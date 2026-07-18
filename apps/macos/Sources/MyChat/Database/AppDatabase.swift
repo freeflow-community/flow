@@ -132,6 +132,13 @@ struct AppDatabase: Sendable {
                 t.add(column: "timezone", .text)
             }
         }
+        // Phase 2.5 (design 3a): user status emoji + label.
+        migrator.registerMigration("v3") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "statusEmoji", .text)
+                t.add(column: "statusText", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

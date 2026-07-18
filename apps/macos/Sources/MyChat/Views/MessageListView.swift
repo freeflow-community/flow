@@ -4,6 +4,7 @@ import SwiftUI
 struct MessageListView: View {
     let messages: [Message] // ascending by id
     let userNames: [String: String]
+    var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
     let hasMore: Bool
     let showThreadAffordances: Bool
@@ -27,16 +28,22 @@ struct MessageListView: View {
                         .padding(.vertical, 8)
                     }
                     ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                        MessageRow(
-                            message: message,
-                            userNames: userNames,
-                            currentUserId: currentUserId,
-                            showHeader: showsHeader(at: index),
-                            showThreadAffordances: showThreadAffordances,
-                            onOpenThread: onOpenThread,
-                            onEdit: onEdit,
-                            onDelete: onDelete
-                        )
+                        VStack(alignment: .leading, spacing: 0) {
+                            if startsNewDay(at: index) {
+                                DayDividerView(iso: message.createdAt)
+                            }
+                            MessageRow(
+                                message: message,
+                                userNames: userNames,
+                                userStatuses: userStatuses,
+                                currentUserId: currentUserId,
+                                showHeader: showsHeader(at: index),
+                                showThreadAffordances: showThreadAffordances,
+                                onOpenThread: onOpenThread,
+                                onEdit: onEdit,
+                                onDelete: onDelete
+                            )
+                        }
                         .id(message.id)
                     }
                 }
@@ -61,6 +68,7 @@ struct MessageListView: View {
     /// or more than 5 minutes passed since the previous message.
     private func showsHeader(at index: Int) -> Bool {
         guard index > 0 else { return true }
+        if startsNewDay(at: index) { return true }
         let prev = messages[index - 1]
         let cur = messages[index]
         if prev.userId != cur.userId { return true }
@@ -68,11 +76,45 @@ struct MessageListView: View {
               let curDate = ISO8601.parse(cur.createdAt) else { return true }
         return curDate.timeIntervalSince(prevDate) > 300
     }
+
+    private func startsNewDay(at index: Int) -> Bool {
+        guard index > 0 else { return true }
+        guard let prev = ISO8601.parse(messages[index - 1].createdAt),
+              let cur = ISO8601.parse(messages[index].createdAt) else { return false }
+        return !Calendar.current.isDate(prev, inSameDayAs: cur)
+    }
+}
+
+/// Centered "Today" / date pill between days (design 3a).
+struct DayDividerView: View {
+    let iso: String
+
+    var body: some View {
+        HStack {
+            Spacer()
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(MC.faint)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(MC.daypill))
+            Spacer()
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var label: String {
+        guard let date = ISO8601.parse(iso) else { return "" }
+        if Calendar.current.isDateInToday(date) { return "Today" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(.dateTime.month(.wide).day())
+    }
 }
 
 struct MessageRow: View {
     let message: Message
     let userNames: [String: String]
+    var userStatuses: [String: String] = [:]
     let currentUserId: String?
     let showHeader: Bool
     let showThreadAffordances: Bool
@@ -90,18 +132,29 @@ struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if showHeader {
-                avatar
+                AvatarChip(
+                    userId: message.userId,
+                    name: senderName,
+                    avatarPath: avatarPath,
+                    size: 38,
+                    radius: 11
+                )
             } else {
-                Color.clear.frame(width: 30, height: 1)
+                Color.clear.frame(width: 38, height: 1)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 if showHeader {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(senderName).font(.callout.bold())
+                        Text(senderName)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(MC.ink)
+                        if let emoji = userStatuses[message.userId], !emoji.isEmpty {
+                            Text(emoji).font(.system(size: 14))
+                        }
                         Text(ISO8601.displayTime(message.createdAt))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(MC.faint)
                     }
                 }
 
@@ -177,8 +230,8 @@ struct MessageRow: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, showHeader ? 8 : 1)
+        .padding(.horizontal, 22)
+        .padding(.top, showHeader ? 10 : 1)
         .padding(.bottom, 1)
         .opacity(message.pending ? 0.55 : 1)
         .contentShape(Rectangle())
@@ -213,16 +266,16 @@ struct MessageRow: View {
                 } label: {
                     HStack(spacing: 3) {
                         Text(agg.emoji).font(.system(size: 12))
-                        Text("\(agg.count)").font(.caption2.bold())
+                        Text("\(agg.count)")
+                            .font(.caption2.bold())
+                            .foregroundStyle(mine ? MC.accentSoft : MC.inkSoft)
                     }
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, 9)
                     .padding(.vertical, 2)
-                    .background(
-                        Capsule().fill(mine ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12))
-                    )
+                    .background(Capsule().fill(.white))
                     .overlay(
                         Capsule().strokeBorder(
-                            mine ? Color.accentColor : .clear, lineWidth: 1
+                            mine ? MC.accentSoft.opacity(0.4) : MC.hairline, lineWidth: 1
                         )
                     )
                 }
@@ -235,50 +288,9 @@ struct MessageRow: View {
         .padding(.top, 2)
     }
 
-    private var avatar: some View {
-        Group {
-            if let path = avatarPath {
-                AuthImage(path: path) {
-                    fallbackAvatar
-                }
-                .scaledToFill()
-                .frame(width: 30, height: 30)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                fallbackAvatar
-            }
-        }
-    }
-
     private var avatarPath: String? {
         // Avatar URLs are API-relative (/v1/avatars/<key>); cached user rows carry them.
         app.avatarPaths[message.userId]
-    }
-
-    private var fallbackAvatar: some View {
-        RoundedRectangle(cornerRadius: 6)
-            .fill(avatarColor)
-            .frame(width: 30, height: 30)
-            .overlay(
-                Text(initials)
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-            )
-    }
-
-    private var initials: String {
-        let parts = senderName.split(separator: " ")
-        let chars = parts.prefix(2).compactMap(\.first)
-        return chars.isEmpty ? "?" : String(chars).uppercased()
-    }
-
-    private var avatarColor: Color {
-        let palette: [Color] = [.blue, .purple, .pink, .orange, .teal, .indigo, .mint, .brown]
-        var hash = 0
-        for scalar in message.userId.unicodeScalars {
-            hash = (hash &* 31 &+ Int(scalar.value)) & 0x7fffffff
-        }
-        return palette[hash % palette.count]
     }
 }
 

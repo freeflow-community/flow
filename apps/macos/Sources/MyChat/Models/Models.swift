@@ -16,6 +16,8 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var displayName: String
     var avatarUrl: String?
     var timezone: String?
+    var statusEmoji: String? // "" / nil = no status
+    var statusText: String?
     var createdAt: String?
 }
 
@@ -254,6 +256,8 @@ struct MemberDTO: Decodable, Sendable {
     let displayName: String
     let email: String
     let avatarUrl: String?
+    let statusEmoji: String?
+    let statusText: String?
     let role: String
     let joinedAt: String?
 }
@@ -343,6 +347,18 @@ struct NotifyLevelBody: Encodable, Sendable { let level: Int }
 struct PatchMeBody: Encodable, Sendable {
     let displayName: String?
     let timezone: String?
+    let statusEmoji: String? // set with statusText together; "" clears
+    let statusText: String?
+
+    init(
+        displayName: String? = nil, timezone: String? = nil,
+        statusEmoji: String? = nil, statusText: String? = nil
+    ) {
+        self.displayName = displayName
+        self.timezone = timezone
+        self.statusEmoji = statusEmoji
+        self.statusText = statusText
+    }
 }
 struct MarkNotificationsReadBody: Encodable, Sendable { let upToId: String }
 

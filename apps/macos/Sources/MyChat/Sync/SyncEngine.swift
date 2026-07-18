@@ -241,6 +241,9 @@ actor SyncEngine {
                     email: m.email,
                     displayName: m.displayName,
                     avatarUrl: m.avatarUrl,
+                    timezone: existing?.timezone,
+                    statusEmoji: m.statusEmoji,
+                    statusText: m.statusText,
                     createdAt: existing?.createdAt
                 ).save(db)
                 try Member(workspaceId: workspaceId, userId: m.userId, role: m.role).save(db)
@@ -593,6 +596,17 @@ actor SyncEngine {
         let me: User = try await api.patch(
             "/v1/me",
             body: PatchMeBody(displayName: displayName, timezone: timezone)
+        )
+        currentUser = me
+        try? await db.writer.write { db in try me.save(db) }
+        await appState?.setPhase(.signedIn(me))
+    }
+
+    /// Set (or clear, with two empty strings) the user's status emoji + label.
+    func setStatus(emoji: String, text: String) async throws {
+        let me: User = try await api.patch(
+            "/v1/me",
+            body: PatchMeBody(statusEmoji: emoji, statusText: text)
         )
         currentUser = me
         try? await db.writer.write { db in try me.save(db) }

@@ -6,9 +6,12 @@ struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable
     var userId: String
     var displayName: String
     var role: String
+    var statusEmoji: String?
+    var statusText: String?
     var id: String { userId }
 }
 
+/// Design 3a column 2: violet gradient channel/DM list with the profile footer.
 struct SidebarView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
@@ -41,97 +44,69 @@ struct SidebarView: View {
         channels.value.filter { !$0.isMember && !$0.isPrivate && !$0.isDM }
     }
 
+    private var memberById: [String: MemberInfo] {
+        Dictionary(uniqueKeysWithValues: members.value.map { ($0.userId, $0) })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            workspaceMenu
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-            Divider()
+            header
+                .padding(.horizontal, 14)
+                .padding(.top, 18)
+                .padding(.bottom, 6)
 
-            List(selection: Binding(
-                get: { app.selectedChannelId },
-                set: { app.selectChannel($0) }
-            )) {
-                Section("Channels") {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    sectionHeader("Channels") {
+                        Button {
+                            showCreateChannel = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.55))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Create a channel")
+                    }
                     ForEach(joinedChannels) { channel in
                         channelRow(channel)
                     }
-                }
 
-                Section {
-                    ForEach(dmChannels) { channel in
-                        dmRow(channel)
-                    }
-                } header: {
-                    HStack {
-                        Text("Direct Messages")
-                        Spacer()
+                    sectionHeader("Direct messages") {
                         Button {
                             showNewDM = true
                         } label: {
                             Image(systemName: "square.and.pencil")
                                 .font(.caption)
+                                .foregroundStyle(.white.opacity(0.55))
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.plain)
                         .help("New direct message")
                         .accessibilityIdentifier("sidebar.newDM")
                     }
-                }
+                    ForEach(dmChannels) { channel in
+                        dmRow(channel)
+                    }
 
-                if !browsableChannels.isEmpty {
-                    Section("Browse") {
+                    if !browsableChannels.isEmpty {
+                        sectionHeader("Browse") {}
                         ForEach(browsableChannels) { channel in
-                            HStack(spacing: 6) {
-                                Image(systemName: "number")
-                                    .foregroundStyle(.tertiary)
-                                    .frame(width: 14)
-                                Text(channel.name ?? "")
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Join") {
-                                    Task {
-                                        do {
-                                            let ch = try await app.engine.joinChannel(channel.id)
-                                            app.selectChannel(ch.id)
-                                        } catch {
-                                            app.showError(error.localizedDescription)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.borderless)
-                                .font(.caption)
-                            }
+                            browseRow(channel)
                         }
                     }
-                }
 
-                Section("Members") {
+                    sectionHeader("Members") {}
                     ForEach(members.value) { member in
                         memberRow(member)
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
             }
-            .listStyle(.sidebar)
 
-            Divider()
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(app.connection == .connected ? .green : .orange)
-                    .frame(width: 7, height: 7)
-                Text(app.connection.label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    showCreateChannel = true
-                } label: {
-                    Image(systemName: "plus.circle")
-                }
-                .buttonStyle(.borderless)
-                .help("Create a channel")
-            }
-            .padding(8)
+            StatusFooterView()
         }
+        .background(MC.sidebarGradient)
         .task {
             workspaces.start(db: app.db) { db in
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
@@ -154,7 +129,8 @@ struct SidebarView: View {
                 try MemberInfo.fetchAll(
                     db,
                     sql: """
-                        SELECT m.userId AS userId, u.displayName AS displayName, m.role AS role
+                        SELECT m.userId AS userId, u.displayName AS displayName, m.role AS role,
+                               u.statusEmoji AS statusEmoji, u.statusText AS statusText
                         FROM member m JOIN user u ON u.id = m.userId
                         WHERE m.workspaceId = ?
                         ORDER BY u.displayName COLLATE NOCASE
@@ -192,29 +168,74 @@ struct SidebarView: View {
         }
     }
 
+    // MARK: - Header
+
+    private var header: some View {
+        HStack {
+            workspaceMenu
+            Spacer()
+        }
+    }
+
+    private func sectionHeader(_ label: String, @ViewBuilder action: () -> some View) -> some View {
+        HStack {
+            Text(label.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(.white.opacity(0.55))
+            Spacer()
+            action()
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 14)
+        .padding(.bottom, 3)
+    }
+
     // MARK: - Rows
 
+    private func rowBackground(_ active: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
+    }
+
     private func channelRow(_ channel: Channel) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: channel.isPrivate ? "lock" : "number")
-                .foregroundStyle(.secondary)
+        let active = app.selectedChannelId == channel.id
+        return Button {
+            app.selectChannel(channel.id)
+        } label: {
+            HStack(spacing: 9) {
+                Group {
+                    if channel.isPrivate {
+                        Image(systemName: "lock")
+                    } else {
+                        Text("#")
+                    }
+                }
+                .font(.system(size: 14))
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
                 .frame(width: 14)
-            Text(channel.name ?? "")
-                .fontWeight(channel.unreadCount > 0 ? .bold : .regular)
-            if channel.notifyLevel == 0 {
-                Image(systemName: "bell.slash")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                Text(channel.name ?? "")
+                    .font(.system(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular))
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
+                if channel.notifyLevel == 0 {
+                    Image(systemName: "bell.slash")
+                        .font(.caption2)
+                        .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
+                }
+                Spacer(minLength: 0)
+                if channel.unreadCount > 0 {
+                    unreadBadge(channel.unreadCount)
+                }
             }
-            Spacer()
-            if channel.unreadCount > 0 {
-                unreadBadge(channel.unreadCount)
-            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
         .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
-        .tag(Optional(channel.id))
+        .accessibilityAddTraits(active ? [.isSelected] : [])
         .contextMenu { channelMenu(channel) }
     }
 
@@ -222,36 +243,51 @@ struct SidebarView: View {
         let title = channel.displayTitle(
             userNames: userNames.value, currentUserId: app.currentUser?.id
         )
+        let active = app.selectedChannelId == channel.id
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
-        return HStack(spacing: 6) {
-            if channel.kind == "dm", let otherId {
-                Circle()
-                    .fill(app.presence[otherId] == true ? .green : Color.gray.opacity(0.5))
-                    .frame(width: 8, height: 8)
-                    .frame(width: 14)
-            } else {
-                Image(systemName: "person.2")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
+        let otherStatus = otherId.flatMap { memberById[$0] }
+        return Button {
+            app.selectChannel(channel.id)
+        } label: {
+            HStack(spacing: 9) {
+                if channel.kind == "dm", let otherId {
+                    presenceDot(online: app.presence[otherId] == true)
+                        .frame(width: 14)
+                } else {
+                    Image(systemName: "person.2")
+                        .font(.caption)
+                        .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
+                        .frame(width: 14)
+                }
+                Text(title)
+                    .font(.system(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular))
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
+                    .lineLimit(1)
+                if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 14))
+                        .help(otherStatus?.statusText ?? "")
+                }
+                if channel.notifyLevel == 0 {
+                    Image(systemName: "bell.slash")
+                        .font(.caption2)
+                        .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
+                }
+                Spacer(minLength: 0)
+                if channel.unreadCount > 0 {
+                    unreadBadge(channel.unreadCount)
+                }
             }
-            Text(title)
-                .fontWeight(channel.unreadCount > 0 ? .bold : .regular)
-                .lineLimit(1)
-            if channel.notifyLevel == 0 {
-                Image(systemName: "bell.slash")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer()
-            if channel.unreadCount > 0 {
-                unreadBadge(channel.unreadCount)
-            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.dm.\(title)")
         .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
-        .tag(Optional(channel.id))
+        .accessibilityAddTraits(active ? [.isSelected] : [])
         .contextMenu {
             notifyMenu(channel)
             if channel.kind == "group_dm" {
@@ -260,41 +296,84 @@ struct SidebarView: View {
         }
     }
 
+    private func browseRow(_ channel: Channel) -> some View {
+        HStack(spacing: 9) {
+            Text("#")
+                .font(.system(size: 14))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: 14)
+            Text(channel.name ?? "")
+                .font(.system(size: 14))
+                .foregroundStyle(.white.opacity(0.7))
+            Spacer(minLength: 0)
+            Button("Join") {
+                Task {
+                    do {
+                        let ch = try await app.engine.joinChannel(channel.id)
+                        app.selectChannel(ch.id)
+                    } catch {
+                        app.showError(error.localizedDescription)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.white.opacity(0.8))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+    }
+
     private func memberRow(_ member: MemberInfo) -> some View {
         Button {
             profileUserId = member.userId
         } label: {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(app.presence[member.userId] == true ? .green : Color.gray.opacity(0.5))
-                    .frame(width: 8, height: 8)
+            HStack(spacing: 9) {
+                presenceDot(online: app.presence[member.userId] == true)
                 Text(member.displayName)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
-                if member.userId == app.currentUser?.id {
-                    Text("(you)").font(.caption2).foregroundStyle(.tertiary)
+                if let emoji = member.statusEmoji, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 14))
+                        .help(member.statusText ?? "")
                 }
-                Spacer()
+                if member.userId == app.currentUser?.id {
+                    Text("(you)").font(.caption2).foregroundStyle(.white.opacity(0.55))
+                }
+                Spacer(minLength: 0)
                 if member.role != "member" {
                     Text(member.role)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.white.opacity(0.55))
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.member.\(member.displayName)")
         .accessibilityValue(app.presence[member.userId] == true ? "online" : "offline")
-        .selectionDisabled()
+    }
+
+    private func presenceDot(online: Bool) -> some View {
+        Circle()
+            .fill(online ? MC.online : Color.clear)
+            .overlay(
+                Circle().strokeBorder(online ? Color.clear : .white.opacity(0.4), lineWidth: 1.5)
+            )
+            .frame(width: 8, height: 8)
     }
 
     private func unreadBadge(_ n: Int) -> some View {
         Text("\(n)")
-            .font(.caption2.bold())
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(.red))
+            .font(.system(size: 11, weight: .bold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(MC.unread))
             .foregroundStyle(.white)
     }
 
@@ -368,18 +447,162 @@ struct SidebarView: View {
                 Task { await app.engine.logout() }
             }
         } label: {
-            HStack {
+            HStack(spacing: 4) {
                 Text(currentWorkspace?.name ?? "Workspace")
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
                     .lineLimit(1)
-                Spacer()
                 Image(systemName: "chevron.down")
                     .font(.caption)
+                    .foregroundStyle(.white.opacity(0.55))
             }
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .accessibilityIdentifier("sidebar.workspaceMenu")
+    }
+}
+
+/// Profile footer pinned to the sidebar bottom; opens the status picker
+/// (design 3a's core interaction).
+struct StatusFooterView: View {
+    @EnvironmentObject private var app: AppState
+    @State private var showPicker = false
+    @State private var busy = false
+
+    private var statusEmoji: String { app.currentUser?.statusEmoji ?? "" }
+    private var statusText: String { app.currentUser?.statusText ?? "" }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(.white.opacity(0.14)).frame(height: 1)
+            Button {
+                showPicker.toggle()
+            } label: {
+                HStack(spacing: 10) {
+                    avatarWithBadge
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 5) {
+                            Text(app.currentUser?.displayName ?? "You")
+                                .font(.system(size: 13.5, weight: .bold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                            Circle()
+                                .fill(app.connection == .connected ? MC.online : .orange)
+                                .frame(width: 6, height: 6)
+                                .help(app.connection.label)
+                        }
+                        Text(statusText.isEmpty ? "Set a status" : statusText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("sidebar.statusFooter")
+            .accessibilityValue(
+                "\(app.connection.label); \(statusText.isEmpty ? "no status" : statusText)"
+            )
+            .popover(isPresented: $showPicker, arrowEdge: .top) {
+                statusPicker
+            }
+        }
+    }
+
+    private var avatarWithBadge: some View {
+        AvatarChip(
+            userId: app.currentUser?.id ?? "",
+            name: app.currentUser?.displayName ?? "?",
+            avatarPath: app.currentUser.flatMap { app.avatarPaths[$0.id] },
+            size: 34,
+            radius: 10
+        )
+        .overlay(alignment: .bottomTrailing) {
+            if !statusEmoji.isEmpty {
+                Text(statusEmoji)
+                    .font(.system(size: 11))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(MC.rail))
+                    .overlay(Circle().strokeBorder(MC.sideBot, lineWidth: 2))
+                    .offset(x: 6, y: 6)
+            }
+        }
+    }
+
+    private var statusPicker: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("SET YOUR STATUS")
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.55)
+                .foregroundStyle(MC.muted)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+            ForEach(Array(MC.statusOptions.enumerated()), id: \.offset) { index, option in
+                Button {
+                    setStatus(option.emoji, option.text)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(option.emoji)
+                            .font(.system(size: 17))
+                            .frame(width: 22)
+                        Text(option.text)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(MC.ink)
+                        Spacer(minLength: 0)
+                        if option.emoji == statusEmoji, option.text == statusText {
+                            Image(systemName: "checkmark")
+                                .font(.caption)
+                                .foregroundStyle(MC.accentSoft)
+                        }
+                    }
+                    .padding(8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+                .accessibilityIdentifier("status.option.\(index + 1)")
+            }
+            Divider().padding(.vertical, 4)
+            Button {
+                setStatus("", "")
+            } label: {
+                Text("Clear status")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MC.faint)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+            .accessibilityIdentifier("status.clear")
+        }
+        .padding(12)
+        .frame(width: 240)
+        .accessibilityIdentifier("status.picker")
+    }
+
+    private func setStatus(_ emoji: String, _ text: String) {
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                try await app.engine.setStatus(emoji: emoji, text: text)
+                showPicker = false
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
     }
 }
 

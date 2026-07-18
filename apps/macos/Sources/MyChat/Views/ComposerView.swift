@@ -57,19 +57,25 @@ struct ComposerView: View {
 
                 Button(action: send) {
                     Image(systemName: "paperplane.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(MC.send))
+                        .opacity(canSend ? 1 : 0.4)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .disabled(!canSend)
                 .help("Send message")
                 .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
             }
         }
-        .padding(10)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(.quaternary, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.white)
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MC.hairline2, lineWidth: 1))
         )
-        .padding([.horizontal, .bottom], 12)
+        .padding([.horizontal, .bottom], 22)
         .padding(.top, 4)
         .onAppear { focused = true }
         .task(id: workspaceId) {

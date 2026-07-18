@@ -8,6 +8,7 @@ struct ChannelView: View {
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
+    @StateObject private var userStatuses = DBObserved<[String: String]>(initial: [:])
     @State private var editingMessage: Message?
 
     var body: some View {
@@ -18,6 +19,7 @@ struct ChannelView: View {
             MessageListView(
                 messages: messages.value,
                 userNames: userNames.value,
+                userStatuses: userStatuses.value,
                 currentUserId: app.currentUser?.id,
                 hasMore: app.hasMore[channelId] ?? false,
                 showThreadAffordances: true,
@@ -66,6 +68,13 @@ struct ChannelView: View {
                     uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayName) }
                 )
             }
+            userStatuses.start(db: app.db, reset: [:]) { db in
+                try Dictionary(
+                    uniqueKeysWithValues: User.fetchAll(db).compactMap { u in
+                        (u.statusEmoji?.isEmpty == false) ? (u.id, u.statusEmoji!) : nil
+                    }
+                )
+            }
         }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
@@ -81,22 +90,29 @@ struct ChannelView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: headerIcon)
-                .foregroundStyle(.secondary)
-            Text(channel.value?.isDM == true
-                 ? headerTitle
-                 : (channel.value?.name ?? ""))
-                .font(.headline)
-            if let topic = channel.value?.topic, !topic.isEmpty {
-                Text(topic)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Image(systemName: headerIcon)
+                        .font(.system(size: 13))
+                        .foregroundStyle(MC.muted)
+                    Text(channel.value?.isDM == true
+                         ? headerTitle
+                         : (channel.value?.name ?? ""))
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(MC.ink)
+                }
+                if let topic = channel.value?.topic, !topic.isEmpty {
+                    Text(topic)
+                        .font(.system(size: 12))
+                        .foregroundStyle(MC.muted)
+                        .lineLimit(1)
+                }
             }
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 22)
+        .frame(height: 60)
+        .background(MC.base)
     }
 
     private var headerIcon: String {
