@@ -74,14 +74,14 @@ export default function Composer({
   };
 
   return (
-    <div className="relative px-4 pb-4">
+    <div className="relative px-[22px] pb-[22px]">
       {suggestions.length > 0 && (
-        <div className="absolute bottom-full left-4 z-20 mb-1 flex gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+        <div className="absolute bottom-full left-[22px] z-20 mb-1 flex gap-1 rounded-lg border border-hairline bg-white p-1 shadow-lg">
           {suggestions.map((s) => (
             <button
               key={s.label}
               data-testid={`suggestion-${s.label}`}
-              className="rounded px-2 py-1 text-sm hover:bg-gray-100"
+              className="rounded px-2 py-1 text-sm hover:bg-daypill"
               onClick={() => applySuggestion(s.insert)}
             >
               {s.label}
@@ -96,34 +96,25 @@ export default function Composer({
             <span
               key={f.id}
               data-testid={`pending-file-${f.name}`}
-              className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs"
+              className="flex items-center gap-1 rounded-full bg-daypill px-2 py-0.5 text-xs"
             >
               {f.hasThumb ? '🖼' : '📄'} {f.name}
-              <button className="text-gray-400 hover:text-gray-700" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
+              <button className="text-faint hover:text-ink" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
                 ✕
               </button>
             </span>
           ))}
-          {uploading > 0 && <span className="text-xs text-gray-500">Uploading…</span>}
+          {uploading > 0 && <span className="text-xs text-muted">Uploading…</span>}
         </div>
       )}
 
       {error && <p className="mb-1 text-xs text-red-600">{error}</p>}
 
-      <div className="flex items-end gap-2 rounded-lg border border-gray-300 px-2 py-1.5 focus-within:border-blue-400">
-        <button
-          data-testid={`${testPrefix}-attach`}
-          className="pb-0.5 text-gray-400 hover:text-gray-700"
-          title="Attach files"
-          onClick={() => fileRef.current?.click()}
-        >
-          📎
-        </button>
-        <input ref={fileRef} type="file" multiple hidden onChange={(e) => void pickFiles(e.target.files)} />
+      <div className="rounded-xl border border-hairline2 bg-white px-3.5 py-3 focus-within:border-accent/40">
         <textarea
           ref={inputRef}
           data-testid={`${testPrefix}-input`}
-          className="max-h-40 flex-1 resize-none bg-transparent py-1 text-[15px] outline-none"
+          className="max-h-40 w-full resize-none bg-transparent text-sm outline-none placeholder:text-faint"
           rows={1}
           placeholder={placeholder}
           value={text}
@@ -138,26 +129,45 @@ export default function Composer({
             }
           }}
         />
-        <button
-          data-testid={`${testPrefix}-emoji`}
-          className="pb-0.5 text-gray-400 hover:text-gray-700"
-          title="Emoji"
-          onClick={() => setShowEmoji((v) => !v)}
-        >
-          🙂
-        </button>
-        <button
-          data-testid={`${testPrefix}-send`}
-          className="rounded bg-blue-600 px-3 py-1 text-sm font-semibold text-white disabled:opacity-40"
-          disabled={(!text.trim() && attachments.length === 0) || uploading > 0}
-          onClick={doSend}
-        >
-          Send
-        </button>
+        <div className="mt-1.5 flex items-center gap-3 text-[15px] text-faint">
+          <button
+            data-testid={`${testPrefix}-attach`}
+            className="hover:text-ink"
+            title="Attach files"
+            onClick={() => fileRef.current?.click()}
+          >
+            ＋
+          </button>
+          <input ref={fileRef} type="file" multiple hidden onChange={(e) => void pickFiles(e.target.files)} />
+          <button
+            data-testid={`${testPrefix}-emoji`}
+            className="hover:text-ink"
+            title="Emoji"
+            onClick={() => setShowEmoji((v) => !v)}
+          >
+            😊
+          </button>
+          <button
+            className="hover:text-ink"
+            title="Mention someone"
+            onClick={() => { setText((t) => t + '@'); inputRef.current?.focus(); }}
+          >
+            @
+          </button>
+          <button
+            data-testid={`${testPrefix}-send`}
+            className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
+            title="Send"
+            disabled={(!text.trim() && attachments.length === 0) || uploading > 0}
+            onClick={doSend}
+          >
+            ➤
+          </button>
+        </div>
       </div>
 
       {showEmoji && (
-        <div className="absolute right-4 bottom-full z-30 mb-1">
+        <div className="absolute right-[22px] bottom-full z-30 mb-1">
           <EmojiPicker
             onPick={(emoji) => {
               setShowEmoji(false);

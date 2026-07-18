@@ -25,8 +25,8 @@ export function renderBody(
         data-mention={m[2] ?? m[1]}
         className={
           strong
-            ? 'rounded bg-blue-600 px-1 font-semibold text-white'
-            : 'rounded bg-blue-100 px-1 font-semibold text-blue-700'
+            ? 'rounded bg-accent px-1 font-semibold text-white'
+            : 'rounded bg-accent/15 px-1 font-semibold text-accent-deep'
         }
       >
         {label}

@@ -1,0 +1,84 @@
+// Initials-on-color avatar chips (design 3a) with real-image fallback, and the
+// bearer-auth <img> helper shared by attachments and profile views.
+import { useEffect, useState } from 'react';
+import { blobUrl } from '../lib/api';
+
+/* Design 3a avatar palette (bg / text), extended with two matching pairs. */
+const PALETTE: [string, string][] = [
+  ['#e9c8b0', '#7a4d2b'],
+  ['#bcd0e9', '#2b527a'],
+  ['#cbe3c9', '#3a6b3a'],
+  ['#ffb547', '#5a3a00'],
+  ['#e3c9e0', '#6b2b62'],
+  ['#f0e0a8', '#6e5a14'],
+];
+
+function hash(s: string): number {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0;
+  return Math.abs(h);
+}
+
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? '?';
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '';
+  return (first + last).toUpperCase();
+}
+
+export function chipColors(userId: string): [string, string] {
+  return PALETTE[hash(userId) % PALETTE.length]!;
+}
+
+export function Avatar({
+  userId,
+  name,
+  avatarUrl,
+  size = 38,
+  radius = 11,
+  className = '',
+}: {
+  userId: string;
+  name: string;
+  avatarUrl?: string | null;
+  size?: number;
+  radius?: number;
+  className?: string;
+}) {
+  const style = { width: size, height: size, borderRadius: radius };
+  if (avatarUrl) {
+    return (
+      <AuthImg path={avatarUrl} alt={name} className={`shrink-0 object-cover ${className}`} style={style} />
+    );
+  }
+  const [bg, fg] = chipColors(userId);
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center font-extrabold select-none ${className}`}
+      style={{ ...style, background: bg, color: fg, fontSize: Math.round(size * 0.37) }}
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+export function AuthImg({
+  path,
+  alt,
+  className,
+  style,
+}: {
+  path: string;
+  alt: string;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void blobUrl(path).then((u) => { if (alive) setUrl(u); }).catch(() => {});
+    return () => { alive = false; };
+  }, [path]);
+  if (!url) return <span className={`inline-block animate-pulse rounded-lg bg-daypill ${className ?? ''}`} style={style} />;
+  return <img src={url} alt={alt} className={className} style={style} />;
+}

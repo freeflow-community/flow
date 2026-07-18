@@ -27,6 +27,8 @@ export interface WorkspaceMemberDTO {
   displayName: string;
   email: string;
   avatarUrl: string | null;
+  statusEmoji: string; // '' = no status
+  statusText: string;
   role: MemberRole;
   joinedAt: string;
 }

@@ -51,6 +51,14 @@ export function useNameMap(workspaceId: string | null): Record<string, string> {
   return map;
 }
 
+/** userId -> full member DTO (avatar + status) for the active workspace. */
+export function useMemberMap(workspaceId: string | null): Record<string, WorkspaceMemberDTO> {
+  const members = useMembers(workspaceId);
+  const map: Record<string, WorkspaceMemberDTO> = {};
+  for (const m of members.data ?? []) map[m.userId] = m;
+  return map;
+}
+
 export function useMessages(channelId: string | null) {
   return useInfiniteQuery({
     queryKey: ['messages', channelId],

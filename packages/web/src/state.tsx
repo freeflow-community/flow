@@ -24,6 +24,7 @@ export interface LiveState {
   presence: Record<string, boolean>;
   typing: Record<string, Record<string, number>>; // channelId -> userId -> ts(ms)
   notificationUnread: number;
+  setNotificationUnread(n: number): void;
   sendTyping(channelId: string): void;
 }
 

@@ -88,6 +88,8 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
     displayName: r.u.displayName,
     email: r.u.email,
     avatarUrl: r.u.avatarUrl,
+    statusEmoji: r.u.statusEmoji,
+    statusText: r.u.statusText,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   }));

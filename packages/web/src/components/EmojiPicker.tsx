@@ -40,10 +40,10 @@ export default function EmojiPicker({
       );
 
   return (
-    <div ref={ref} data-testid="emoji-picker" className="w-72 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+    <div ref={ref} data-testid="emoji-picker" className="w-72 rounded-lg border border-hairline bg-white p-2 shadow-xl">
       <input
         data-testid="emoji-search"
-        className="mb-2 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+        className="mb-2 w-full rounded border border-hairline2 px-2 py-1 text-sm"
         placeholder="Search emoji"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
@@ -54,13 +54,13 @@ export default function EmojiPicker({
           <button
             key={emoji}
             data-testid={`emoji-${emoji}`}
-            className="rounded p-1 text-xl hover:bg-gray-100"
+            className="rounded p-1 text-xl hover:bg-daypill"
             onClick={() => onPick(emoji)}
           >
             {emoji}
           </button>
         ))}
-        {results.length === 0 && <p className="col-span-8 py-4 text-center text-sm text-gray-400">No matches</p>}
+        {results.length === 0 && <p className="col-span-8 py-4 text-center text-sm text-faint">No matches</p>}
       </div>
     </div>
   );

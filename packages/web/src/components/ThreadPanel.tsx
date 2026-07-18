@@ -19,13 +19,13 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
   return (
     <aside
       data-testid="thread-panel"
-      className="flex w-96 shrink-0 flex-col border-l border-gray-200"
+      className="flex w-96 shrink-0 flex-col border-l border-hairline"
     >
-      <header className="flex items-center justify-between border-b border-gray-200 px-4 py-2.5">
+      <header className="flex items-center justify-between border-b border-hairline px-4 py-2.5">
         <h3 className="font-bold">Thread</h3>
         <button
           data-testid="thread-close"
-          className="rounded px-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          className="rounded px-2 text-faint hover:bg-daypill hover:text-ink"
           onClick={() => sel.openThread(null)}
         >
           ✕

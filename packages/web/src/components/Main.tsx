@@ -5,7 +5,7 @@ import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { LiveContext, useAuth, useSelection } from '../state';
-import { useNameMap } from '../hooks';
+import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import ThreadPanel from './ThreadPanel';
@@ -145,6 +145,7 @@ export default function Main() {
       presence,
       typing,
       notificationUnread,
+      setNotificationUnread,
       sendTyping: (channelId: string) => socketRef.current?.sendTyping(channelId),
     }),
     [status, presence, typing, notificationUnread],
@@ -152,28 +153,65 @@ export default function Main() {
 
   return (
     <LiveContext.Provider value={live}>
-      <div className="flex h-full bg-white text-gray-900">
+      <div className="flex h-full bg-base text-ink">
+        <WorkspaceRail />
         <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-end border-b border-gray-200 px-3 py-1.5">
-            <NotificationsBell onCountChange={setNotificationUnread} />
-          </div>
-          <div className="flex min-h-0 flex-1">
-            {sel.channelId ? (
-              <>
-                <ChannelView key={sel.channelId} channelId={sel.channelId} />
-                {sel.threadRootId && (
-                  <ThreadPanel key={sel.threadRootId} rootId={sel.threadRootId} />
-                )}
-              </>
-            ) : (
-              <div className="flex flex-1 items-center justify-center text-gray-400">
+        <div className="flex min-h-0 min-w-0 flex-1">
+          {sel.channelId ? (
+            <>
+              <ChannelView key={sel.channelId} channelId={sel.channelId} />
+              {sel.threadRootId && (
+                <ThreadPanel key={sel.threadRootId} rootId={sel.threadRootId} />
+              )}
+            </>
+          ) : (
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex h-[60px] items-center justify-end border-b border-hairline px-[22px]">
+                <NotificationsBell />
+              </div>
+              <div className="flex flex-1 items-center justify-center text-faint">
                 Select a channel
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </LiveContext.Provider>
+  );
+}
+
+/** Design 3a column 1: the 64px violet workspace rail. */
+function WorkspaceRail() {
+  const sel = useSelection();
+  const workspaces = useWorkspaces();
+  return (
+    <nav className="flex w-16 shrink-0 flex-col items-center gap-3.5 bg-rail py-4">
+      {(workspaces.data ?? []).map((w) => {
+        const active = w.id === sel.workspaceId;
+        return (
+          <button
+            key={w.id}
+            data-testid={`rail-workspace-${w.slug}`}
+            title={w.name}
+            className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+              active
+                ? 'bg-white text-[17px] font-extrabold text-accent'
+                : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
+            }`}
+            onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
+          >
+            {w.name.slice(0, 1).toUpperCase()}
+          </button>
+        );
+      })}
+      <button
+        data-testid="rail-add-workspace"
+        title="Add a workspace"
+        className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-white/40 text-white/70 hover:border-white/70 hover:text-white"
+        onClick={() => sel.selectWorkspace(null)}
+      >
+        +
+      </button>
+    </nav>
   );
 }

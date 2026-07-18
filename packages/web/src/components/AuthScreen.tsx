@@ -28,21 +28,21 @@ export default function AuthScreen({ onSignedIn }: { onSignedIn: (r: AuthRespons
   };
 
   return (
-    <div className="flex h-full items-center justify-center bg-gray-50">
-      <form onSubmit={submit} className="w-80 rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h1 className="mb-1 text-center text-2xl font-bold text-gray-900">MyChat</h1>
+    <div className="flex h-full items-center justify-center bg-base">
+      <form onSubmit={submit} className="w-80 rounded-xl border border-hairline bg-white p-6 shadow-sm">
+        <h1 className="mb-1 text-center text-2xl font-bold text-ink">MyChat</h1>
         <div className="mb-4 flex justify-center gap-2 text-sm" data-testid="auth-mode">
           <button
             type="button"
-            className={mode === 'signin' ? 'font-semibold text-blue-600' : 'text-gray-500'}
+            className={mode === 'signin' ? 'font-semibold text-accent-soft' : 'text-muted'}
             onClick={() => setMode('signin')}
           >
             Sign In
           </button>
-          <span className="text-gray-300">·</span>
+          <span className="text-faint">·</span>
           <button
             type="button"
-            className={mode === 'register' ? 'font-semibold text-blue-600' : 'text-gray-500'}
+            className={mode === 'register' ? 'font-semibold text-accent-soft' : 'text-muted'}
             onClick={() => setMode('register')}
           >
             Register
@@ -51,7 +51,7 @@ export default function AuthScreen({ onSignedIn }: { onSignedIn: (r: AuthRespons
         {mode === 'register' && (
           <input
             data-testid="auth-displayName"
-            className="mb-2 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
             placeholder="Display name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
@@ -59,7 +59,7 @@ export default function AuthScreen({ onSignedIn }: { onSignedIn: (r: AuthRespons
         )}
         <input
           data-testid="auth-email"
-          className="mb-2 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+          className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
           placeholder="Email"
           type="email"
           value={email}
@@ -67,7 +67,7 @@ export default function AuthScreen({ onSignedIn }: { onSignedIn: (r: AuthRespons
         />
         <input
           data-testid="auth-password"
-          className="mb-3 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+          className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
           placeholder="Password"
           type="password"
           value={password}
@@ -76,7 +76,7 @@ export default function AuthScreen({ onSignedIn }: { onSignedIn: (r: AuthRespons
         {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
         <button
           data-testid="auth-submit"
-          className="w-full rounded bg-blue-600 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          className="w-full rounded bg-accent py-2 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-50"
           disabled={busy || !email || !password || (mode === 'register' && !displayName)}
         >
           {mode === 'signin' ? 'Sign In' : 'Create Account'}

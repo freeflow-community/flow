@@ -4,7 +4,7 @@ import type { ChannelDTO, InviteDTO, UserDTO } from '@mychat/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useMembers } from '../hooks';
-import { AuthImg } from './MessageList';
+import { AuthImg } from './Avatar';
 
 function Modal({ children, onClose, testid }: { children: React.ReactNode; onClose: () => void; testid?: string }) {
   useEffect(() => {
@@ -51,9 +51,9 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
   return (
     <Modal onClose={onClose} testid="create-channel-modal">
       <h3 className="mb-3 font-bold">Create Channel</h3>
-      <input data-testid="create-channel-name" className="mb-2 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+      <input data-testid="create-channel-name" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         placeholder="name (lowercase, a-z 0-9 - _)" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-      <input className="mb-2 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+      <input className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         placeholder="Topic (optional)" value={topic} onChange={(e) => setTopic(e.target.value)} />
       <label className="mb-3 flex items-center gap-2 text-sm">
         <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
@@ -61,9 +61,9 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
       </label>
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
       <div className="flex justify-end gap-2">
-        <button className="px-3 py-1.5 text-sm text-gray-600" onClick={onClose}>Cancel</button>
+        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
         <button data-testid="create-channel-submit"
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           disabled={!name.trim()} onClick={() => void create()}>Create</button>
       </div>
     </Modal>
@@ -90,21 +90,21 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
       <h3 className="mb-3 font-bold">Invite People</h3>
       {inviteUrl ? (
         <>
-          <p className="mb-2 text-sm text-gray-600">Share this invite link (shown once):</p>
-          <code data-testid="invite-url" className="mb-3 block rounded bg-gray-100 p-2 text-xs break-all select-all">{inviteUrl}</code>
+          <p className="mb-2 text-sm text-ink-soft">Share this invite link (shown once):</p>
+          <code data-testid="invite-url" className="mb-3 block rounded bg-daypill p-2 text-xs break-all select-all">{inviteUrl}</code>
           <div className="flex justify-end">
-            <button className="rounded bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white" onClick={onClose}>Done</button>
+            <button className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white" onClick={onClose}>Done</button>
           </div>
         </>
       ) : (
         <>
-          <input data-testid="invite-email" className="mb-2 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+          <input data-testid="invite-email" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
             placeholder="email@example.com" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
           {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
           <div className="flex justify-end gap-2">
-            <button className="px-3 py-1.5 text-sm text-gray-600" onClick={onClose}>Cancel</button>
+            <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
             <button data-testid="invite-submit"
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
               disabled={!email.includes('@')} onClick={() => void invite()}>Create Invite</button>
           </div>
         </>
@@ -137,12 +137,12 @@ export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onCl
   return (
     <Modal onClose={onClose} testid="new-dm-modal">
       <h3 className="mb-1 font-bold">New Direct Message</h3>
-      <p className="mb-3 text-sm text-gray-500">Pick one person for a DM, several for a group DM (max 8).</p>
+      <p className="mb-3 text-sm text-muted">Pick one person for a DM, several for a group DM (max 8).</p>
       <div className="mc-scroll mb-3 max-h-56 overflow-y-auto">
         {(members.data ?? [])
           .filter((m) => m.userId !== auth.user.id)
           .map((m) => (
-            <label key={m.userId} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
+            <label key={m.userId} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-daypill/50">
               <input
                 type="checkbox"
                 data-testid={`dm-member-${m.displayName}`}
@@ -160,9 +160,9 @@ export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onCl
       </div>
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
       <div className="flex justify-end gap-2">
-        <button className="px-3 py-1.5 text-sm text-gray-600" onClick={onClose}>Cancel</button>
+        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
         <button data-testid="dm-start"
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           disabled={selected.size === 0 || selected.size > 8} onClick={() => void start()}>Start</button>
       </div>
     </Modal>
@@ -205,7 +205,7 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
     <Modal onClose={onClose} testid="channel-menu-modal">
       <h3 className="mb-3 font-bold">{channel.name ? `#${channel.name}` : 'Conversation'} settings</h3>
 
-      <p className="mb-1 text-xs font-semibold text-gray-400 uppercase">Notifications</p>
+      <p className="mb-1 text-xs font-semibold text-faint uppercase">Notifications</p>
       <div className="mb-3 flex gap-1">
         {[
           { level: 1, label: 'Mentions' },
@@ -215,7 +215,7 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
           <button
             key={o.level}
             data-testid={`notify-${o.label.toLowerCase()}`}
-            className={`rounded border px-3 py-1 text-sm ${channel.notifyLevel === o.level ? 'border-blue-500 bg-blue-50 font-semibold' : 'border-gray-200 hover:bg-gray-50'}`}
+            className={`rounded border px-3 py-1 text-sm ${channel.notifyLevel === o.level ? 'border-accent bg-accent/10 font-semibold' : 'border-hairline hover:bg-daypill/50'}`}
             onClick={() => setLevel(o.level)}
           >
             {o.label}
@@ -225,9 +225,9 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
 
       {!isDm && (
         <>
-          <p className="mb-1 text-xs font-semibold text-gray-400 uppercase">Invite to channel</p>
+          <p className="mb-1 text-xs font-semibold text-faint uppercase">Invite to channel</p>
           <div className="mc-scroll mb-3 max-h-40 overflow-y-auto">
-            {candidates.length === 0 && <p className="px-1 py-1 text-sm text-gray-400">Everyone is here.</p>}
+            {candidates.length === 0 && <p className="px-1 py-1 text-sm text-faint">Everyone is here.</p>}
             {candidates.map((m) => (
               <div key={m.userId} className="flex items-center justify-between px-1 py-1 text-sm">
                 <span>{m.displayName}</span>
@@ -236,7 +236,7 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
                 ) : (
                   <button
                     data-testid={`channel-add-${m.displayName}`}
-                    className="text-xs text-blue-600 hover:underline"
+                    className="text-xs text-accent-soft hover:underline"
                     onClick={() =>
                       act(async () => {
                         await api('POST', `/v1/channels/${channel.id}/members`, { userId: m.userId });
@@ -286,7 +286,7 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
             </button>
           )}
         </div>
-        <button className="px-3 py-1.5 text-sm text-gray-600" onClick={onClose}>Close</button>
+        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Close</button>
       </div>
     </Modal>
   );
@@ -334,30 +334,30 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         {auth.user.avatarUrl ? (
           <AuthImg path={auth.user.avatarUrl} alt="avatar" className="h-14 w-14 rounded-full object-cover" />
         ) : (
-          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-200 text-lg font-bold text-gray-500">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-daypill text-lg font-bold text-muted">
             {auth.user.displayName.slice(0, 1).toUpperCase()}
           </span>
         )}
-        <label className="cursor-pointer text-sm text-blue-600 hover:underline">
+        <label className="cursor-pointer text-sm text-accent-soft hover:underline">
           {avatarBusy ? 'Uploading…' : 'Change avatar…'}
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden
             data-testid="profile-avatar-input"
             onChange={(e) => void pickAvatar(e.target.files)} />
         </label>
       </div>
-      <label className="mb-1 block text-xs font-semibold text-gray-400 uppercase">Display name</label>
-      <input data-testid="profile-name" className="mb-3 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Display name</label>
+      <input data-testid="profile-name" className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-      <label className="mb-1 block text-xs font-semibold text-gray-400 uppercase">Timezone</label>
-      <select data-testid="profile-timezone" className="mb-3 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Timezone</label>
+      <select data-testid="profile-timezone" className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         value={timezone} onChange={(e) => setTimezone(e.target.value)}>
         {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
       </select>
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
       <div className="flex justify-end gap-2">
-        <button className="px-3 py-1.5 text-sm text-gray-600" onClick={onClose}>Cancel</button>
+        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
         <button data-testid="profile-save"
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           disabled={!displayName.trim()} onClick={() => void save()}>Save</button>
       </div>
     </Modal>
@@ -405,26 +405,26 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
           {user.avatarUrl ? (
             <AuthImg path={user.avatarUrl} alt="avatar" className="h-16 w-16 rounded-full object-cover" />
           ) : (
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-200 text-xl font-bold text-gray-500">
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-daypill text-xl font-bold text-muted">
               {user.displayName.slice(0, 1).toUpperCase()}
             </span>
           )}
           <p data-testid="user-card-name" className="text-lg font-bold">{user.displayName}</p>
-          <p className="text-sm text-gray-500 select-all">{user.email}</p>
-          <p data-testid="user-card-localtime" className="text-sm text-gray-500">{localTime(user.timezone)}</p>
+          <p className="text-sm text-muted select-all">{user.email}</p>
+          <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>
           <div className="mt-2 flex gap-2">
             {userId !== auth.user.id && (
               <button data-testid="user-card-message"
-                className="rounded bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white"
+                className="rounded bg-accent px-4 py-1.5 text-sm font-semibold text-white"
                 onClick={() => void message()}>Message</button>
             )}
-            <button className="rounded border border-gray-200 px-4 py-1.5 text-sm" onClick={onClose}>Close</button>
+            <button className="rounded border border-hairline px-4 py-1.5 text-sm" onClick={onClose}>Close</button>
           </div>
         </div>
       ) : error ? (
         <p className="text-sm text-red-600">{error}</p>
       ) : (
-        <p className="py-6 text-center text-sm text-gray-400">Loading…</p>
+        <p className="py-6 text-center text-sm text-faint">Loading…</p>
       )}
     </Modal>
   );

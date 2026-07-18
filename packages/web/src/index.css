@@ -1,5 +1,27 @@
 @import "tailwindcss";
 
+/* Design 3a "Quiet, in violet" tokens (design_handoff_chat_workspace/README.md) */
+@theme {
+  --color-rail: oklch(0.42 0.19 292);
+  --color-side-top: oklch(0.5 0.19 305);
+  --color-side-bot: oklch(0.44 0.19 292);
+  --color-base: #fbfaf8;
+  --color-ink: #39342f;
+  --color-ink-soft: #635d56;
+  --color-muted: #a49d94;
+  --color-faint: #b7b0a6;
+  --color-hairline: #e7e3db;
+  --color-hairline2: #ddd8cf;
+  --color-hairline3: #eee7dc;
+  --color-daypill: #f0ede7;
+  --color-accent: oklch(0.46 0.19 300);
+  --color-accent-deep: oklch(0.44 0.19 300);
+  --color-accent-soft: oklch(0.42 0.16 292);
+  --color-send: oklch(0.5 0.19 305);
+  --color-online: #5ef0a8;
+  --color-unread: #ff5c8a;
+}
+
 html, body, #root {
   height: 100%;
 }
@@ -7,3 +29,5 @@ html, body, #root {
 /* thin scrollbars for panels */
 .mc-scroll::-webkit-scrollbar { width: 8px; }
 .mc-scroll::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.15); border-radius: 4px; }
+/* on-violet variant */
+.mc-scroll-dark::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.2); }

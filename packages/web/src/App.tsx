@@ -47,7 +47,7 @@ export default function App() {
   }, [qc]);
 
   if (booting) {
-    return <div className="flex h-full items-center justify-center text-gray-400">Loading…</div>;
+    return <div className="flex h-full items-center justify-center text-faint">Loading…</div>;
   }
 
   if (!user) {
