@@ -96,20 +96,33 @@ One JSON line per element: `role`, `id` (accessibility identifier), `title`, `va
 - `sidebar.workspaceMenu`; `typing.indicator` (exists only while someone types)
 - Message text appears as static-text values — "did Bob's message render?" is a grep.
 
-To act: take the element's `frame`, click its center, re-dump to confirm (re-dumping
-is cheap — prefer it over screenshots):
+To act, prefer AX attributes over coordinate clicks — in this SwiftUI app,
+`click at {x,y}` lands on the element but does NOT move keyboard focus, so keystrokes
+after a coordinate click go nowhere (learned in run r718a):
 
 ```bash
+# focus a text field by identifier, then type:
 osascript -e 'tell application "System Events"
   tell (first process whose unix id is '$ALICE_PID')
     set frontmost to true
+    set focused of (first text field of window 1 whose value of attribute "AXIdentifier" is "composer.input") to true
     delay 0.2
-    click at {'$CX', '$CY'}
+    keystroke "text here"
+    keystroke return
   end tell
 end tell'
-# type into the focused field:  keystroke "text"   (keystroke return to submit)
+# select a sidebar channel row:  set selected of row N of outline 1 of ... to true
+# buttons: click the element itself (by AXIdentifier filter), or click at its frame center
 # paste long strings: set the clipboard, then keystroke "v" using command down
 ```
+
+Coordinate clicks (`click at {CX,CY}` from the frame center) are the fallback for
+elements System Events can't reach by filter. After any action, re-dump to confirm
+(re-dumping is cheap — prefer it over screenshots).
+
+Known tooling quirk: axdump may truncate its walk on a window whose message list is
+EMPTY (composer appears missing). Don't conclude the composer is gone on an empty
+channel — verify via System Events or a screenshot before reporting a failure.
 
 Practical notes:
 - Poll for expected state (dump → grep → sleep 0.3 → retry, ~5s cap), no long sleeps.
