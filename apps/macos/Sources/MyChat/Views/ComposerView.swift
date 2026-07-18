@@ -20,6 +20,7 @@ struct ComposerView: View {
                     guard !newValue.isEmpty else { return }
                     Task { await app.engine.typing(channelId: channelId) }
                 }
+                .accessibilityIdentifier(threadRootId == nil ? "composer.input" : "thread.composer.input")
 
             Button(action: send) {
                 Image(systemName: "paperplane.fill")
@@ -27,6 +28,7 @@ struct ComposerView: View {
             .buttonStyle(.borderless)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .help("Send message")
+            .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
         }
         .padding(10)
         .background(

@@ -25,18 +25,22 @@ struct AuthView: View {
             .pickerStyle(.segmented)
             .frame(width: 240)
             .labelsHidden()
+            .accessibilityIdentifier("auth.mode")
 
             VStack(spacing: 10) {
                 if isRegister {
                     TextField("Display name", text: $displayName)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("auth.displayName")
                 }
                 TextField("Email", text: $email)
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.username)
+                    .accessibilityIdentifier("auth.email")
                 SecureField("Password", text: $password)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(submit)
+                    .accessibilityIdentifier("auth.password")
             }
             .frame(width: 280)
 
@@ -59,6 +63,7 @@ struct AuthView: View {
             .buttonStyle(.borderedProminent)
             .disabled(busy || !formValid)
             .keyboardShortcut(.defaultAction)
+            .accessibilityIdentifier("auth.submit")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

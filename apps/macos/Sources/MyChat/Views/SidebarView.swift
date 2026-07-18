@@ -61,6 +61,9 @@ struct SidebarView: View {
                                     .foregroundStyle(.white)
                             }
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("sidebar.channel.\(channel.name)")
+                        .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
                         .tag(Optional(channel.id))
                     }
                 }
@@ -110,6 +113,9 @@ struct SidebarView: View {
                                     .foregroundStyle(.tertiary)
                             }
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("sidebar.member.\(member.displayName)")
+                        .accessibilityValue(app.presence[member.userId] == true ? "online" : "offline")
                         .selectionDisabled()
                     }
                 }
@@ -209,6 +215,7 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 }
 

@@ -96,6 +96,7 @@ struct TypingIndicatorView: View {
                 Text(typingText(names))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("typing.indicator")
             }
             Spacer()
         }
