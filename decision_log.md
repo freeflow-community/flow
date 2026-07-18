@@ -104,3 +104,26 @@ Approved deviations from phase2.md as written:
 - **Notification kind 3 = channel activity**: phase2.md §4's smallint enumerated only 0=mention, 1=dm, 2=thread_reply, but `notify_level=all` needs a row per channel message; kind 3 covers it rather than mislabeling as a mention. Precedence per (user, message): dm > mention > thread_reply > activity — one notification row max.
 - **Message edits do not (re-)notify mentions**: parse-at-write model; re-notifying on every typo fix is noise. A mention added by an edit will not notify until/unless a later phase decides otherwise.
 - **Item-6 checkpoint bug (fixed, `dd499fe`)**: the macOS reaction-picker popover dismissed on mouse move because its anchor button unmounted when the row lost hover — anchors of open popovers must stay mounted. QA smoke now regression-checks with real CGEvent pointer input (`apps/macos/tools/mouse.swift`), guarded to never inject input while the human is using the desktop.
+
+## 2026-07-18 — Design adoption: "Quiet, in violet" (design 3a) + user status
+
+Operator delivered a high-fidelity design package (~/Downloads "Slack clone design
+concepts.zip", handoff README with exact tokens); implemented interactively by the
+orchestrator across server/web/macOS (commits 304ebe1, b44aad3, 5502801).
+
+- **User status feature added** (not in any phase doc; the design's core interaction):
+  `users.status_emoji/status_text` (empty = cleared, single-RGI-emoji validated, set/clear
+  together), extended `PATCH /v1/me`, carried on UserDTO + WorkspaceMemberDTO, broadcast
+  via the existing `user.updated` meta event. Canned 8-option picker in both clients
+  (custom popover on both — small deviation from the emoji-picker ruling since options
+  are fixed label+emoji pairs, not free emoji).
+- **Design tokens**: oklch converted to sRGB hex for SwiftUI (MC enum); Tailwind 4
+  @theme tokens on web. Initials-on-color avatar palette per the handoff.
+- **Web layout gained the 64px workspace rail**; notifications bell moved into the
+  channel header (design has no top strip).
+- **QA hooks**: testids/ax-ids preserved; new status ids (web: status-footer,
+  status-picker, status-option-<n>, status-clear; macOS: sidebar.statusFooter,
+  status.picker, status.option.<n>, status.clear). macOS sidebar is now custom rows
+  (not List) — selection exposed via AX isSelected trait.
+- **Dev note**: rebuilding packages/web/dist requires a server restart to re-register
+  static asset routes (@fastify/static wildcard:false snapshots files at boot).
