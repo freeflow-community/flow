@@ -13,6 +13,13 @@
 - **404 (not 403) for resources in workspaces/private channels the caller can't see** — avoids leaking existence, standard practice.
 - **Presence snapshot on WS connect**: new sockets receive `presence: online` events for currently-online users in shared workspaces (single-node local map is authoritative), so clients don't start blind; spec's event-only model unchanged on the wire.
 
+## 2026-07-18 — Phase 1 macOS client decisions
+
+- **SwiftPM package instead of a checked-in .xcodeproj** (`apps/macos/Package.swift`, executable target): buildable/testable headlessly with `swift build` / `swift test`, opens directly in Xcode. Consequence: as a bare executable there is no Info.plist, so the `myapp://` URL scheme can't be registered with LaunchServices yet — `.onOpenURL` is wired and activates once the target is wrapped in an .app bundle (phase 2/3 packaging); until then the Accept Invite sheet takes a pasted link/token.
+- **Reconnect backfill pages `before=` cursors backwards until overlapping the newest local message id** — the API deliberately has only a `before` cursor, and this is the faithful reading of the spec's reconnect note.
+- **Timestamps stored as ISO-8601 strings in the GRDB cache**; all ordering uses UUIDv7 ids per spec, timestamps are display-only.
+- **Presence is event-driven only** (gateway sends an online snapshot on connect; no REST presence endpoint) — members render gray until events arrive.
+
 ## 2026-07-18 — Phase 2–4 drafted; overview gaps allocated
 
 Gap analysis of overview.md vs. phase docs found features promised nowhere: Slack API compatibility, file previews, invite-to-channel, group DMs, profile editing/timezone, emoji in composer, password reset, invite emails, multi-node, key-rotation tooling. Allocation:
