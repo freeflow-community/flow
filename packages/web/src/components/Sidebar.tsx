@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@mychat/shared';
 import type { ChannelDTO } from '@mychat/shared';
@@ -43,6 +43,25 @@ export default function Sidebar() {
   const [memberMenuFor, setMemberMenuFor] = useState<string | null>(null);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
+  const wsMenuRef = useRef<HTMLDivElement>(null);
+
+  // Dismiss the workspace dropdown on outside click or Escape
+  // (QA w7g2 finding: it previously only closed via the trigger).
+  useEffect(() => {
+    if (!wsMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (wsMenuRef.current && !wsMenuRef.current.contains(e.target as Node)) setWsMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setWsMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [wsMenuOpen]);
 
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
@@ -64,7 +83,7 @@ export default function Sidebar() {
       className="relative flex shrink-0 flex-col text-white"
       style={{ width, background: `linear-gradient(to bottom, ${color.top}, ${color.bottom})` }}
     >
-      <div className="relative flex items-center justify-between px-3.5 pt-5 pb-2">
+      <div ref={wsMenuRef} className="relative flex items-center justify-between px-3.5 pt-5 pb-2">
         <button
           data-testid="workspace-menu"
           className="flex min-w-0 items-center gap-1 rounded px-1 text-left text-base font-bold hover:bg-white/10"

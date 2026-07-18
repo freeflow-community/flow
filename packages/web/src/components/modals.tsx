@@ -17,7 +17,7 @@ function Modal({ children, onClose, testid }: { children: React.ReactNode; onClo
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onMouseDown={onClose}>
       <div
         data-testid={testid}
-        className="w-96 rounded-xl bg-white p-5 shadow-2xl"
+        className="w-96 rounded-xl bg-white p-5 text-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {children}
