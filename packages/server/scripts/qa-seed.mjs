@@ -39,17 +39,20 @@ async function ensureUser(email, displayName) {
 
 const alice = await ensureUser('alice@qa.local', 'Alice');
 const bob = await ensureUser('bob@qa.local', 'Bob');
+const scott = await ensureUser('scott@qa.local', 'Scott'); // human tester's account for interactive sessions
 
 // workspace: reuse by slug, create if missing
 const mine = await api('GET', '/v1/me/workspaces', alice.token);
 let ws = mine.workspaces.find((w) => w.slug === SLUG);
 if (!ws) ws = await api('POST', '/v1/workspaces', alice.token, { name: 'QA Lab', slug: SLUG });
 
-// bob's membership: invite + accept once
+// bob's and scott's memberships: invite + accept once
 const members = await api('GET', `/v1/workspaces/${ws.id}/members`, alice.token);
-if (!members.members.some((m) => m.userId === bob.user.id)) {
-  const inv = await api('POST', `/v1/workspaces/${ws.id}/invites`, alice.token, { email: 'bob@qa.local' });
-  await api('POST', '/v1/invites/accept', bob.token, { token: inv.inviteUrl.split('/').pop() });
+for (const u of [bob, scott]) {
+  if (!members.members.some((m) => m.userId === u.user.id)) {
+    const inv = await api('POST', `/v1/workspaces/${ws.id}/invites`, alice.token, { email: u.user.email });
+    await api('POST', '/v1/invites/accept', u.token, { token: inv.inviteUrl.split('/').pop() });
+  }
 }
 
 const chans = await api('GET', `/v1/workspaces/${ws.id}/channels`, alice.token);
@@ -60,6 +63,7 @@ console.log(JSON.stringify({
   password: PASSWORD,
   alice: { email: alice.user.email, userId: alice.user.id, token: alice.token },
   bob: { email: bob.user.email, userId: bob.user.id, token: bob.token },
+  scott: { email: scott.user.email, userId: scott.user.id, token: scott.token },
   workspaceId: ws.id,
   workspaceName: ws.name,
   workspaceSlug: SLUG,

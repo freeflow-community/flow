@@ -118,6 +118,77 @@ switch (mode) {
       ...(opts.tz ? { timezone: opts.tz } : {}),
     });
     break;
+  case 'respond': {
+    // Auto-responder: holds a persistent WS (real presence) and replies as this
+    // user whenever someone else DMs them or @-mentions them — a scripted stand-in
+    // so a single human tester always has a live conversation partner.
+    //   node scripts/qa-bot.mjs respond --token T --user SELF_USER_ID [--delay 900]
+    const token = need('token');
+    const self = need('user');
+    const delayMs = Number(opts.delay ?? 900);
+    const REPLIES = [
+      'Got it — "{body}"? Interesting, tell me more.',
+      'Ha! Agreed.',
+      'Hmm, let me think about "{body}" for a bit…',
+      'Yes — that matches what I saw earlier.',
+      'Nice. Ship it. 🚀',
+    ];
+    const authHdr = { authorization: `Bearer ${token}` };
+    const get = async (path) => {
+      const res = await fetch(API + path, { headers: authHdr });
+      if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
+      return res.json();
+    };
+    const kinds = new Map(); // channelId -> kind
+    const loadChannels = async (workspaceId) => {
+      const { channels } = await get(`/v1/workspaces/${workspaceId}/channels`);
+      for (const c of channels) kinds.set(c.id, c.kind);
+    };
+    const { workspaces } = await get('/v1/me/workspaces');
+    for (const w of workspaces) await loadChannels(w.id);
+    const seen = new Set();
+    let n = 0;
+    const ws = new WebSocket(WS_URL);
+    ws.on('open', () => ws.send(JSON.stringify({ op: 'auth', token })));
+    ws.on('close', () => { console.log('socket closed'); process.exit(0); });
+    ws.on('error', (e) => { console.error('ws error:', e.message); process.exit(1); });
+    ws.on('message', async (raw) => {
+      const f = JSON.parse(String(raw));
+      if (f.op === 'ping') return ws.send(JSON.stringify({ op: 'pong' }));
+      if (f.op === 'hello') return console.log('responder online (hello received)');
+      if (f.op !== 'event') return;
+      const ev = f.event;
+      if (ev.type === 'channel.created') { kinds.set(ev.data.id, ev.data.kind); return; }
+      if (ev.type !== 'message.created' && ev.type !== 'thread.reply') return;
+      const m = ev.data;
+      if (m.userId === self || m.deletedAt || seen.has(m.id)) return; // never self-reply (loop guard)
+      seen.add(m.id);
+      if (!kinds.has(m.channelId)) await loadChannels(ev.workspaceId).catch(() => {});
+      const kind = kinds.get(m.channelId) ?? 'standard';
+      const mentioned = m.body.includes(`<@${self}>`) || /<!(channel|here|everyone)>/.test(m.body);
+      if (kind === 'standard' && !mentioned) return; // channels: only when mentioned
+      try {
+        ws.send(JSON.stringify({ op: 'typing', channelId: m.channelId }));
+        await fetch(`${API}/v1/messages/${m.id}/reactions/${encodeURIComponent('👀')}`, { method: 'PUT', headers: authHdr });
+        await new Promise((r) => setTimeout(r, delayMs));
+        const quoted = m.body.replace(/<@[^>]+>|<![^>]+>/g, '').trim().slice(0, 60) || '…';
+        const body = REPLIES[n++ % REPLIES.length].replace('{body}', quoted);
+        const res = await fetch(`${API}/v1/channels/${m.channelId}/messages`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...authHdr },
+          body: JSON.stringify({
+            clientMsgId: crypto.randomUUID(),
+            body,
+            ...(m.threadRootId ? { threadRootId: m.threadRootId } : {}),
+          }),
+        });
+        console.log(`${res.ok ? 'replied' : `reply FAILED (${res.status})`} in ${kind} ${m.channelId}: ${body}`);
+      } catch (e) {
+        console.error('respond error:', e.message);
+      }
+    });
+    break;
+  }
   case 'listen': {
     const eventsPath = need('events');
     const token = need('token');
@@ -155,6 +226,6 @@ switch (mode) {
     break;
   }
   default:
-    console.error('usage: qa-bot.mjs listen|send|edit|delete|read|messages|react|dm|upload|send-file|mention|notifications|notify-level|profile --token T ...');
+    console.error('usage: qa-bot.mjs listen|respond|send|edit|delete|read|messages|react|dm|upload|send-file|mention|notifications|notify-level|profile --token T ...');
     process.exit(2);
 }
