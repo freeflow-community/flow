@@ -82,3 +82,19 @@ Sentry is a cloud service outside the exception list, and at single-node/early-u
 ### Ruling 5 (simplicity pass): production-hardening creep trimmed from phase 2
 
 Minor scope drift in the local-only phase: the per-user upload rate limit moves to phase 3 (where all other rate limiting lives), and orphaned-file GC needs no scheduled-job infrastructure — a boot-time (or daily in-process timer) sweep of unattached files older than 24h is enough at this scale.
+
+## 2026-07-18 — Phase 2 pre-flight: operator answers and approved deviations
+
+Operator rulings from the phase-2 pre-flight review (recorded before implementation):
+
+- **macOS .app bundle packaging is in phase 2**: a minimal build script wraps the SwiftPM executable in `MyChat.app` with an Info.plist. Required because `UNUserNotificationCenter` needs a real bundle (bare executables can't post banners); also activates the `myapp://` URL scheme deferred from phase 1. `swift build` and the QA bare-executable launch path keep working.
+- **Emoji picker**: macOS uses the NATIVE character palette (no custom grid); the web client gets the custom grid + search. `:shortcode:` autocompletion in both composers.
+- **Group mentions (@channel/@here/@everyone) are IN SCOPE for phase 2** (operator override of the PM recommendation to defer): parse at write time, fan out notifications to channel members respecting notify levels, picker/autocomplete entries in clients. Stored Slack-style in bodies (`<!channel>` etc.) alongside `<@userId>` user mentions.
+- **Notify-level setter ships in phase 2**: `PUT /v1/channels/:id/notify {level}` (0=mute, 1=mentions, 2=all — matching the existing `channel_members.notify_level` smallint) plus mute/all controls in the channel context menu on both clients. Without a setter, §4's "mute suppresses everything" would be dead code.
+- **Web QA = Chrome-driven smoke tier** once the web client lands; full web tier only on request.
+- **Mid-phase checkpoint**: operator reviews after build item 6 (server + macOS feature-complete, QA green) before web client bring-up. Tree stays committed at sensible milestones.
+
+Approved deviations from phase2.md as written:
+
+- **Notification subject is `user.{userId}.notify`** (user-global), not `ws.{workspaceId}.user.{userId}.notify`: matches the existing `user.{userId}.meta` pattern, one subscription per socket instead of per socket×workspace; the event envelope already carries `workspaceId`/`channelId`.
+- **Avatars bypass the `files` table**: stored via the storage interface with `users.avatar_url` pointing at them, unencrypted (per §6's cacheability requirement). Keeps the orphan sweep trivially "any unattached `files` row older than 24h" with no avatar special-casing.
