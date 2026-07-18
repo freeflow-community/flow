@@ -247,6 +247,21 @@ PUN=$(echo "$PU" | j "['displayName']"); PUT2=$(echo "$PU" | j "['timezone']"); 
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/v1/users/$AID" -H "authorization: Bearer $DT")
 [ "$CODE" = 404 ] && ok "stranger profile fetch -> 404" || fail "stranger profile" "got $CODE"
 
+# status (design 3a): set both together, propagates to profile fetch, clears with ''
+SS=$(curl -s -X PATCH "$API/v1/me" -H "authorization: Bearer $AT" -H 'content-type: application/json' \
+  -d '{"statusEmoji":"🎧","statusText":"Focusing"}')
+SSE=$(echo "$SS" | j "['statusEmoji']"); SST=$(echo "$SS" | j "['statusText']")
+[ "$SSE" = "🎧" ] && [ "$SST" = "Focusing" ] && ok "set status (emoji + text)" || fail "set status" "$SS"
+PS=$(curl -s "$API/v1/users/$AID" -H "authorization: Bearer $BT" | j "['statusText']")
+[ "$PS" = "Focusing" ] && ok "status visible on profile fetch" || fail "status profile" "$PS"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$API/v1/me" -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"statusEmoji":"🎧"}')
+[ "$CODE" = 400 ] && ok "status fields must be set together -> 400" || fail "status pair" "got $CODE"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$API/v1/me" -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"statusEmoji":"abc","statusText":"x"}')
+[ "$CODE" = 400 ] && ok "non-emoji status -> 400" || fail "status emoji" "got $CODE"
+CS=$(curl -s -X PATCH "$API/v1/me" -H "authorization: Bearer $AT" -H 'content-type: application/json' \
+  -d '{"statusEmoji":"","statusText":""}' | j "['statusEmoji']")
+[ "$CS" = "" ] && ok "clear status with empty strings" || fail "clear status" "$CS"
+
 AV=$(curl -s -X POST "$API/v1/me/avatar" -H "authorization: Bearer $AT" -F "file=@$PNG;type=image/png")
 AVURL=$(echo "$AV" | j "['avatarUrl']")
 case "$AVURL" in /v1/avatars/*) ok "avatar upload sets avatarUrl" ;; *) fail "avatar" "$AV" ;; esac

@@ -112,10 +112,13 @@ switch (mode) {
   case 'notify-level': // --channel C --level 0|1|2
     await api('PUT', `/v1/channels/${need('channel')}/notify`, { level: Number(need('level')) });
     break;
-  case 'profile': // --name "New Name" and/or --tz "America/New_York"
+  case 'profile': // --name "New Name" and/or --tz "America/New_York" and/or --status-emoji 🎧 --status-text "Focusing" (both '' to clear)
     await api('PATCH', '/v1/me', {
       ...(opts.name ? { displayName: opts.name } : {}),
       ...(opts.tz ? { timezone: opts.tz } : {}),
+      ...(opts['status-emoji'] !== undefined || opts['status-text'] !== undefined
+        ? { statusEmoji: opts['status-emoji'] ?? '', statusText: opts['status-text'] ?? '' }
+        : {}),
     });
     break;
   case 'respond': {
