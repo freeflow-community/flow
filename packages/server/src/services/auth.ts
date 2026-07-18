@@ -23,6 +23,8 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
     timezone: u.timezone,
+    statusEmoji: u.statusEmoji,
+    statusText: u.statusText,
     createdAt: u.createdAt.toISOString(),
   };
 }

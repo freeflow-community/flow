@@ -26,6 +26,8 @@ export const users = pgTable('users', {
   displayName: text('display_name').notNull(),
   avatarUrl: text('avatar_url'),
   timezone: text('timezone').notNull().default('UTC'),
+  statusEmoji: text('status_emoji').notNull().default(''),
+  statusText: text('status_text').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

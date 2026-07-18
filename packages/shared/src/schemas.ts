@@ -134,6 +134,24 @@ export const PatchMeBody = z
         }
       }, 'must be a valid IANA timezone name')
       .optional(),
+    // status: set both together ({emoji:'🎧', text:'Focusing'}); both '' clears it
+    statusEmoji: z
+      .string()
+      .max(32)
+      .refine((s) => s === '' || /^\p{RGI_Emoji}$/v.test(s), 'must be empty or a single unicode emoji')
+      .optional(),
+    statusText: z.string().max(80).optional(),
   })
-  .refine((b) => b.displayName !== undefined || b.timezone !== undefined, 'nothing to update');
+  .refine(
+    (b) =>
+      b.displayName !== undefined ||
+      b.timezone !== undefined ||
+      b.statusEmoji !== undefined ||
+      b.statusText !== undefined,
+    'nothing to update',
+  )
+  .refine(
+    (b) => (b.statusEmoji === undefined) === (b.statusText === undefined),
+    'statusEmoji and statusText must be set together',
+  );
 export type PatchMeBody = z.infer<typeof PatchMeBody>;

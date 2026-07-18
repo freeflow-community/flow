@@ -37,11 +37,18 @@ async function broadcastUserUpdated(user: typeof users.$inferSelect): Promise<vo
 
 export async function patchMe(
   userId: string,
-  patch: { displayName?: string | undefined; timezone?: string | undefined },
+  patch: {
+    displayName?: string | undefined;
+    timezone?: string | undefined;
+    statusEmoji?: string | undefined;
+    statusText?: string | undefined;
+  },
 ): Promise<UserDTO> {
-  const set: Partial<{ displayName: string; timezone: string }> = {};
+  const set: Partial<{ displayName: string; timezone: string; statusEmoji: string; statusText: string }> = {};
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.timezone !== undefined) set.timezone = patch.timezone;
+  if (patch.statusEmoji !== undefined) set.statusEmoji = patch.statusEmoji;
+  if (patch.statusText !== undefined) set.statusText = patch.statusText;
   const updated = await db.update(users).set(set).where(eq(users.id, userId)).returning();
   if (!updated[0]) throw notFound('user not found');
   await broadcastUserUpdated(updated[0]);

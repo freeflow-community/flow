@@ -6,6 +6,8 @@ export interface UserDTO {
   displayName: string;
   avatarUrl: string | null;
   timezone: string; // IANA name, default UTC
+  statusEmoji: string; // '' = no status
+  statusText: string; // '' = no status
   createdAt: string;
 }
 
