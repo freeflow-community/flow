@@ -233,6 +233,67 @@ updates; `profile.localTime` renders for Bob's timezone), thread-reply notificat
 (Bob replies to Alice's root → bell increments, kind=2 in Alice's REST
 `notifications`).
 
+### WEB smoke tier (Chrome-driven; phase 2, operator answer 5)
+
+Tests the React web client end to end in a real browser. Target the
+**Fastify-served production build** at `http://127.0.0.1:8787/` (that's what
+ships) — build it first if stale: `cd packages/web && pnpm build` (the running
+server picks up dist/ at boot; if / returns JSON 404, restart `pnpm dev` in
+packages/server). Drive Chrome via the browser MCP tools (load them via
+ToolSearch first; claude-in-chrome needs site permission for 127.0.0.1).
+
+CRITICAL SAFETY GATE: browser automation uses the human's desktop. Before
+starting AND between long steps, check
+`ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}'`
+— if the human is active (idle < ~120s), STOP and report BLOCKED/deferred
+rather than fighting them for the pointer.
+
+Cast: the BROWSER user is `bob@qa.local` (password `qa-password-1`); the peer
+is Alice driven over REST/WS via qa-bot (tokens from stage 1 seed.json). Do
+not sign the browser into alice — her profile belongs to the macOS app. The
+UI exposes stable `data-testid` attributes everywhere (auth-*, workspace-<slug>,
+sidebar-channel-<name>, sidebar-dm-<Title>, sidebar-member-<Name> [data-presence],
+composer-input/-send/-attach/-emoji, thread-composer-*, suggestion-<label>,
+message-<id>, reaction-<emoji> [data-count/data-mine], add-reaction-<id>,
+file-<name>, thread-open-<id>, thread-panel/-close, notifications-bell
+[data-unread], notifications-panel/-mark-read, notification-<id> [data-kind],
+emoji-picker/-search/emoji-<emoji>, channel-menu-<name>, notify-mentions/-all/-mute,
+channel-add-<Name>, new-dm-modal, dm-member-<Name>, dm-start, invite-modal/-email/
+-url, profile-modal/-name/-timezone/-save, user-card-*, connection-status,
+typing-indicator, workspace-menu, menu-profile/-invite/-signout).
+
+Items (tag bodies with the runid as always):
+1. Load / → auth screen; sign in as bob → workspace chooser → pick `workspace-qa-lab`.
+2. Sidebar sanity: #general listed, DM list present, members with presence dots;
+   `connection-status` green once the WS connects.
+3. Bob(browser) sends "web-<runid>: hello from browser" in #general via the
+   composer → assert receipt in alice's listener events (qa-bot listen --token ALICE).
+4. Alice (qa-bot send) posts "web-<runid>: hello from alice" → renders in the
+   browser WITHOUT reload (poll the DOM, ~5s cap).
+5. Reactions both ways: alice `react`s 👍 on bob's message → `reaction-👍`
+   chip appears live; click the chip in the browser → data-count increments and
+   alice's events show reaction.added from bob.
+6. Typing + presence: alice's listener + typing cmd → `typing-indicator`
+   appears; `sidebar-member-Alice` data-presence=online while her socket lives.
+7. Mention: alice `mention`s bob → `notifications-bell` data-unread increments;
+   open panel → item kind=0 present; click it → lands in #general, message shows
+   the @Bob pill.
+8. DM: alice `dm`s bob + sends → `sidebar-dm-Alice` appears/unread while bob
+   views #general; open it, reply from the browser → assert in alice's events.
+9. Files: alice `upload`s the 1x1 PNG + `send-file` to #general → `file-<name>`
+   thumbnail (img) renders in the browser. (Browser-side upload needs the MCP
+   file-upload tool if available; otherwise cover download-only and note it.)
+10. Emoji picker: `composer-emoji` → `emoji-picker` opens; type "rocket" in
+    `emoji-search`; click `emoji-🚀` → appears in `composer-input`; shortcode
+    autocomplete: type ":roc" → `suggestion-🚀 :rocket:` chip appears.
+11. Thread: alice replies --thread to bob's runid root → `thread-open-<id>`
+    affordance appears; click → `thread-panel` shows both; reply from
+    `thread-composer-input` → assert thread.reply in alice's events.
+
+Evidence: screenshots via the MCP screenshot tool + DOM assertions; same
+PASS/FAIL table format. Leave the browser tab open or close it — but never
+touch other tabs/windows of the human's browser.
+
 ### DUAL-WINDOW mode (only when explicitly requested — slow, human-fidelity)
 
 Two real windows (`MYCHAT_PROFILE=qa-alice` and `=qa-bob`; sign bob in once the same
