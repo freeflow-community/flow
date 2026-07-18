@@ -7,7 +7,7 @@ struct MyChatApp: App {
     @StateObject private var app = AppState()
 
     var body: some Scene {
-        WindowGroup("MyChat") {
+        WindowGroup(Profile.windowTitle) {
             RootView()
                 .environmentObject(app)
                 .frame(minWidth: 900, minHeight: 560)

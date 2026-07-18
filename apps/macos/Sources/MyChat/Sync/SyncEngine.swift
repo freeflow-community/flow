@@ -17,7 +17,7 @@ actor SyncEngine {
     private var socketConsumer: Task<Void, Never>?
     private var typingLastSent: [String: Date] = [:]
 
-    private static let currentUserIdKey = "currentUserId"
+    private static let currentUserIdKey = "currentUserId" + Profile.suffix
 
     init(db: AppDatabase, api: APIClient, socket: SocketClient) {
         self.db = db

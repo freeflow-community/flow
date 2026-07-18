@@ -4,7 +4,7 @@ import Security
 /// Minimal Keychain wrapper for the session bearer token.
 enum Keychain {
     private static let service = "ai.biztrip.mychat"
-    private static let account = "session-token"
+    private static let account = "session-token" + Profile.suffix
 
     static func saveToken(_ token: String) {
         deleteToken()

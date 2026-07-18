@@ -13,7 +13,9 @@ struct AppDatabase: Sendable {
             for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: true
         )
-        let dir = support.appendingPathComponent("MyChat", isDirectory: true)
+        let dir = support.appendingPathComponent(
+            "MyChat" + Profile.suffix, isDirectory: true
+        )
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let pool = try DatabasePool(path: dir.appendingPathComponent("mychat.sqlite").path)
         let db = AppDatabase(writer: pool)
