@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import type { InviteDTO, MemberRole, WorkspaceDTO, WorkspaceMemberDTO } from '@mychat/shared';
+import { SIDEBAR_COLOR_IDS, type InviteDTO, type MemberRole, type WorkspaceDTO, type WorkspaceMemberDTO } from '@mychat/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
@@ -14,11 +14,42 @@ function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberRole): W
     id: w.id,
     slug: w.slug,
     name: w.name,
+    sidebarColor: w.sidebarColor,
     createdBy: w.createdBy,
     createdAt: w.createdAt.toISOString(),
   };
   if (role) dto.role = role;
   return dto;
+}
+
+/**
+ * Workspace branding (phase 3.5 ruling 3): owner/admin sets the sidebar color
+ * (curated preset id) for everyone; broadcast on meta so clients restyle live.
+ */
+export async function updateWorkspace(
+  workspaceId: string,
+  actorId: string,
+  patch: { sidebarColor: string },
+): Promise<WorkspaceDTO> {
+  const m = await requireMembership(workspaceId, actorId);
+  if (m.role !== 'owner' && m.role !== 'admin') throw forbidden('only owners and admins can change workspace settings');
+  if (!SIDEBAR_COLOR_IDS.includes(patch.sidebarColor)) {
+    throw badRequest('bad_color', `sidebarColor must be one of: ${SIDEBAR_COLOR_IDS.join(', ')}`);
+  }
+  const updated = await db
+    .update(workspaces)
+    .set({ sidebarColor: patch.sidebarColor })
+    .where(eq(workspaces.id, workspaceId))
+    .returning();
+  if (!updated[0]) throw notFound('workspace not found');
+  const dto = toWorkspaceDTO(updated[0]);
+  publishEvent(subjectMeta(workspaceId), {
+    type: 'workspace.updated',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: dto,
+  });
+  return toWorkspaceDTO(updated[0], m.role);
 }
 
 export async function requireMembership(workspaceId: string, userId: string) {

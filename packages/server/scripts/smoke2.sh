@@ -247,6 +247,18 @@ PUN=$(echo "$PU" | j "['displayName']"); PUT2=$(echo "$PU" | j "['timezone']"); 
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/v1/users/$AID" -H "authorization: Bearer $DT")
 [ "$CODE" = 404 ] && ok "stranger profile fetch -> 404" || fail "stranger profile" "got $CODE"
 
+# workspace sidebar color (phase 3.5): owner sets preset, member forbidden, invalid id rejected
+WC=$(curl -s -X PATCH "$API/v1/workspaces/$WS" -H "authorization: Bearer $AT" -H 'content-type: application/json' \
+  -d '{"sidebarColor":"ocean"}' | j "['sidebarColor']")
+[ "$WC" = "ocean" ] && ok "owner sets workspace sidebar color" || fail "set color" "$WC"
+WCL=$(curl -s "$API/v1/me/workspaces" -H "authorization: Bearer $BT" | \
+  python3 -c "import sys,json; print([w['sidebarColor'] for w in json.load(sys.stdin)['workspaces'] if w['id']=='$WS'][0])")
+[ "$WCL" = "ocean" ] && ok "color visible to members on workspace list" || fail "color list" "$WCL"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$API/v1/workspaces/$WS" -H "authorization: Bearer $BT" -H 'content-type: application/json' -d '{"sidebarColor":"plum"}')
+[ "$CODE" = 403 ] && ok "member set color -> 403" || fail "color perm" "got $CODE"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$API/v1/workspaces/$WS" -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"sidebarColor":"hotpink"}')
+[ "$CODE" = 400 ] && ok "invalid color id -> 400" || fail "color validation" "got $CODE"
+
 # status (design 3a): set both together, propagates to profile fetch, clears with ''
 SS=$(curl -s -X PATCH "$API/v1/me" -H "authorization: Bearer $AT" -H 'content-type: application/json' \
   -d '{"statusEmoji":"🎧","statusText":"Focusing"}')

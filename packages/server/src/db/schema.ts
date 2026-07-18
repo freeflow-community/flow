@@ -43,6 +43,7 @@ export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey(),
   slug: citext('slug').notNull().unique(),
   name: text('name').notNull(),
+  sidebarColor: text('sidebar_color').notNull().default('violet'), // preset id (phase 3.5)
   createdBy: uuid('created_by').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -105,6 +105,18 @@ Approved deviations from phase2.md as written:
 - **Message edits do not (re-)notify mentions**: parse-at-write model; re-notifying on every typo fix is noise. A mention added by an edit will not notify until/unless a later phase decides otherwise.
 - **Item-6 checkpoint bug (fixed, `dd499fe`)**: the macOS reaction-picker popover dismissed on mouse move because its anchor button unmounted when the row lost hover — anchors of open popovers must stay mounted. QA smoke now regression-checks with real CGEvent pointer input (`apps/macos/tools/mouse.swift`), guarded to never inject input while the human is using the desktop.
 
+## 2026-07-18 — Phase 3.5 rulings (pre-implementation)
+
+Operator rulings on the phase-3.5 pre-flight (six client features before phase 3):
+
+1. **Footer split**: avatar click = user menu (My Profile…, Sign Out, admin "Workspace color…" entry); name/status/chevron keeps opening the status picker unchanged. My Profile and Sign Out MOVE OUT of the top workspace menu, which becomes workspace-scoped only (switch/create/invite/accept).
+2. **Composer markdown (operator override of PM recommendation)**: blockquote (`>`) and code-block (```) styling render live INSIDE the composer input itself — contenteditable on web, NSTextView/custom editor on macOS — not a separate preview pane. Message rendering in both clients also gains blockquote + code-block styles. Bodies stay literal markdown (no schema change; old messages gain styling retroactively). QA drivers must still be able to type into the swapped input elements; testids/AX ids preserved. If a genuine feasibility wall appears, ship the best achievable in-input styling and report the gap honestly at the checkpoint.
+3. **Sidebar color = workspace-wide branding** (not per-user): `sidebar_color` on the workspaces row; setter permission-gated to owner/admin (same bar as invites); broadcast on the meta subject so all clients restyle live; curated preset palette (~8 gradients tuned for white-text legibility). Picker in the workspace menu ("Workspace color…"), hidden for non-admins.
+4. **Profile viewing relocation** (member-click now opens the DM): right-click/⋯ on member rows → View profile; clicking an open DM's header shows the other member's card.
+5. **Sidebar width = local per-device preference** (UserDefaults/localStorage), clamped ~180-360, double-click resets. Not synced.
+
+Build order: item 4 (click→DM) → 1 (footer split) → 3 (image paste) → color → width → markdown last. Same working agreement as phase 2 (milestone commits, QA alongside, idle-gate/authorized UI automation, checkpoint stop for operator review when all six are feature-complete and QA-green on both clients).
+
 ## 2026-07-18 — Design adoption: "Quiet, in violet" (design 3a) + user status
 
 Operator delivered a high-fidelity design package (~/Downloads "Slack clone design

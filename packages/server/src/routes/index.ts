@@ -19,6 +19,7 @@ import {
   RegisterBody,
   SendMessageBody,
   SetNotifyLevelBody,
+  UpdateWorkspaceBody,
   type UserDTO,
 } from '@mychat/shared';
 import { ApiError, badRequest, unauthorized } from '../lib/errors.js';
@@ -151,6 +152,13 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/workspaces/:id', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return ws.getWorkspace(id, req.user.id);
+  });
+
+  // workspace branding (phase 3.5): owner/admin only
+  app.patch('/v1/workspaces/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(UpdateWorkspaceBody, req.body);
+    return ws.updateWorkspace(id, req.user.id, body);
   });
 
   app.post('/v1/workspaces/:id/invites', { preHandler: requireAuth }, async (req, reply) => {

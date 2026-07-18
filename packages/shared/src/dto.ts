@@ -17,6 +17,7 @@ export interface WorkspaceDTO {
   name: string;
   createdBy: string;
   createdAt: string;
+  sidebarColor: string; // preset id from SIDEBAR_COLORS (phase 3.5)
   role?: MemberRole; // present on "my workspaces"
 }
 

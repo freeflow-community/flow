@@ -16,6 +16,7 @@ export type EventType =
   | 'reaction.removed'
   | 'notification.created' // per-user notify subject (phase 2 §4)
   | 'user.updated' // meta subject of every workspace the user belongs to
+  | 'workspace.updated' // meta subject; workspace-level changes (e.g. sidebar color)
   | 'workspace.joined'; // per-user subject; consumed by the gateway, not forwarded to clients
 
 export interface Event<T = unknown> {

@@ -28,6 +28,12 @@ export const CreateInviteBody = z.object({
 });
 export type CreateInviteBody = z.infer<typeof CreateInviteBody>;
 
+/** PATCH /v1/workspaces/:id — owner/admin only (phase 3.5: workspace branding). */
+export const UpdateWorkspaceBody = z.object({
+  sidebarColor: z.string().min(1).max(32),
+});
+export type UpdateWorkspaceBody = z.infer<typeof UpdateWorkspaceBody>;
+
 export const AcceptInviteBody = z.object({
   token: z.string().min(16).max(128),
 });
