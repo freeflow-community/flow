@@ -9,7 +9,8 @@ export type EventType =
   | 'typing'
   | 'presence'
   | 'channel.created'
-  | 'member.joined';
+  | 'member.joined'
+  | 'workspace.joined'; // per-user subject; consumed by the gateway, not forwarded to clients
 
 export interface Event<T = unknown> {
   type: EventType;

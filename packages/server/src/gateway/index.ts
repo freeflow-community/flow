@@ -11,6 +11,7 @@ import {
   publishEvent,
   subjectPresence,
   subjectTyping,
+  subjectUserMeta,
   subjectWorkspaceAll,
   subscribeBus,
 } from '../bus.js';
@@ -94,6 +95,54 @@ function presenceEvent(workspaceId: string, userId: string, status: 'online' | '
   };
 }
 
+/** Subscribe a socket to one workspace's wildcard subject and pump events to it. */
+function attachWorkspaceSub(s: SocketState, sock: WebSocket, wsId: string): void {
+  const sub = subscribeBus(subjectWorkspaceAll(wsId));
+  s.subs.push(sub);
+  void (async () => {
+    for await (const m of sub) {
+      try {
+        const event = JSON.parse(new TextDecoder().decode(m.data)) as Event;
+        if (m.subject.endsWith('.meta')) applyMetaEvent(s, event);
+        if (visible(s, event)) send(sock, { op: 'event', event });
+      } catch {
+        /* skip malformed */
+      }
+    }
+  })();
+}
+
+/** Load one workspace's channels + this user's memberships into socket state. */
+async function loadWorkspaceIntoState(s: SocketState, wsId: string): Promise<void> {
+  const chanRows = await db
+    .select({ id: channels.id, workspaceId: channels.workspaceId, isPrivate: channels.isPrivate })
+    .from(channels)
+    .where(eq(channels.workspaceId, wsId));
+  for (const c of chanRows) s.chans.set(c.id, { workspaceId: c.workspaceId, isPrivate: c.isPrivate });
+  const memRows = await db
+    .select({ channelId: channelMembers.channelId })
+    .from(channelMembers)
+    .where(eq(channelMembers.userId, s.userId));
+  for (const m of memRows) if (s.chans.has(m.channelId)) s.member.add(m.channelId);
+}
+
+/** Tell this socket who is currently online in shared workspaces (local map, single node). */
+function sendPresenceSnapshot(s: SocketState, sock: WebSocket, onlyWorkspaceId?: string): void {
+  for (const [uid, n] of online) {
+    if (n <= 0 || uid === s.userId) continue;
+    const other = socketsByUser.get(uid);
+    if (!other) continue;
+    for (const otherState of other) {
+      for (const wsId of otherState.workspaces) {
+        if (s.workspaces.has(wsId) && (!onlyWorkspaceId || wsId === onlyWorkspaceId)) {
+          send(sock, { op: 'event', event: presenceEvent(wsId, uid, 'online') });
+        }
+      }
+      break; // one socket is enough to know their workspaces
+    }
+  }
+}
+
 export function attachGateway(server: HttpServer): { close(): void } {
   const wss = new WebSocketServer({ server, path: '/v1/ws' });
   const liveness = new Map<WebSocket, boolean>();
@@ -131,20 +180,34 @@ export function attachGateway(server: HttpServer): { close(): void } {
 
             // one wildcard subscription per workspace (spec §3)
             for (const wsId of s.workspaces) {
-              const sub = subscribeBus(subjectWorkspaceAll(wsId));
-              s.subs.push(sub);
-              void (async () => {
-                for await (const m of sub) {
-                  try {
-                    const event = JSON.parse(new TextDecoder().decode(m.data)) as Event;
-                    if (m.subject.endsWith('.meta')) applyMetaEvent(s, event);
-                    if (visible(s, event)) send(sock, { op: 'event', event });
-                  } catch {
-                    /* skip malformed */
-                  }
-                }
-              })();
+              attachWorkspaceSub(s, sock, wsId);
             }
+
+            // sockets auth before joins happen: follow workspace joins/creates live,
+            // so a socket connected pre-join still gets subscribed (fixes dead presence
+            // and fan-out for workspaces entered after connect)
+            const userSub = subscribeBus(subjectUserMeta(s.userId));
+            s.subs.push(userSub);
+            void (async () => {
+              for await (const m of userSub) {
+                try {
+                  const event = JSON.parse(new TextDecoder().decode(m.data)) as Event;
+                  if (event.type !== 'workspace.joined' || s.workspaces.has(event.workspaceId)) continue;
+                  s.workspaces.add(event.workspaceId);
+                  await loadWorkspaceIntoState(s, event.workspaceId);
+                  attachWorkspaceSub(s, sock, event.workspaceId);
+                  if ((online.get(s.userId) ?? 0) > 0) {
+                    publishEvent(
+                      subjectPresence(event.workspaceId),
+                      presenceEvent(event.workspaceId, s.userId, 'online'),
+                    );
+                  }
+                  sendPresenceSnapshot(s, sock, event.workspaceId);
+                } catch {
+                  /* skip malformed */
+                }
+              }
+            })();
 
             // presence bookkeeping (single node: local map is authoritative)
             if (!socketsByUser.has(s.userId)) socketsByUser.set(s.userId, new Set());
@@ -160,20 +223,7 @@ export function attachGateway(server: HttpServer): { close(): void } {
             send(sock, { op: 'hello', sessionId: s.sessionId });
 
             // presence snapshot: everyone currently online (local map, single node)
-            for (const [uid, n] of online) {
-              if (n > 0 && uid !== s.userId) {
-                const other = socketsByUser.get(uid);
-                if (!other) continue;
-                for (const otherState of other) {
-                  for (const wsId of otherState.workspaces) {
-                    if (s.workspaces.has(wsId)) {
-                      send(sock, { op: 'event', event: presenceEvent(wsId, uid, 'online') });
-                    }
-                  }
-                  break; // one socket is enough to know their workspaces
-                }
-              }
-            }
+            sendPresenceSnapshot(s, sock);
           } catch {
             send(sock, { op: 'error', code: 'unauthorized', message: 'invalid token' });
             sock.close(4003, 'unauthorized');

@@ -32,6 +32,10 @@ export function subjectMeta(workspaceId: string): string {
 export function subjectWorkspaceAll(workspaceId: string): string {
   return `ws.${workspaceId}.>`;
 }
+/** Per-user meta subject: tells a user's live sockets about workspace joins. */
+export function subjectUserMeta(userId: string): string {
+  return `user.${userId}.meta`;
+}
 
 export function publishEvent(subject: string, event: Event): void {
   // Fire-and-forget: core NATS, loss-tolerant — clients backfill over REST.

@@ -5,7 +5,7 @@ import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
-import { publishEvent, subjectMeta } from '../bus.js';
+import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 
 const { workspaces, workspaceMembers, invites, channels, channelMembers, users } = schema;
 
@@ -54,6 +54,7 @@ export async function createWorkspace(userId: string, name: string, slug: string
     throw err;
   }
   const created = await db.select().from(workspaces).where(eq(workspaces.id, wsId)).limit(1);
+  publishWorkspaceJoined(wsId, userId);
   return toWorkspaceDTO(created[0]!, 'owner');
 }
 
@@ -173,7 +174,18 @@ export async function acceptInvite(userId: string, token: string): Promise<Works
   });
 
   const ws = await db.select().from(workspaces).where(eq(workspaces.id, inv.workspaceId)).limit(1);
+  publishWorkspaceJoined(inv.workspaceId, userId);
   return toWorkspaceDTO(ws[0]!, 'member');
+}
+
+/** Tell the joining user's live sockets so the gateway can subscribe them (they authed before joining). */
+function publishWorkspaceJoined(workspaceId: string, userId: string): void {
+  publishEvent(subjectUserMeta(userId), {
+    type: 'workspace.joined',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: { userId },
+  });
 }
 
 export function isUniqueViolation(err: unknown): boolean {
