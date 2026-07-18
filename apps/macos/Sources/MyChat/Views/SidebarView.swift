@@ -24,12 +24,20 @@ struct SidebarView: View {
     @State private var showCreateWorkspace = false
     @State private var showAcceptInvite = false
     @State private var showNewDM = false
-    @State private var showMyProfile = false
+    @State private var showColorPicker = false
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
 
     private var currentWorkspace: Workspace? {
         workspaces.value.first { $0.id == app.selectedWorkspaceId }
+    }
+
+    private var palette: SidebarPalette {
+        SidebarPalette.palette(for: currentWorkspace?.sidebarColor)
+    }
+
+    private var canEditWorkspace: Bool {
+        currentWorkspace.map { $0.role == "owner" || $0.role == "admin" } ?? false
     }
 
     private var joinedChannels: [Channel] {
@@ -104,9 +112,9 @@ struct SidebarView: View {
                 .padding(.bottom, 10)
             }
 
-            StatusFooterView()
+            StatusFooterView(palette: palette)
         }
-        .background(MC.sidebarGradient)
+        .background(palette.gradient)
         .task {
             workspaces.start(db: app.db) { db in
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
@@ -156,7 +164,11 @@ struct SidebarView: View {
                 NewDMSheet(workspaceId: wsId, members: members.value)
             }
         }
-        .sheet(isPresented: $showMyProfile) { MyProfileSheet() }
+        .sheet(isPresented: $showColorPicker) {
+            if let ws = currentWorkspace {
+                WorkspaceColorSheet(workspace: ws)
+            }
+        }
         .sheet(item: $addMemberChannel) { channel in
             AddMemberSheet(channel: channel, members: members.value)
         }
@@ -326,7 +338,7 @@ struct SidebarView: View {
 
     private func memberRow(_ member: MemberInfo) -> some View {
         Button {
-            profileUserId = member.userId
+            openDm(with: member.userId)
         } label: {
             HStack(spacing: 9) {
                 presenceDot(online: app.presence[member.userId] == true)
@@ -357,6 +369,23 @@ struct SidebarView: View {
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.member.\(member.displayName)")
         .accessibilityValue(app.presence[member.userId] == true ? "online" : "offline")
+        .contextMenu {
+            Button("View Profile") { profileUserId = member.userId }
+        }
+    }
+
+    /// Member click (ruling 4): open (or create) the 1:1 DM with that user.
+    /// Clicking yourself opens your self-DM.
+    private func openDm(with userId: String) {
+        guard let wsId = app.selectedWorkspaceId else { return }
+        Task {
+            do {
+                let dm = try await app.engine.createDm(workspaceId: wsId, userIds: [userId])
+                app.selectChannel(dm.id)
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
     }
 
     private func presenceDot(online: Bool) -> some View {
@@ -436,16 +465,14 @@ struct SidebarView: View {
                 }
             }
             Divider()
-            Button("My Profile…") { showMyProfile = true }
-            Divider()
+            if canEditWorkspace {
+                Button("Workspace Color…") { showColorPicker = true }
+            }
             Button("Create Workspace…") { showCreateWorkspace = true }
             Button("Accept Invite…") { showAcceptInvite = true }
             Button("Invite People…") { showInvite = true }
             Divider()
             Button("All Workspaces") { app.selectWorkspace(nil) }
-            Button("Sign Out") {
-                Task { await app.engine.logout() }
-            }
         } label: {
             HStack(spacing: 4) {
                 Text(currentWorkspace?.name ?? "Workspace")
@@ -468,8 +495,12 @@ struct SidebarView: View {
 /// Profile footer pinned to the sidebar bottom; opens the status picker
 /// (design 3a's core interaction).
 struct StatusFooterView: View {
+    /// Active workspace palette (badge ring matches the gradient bottom).
+    var palette: SidebarPalette = SidebarPalette.palette(for: nil)
     @EnvironmentObject private var app: AppState
     @State private var showPicker = false
+    @State private var showAvatarMenu = false
+    @State private var showMyProfile = false
     @State private var busy = false
 
     private var statusEmoji: String { app.currentUser?.statusEmoji ?? "" }
@@ -478,45 +509,99 @@ struct StatusFooterView: View {
     var body: some View {
         VStack(spacing: 0) {
             Rectangle().fill(.white.opacity(0.14)).frame(height: 1)
-            Button {
-                showPicker.toggle()
-            } label: {
-                HStack(spacing: 10) {
+            HStack(spacing: 10) {
+                // Ruling 1: the avatar is its own button — user-scoped menu
+                // (profile / sign-out); the rest still opens the status picker.
+                Button {
+                    showAvatarMenu.toggle()
+                } label: {
                     avatarWithBadge
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 5) {
-                            Text(app.currentUser?.displayName ?? "You")
-                                .font(.system(size: 13.5, weight: .bold))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                            Circle()
-                                .fill(app.connection == .connected ? MC.online : .orange)
-                                .frame(width: 6, height: 6)
-                                .help(app.connection.label)
-                        }
-                        Text(statusText.isEmpty ? "Set a status" : statusText)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.down")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.55))
+                        .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.avatarMenu")
+                .popover(isPresented: $showAvatarMenu, arrowEdge: .top) {
+                    avatarMenu
+                }
+
+                Button {
+                    showPicker.toggle()
+                } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 5) {
+                                Text(app.currentUser?.displayName ?? "You")
+                                    .font(.system(size: 13.5, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Circle()
+                                    .fill(app.connection == .connected ? MC.online : .orange)
+                                    .frame(width: 6, height: 6)
+                                    .help(app.connection.label)
+                            }
+                            Text(statusText.isEmpty ? "Set a status" : statusText)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.7))
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.statusFooter")
+                .accessibilityValue(
+                    "\(app.connection.label); \(statusText.isEmpty ? "no status" : statusText)"
+                )
+                .popover(isPresented: $showPicker, arrowEdge: .top) {
+                    statusPicker
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
+        .sheet(isPresented: $showMyProfile) { MyProfileSheet() }
+    }
+
+    private var avatarMenu: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                showAvatarMenu = false
+                showMyProfile = true
+            } label: {
+                Text("My Profile…")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(MC.ink)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar.statusFooter")
-            .accessibilityValue(
-                "\(app.connection.label); \(statusText.isEmpty ? "no status" : statusText)"
-            )
-            .popover(isPresented: $showPicker, arrowEdge: .top) {
-                statusPicker
+            .accessibilityIdentifier("avatarMenu.profile")
+            Divider()
+            Button {
+                showAvatarMenu = false
+                Task { await app.engine.logout() }
+            } label: {
+                Text("Sign Out")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(MC.ink)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("avatarMenu.signOut")
         }
+        .padding(8)
+        .frame(width: 180)
+        // .contain keeps the per-item ids visible in the AX tree (same
+        // shadowing pattern as status.picker below).
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("avatarMenu")
     }
 
     private var avatarWithBadge: some View {
@@ -532,8 +617,8 @@ struct StatusFooterView: View {
                 Text(statusEmoji)
                     .font(.system(size: 11))
                     .frame(width: 20, height: 20)
-                    .background(Circle().fill(MC.rail))
-                    .overlay(Circle().strokeBorder(MC.sideBot, lineWidth: 2))
+                    .background(Circle().fill(palette.rail))
+                    .overlay(Circle().strokeBorder(palette.bottom, lineWidth: 2))
                     .offset(x: 6, y: 6)
             }
         }
@@ -614,6 +699,97 @@ struct StatusFooterView: View {
 struct ProfileTarget: Identifiable {
     let userId: String
     var id: String { userId }
+}
+
+/// Owner/admin picker for the workspace's sidebar color preset (ruling 3).
+/// Selecting a swatch PATCHes the workspace; the saved row + broadcast
+/// restyle every client live.
+struct WorkspaceColorSheet: View {
+    let workspace: Workspace
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var busy = false
+
+    private var currentId: String {
+        SidebarPalette.palette(for: workspace.sidebarColor).id
+    }
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Workspace Color").font(.headline)
+            Text("Applies to everyone in \(workspace.name).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(SidebarPalette.all) { palette in
+                    swatch(palette)
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
+        // .contain so this container id doesn't shadow the color.swatch.<id>
+        // ids in the AX tree (see status.picker).
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.colorSheet")
+    }
+
+    private func swatch(_ palette: SidebarPalette) -> some View {
+        let selected = palette.id == currentId
+        return Button {
+            pick(palette)
+        } label: {
+            VStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(palette.gradient)
+                    .frame(height: 44)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(
+                                selected ? MC.accent : Color.black.opacity(0.1),
+                                lineWidth: selected ? 2 : 1
+                            )
+                    )
+                    .overlay {
+                        if selected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                Text(palette.name)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .accessibilityIdentifier("color.swatch.\(palette.id)")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    private func pick(_ palette: SidebarPalette) {
+        guard palette.id != currentId else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await app.engine.updateWorkspaceColor(
+                    workspaceId: workspace.id, colorId: palette.id
+                )
+                dismiss()
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
 }
 
 struct CreateChannelSheet: View {

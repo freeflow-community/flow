@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { SIDEBAR_COLORS } from '@mychat/shared';
 import type { ChannelDTO, InviteDTO, UserDTO } from '@mychat/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useMembers } from '../hooks';
+import { useMembers, useWorkspaces } from '../hooks';
 import { AuthImg } from './Avatar';
 
 function Modal({ children, onClose, testid }: { children: React.ReactNode; onClose: () => void; testid?: string }) {
@@ -286,6 +287,55 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
             </button>
           )}
         </div>
+        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Close</button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
+export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const workspaces = useWorkspaces();
+  const current = (workspaces.data ?? []).find((w) => w.id === workspaceId)?.sidebarColor;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pick = async (id: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id });
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="workspace-color-modal">
+      <h3 className="mb-3 font-bold">Workspace color</h3>
+      <div className="mb-3 grid grid-cols-4 gap-2">
+        {SIDEBAR_COLORS.map((c) => (
+          <button
+            key={c.id}
+            data-testid={`color-swatch-${c.id}`}
+            title={c.name}
+            disabled={busy}
+            className={`flex h-12 items-center justify-center rounded-lg text-white ${
+              current === c.id ? 'ring-2 ring-accent ring-offset-2' : 'hover:opacity-85'
+            }`}
+            style={{ background: `linear-gradient(to bottom, ${c.top}, ${c.bottom})` }}
+            onClick={() => void pick(c.id)}
+          >
+            {current === c.id ? '✓' : ''}
+          </button>
+        ))}
+      </div>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end">
         <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Close</button>
       </div>
     </Modal>

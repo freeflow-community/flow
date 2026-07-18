@@ -6,6 +6,7 @@ import type { UserDTO } from '@mychat/shared';
 import { api } from '../lib/api';
 import { useAuth, useLive } from '../state';
 import { Avatar } from './Avatar';
+import { ProfileModal } from './modals';
 
 export const STATUS_OPTIONS: { emoji: string; text: string }[] = [
   { emoji: '🎧', text: 'Focusing' },
@@ -23,6 +24,8 @@ export default function StatusFooter() {
   const live = useLive();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [busy, setBusy] = useState(false);
   const me = auth.user;
 
@@ -70,12 +73,34 @@ export default function StatusFooter() {
         </div>
       )}
 
-      <button
-        data-testid="status-footer"
-        className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2.5 rounded-lg px-1.5 py-1 text-left hover:bg-white/10"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="relative shrink-0">
+      {menuOpen && (
+        <div
+          data-testid="avatar-menu"
+          className="absolute bottom-[74px] left-3 z-30 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]"
+        >
+          <button
+            data-testid="avatar-menu-profile"
+            className="block w-full px-4 py-1.5 text-left text-sm whitespace-nowrap hover:bg-accent/10"
+            onClick={() => { setMenuOpen(false); setShowProfile(true); }}
+          >
+            My Profile…
+          </button>
+          <button
+            data-testid="avatar-menu-signout"
+            className="block w-full px-4 py-1.5 text-left text-sm whitespace-nowrap hover:bg-accent/10"
+            onClick={auth.signOut}
+          >
+            Sign Out
+          </button>
+        </div>
+      )}
+
+      <div className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2.5">
+        <button
+          data-testid="avatar-menu-trigger"
+          className="relative shrink-0 rounded-[10px] hover:ring-2 hover:ring-white/30"
+          onClick={() => { setMenuOpen((v) => !v); setOpen(false); }}
+        >
           <Avatar userId={me.id} name={me.displayName} avatarUrl={me.avatarUrl} size={34} radius={10} />
           {me.statusEmoji && (
             <span
@@ -85,22 +110,30 @@ export default function StatusFooter() {
               {me.statusEmoji}
             </span>
           )}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5 text-[13.5px] font-bold text-white">
-            <span className="truncate">{me.displayName}</span>
-            <span
-              data-testid="connection-status"
-              title={live.status === 'connected' ? 'Connected' : live.status === 'connecting' ? 'Connecting…' : 'Reconnecting…'}
-              className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${live.status === 'connected' ? 'bg-online' : 'bg-orange-400'}`}
-            />
+        </button>
+        <button
+          data-testid="status-footer"
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-white/10"
+          onClick={() => { setOpen((v) => !v); setMenuOpen(false); }}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5 text-[13.5px] font-bold text-white">
+              <span className="truncate">{me.displayName}</span>
+              <span
+                data-testid="connection-status"
+                title={live.status === 'connected' ? 'Connected' : live.status === 'connecting' ? 'Connecting…' : 'Reconnecting…'}
+                className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${live.status === 'connected' ? 'bg-online' : 'bg-orange-400'}`}
+              />
+            </span>
+            <span data-testid="status-footer-label" className="block truncate text-xs text-white/70">
+              {me.statusText || 'Set a status'}
+            </span>
           </span>
-          <span data-testid="status-footer-label" className="block truncate text-xs text-white/70">
-            {me.statusText || 'Set a status'}
-          </span>
-        </span>
-        <span className="text-white/55">▾</span>
-      </button>
+          <span className="text-white/55">▾</span>
+        </button>
+      </div>
+
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

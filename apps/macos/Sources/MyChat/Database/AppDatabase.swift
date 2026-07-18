@@ -139,6 +139,12 @@ struct AppDatabase: Sendable {
                 t.add(column: "statusText", .text)
             }
         }
+        // Phase 3.5 (ruling 3): workspace-wide sidebar color preset id.
+        migrator.registerMigration("v4") { db in
+            try db.alter(table: "workspace") { t in
+                t.add(column: "sidebarColor", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

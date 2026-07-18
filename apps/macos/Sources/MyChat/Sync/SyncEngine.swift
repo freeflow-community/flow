@@ -227,6 +227,28 @@ actor SyncEngine {
         return ws
     }
 
+    /// Sets the workspace's sidebar color preset (owner/admin only, server-enforced).
+    func updateWorkspaceColor(workspaceId: String, colorId: String) async throws -> Workspace {
+        let ws: Workspace = try await api.patch(
+            "/v1/workspaces/\(workspaceId)",
+            body: UpdateWorkspaceColorBody(sidebarColor: colorId)
+        )
+        await saveWorkspacePreservingRole(ws)
+        return ws
+    }
+
+    /// Saves a workspace row, keeping the locally cached `role` when the
+    /// incoming DTO doesn't carry one (broadcast DTOs are role-less).
+    private func saveWorkspacePreservingRole(_ ws: Workspace) async {
+        try? await db.writer.write { db in
+            var toSave = ws
+            if toSave.role == nil {
+                toSave.role = try Workspace.fetchOne(db, key: ws.id)?.role
+            }
+            try toSave.save(db)
+        }
+    }
+
     func refreshMembers(workspaceId: String) async {
         guard let resp: MembersResponse = try? await api.get("/v1/workspaces/\(workspaceId)/members")
         else { return }
@@ -808,6 +830,9 @@ actor SyncEngine {
                 }
                 Banners.show(title: title, body: MentionRendering.plainText(n.message.body), id: n.id)
             }
+
+        case .workspaceUpdated(let ws):
+            await saveWorkspacePreservingRole(ws)
 
         case .userUpdated(let u):
             try? await db.writer.write { db in try u.save(db) }

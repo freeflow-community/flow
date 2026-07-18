@@ -10,6 +10,7 @@ struct ChannelView: View {
     @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
     @StateObject private var userStatuses = DBObserved<[String: String]>(initial: [:])
     @State private var editingMessage: Message?
+    @State private var profileUserId: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -79,6 +80,19 @@ struct ChannelView: View {
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }
+        .sheet(item: Binding(
+            get: { profileUserId.map { ProfileTarget(userId: $0) } },
+            set: { profileUserId = $0?.userId }
+        )) { target in
+            MemberProfileSheet(userId: target.userId)
+        }
+    }
+
+    /// The non-me member of a 1:1 DM (falls back to me for a self-DM).
+    private var dmOtherUserId: String? {
+        guard channel.value?.kind == "dm" else { return nil }
+        let ids = channel.value?.memberIds ?? []
+        return ids.first { $0 != app.currentUser?.id } ?? ids.first
     }
 
     private var headerTitle: String {
@@ -95,11 +109,26 @@ struct ChannelView: View {
                     Image(systemName: headerIcon)
                         .font(.system(size: 13))
                         .foregroundStyle(MC.muted)
-                    Text(channel.value?.isDM == true
-                         ? headerTitle
-                         : (channel.value?.name ?? ""))
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(MC.ink)
+                    // Ruling 4: a 1:1 DM's header title opens the other
+                    // member's profile card.
+                    if let otherId = dmOtherUserId {
+                        Button {
+                            profileUserId = otherId
+                        } label: {
+                            Text(headerTitle)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(MC.ink)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("View profile")
+                    } else {
+                        Text(channel.value?.isDM == true
+                             ? headerTitle
+                             : (channel.value?.name ?? ""))
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(MC.ink)
+                    }
                 }
                 if let topic = channel.value?.topic, !topic.isEmpty {
                     Text(topic)

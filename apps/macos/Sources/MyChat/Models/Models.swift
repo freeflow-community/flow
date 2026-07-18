@@ -30,6 +30,35 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
     var createdBy: String
     var createdAt: String
     var role: String?
+    var sidebarColor: String? // preset id (see SidebarPalette); nil = default
+
+    enum CodingKeys: String, CodingKey {
+        case id, slug, name, createdBy, createdAt, role, sidebarColor
+    }
+
+    init(
+        id: String, slug: String, name: String, createdBy: String, createdAt: String,
+        role: String? = nil, sidebarColor: String? = nil
+    ) {
+        self.id = id
+        self.slug = slug
+        self.name = name
+        self.createdBy = createdBy
+        self.createdAt = createdAt
+        self.role = role
+        self.sidebarColor = sidebarColor
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        slug = try c.decode(String.self, forKey: .slug)
+        name = try c.decode(String.self, forKey: .name)
+        createdBy = try c.decode(String.self, forKey: .createdBy)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        sidebarColor = try c.decodeIfPresent(String.self, forKey: .sidebarColor)
+    }
 }
 
 /// One emoji aggregate on a message: who reacted, how many.
@@ -361,6 +390,7 @@ struct PatchMeBody: Encodable, Sendable {
     }
 }
 struct MarkNotificationsReadBody: Encodable, Sendable { let upToId: String }
+struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String }
 
 // MARK: - WS events
 
@@ -398,6 +428,7 @@ enum EventPayload: Sendable {
     case reaction(ReactionEventData, added: Bool)
     case notification(NotificationItem)
     case userUpdated(User)
+    case workspaceUpdated(Workspace)
     case unknown
 }
 
@@ -439,6 +470,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .notification(try c.decode(NotificationItem.self, forKey: .data))
         case "user.updated":
             payload = .userUpdated(try c.decode(User.self, forKey: .data))
+        case "workspace.updated":
+            payload = .workspaceUpdated(try c.decode(Workspace.self, forKey: .data))
         default:
             payload = .unknown
         }

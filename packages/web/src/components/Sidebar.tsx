@@ -1,11 +1,21 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { sidebarColor } from '@mychat/shared';
 import type { ChannelDTO } from '@mychat/shared';
 import { api } from '../lib/api';
 import { useAuth, useLive, useSelection } from '../state';
 import { useChannels, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
-import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, ProfileModal, UserCard } from './modals';
+import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, UserCard, WorkspaceColorModal } from './modals';
 import StatusFooter from './StatusPicker';
+
+// Sidebar width (phase 3.5 ruling 5): local per-device preference.
+const WIDTH_KEY = 'mychat.sidebarWidth';
+const DEFAULT_WIDTH = 240;
+const clampWidth = (w: number) => Math.min(360, Math.max(180, w));
+function storedWidth(): number {
+  const w = Number(localStorage.getItem(WIDTH_KEY));
+  return Number.isFinite(w) && w > 0 ? clampWidth(w) : DEFAULT_WIDTH;
+}
 
 export function dmTitle(c: ChannelDTO, names: Record<string, string>, me: string): string {
   const others = (c.memberIds ?? []).filter((id) => id !== me);
@@ -27,18 +37,33 @@ export default function Sidebar() {
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
+  const [showColor, setShowColor] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
+  const [memberMenuFor, setMemberMenuFor] = useState<string | null>(null);
+  const [width, setWidth] = useState(storedWidth);
+  const dragRef = useRef<{ x: number; w: number } | null>(null);
 
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
+  const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
+  const color = sidebarColor(ws?.sidebarColor);
+
+  const openDm = async (userId: string) => {
+    if (!sel.workspaceId) return;
+    const ch = await api<ChannelDTO>('POST', `/v1/workspaces/${sel.workspaceId}/dms`, { userIds: [userId] });
+    await qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] });
+    sel.selectChannel(ch.id);
+  };
   const all = channels.data ?? [];
   const joined = all.filter((c) => c.isMember && c.kind === 'standard');
   const dms = all.filter((c) => c.isMember && c.kind !== 'standard');
   const browsable = all.filter((c) => !c.isMember && !c.isPrivate && c.kind === 'standard');
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col bg-gradient-to-b from-side-top to-side-bot text-white">
+    <aside
+      className="relative flex shrink-0 flex-col text-white"
+      style={{ width, background: `linear-gradient(to bottom, ${color.top}, ${color.bottom})` }}
+    >
       <div className="relative flex items-center justify-between px-3.5 pt-5 pb-2">
         <button
           data-testid="workspace-menu"
@@ -64,17 +89,17 @@ export default function Sidebar() {
               </MenuItem>
             ))}
             <hr className="my-1 border-hairline3" />
-            <MenuItem testid="menu-profile" onClick={() => { setWsMenuOpen(false); setShowProfile(true); }}>
-              My Profile…
-            </MenuItem>
             <MenuItem testid="menu-invite" onClick={() => { setWsMenuOpen(false); setShowInvite(true); }}>
               Invite People…
             </MenuItem>
+            {isAdmin && (
+              <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
+                Workspace color…
+              </MenuItem>
+            )}
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
             </MenuItem>
-            <hr className="my-1 border-hairline3" />
-            <MenuItem testid="menu-signout" onClick={auth.signOut}>Sign Out</MenuItem>
           </div>
         )}
       </div>
@@ -136,32 +161,79 @@ export default function Sidebar() {
 
         <SectionHeader label="Members" />
         {(members.data ?? []).map((m) => (
-          <button
+          <div
             key={m.userId}
-            data-testid={`sidebar-member-${m.displayName}`}
-            data-presence={live.presence[m.userId] ? 'online' : 'offline'}
-            className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/82 hover:bg-white/10"
-            onClick={() => setProfileUserId(m.userId)}
+            className="group relative flex items-center gap-[9px] rounded-lg px-2 py-[7px] hover:bg-white/10"
           >
-            <PresenceDot online={!!live.presence[m.userId]} />
-            <span className="truncate">{m.displayName}</span>
-            {m.statusEmoji && (
-              <span className="ml-0.5 text-sm" title={m.statusText}>{m.statusEmoji}</span>
+            <button
+              data-testid={`sidebar-member-${m.displayName}`}
+              data-presence={live.presence[m.userId] ? 'online' : 'offline'}
+              className="flex min-w-0 flex-1 items-center gap-[9px] text-left text-white/82"
+              onClick={() => void openDm(m.userId)}
+            >
+              <PresenceDot online={!!live.presence[m.userId]} />
+              <span className="truncate">{m.displayName}</span>
+              {m.statusEmoji && (
+                <span className="ml-0.5 text-sm" title={m.statusText}>{m.statusEmoji}</span>
+              )}
+              {m.userId === auth.user.id && <span className="text-xs text-white/55">(you)</span>}
+              {m.role !== 'member' && <span className="ml-auto text-xs text-white/55">{m.role}</span>}
+            </button>
+            <button
+              data-testid={`member-menu-${m.displayName}`}
+              className="hidden rounded px-1 text-xs text-white/55 group-hover:block hover:text-white"
+              onClick={() => setMemberMenuFor((v) => (v === m.userId ? null : m.userId))}
+            >
+              ⋯
+            </button>
+            {memberMenuFor === m.userId && (
+              <div className="absolute top-full right-2 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
+                <MenuItem
+                  testid={`member-profile-${m.displayName}`}
+                  onClick={() => { setMemberMenuFor(null); setProfileUserId(m.userId); }}
+                >
+                  View profile
+                </MenuItem>
+              </div>
             )}
-            {m.userId === auth.user.id && <span className="text-xs text-white/55">(you)</span>}
-            {m.role !== 'member' && <span className="ml-auto text-xs text-white/55">{m.role}</span>}
-          </button>
+          </div>
         ))}
       </div>
 
       <StatusFooter />
+
+      <div
+        data-testid="sidebar-resizer"
+        className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize hover:bg-white/30"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          dragRef.current = { x: e.clientX, w: width };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          const drag = dragRef.current;
+          if (drag) setWidth(clampWidth(drag.w + e.clientX - drag.x));
+        }}
+        onPointerUp={(e) => {
+          const drag = dragRef.current;
+          if (!drag) return;
+          dragRef.current = null;
+          const final = clampWidth(drag.w + e.clientX - drag.x);
+          setWidth(final);
+          localStorage.setItem(WIDTH_KEY, String(final));
+        }}
+        onDoubleClick={() => {
+          setWidth(DEFAULT_WIDTH);
+          localStorage.setItem(WIDTH_KEY, String(DEFAULT_WIDTH));
+        }}
+      />
 
       {showCreateChannel && sel.workspaceId && (
         <CreateChannelModal workspaceId={sel.workspaceId} onClose={() => setShowCreateChannel(false)} />
       )}
       {showInvite && sel.workspaceId && <InviteModal workspaceId={sel.workspaceId} onClose={() => setShowInvite(false)} />}
       {showNewDm && sel.workspaceId && <NewDmModal workspaceId={sel.workspaceId} onClose={() => setShowNewDm(false)} />}
-      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
       {profileUserId && <UserCard userId={profileUserId} onClose={() => setProfileUserId(null)} />}
     </aside>

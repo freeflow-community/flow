@@ -57,7 +57,7 @@ export default function Composer({
     setError(null);
   };
 
-  const pickFiles = async (files: FileList | null) => {
+  const pickFiles = async (files: FileList | File[] | null) => {
     if (!files || !sel.workspaceId) return;
     for (const file of Array.from(files)) {
       setUploading((v) => v + 1);
@@ -71,6 +71,20 @@ export default function Composer({
       }
     }
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Image paste (phase 3.5 item 3): pasted images upload like picked files;
+  // text-only pastes fall through untouched.
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = Array.from(e.clipboardData.items)
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (images.length === 0) return;
+    e.preventDefault();
+    void pickFiles(
+      images.map((f, i) => (f.name ? f : new File([f], `pasted-${Date.now() + i}.png`, { type: f.type }))),
+    );
   };
 
   return (
@@ -128,6 +142,7 @@ export default function Composer({
               doSend();
             }
           }}
+          onPaste={onPaste}
         />
         <div className="mt-1.5 flex items-center gap-3 text-[15px] text-faint">
           <button

@@ -1,3 +1,4 @@
+import AppKit
 import GRDB
 import SwiftUI
 
@@ -5,11 +6,24 @@ struct MainView: View {
     @EnvironmentObject private var app: AppState
     @State private var showNotifications = false
 
+    // Ruling 5: sidebar width is a local per-device preference, clamped on use.
+    @AppStorage("sidebarWidth" + Profile.suffix) private var sidebarWidth: Double = 240
+    @State private var dragStartWidth: Double?
+
+    private static let minSidebarWidth: Double = 180
+    private static let maxSidebarWidth: Double = 360
+    private static let defaultSidebarWidth: Double = 240
+
+    private var clampedSidebarWidth: Double {
+        min(Self.maxSidebarWidth, max(Self.minSidebarWidth, sidebarWidth))
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             WorkspaceRailView()
             SidebarView()
-                .frame(width: 240)
+                .frame(width: clampedSidebarWidth)
+            sidebarResizer
             detail
                 .frame(maxWidth: .infinity)
                 .background(MC.base)
@@ -39,6 +53,39 @@ struct MainView: View {
                 }
             }
         }
+    }
+
+    /// Thin drag strip on the sidebar/content boundary: drag resizes live,
+    /// double-tap resets to the default width.
+    private var sidebarResizer: some View {
+        Rectangle()
+            .fill(MC.base)
+            .frame(width: 5)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { sidebarWidth = Self.defaultSidebarWidth }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        let base = dragStartWidth ?? clampedSidebarWidth
+                        if dragStartWidth == nil { dragStartWidth = base }
+                        sidebarWidth = min(
+                            Self.maxSidebarWidth,
+                            max(Self.minSidebarWidth, base + value.translation.width)
+                        )
+                    }
+                    .onEnded { _ in dragStartWidth = nil }
+            )
+            .onHover { inside in
+                if inside {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .accessibilityElement()
+            .accessibilityIdentifier("sidebar.resizer")
+            .accessibilityLabel("Resize sidebar")
+            .accessibilityValue("\(Int(clampedSidebarWidth)) points")
     }
 
     @ViewBuilder
@@ -71,6 +118,12 @@ struct MainView: View {
 struct WorkspaceRailView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
+
+    /// Rail shade follows the active workspace's palette (violet default).
+    private var railColor: Color {
+        let current = workspaces.value.first { $0.id == app.selectedWorkspaceId }
+        return SidebarPalette.palette(for: current?.sidebarColor).rail
+    }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -112,7 +165,7 @@ struct WorkspaceRailView: View {
         .padding(.vertical, 16)
         .frame(width: 64)
         .frame(maxHeight: .infinity)
-        .background(MC.rail)
+        .background(railColor)
         .task {
             workspaces.start(db: app.db) { db in
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)

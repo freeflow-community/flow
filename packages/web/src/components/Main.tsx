@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { sidebarColor } from '@mychat/shared';
 import type { Event, NotificationDTO, TypingData, PresenceData } from '@mychat/shared';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
@@ -112,6 +113,9 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['members'] });
         void qc.invalidateQueries({ queryKey: ['me'] });
         break;
+      case 'workspace.updated':
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
+        break;
       case 'notification.created': {
         const n = event.data as NotificationDTO;
         void qc.invalidateQueries({ queryKey: ['notifications'] });
@@ -184,8 +188,12 @@ export default function Main() {
 function WorkspaceRail() {
   const sel = useSelection();
   const workspaces = useWorkspaces();
+  const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   return (
-    <nav className="flex w-16 shrink-0 flex-col items-center gap-3.5 bg-rail py-4">
+    <nav
+      className="flex w-16 shrink-0 flex-col items-center gap-3.5 py-4"
+      style={{ background: sidebarColor(activeWs?.sidebarColor).rail }}
+    >
       {(workspaces.data ?? []).map((w) => {
         const active = w.id === sel.workspaceId;
         return (

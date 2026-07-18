@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth, useLive, useSelection } from '../state';
 import { useChannels, useMarkRead, useMemberMap, useMembers, useMessages, useNameMap, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
@@ -6,6 +6,7 @@ import { Avatar } from './Avatar';
 import MessageList from './MessageList';
 import Composer from './Composer';
 import NotificationsBell from './NotificationsBell';
+import { UserCard } from './modals';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -18,6 +19,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const messagesQ = useMessages(channelId);
   const markRead = useMarkRead();
   const lastReadRef = useRef<string | null>(null);
+  const [cardUserId, setCardUserId] = useState<string | null>(null);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
@@ -33,6 +35,11 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   }, [newestId, channelId]);
 
   const isDm = channel && channel.kind !== 'standard';
+  // 1:1 DM header click opens the other member's card (ruling 4); self-DM shows your own.
+  const dmOtherId =
+    channel?.kind === 'dm'
+      ? (channel.memberIds ?? []).find((id) => id !== auth.user.id) ?? auth.user.id
+      : null;
   const title = channel
     ? channel.kind === 'standard'
       ? channel.name ?? ''
@@ -52,7 +59,11 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     <section className="flex min-w-0 flex-1 flex-col bg-base">
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px]">
         <div className="min-w-0">
-          <h2 data-testid="channel-header" className="truncate text-[15px] font-bold">
+          <h2
+            data-testid="channel-header"
+            className={`truncate text-[15px] font-bold ${dmOtherId ? 'cursor-pointer hover:underline' : ''}`}
+            onClick={dmOtherId ? () => setCardUserId(dmOtherId) : undefined}
+          >
             {channel?.kind === 'standard' ? <><span className="text-muted"># </span>{title}</> : title}
           </h2>
           {channel?.topic && <p className="truncate text-xs text-muted">{channel.topic}</p>}
@@ -100,6 +111,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       ) : (
         <Composer channelId={channelId} placeholder={`Message ${channel?.kind === 'standard' ? `#${title}` : title}`} />
       )}
+
+      {cardUserId && <UserCard userId={cardUserId} onClose={() => setCardUserId(null)} />}
     </section>
   );
 }

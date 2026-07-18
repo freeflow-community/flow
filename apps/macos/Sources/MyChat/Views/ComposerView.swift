@@ -1,6 +1,7 @@
 import AppKit
 import GRDB
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ComposerView: View {
     let channelId: String
@@ -43,6 +44,9 @@ struct ComposerView: View {
                         Task { await app.engine.typing(channelId: channelId) }
                     }
                     .accessibilityIdentifier(threadRootId == nil ? "composer.input" : "thread.composer.input")
+                    // Image paste → upload as attachment. `.string` is
+                    // deliberately absent so plain-text paste stays native.
+                    .onPasteCommand(of: [.png, .tiff, .jpeg, .fileURL], perform: handlePaste)
 
                 Button {
                     // Operator ruling: macOS uses the native character palette.
@@ -217,6 +221,73 @@ struct ComposerView: View {
                     } catch {
                         app.showError("Couldn't upload \(url.lastPathComponent): \(error.localizedDescription)")
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - Image paste (phase 3.5 item 3)
+
+    /// Uploads pasted images through the same attachment flow as the
+    /// paperclip picker (cap 10, shared uploading counter).
+    private func handlePaste(_ providers: [NSItemProvider]) {
+        guard let wsId = workspaceId else { return }
+        for provider in providers {
+            uploading += 1
+            Task { @MainActor in
+                defer { uploading -= 1 }
+                do {
+                    guard let url = try await Self.pastedImageFileURL(from: provider) else { return }
+                    let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: url)
+                    if attachments.count < 10 { attachments.append(file) }
+                } catch {
+                    app.showError("Couldn't paste image: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private static let pastedImageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "webp", "tiff", "tif", "heic", "bmp",
+    ]
+
+    /// Resolves a pasted item to a local image file URL. File URLs are used
+    /// as-is (image extensions only); raw image data is written to a temp
+    /// PNG (non-PNG data converted via NSBitmapImageRep). Returns nil for
+    /// non-image content.
+    private static func pastedImageFileURL(from provider: NSItemProvider) async throws -> URL? {
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            let data = try await loadData(from: provider, type: .fileURL)
+            guard let url = URL(dataRepresentation: data, relativeTo: nil),
+                  pastedImageExtensions.contains(url.pathExtension.lowercased())
+            else { return nil }
+            return url
+        }
+        for type in [UTType.png, .tiff, .jpeg]
+        where provider.hasItemConformingToTypeIdentifier(type.identifier) {
+            let data = try await loadData(from: provider, type: type)
+            let png = type == .png
+                ? data
+                : NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:])
+            guard let png else { return nil }
+            let epochMs = Int(Date().timeIntervalSince1970 * 1000)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("pasted-\(epochMs).png")
+            try png.write(to: url)
+            return url
+        }
+        return nil
+    }
+
+    private static func loadData(from provider: NSItemProvider, type: UTType) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, error in
+                if let data {
+                    continuation.resume(returning: data)
+                } else {
+                    continuation.resume(throwing: error ?? APIError(
+                        status: 0, code: "paste", message: "Couldn't read pasted item"
+                    ))
                 }
             }
         }
