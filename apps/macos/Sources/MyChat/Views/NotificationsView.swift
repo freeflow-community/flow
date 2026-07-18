@@ -50,7 +50,9 @@ struct NotificationsPopover: View {
             }
         }
         .frame(width: 360)
-        .task {
+        // task(id:) → refetches whenever a new notification arrives while the
+        // popover is open (QA s718c finding: the list went stale mid-display).
+        .task(id: app.notificationUnread) {
             defer { loading = false }
             if let resp = try? await app.engine.fetchNotifications() {
                 items = resp.notifications

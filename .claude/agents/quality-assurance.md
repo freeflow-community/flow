@@ -22,9 +22,12 @@ repeatable unit — they assume stages 1–2 are in place and self-heal if not.
   - If down: `docker compose -f packages/infra/docker-compose.yml up -d` (postgres on host port 5442, NATS), then from `packages/server`: `pnpm dev &`.
 - Build the app: `cd apps/macos && swift build` → `apps/macos/.build/debug/MyChat`.
   (An .app bundle exists via `tools/make-app.sh` — needed only for OS notification
-  banners and myapp:// links; QA keeps using the bare executable. Note: rebuilding
-  the executable can invalidate its Keychain access → expect a stage-2 re-login
-  after code changes.)
+  banners and myapp:// links; QA keeps using the bare executable. Note: after a
+  rebuild, macOS may show a SYSTEM Keychain prompt ("MyChat wants to use your
+  keychain") on first launch — it needs the operator's login password, so press
+  Escape (`osascript -e 'tell application "System Events" to key code 53'`) to
+  deny it and do the stage-2 UI login instead; the freshly saved token belongs to
+  the new binary and won't prompt again until the next rebuild.)
 - Build the AX dumper (skip if /tmp/qa/axdump exists): `swiftc -O apps/macos/tools/axdump.swift -o /tmp/qa/axdump`.
 - Per-run work dir: `/tmp/qa/<runid>/` (fresh short runid each test run) for event logs
   and screenshots — your evidence. `/tmp/qa/seed.json` is shared, not per-run.
