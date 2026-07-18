@@ -98,3 +98,9 @@ Approved deviations from phase2.md as written:
 
 - **Notification subject is `user.{userId}.notify`** (user-global), not `ws.{workspaceId}.user.{userId}.notify`: matches the existing `user.{userId}.meta` pattern, one subscription per socket instead of per socket×workspace; the event envelope already carries `workspaceId`/`channelId`.
 - **Avatars bypass the `files` table**: stored via the storage interface with `users.avatar_url` pointing at them, unencrypted (per §6's cacheability requirement). Keeps the orphan sweep trivially "any unattached `files` row older than 24h" with no avatar special-casing.
+
+## 2026-07-18 — Phase 2 implementation calls ratified at the item-6 checkpoint
+
+- **Notification kind 3 = channel activity**: phase2.md §4's smallint enumerated only 0=mention, 1=dm, 2=thread_reply, but `notify_level=all` needs a row per channel message; kind 3 covers it rather than mislabeling as a mention. Precedence per (user, message): dm > mention > thread_reply > activity — one notification row max.
+- **Message edits do not (re-)notify mentions**: parse-at-write model; re-notifying on every typo fix is noise. A mention added by an edit will not notify until/unless a later phase decides otherwise.
+- **Item-6 checkpoint bug (fixed, `dd499fe`)**: the macOS reaction-picker popover dismissed on mouse move because its anchor button unmounted when the row lost hover — anchors of open popovers must stay mounted. QA smoke now regression-checks with real CGEvent pointer input (`apps/macos/tools/mouse.swift`), guarded to never inject input while the human is using the desktop.
