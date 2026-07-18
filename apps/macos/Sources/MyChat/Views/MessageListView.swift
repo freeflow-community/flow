@@ -156,7 +156,11 @@ struct MessageRow: View {
             }
             Spacer(minLength: 0)
 
-            if hovering, !message.isDeleted, !message.pending {
+            // The button must stay mounted while the picker is open: it is the
+            // popover's anchor, and moving the mouse toward the popover leaves
+            // the row (hovering -> false) — unmounting the anchor would tear
+            // the popover down (operator-reported bug at the item-6 checkpoint).
+            if hovering || showReactionPicker, !message.isDeleted, !message.pending {
                 Button {
                     showReactionPicker = true
                 } label: {

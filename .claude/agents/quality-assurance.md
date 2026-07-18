@@ -189,6 +189,17 @@ Practical notes:
 6. Reactions: Bob `react`s (👍) to Alice's runid message → assert
    `msg.reaction.👍` appears in Alice's dump; Alice clicks the chip → count 2
    ("including you") and `reaction.added` in bob-events.
+   REGRESSION (operator-found at the item-6 checkpoint): the emoji picker must
+   survive mouse travel. `msg.addReaction` only mounts on hover, so this needs
+   REAL pointer moves — build the CGEvent tool once
+   (`swiftc -O apps/macos/tools/mouse.swift -o /tmp/qa/mouse`; skip if present):
+   app frontmost → `/tmp/qa/mouse move <over runid message row>` → dump shows
+   `msg.addReaction` at some frame → `/tmp/qa/mouse click` its center → dump
+   shows `emoji.search` → `/tmp/qa/mouse move` ~80pt away (toward the popover)
+   → `emoji.search` STILL in the dump (pre-fix it vanished) → click an emoji in
+   the popover grid → chip appears. NEVER run this (or any `keystroke`) while
+   the human is using the machine — check `ioreg -c IOHIDSystem` HIDIdleTime
+   first and skip/BLOCK the item if the desktop is active.
 7. DM: Bob `dm --users <aliceId>` then `send`s "smoke-<runid>: dm" to it →
    assert `sidebar.dm.Bob` shows unread in Alice's dump AND a
    `notification.created` kind=1 would land for Alice (verify via Alice's bell:
