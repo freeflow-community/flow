@@ -102,8 +102,10 @@ actor SyncEngine {
         UserDefaults.standard.set(user.id, forKey: Self.currentUserIdKey)
         try? await db.writer.write { db in try user.save(db) }
         await appState?.setPhase(.signedIn(user))
+        await Banners.requestPermissionIfNeeded()
         startSocket(token: token)
         await refreshWorkspaces()
+        await refreshNotificationBadge()
     }
 
     // MARK: - Socket lifecycle
@@ -143,6 +145,7 @@ actor SyncEngine {
         if let root = openThreadRootId {
             await fetchThread(rootId: root)
         }
+        await refreshNotificationBadge()
     }
 
     /// Fills the gap between the server head and our newest local message by
@@ -243,6 +246,16 @@ actor SyncEngine {
                 try Member(workspaceId: workspaceId, userId: m.userId, role: m.role).save(db)
             }
         }
+        await pushAvatarPaths()
+    }
+
+    /// Publishes the userId -> avatarUrl map so message rows can render avatars.
+    private func pushAvatarPaths() async {
+        let rows: [(String, String)] = (try? await db.reader.read { db in
+            try Row.fetchAll(db, sql: "SELECT id, avatarUrl FROM user WHERE avatarUrl IS NOT NULL")
+                .map { ($0["id"] as String, $0["avatarUrl"] as String) }
+        }) ?? []
+        await appState?.setAvatarPaths(Dictionary(uniqueKeysWithValues: rows))
     }
 
     // MARK: - Channels
@@ -336,9 +349,18 @@ actor SyncEngine {
 
     // MARK: - Messages
 
-    func sendMessage(channelId: String, body: String, threadRootId: String? = nil) async {
-        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let uid = currentUser?.id else { return }
+    func sendMessage(
+        channelId: String,
+        body: String,
+        threadRootId: String? = nil,
+        attachments: [FileAttachment] = []
+    ) async {
+        var outgoing = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !outgoing.isEmpty || !attachments.isEmpty, let uid = currentUser?.id else { return }
+        if outgoing.isEmpty { outgoing = " " } // server requires a non-empty body
+        // Composer sugar → wire format: :shortcode: → unicode; @Name → <@id>;
+        // @channel/@here/@everyone → <!token>. Returns resolved mention ids.
+        let (wireBody, mentions) = await prepareOutgoing(outgoing, channelId: channelId)
         let clientMsgId = UUID().uuidString.lowercased()
         let now = ISO8601.now()
         let local = Message(
@@ -347,12 +369,13 @@ actor SyncEngine {
             userId: uid,
             threadRootId: threadRootId,
             clientMsgId: clientMsgId,
-            body: trimmed,
+            body: wireBody,
             createdAt: now,
             editedAt: nil,
             deletedAt: nil,
             replyCount: 0,
             lastReplyAt: nil,
+            files: attachments,
             pending: true
         )
         // Optimistic insert; the POST response or WS echo reconciles it.
@@ -368,12 +391,258 @@ actor SyncEngine {
         do {
             let server: Message = try await api.post(
                 "/v1/channels/\(channelId)/messages",
-                body: SendMessageBody(clientMsgId: clientMsgId, body: trimmed, threadRootId: threadRootId)
+                body: SendMessageBody(
+                    clientMsgId: clientMsgId,
+                    body: wireBody,
+                    threadRootId: threadRootId,
+                    fileIds: attachments.isEmpty ? nil : attachments.map(\.id),
+                    mentions: mentions.isEmpty ? nil : mentions
+                )
             )
             _ = await applyServerMessage(server)
         } catch {
             await appState?.showError("Couldn't send message: \(error.localizedDescription)")
         }
+    }
+
+    /// Expands shortcodes and resolves mention sugar against the channel's
+    /// workspace members: "@Display Name" → "<@userId>" (longest-name-first so
+    /// "Bob Smith" wins over "Bob"), "@channel|here|everyone" → "<!token>".
+    private func prepareOutgoing(_ body: String, channelId: String) async -> (String, [String]) {
+        var text = EmojiCatalog.expandShortcodes(body)
+        guard text.contains("@") else { return (text, []) }
+        for token in ["channel", "here", "everyone"] {
+            text = text.replacingOccurrences(of: "@\(token)", with: "<!\(token)>")
+        }
+        let wsId: String? = try? await db.reader.read { db in
+            try String.fetchOne(db, sql: "SELECT workspaceId FROM channel WHERE id = ?", arguments: [channelId])
+        }
+        guard let wsId else { return (text, []) }
+        let members: [(id: String, name: String)] = (try? await db.reader.read { db in
+            try Row.fetchAll(
+                db,
+                sql: "SELECT u.id AS id, u.displayName AS name FROM member m JOIN user u ON u.id = m.userId WHERE m.workspaceId = ?",
+                arguments: [wsId]
+            ).map { (id: $0["id"] as String, name: $0["name"] as String) }
+        }) ?? []
+        var mentions: [String] = []
+        for m in members.sorted(by: { $0.name.count > $1.name.count }) where !m.name.isEmpty {
+            let needle = "@\(m.name)"
+            if text.contains(needle) {
+                text = text.replacingOccurrences(of: needle, with: "<@\(m.id)>")
+                mentions.append(m.id)
+            }
+        }
+        return (text, mentions)
+    }
+
+    // MARK: - Reactions
+
+    /// Adds or removes the caller's reaction; server response is authoritative.
+    func toggleReaction(messageId: String, emoji: String) async {
+        guard let uid = currentUser?.id else { return }
+        let mine: Bool = (try? await db.reader.read { db in
+            guard let m = try Message.fetchOne(db, key: messageId) else { return false }
+            return m.reactions.first { $0.emoji == emoji }?.userIds.contains(uid) ?? false
+        }) ?? false
+        let path = "/v1/messages/\(messageId)/reactions/\(emoji.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? emoji)"
+        do {
+            let resp: ReactionsResponse = mine
+                ? try await api.delete(path)
+                : try await api.put(path)
+            await setReactions(messageId: messageId, resp.reactions)
+        } catch {
+            await appState?.showError("Couldn't update reaction: \(error.localizedDescription)")
+        }
+    }
+
+    private func setReactions(messageId: String, _ reactions: [ReactionAgg]) async {
+        try? await db.writer.write { db in
+            guard var m = try Message.fetchOne(db, key: messageId) else { return }
+            m.reactions = reactions
+            try m.save(db)
+        }
+    }
+
+    /// Applies a live reaction event by editing the cached aggregate in place.
+    private func applyReactionEvent(_ data: ReactionEventData, added: Bool) async {
+        try? await db.writer.write { db in
+            guard var m = try Message.fetchOne(db, key: data.messageId) else { return }
+            var aggs = m.reactions
+            if let idx = aggs.firstIndex(where: { $0.emoji == data.emoji }) {
+                var agg = aggs[idx]
+                if added {
+                    if !agg.userIds.contains(data.userId) {
+                        agg.userIds.append(data.userId)
+                        agg.count += 1
+                    }
+                } else {
+                    agg.userIds.removeAll { $0 == data.userId }
+                    agg.count = agg.userIds.count
+                }
+                if agg.count == 0 { aggs.remove(at: idx) } else { aggs[idx] = agg }
+            } else if added {
+                aggs.append(ReactionAgg(emoji: data.emoji, count: 1, userIds: [data.userId]))
+            }
+            m.reactions = aggs
+            try m.save(db)
+        }
+    }
+
+    // MARK: - Files
+
+    func uploadFile(workspaceId: String, fileURL: URL) async throws -> FileAttachment {
+        let data = try Data(contentsOf: fileURL)
+        let mime = Self.mimeType(for: fileURL)
+        return try await api.upload(
+            "/v1/workspaces/\(workspaceId)/files",
+            filename: fileURL.lastPathComponent,
+            mimeType: mime,
+            data: data
+        )
+    }
+
+    /// Downloads a file to a temp path (original filename preserved) and
+    /// returns the local URL — used for "open" on attachments.
+    func downloadFile(_ file: FileAttachment) async throws -> URL {
+        let data = try await api.getData("/v1/files/\(file.id)")
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MyChatDownloads-\(file.id)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dest = dir.appendingPathComponent(file.name)
+        try data.write(to: dest)
+        return dest
+    }
+
+    static func mimeType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "png": "image/png"
+        case "jpg", "jpeg": "image/jpeg"
+        case "gif": "image/gif"
+        case "webp": "image/webp"
+        case "pdf": "application/pdf"
+        case "txt", "md", "log": "text/plain"
+        case "json": "application/json"
+        case "zip": "application/zip"
+        case "mp4": "video/mp4"
+        case "mov": "video/quicktime"
+        default: "application/octet-stream"
+        }
+    }
+
+    // MARK: - DMs
+
+    /// Upsert a DM with the given other members (server dedupes by member set).
+    func createDm(workspaceId: String, userIds: [String]) async throws -> Channel {
+        let ch: Channel = try await api.post(
+            "/v1/workspaces/\(workspaceId)/dms",
+            body: CreateDmBody(userIds: userIds)
+        )
+        try? await db.writer.write { db in try ch.save(db) }
+        return ch
+    }
+
+    // MARK: - Channel membership (phase2.md §5)
+
+    func addMember(channelId: String, userId: String) async throws {
+        let _: OkResponse = try await api.post(
+            "/v1/channels/\(channelId)/members",
+            body: AddMemberBody(userId: userId)
+        )
+    }
+
+    func leaveChannel(_ channelId: String) async throws {
+        let _: OkResponse = try await api.post("/v1/channels/\(channelId)/leave")
+        try? await db.writer.write { db in
+            try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [channelId])
+            try db.execute(sql: "DELETE FROM message WHERE channelId = ?", arguments: [channelId])
+        }
+        if activeChannelId == channelId {
+            await appState?.channelBecameUnavailable(channelId)
+        }
+    }
+
+    func archiveChannel(_ channelId: String) async throws {
+        let ch: Channel = try await api.post("/v1/channels/\(channelId)/archive")
+        try? await db.writer.write { db in try ch.save(db) }
+        if activeChannelId == channelId {
+            await appState?.channelBecameUnavailable(channelId)
+        }
+    }
+
+    func setNotifyLevel(channelId: String, level: Int) async {
+        do {
+            let _: OkResponse = try await api.put(
+                "/v1/channels/\(channelId)/notify",
+                body: NotifyLevelBody(level: level)
+            )
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE channel SET notifyLevel = ? WHERE id = ?",
+                    arguments: [level, channelId]
+                )
+            }
+        } catch {
+            await appState?.showError("Couldn't update notifications: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Profile (phase2.md §6)
+
+    func updateProfile(displayName: String?, timezone: String?) async throws {
+        let me: User = try await api.patch(
+            "/v1/me",
+            body: PatchMeBody(displayName: displayName, timezone: timezone)
+        )
+        currentUser = me
+        try? await db.writer.write { db in try me.save(db) }
+        await appState?.setPhase(.signedIn(me))
+    }
+
+    func uploadAvatar(fileURL: URL) async throws {
+        let data = try Data(contentsOf: fileURL)
+        let me: User = try await api.upload(
+            "/v1/me/avatar",
+            filename: fileURL.lastPathComponent,
+            mimeType: Self.mimeType(for: fileURL),
+            data: data
+        )
+        currentUser = me
+        try? await db.writer.write { db in try me.save(db) }
+        await appState?.setPhase(.signedIn(me))
+    }
+
+    func fetchUser(_ userId: String) async throws -> User {
+        let u: User = try await api.get("/v1/users/\(userId)")
+        try? await db.writer.write { db in try u.save(db) }
+        return u
+    }
+
+    // MARK: - Notifications (phase2.md §4)
+
+    func fetchNotifications(before: String? = nil) async throws -> NotificationsResponse {
+        let query: [URLQueryItem] = [
+            URLQueryItem(name: "limit", value: "50"),
+            before.map { URLQueryItem(name: "before", value: $0) },
+        ].compactMap(\.self)
+        let resp: NotificationsResponse = try await api.get("/v1/me/notifications", query: query)
+        await appState?.setNotificationUnread(resp.unreadCount)
+        return resp
+    }
+
+    func markNotificationsRead(upToId: String) async {
+        let _: OkResponse? = try? await api.post(
+            "/v1/me/notifications/read",
+            body: MarkNotificationsReadBody(upToId: upToId)
+        )
+        await refreshNotificationBadge()
+    }
+
+    private func refreshNotificationBadge() async {
+        guard let resp: NotificationsResponse = try? await api.get(
+            "/v1/me/notifications", query: [URLQueryItem(name: "limit", value: "1")]
+        ) else { return }
+        await appState?.setNotificationUnread(resp.unreadCount)
     }
 
     func editMessage(id: String, body: String) async {
@@ -478,7 +747,61 @@ actor SyncEngine {
             }
             if mj.userId == currentUser?.id {
                 await refreshChannels(workspaceId: event.workspaceId)
+            } else if mj.channelId != nil {
+                // membership of a DM/channel we can see changed → refresh so
+                // DM memberIds and lists stay accurate
+                await refreshChannels(workspaceId: event.workspaceId)
             }
+
+        case .memberLeft(let ml):
+            if ml.userId == currentUser?.id, let chId = ml.channelId {
+                try? await db.writer.write { db in
+                    try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [chId])
+                    try db.execute(sql: "DELETE FROM message WHERE channelId = ?", arguments: [chId])
+                }
+                if activeChannelId == chId {
+                    await appState?.channelBecameUnavailable(chId)
+                }
+                await refreshChannels(workspaceId: event.workspaceId)
+            }
+
+        case .channelArchived(let ch):
+            try? await db.writer.write { db in
+                guard var existing = try Channel.fetchOne(db, key: ch.id) else { return }
+                existing.archivedAt = ch.archivedAt
+                try existing.save(db)
+            }
+            if activeChannelId == ch.id {
+                await appState?.channelBecameUnavailable(ch.id)
+            }
+
+        case .reaction(let data, let added):
+            await applyReactionEvent(data, added: added)
+
+        case .notification(let n):
+            await appState?.notificationReceived(n)
+            // Banner unless the user is already looking at that channel.
+            if n.channelId != activeChannelId, n.message.userId != currentUser?.id {
+                let senderName: String? = try? await db.reader.read { db in
+                    try String.fetchOne(
+                        db, sql: "SELECT displayName FROM user WHERE id = ?", arguments: [n.message.userId]
+                    )
+                }
+                let title = switch n.kind {
+                case 1: senderName ?? "New direct message"
+                case 2: "\(senderName ?? "Someone") replied in a thread"
+                default: "\(senderName ?? "Someone") mentioned you"
+                }
+                Banners.show(title: title, body: MentionRendering.plainText(n.message.body), id: n.id)
+            }
+
+        case .userUpdated(let u):
+            try? await db.writer.write { db in try u.save(db) }
+            if u.id == currentUser?.id {
+                currentUser = u
+                await appState?.setPhase(.signedIn(u))
+            }
+            await pushAvatarPaths()
 
         case .unknown:
             break

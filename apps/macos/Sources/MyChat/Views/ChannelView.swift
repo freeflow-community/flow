@@ -37,11 +37,19 @@ struct ChannelView: View {
 
             TypingIndicatorView(channelId: channelId, userNames: userNames.value)
 
-            ComposerView(
-                channelId: channelId,
-                threadRootId: nil,
-                placeholder: "Message #\(channel.value?.name ?? "channel")"
-            )
+            if channel.value?.archivedAt != nil {
+                Text("This channel is archived and read-only.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                ComposerView(
+                    channelId: channelId,
+                    workspaceId: channel.value?.workspaceId,
+                    threadRootId: nil,
+                    placeholder: "Message \(headerTitle)"
+                )
+            }
         }
         .task(id: channelId) {
             channel.start(db: app.db, reset: nil) { db in
@@ -64,11 +72,20 @@ struct ChannelView: View {
         }
     }
 
+    private var headerTitle: String {
+        guard let c = channel.value else { return "" }
+        return c.isDM
+            ? c.displayTitle(userNames: userNames.value, currentUserId: app.currentUser?.id)
+            : "#\(c.name ?? "")"
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: channel.value?.isPrivate == true ? "lock" : "number")
+            Image(systemName: headerIcon)
                 .foregroundStyle(.secondary)
-            Text(channel.value?.name ?? "")
+            Text(channel.value?.isDM == true
+                 ? headerTitle
+                 : (channel.value?.name ?? ""))
                 .font(.headline)
             if let topic = channel.value?.topic, !topic.isEmpty {
                 Text(topic)
@@ -80,6 +97,13 @@ struct ChannelView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var headerIcon: String {
+        guard let c = channel.value else { return "number" }
+        if c.kind == "dm" { return "person" }
+        if c.kind == "group_dm" { return "person.2" }
+        return c.isPrivate ? "lock" : "number"
     }
 }
 

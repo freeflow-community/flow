@@ -7,6 +7,7 @@ struct ThreadPanelView: View {
 
     @StateObject private var thread = DBObserved<[Message]>(initial: [])
     @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
+    @StateObject private var workspaceId = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
 
     private var root: Message? {
@@ -43,8 +44,8 @@ struct ThreadPanelView: View {
                         ForEach(thread.value) { message in
                             MessageRow(
                                 message: message,
-                                senderName: userNames.value[message.userId] ?? "Unknown",
-                                isMine: message.userId == app.currentUser?.id,
+                                userNames: userNames.value,
+                                currentUserId: app.currentUser?.id,
                                 showHeader: true,
                                 showThreadAffordances: false,
                                 onOpenThread: { _ in },
@@ -81,6 +82,7 @@ struct ThreadPanelView: View {
                 TypingIndicatorView(channelId: root.channelId, userNames: userNames.value)
                 ComposerView(
                     channelId: root.channelId,
+                    workspaceId: workspaceId.value,
                     threadRootId: rootId,
                     placeholder: "Reply in thread"
                 )
@@ -97,6 +99,13 @@ struct ThreadPanelView: View {
             userNames.start(db: app.db, reset: [:]) { db in
                 try Dictionary(
                     uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayName) }
+                )
+            }
+            workspaceId.start(db: app.db, reset: nil) { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT c.workspaceId FROM channel c JOIN message m ON m.channelId = c.id WHERE m.id = ?",
+                    arguments: [rootId]
                 )
             }
         }

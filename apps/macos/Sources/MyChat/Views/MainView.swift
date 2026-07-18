@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MainView: View {
     @EnvironmentObject private var app: AppState
+    @State private var showNotifications = false
 
     var body: some View {
         NavigationSplitView {
@@ -28,6 +29,31 @@ struct MainView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showNotifications = true
+                } label: {
+                    Image(systemName: app.notificationUnread > 0 ? "bell.badge.fill" : "bell")
+                        .overlay(alignment: .topTrailing) {
+                            if app.notificationUnread > 0 {
+                                Text("\(min(app.notificationUnread, 99))")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .padding(2)
+                                    .background(Circle().fill(.red))
+                                    .foregroundStyle(.white)
+                                    .offset(x: 6, y: -6)
+                            }
+                        }
+                }
+                .help("Notifications")
+                .accessibilityIdentifier("toolbar.notifications")
+                .accessibilityValue("\(app.notificationUnread) unread")
+                .popover(isPresented: $showNotifications) {
+                    NotificationsPopover()
+                }
             }
         }
     }

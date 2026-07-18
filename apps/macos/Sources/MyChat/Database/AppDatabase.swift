@@ -86,6 +86,52 @@ struct AppDatabase: Sendable {
                 t.primaryKey(["workspaceId", "userId"])
             }
         }
+        // Phase 2: DMs (kind/memberIds, nullable name), reactions/files on
+        // messages (JSON columns), notify levels, user timezone. channel and
+        // message are pure caches — cheapest correct migration is a rebuild;
+        // history refetches on demand.
+        migrator.registerMigration("v2") { db in
+            try db.drop(table: "message")
+            try db.drop(table: "channel")
+            try db.create(table: "channel") { t in
+                t.column("id", .text).primaryKey()
+                t.column("workspaceId", .text).notNull().indexed()
+                t.column("name", .text) // nil for DMs
+                t.column("kind", .text).notNull().defaults(to: "standard")
+                t.column("topic", .text)
+                t.column("isPrivate", .boolean).notNull().defaults(to: false)
+                t.column("createdBy", .text).notNull()
+                t.column("createdAt", .text).notNull()
+                t.column("archivedAt", .text)
+                t.column("isMember", .boolean).notNull().defaults(to: false)
+                t.column("lastReadMsgId", .text)
+                t.column("unreadCount", .integer).notNull().defaults(to: 0)
+                t.column("notifyLevel", .integer).notNull().defaults(to: 1)
+                t.column("memberIds", .text) // JSON array, DMs only
+            }
+            try db.create(table: "message") { t in
+                t.column("id", .text).primaryKey()
+                t.column("channelId", .text).notNull()
+                t.column("userId", .text).notNull()
+                t.column("threadRootId", .text)
+                t.column("clientMsgId", .text).notNull()
+                t.column("body", .text).notNull()
+                t.column("createdAt", .text).notNull()
+                t.column("editedAt", .text)
+                t.column("deletedAt", .text)
+                t.column("replyCount", .integer).notNull().defaults(to: 0)
+                t.column("lastReplyAt", .text)
+                t.column("reactions", .text).notNull().defaults(to: "[]") // JSON
+                t.column("files", .text).notNull().defaults(to: "[]") // JSON
+                t.column("pending", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(index: "msg_channel_id2", on: "message", columns: ["channelId", "id"])
+            try db.create(index: "msg_thread_id2", on: "message", columns: ["threadRootId", "id"])
+            try db.create(index: "msg_client_id2", on: "message", columns: ["channelId", "clientMsgId"])
+            try db.alter(table: "user") { t in
+                t.add(column: "timezone", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

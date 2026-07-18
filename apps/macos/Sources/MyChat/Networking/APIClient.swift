@@ -59,13 +59,60 @@ actor APIClient {
         try await request("DELETE", path, query: [], bodyData: nil)
     }
 
+    func put<T: Decodable & Sendable>(_ path: String, body: some Encodable & Sendable) async throws -> T {
+        try await request("PUT", path, query: [], bodyData: try encoder.encode(body))
+    }
+
+    func put<T: Decodable & Sendable>(_ path: String) async throws -> T {
+        try await request("PUT", path, query: [], bodyData: nil)
+    }
+
+    /// Multipart file upload (single "file" field).
+    func upload<T: Decodable & Sendable>(
+        _ path: String, filename: String, mimeType: String, data: Data
+    ) async throws -> T {
+        let boundary = "mychat-\(UUID().uuidString)"
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"\(filename.replacingOccurrences(of: "\"", with: "_"))\"\r\n".utf8
+        ))
+        body.append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
+        body.append(data)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        return try await request(
+            "POST", path, query: [], bodyData: body,
+            contentType: "multipart/form-data; boundary=\(boundary)"
+        )
+    }
+
+    /// Authenticated raw-byte GET (file downloads, thumbnails, avatars).
+    func getData(_ path: String) async throws -> Data {
+        var req = URLRequest(url: baseURL.appending(path: path))
+        if let token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch {
+            throw APIError(status: 0, code: "network", message: error.localizedDescription)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw APIError(status: status, code: "http_\(status)", message: "HTTP \(status)")
+        }
+        return data
+    }
+
     // MARK: Core
 
     private func request<T: Decodable>(
         _ method: String,
         _ path: String,
         query: [URLQueryItem],
-        bodyData: Data?
+        bodyData: Data?,
+        contentType: String = "application/json"
     ) async throws -> T {
         guard var comps = URLComponents(
             url: baseURL.appending(path: path),
@@ -84,7 +131,7 @@ actor APIClient {
         }
         if let bodyData {
             req.httpBody = bodyData
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
 
         let data: Data

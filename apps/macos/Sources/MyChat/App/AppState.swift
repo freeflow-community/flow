@@ -37,6 +37,10 @@ final class AppState: ObservableObject {
     @Published private(set) var typing: [String: [String: Date]] = [:]
     /// channelId -> more history available on the server
     @Published private(set) var hasMore: [String: Bool] = [:]
+    /// Unread in-app notification count (bell badge + dock badge).
+    @Published private(set) var notificationUnread: Int = 0
+    /// userId -> avatar path (/v1/avatars/<key>), for message rows & popovers.
+    @Published private(set) var avatarPaths: [String: String] = [:]
     @Published var errorMessage: String?
 
     let db: AppDatabase
@@ -52,6 +56,7 @@ final class AppState: ObservableObject {
         let socket = SocketClient(url: URL(string: "ws://127.0.0.1:8787/v1/ws")!)
         self.engine = SyncEngine(db: db, api: api, socket: socket)
         Task {
+            await ImageLoader.shared.configure(api: api)
             await engine.attach(self)
             await engine.bootstrap()
         }
@@ -80,6 +85,7 @@ final class AppState: ObservableObject {
         presence = [:]
         typing = [:]
         hasMore = [:]
+        setNotificationUnread(0)
     }
 
     func setConnection(_ c: Connection) {
@@ -109,6 +115,38 @@ final class AppState: ObservableObject {
 
     func presenceReceived(userId: String, online: Bool) {
         presence[userId] = online
+    }
+
+    func setAvatarPaths(_ paths: [String: String]) {
+        avatarPaths = paths
+    }
+
+    func setNotificationUnread(_ n: Int) {
+        notificationUnread = n
+        Banners.setBadge(n)
+    }
+
+    func notificationReceived(_ n: NotificationItem) {
+        setNotificationUnread(notificationUnread + 1)
+    }
+
+    /// Active channel was archived or left — drop the selection.
+    func channelBecameUnavailable(_ channelId: String) {
+        if selectedChannelId == channelId {
+            selectedChannelId = nil
+            openThreadRootId = nil
+        }
+    }
+
+    /// Bell-menu navigation: jump to a notification's channel (and thread).
+    func openNotification(_ n: NotificationItem) {
+        if selectedWorkspaceId != n.workspaceId {
+            selectWorkspace(n.workspaceId)
+        }
+        selectChannel(n.channelId)
+        if let root = n.message.threadRootId {
+            openThread(root)
+        }
     }
 
     func typingUserIds(channelId: String) -> [String] {
