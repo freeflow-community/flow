@@ -106,6 +106,9 @@ switch (mode) {
       mentions: need('users').split(','),
     });
     break;
+  case 'workspace-color': // --workspace W --color <preset-id> (owner/admin token required)
+    await api('PATCH', `/v1/workspaces/${need('workspace')}`, { sidebarColor: need('color') });
+    break;
   case 'notifications':
     await api('GET', `/v1/me/notifications?limit=${opts.limit ?? 20}`);
     break;

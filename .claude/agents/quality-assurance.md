@@ -215,6 +215,33 @@ Practical notes:
    → cleared in bob-events.
 10. Bob quits → assert Bob flips to `offline` in Alice's sidebar.
 
+Phase-3.5 additions (run as part of SMOKE once those features land):
+11. Member-click DM: Alice clicks Bob's member row → the Bob DM opens (header
+    shows Bob); right-click the row → "View Profile" still opens the profile
+    sheet. Self-click opens a self-DM (not a bug).
+12. Avatar menu: click `sidebar.avatarMenu` → menu shows `avatarMenu.profile`
+    (click it, profile sheet opens, close) and `avatarMenu.signOut` (assert it
+    EXISTS — never click it; signing out breaks the persistent session).
+13. Workspace color: Alice (owner) workspace menu → "Workspace Color…" →
+    `workspace.colorSheet` → click `color.swatch.ocean` → sidebar restyles
+    (screenshot evidence) AND `workspace.updated` with sidebarColor "ocean" in
+    bob-events. Restore with `color.swatch.violet` when done (leave qa-lab
+    violet). qa-bot equivalent: `workspace-color --workspace W --color <id>`.
+14. Sidebar width: read `sidebar.resizer` frame → `/tmp/qa/mouse drag X Y X+60 Y`
+    → dump: sidebar rows' frames shift ~60pt (or resizer AX value changes);
+    double-click the handle resets. (Rebuild /tmp/qa/mouse from
+    apps/macos/tools/mouse.swift — it gained a `drag` verb.)
+15. Image paste: `osascript -e 'set the clipboard to (read (POSIX file
+    "/tmp/qa/pixel.png") as «class PNGf»)'` → focus `composer.input` → keystroke
+    "v" using command down → `composer.attachment.pasted-*.png` chip appears →
+    send → the image message renders (msg.file.*).
+16. Markdown: Bob sends a body containing a ``` fence and "> quote" lines via
+    REST → Alice's dump shows `msg.codeBlock` and the quote text renders
+    (markers stripped). Composer live styling: type "> hello" into the composer
+    → screenshot as visual evidence of in-input quote styling (AX can't read
+    styling). NOTE: the composer is now an AX TEXT AREA (NSTextView), not a
+    text field — target it by identifier with role AXTextArea.
+
 Note (post-retheme): the sidebar is custom rows — selection is exposed via the
 AX isSelected trait, not List selection; the footer is `sidebar.statusFooter`
 whose value carries "Connected/…; <status>".
@@ -304,6 +331,34 @@ Items (tag bodies with the runid as always):
     bob's status; alice sets hers via qa-bot `profile --status-emoji/--status-text`
     → her member row / `status-avatar-badge` updates live in the browser;
     `status-clear` clears (verify in alice's events).
+
+Phase-3.5 additions (run as part of WEB smoke once those features land):
+13. Member-click DM: click `sidebar-member-Alice` → the Alice DM opens
+    (channel-header shows Alice); hover the row → `member-menu-Alice` →
+    `member-profile-Alice` → `user-card` opens.
+14. Avatar menu: `avatar-menu-trigger` → `avatar-menu` with `avatar-menu-profile`
+    (click, profile modal opens, close) and `avatar-menu-signout` (assert
+    EXISTS, never click). The old `menu-profile`/`menu-signout` workspace-menu
+    ids are GONE by design.
+15. Workspace color: browser user bob is NOT an admin → assert
+    `menu-workspace-color` is ABSENT in his workspace menu (UI permission
+    gate); then alice sets the color over REST (`workspace-color --workspace W
+    --color ocean`) → the sidebar `<aside>` inline background restyles LIVE
+    (assert the style attribute changes; screenshot) → restore violet. The
+    picker UI itself is covered by the macOS run (alice is owner there).
+16. Sidebar width: drag `sidebar-resizer` (CDP mouse or pointer-event JS)
+    ~+60px → aside inline width changes and localStorage 'mychat.sidebarWidth'
+    persists; double-click resets to 240.
+17. Image paste: via javascript_tool dispatch a synthetic ClipboardEvent
+    'paste' on the composer with a DataTransfer containing a small PNG File →
+    `pending-file-pasted-*.png` chip appears → send → thumbnail renders.
+18. Markdown: type "> hello" into the composer → in-input quote styling
+    appears (assert the editor's internal line/class structure via DOM;
+    screenshot); type a ``` fence draft → code styling; alice sends a body
+    with a fence + quote via REST → `code-block` and `quote-block` testids
+    render in the message list; NO mention pills inside the code block.
+    NOTE: the composer is now a contenteditable element (still testid
+    `composer-input`) — type via keyboard events/insertText, not .value.
 
 Post-retheme layout notes ("Quiet, in violet"): a 64px workspace rail exists
 (`rail-workspace-<slug>`, `rail-add-workspace`); the notifications bell lives in
