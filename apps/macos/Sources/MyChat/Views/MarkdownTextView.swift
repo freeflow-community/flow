@@ -11,6 +11,14 @@ final class MarkdownNSTextView: NSTextView {
     var onPasteImages: ((NSPasteboard) -> Bool)?
     var wantsInitialFocus = true
 
+    /// A plain-text NSTextView refuses pasteboards it can't read as text, so
+    /// Cmd-V / Edit>Paste with an image-only clipboard never even reaches
+    /// paste(_:) (QA s0854 finding). Advertise image + file-URL types so the
+    /// action stays enabled; our paste override routes them to the upload flow.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        super.readablePasteboardTypes + [.png, .tiff, .fileURL]
+    }
+
     override func paste(_ sender: Any?) {
         if onPasteImages?(NSPasteboard.general) == true { return }
         super.paste(sender)
