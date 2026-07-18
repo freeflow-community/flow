@@ -589,6 +589,10 @@ struct StatusFooterView: View {
         }
         .padding(12)
         .frame(width: 240)
+        // .contain keeps the container id from shadowing the per-row
+        // status.option.N / status.clear ids in the AX tree (QA run s143239
+        // saw every row exposed as "status.picker" without this)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("status.picker")
     }
 
