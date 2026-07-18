@@ -1,17 +1,26 @@
 import { and, asc, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm';
-import type { MessageDTO, MessagePage } from '@mychat/shared';
+import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO } from '@mychat/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { decryptBody, encryptBody } from '../crypto/index.js';
 import { requireChannelAccess } from './channels.js';
+import { reactionsForMessages } from './reactions.js';
+import { filesForMessages, validateAttachments, toFileDTO } from './files.js';
+import { computeRecipients, insertNotifications, publishNotifications } from './notifications.js';
 import { publishEvent, subjectMsg } from '../bus.js';
 
-const { messages, channelMembers } = schema;
+const { messages, channelMembers, messageFiles } = schema;
 
 type MessageRow = typeof messages.$inferSelect;
+export type HydratedMessageRow = MessageRow;
 
-export function toMessageDTO(row: MessageRow): MessageDTO {
+interface DtoExtras {
+  reactions?: ReactionAggDTO[] | undefined;
+  files?: FileDTO[] | undefined;
+}
+
+export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
   return {
     id: row.id,
     channelId: row.channelId,
@@ -24,12 +33,22 @@ export function toMessageDTO(row: MessageRow): MessageDTO {
     deletedAt: row.deletedAt?.toISOString() ?? null,
     replyCount: row.replyCount,
     lastReplyAt: row.lastReplyAt?.toISOString() ?? null,
+    reactions: extras?.reactions ?? [],
+    files: extras?.files ?? [],
   };
 }
 
+/** Page hydration (phase2.md §2/§3): one grouped reactions query + one files join per page. */
+async function hydrate(rows: MessageRow[]): Promise<MessageDTO[]> {
+  const ids = rows.map((r) => r.id);
+  const [reactions, files] = await Promise.all([reactionsForMessages(ids), filesForMessages(ids)]);
+  return rows.map((r) => toMessageDTO(r, { reactions: reactions.get(r.id), files: files.get(r.id) }));
+}
+
 /**
- * Send message (spec write path): validate → insert (encrypted) → publish.
- * Public channels: auto-join on first post. Idempotent on (channel, clientMsgId).
+ * Send message (spec write path): validate → insert (encrypted) + attach files
+ * + write notification rows, one transaction → publish. Public channels:
+ * auto-join on first post. Idempotent on (channel, clientMsgId).
  */
 export async function sendMessage(
   channelId: string,
@@ -37,6 +56,8 @@ export async function sendMessage(
   clientMsgId: string,
   body: string,
   threadRootId?: string,
+  fileIds?: string[],
+  mentions?: string[],
 ): Promise<MessageDTO> {
   const { chan, isMember } = await requireChannelAccess(channelId, userId);
   if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
@@ -51,7 +72,7 @@ export async function sendMessage(
     .from(messages)
     .where(and(eq(messages.channelId, channelId), eq(messages.clientMsgId, clientMsgId)))
     .limit(1);
-  if (existing[0]) return toMessageDTO(existing[0]);
+  if (existing[0]) return (await hydrate([existing[0]]))[0]!;
 
   if (threadRootId) {
     const roots = await db.select().from(messages).where(eq(messages.id, threadRootId)).limit(1);
@@ -61,11 +82,15 @@ export async function sendMessage(
     if (root.deletedAt) throw badRequest('bad_thread_root', 'cannot reply to a deleted message');
   }
 
+  const attachRows = await validateAttachments(fileIds ?? [], chan.workspaceId, userId);
+  const recipients = await computeRecipients(chan, userId, body, mentions ?? [], threadRootId);
+
   const id = newId();
   const enc = encryptBody(body);
   const now = new Date();
 
   let row: MessageRow | undefined;
+  let planned: Awaited<ReturnType<typeof insertNotifications>> = [];
   await db.transaction(async (tx) => {
     const inserted = await tx
       .insert(messages)
@@ -84,13 +109,19 @@ export async function sendMessage(
       .onConflictDoNothing({ target: [messages.channelId, messages.clientMsgId] })
       .returning();
     row = inserted[0];
-    if (row && threadRootId) {
+    if (!row) return; // lost the race; handled below
+    if (threadRootId) {
       // denormalized thread rollup on the root, same txn (spec design note)
       await tx
         .update(messages)
         .set({ replyCount: sql`${messages.replyCount} + 1`, lastReplyAt: now })
         .where(eq(messages.id, threadRootId));
     }
+    if (attachRows.length > 0) {
+      await tx.insert(messageFiles).values(attachRows.map((f) => ({ messageId: id, fileId: f.id })));
+    }
+    // notification rows in the same transaction (phase2.md §4)
+    planned = await insertNotifications(tx, recipients, id, channelId);
   });
 
   if (!row) {
@@ -100,10 +131,10 @@ export async function sendMessage(
       .from(messages)
       .where(and(eq(messages.channelId, channelId), eq(messages.clientMsgId, clientMsgId)))
       .limit(1);
-    return toMessageDTO(winner[0]!);
+    return (await hydrate([winner[0]!]))[0]!;
   }
 
-  const dto = toMessageDTO(row);
+  const dto = toMessageDTO(row, { files: attachRows.map(toFileDTO) });
   publishEvent(subjectMsg(chan.workspaceId, channelId), {
     type: threadRootId ? 'thread.reply' : 'message.created',
     workspaceId: chan.workspaceId,
@@ -111,6 +142,7 @@ export async function sendMessage(
     ts: now.toISOString(),
     data: dto,
   });
+  publishNotifications(planned, dto, chan.workspaceId, now.toISOString());
   return dto;
 }
 
@@ -131,7 +163,7 @@ export async function listMessages(
     .orderBy(desc(messages.id))
     .limit(limit + 1);
   const hasMore = rows.length > limit;
-  return { messages: rows.slice(0, limit).map(toMessageDTO), hasMore };
+  return { messages: await hydrate(rows.slice(0, limit)), hasMore };
 }
 
 /** Thread view: root + replies ascending, cursor after=<msgId>. */
@@ -156,10 +188,15 @@ export async function listThread(
     .orderBy(asc(messages.id))
     .limit(limit + 1);
   const hasMore = rows.length > limit;
-  return { root: toMessageDTO(root), messages: rows.slice(0, limit).map(toMessageDTO), hasMore };
+  const [rootDto, replyDtos] = await Promise.all([hydrate([root]), hydrate(rows.slice(0, limit))]);
+  return { root: rootDto[0]!, messages: replyDtos, hasMore };
 }
 
-/** Only the author edits own messages (spec permission rules). Re-encrypts. */
+/**
+ * Only the author edits own messages (spec permission rules). Re-encrypts.
+ * Edits do not create new notifications (deliberate: re-notifying on every
+ * typo fix is noise; matches the write-time parse model).
+ */
 export async function editMessage(messageId: string, userId: string, body: string): Promise<MessageDTO> {
   const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
   const row = rows[0];
@@ -175,7 +212,7 @@ export async function editMessage(messageId: string, userId: string, body: strin
     .set({ body: enc.body, bodyNonce: enc.bodyNonce, encKeyId: enc.encKeyId, encScheme: enc.encScheme, editedAt })
     .where(eq(messages.id, messageId))
     .returning();
-  const dto = toMessageDTO(updated[0]!);
+  const dto = (await hydrate([updated[0]!]))[0]!;
   publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
     type: 'message.updated',
     workspaceId: chan.workspaceId,

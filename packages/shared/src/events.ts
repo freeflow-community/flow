@@ -1,4 +1,4 @@
-import type { ChannelDTO, MessageDTO, WorkspaceMemberDTO } from './dto.js';
+import type { ChannelDTO, MessageDTO, NotificationDTO, UserDTO, WorkspaceMemberDTO } from './dto.js';
 
 // WS event envelope, per phase1.md §3
 export type EventType =
@@ -9,7 +9,13 @@ export type EventType =
   | 'typing'
   | 'presence'
   | 'channel.created'
+  | 'channel.archived'
   | 'member.joined'
+  | 'member.left'
+  | 'reaction.added'
+  | 'reaction.removed'
+  | 'notification.created' // per-user notify subject (phase 2 §4)
+  | 'user.updated' // meta subject of every workspace the user belongs to
   | 'workspace.joined'; // per-user subject; consumed by the gateway, not forwarded to clients
 
 export interface Event<T = unknown> {
@@ -30,9 +36,25 @@ export interface PresenceData {
   status: 'online' | 'offline';
 }
 
+export interface ReactionEventData {
+  messageId: string;
+  channelId: string;
+  emoji: string;
+  userId: string;
+}
+
+export interface MemberLeftData {
+  userId: string;
+  channelId: string;
+  workspaceId: string;
+}
+
 export type MessageEventData = MessageDTO;
 export type ChannelCreatedData = ChannelDTO;
+export type ChannelArchivedData = ChannelDTO;
 export type MemberJoinedData = WorkspaceMemberDTO;
+export type NotificationCreatedData = NotificationDTO;
+export type UserUpdatedData = UserDTO;
 
 // ---- WS protocol frames (phase1.md §4) --------------------------
 export type ClientFrame =

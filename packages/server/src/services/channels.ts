@@ -1,21 +1,30 @@
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
-import type { ChannelDTO } from '@mychat/shared';
+import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import type { ChannelDTO, ChannelKind, NotifyLevel } from '@mychat/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
-import { conflict, forbidden, notFound } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { isUniqueViolation, requireMembership } from './workspaces.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
-const { channels, channelMembers, messages } = schema;
+const { channels, channelMembers, messages, workspaceMembers } = schema;
+
+type ChannelRow = typeof channels.$inferSelect;
 
 export function toChannelDTO(
-  c: typeof channels.$inferSelect,
-  opts: { isMember: boolean; lastReadMsgId?: string | null; unreadCount?: number },
+  c: ChannelRow,
+  opts: {
+    isMember: boolean;
+    lastReadMsgId?: string | null | undefined;
+    unreadCount?: number | undefined;
+    notifyLevel?: number | undefined;
+    memberIds?: string[] | undefined;
+  },
 ): ChannelDTO {
-  return {
+  const dto: ChannelDTO = {
     id: c.id,
     workspaceId: c.workspaceId,
     name: c.name,
+    kind: c.kind as ChannelKind,
     topic: c.topic,
     isPrivate: c.isPrivate,
     createdBy: c.createdBy,
@@ -24,7 +33,26 @@ export function toChannelDTO(
     isMember: opts.isMember,
     lastReadMsgId: opts.lastReadMsgId ?? null,
     unreadCount: opts.unreadCount ?? 0,
+    notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
   };
+  if (opts.memberIds) dto.memberIds = opts.memberIds;
+  return dto;
+}
+
+async function dmMemberIds(channelIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (channelIds.length === 0) return out;
+  const rows = await db
+    .select({ channelId: channelMembers.channelId, userId: channelMembers.userId })
+    .from(channelMembers)
+    .where(inArray(channelMembers.channelId, channelIds))
+    .orderBy(asc(channelMembers.userId));
+  for (const r of rows) {
+    const list = out.get(r.channelId) ?? [];
+    list.push(r.userId);
+    out.set(r.channelId, list);
+  }
+  return out;
 }
 
 export async function createChannel(
@@ -64,6 +92,96 @@ export async function createChannel(
   return dto;
 }
 
+/**
+ * DM upsert (phase2.md §1): one DM channel per member set per workspace.
+ * The caller is implicitly a member; dm_key = sorted member ids joined with ':'.
+ * Races resolve via the chan_dm_key unique index — loser re-selects the winner.
+ */
+export async function createDm(workspaceId: string, callerId: string, otherUserIds: string[]): Promise<ChannelDTO> {
+  await requireMembership(workspaceId, callerId);
+  const memberIds = [...new Set([callerId, ...otherUserIds])].sort();
+  // every target must be a workspace member
+  const memRows = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, memberIds)));
+  if (memRows.length !== memberIds.length) {
+    throw badRequest('bad_user', 'all DM recipients must be members of this workspace');
+  }
+  const dmKey = memberIds.join(':');
+  const kind: ChannelKind = memberIds.length <= 2 ? 'dm' : 'group_dm';
+
+  const fetchExisting = async (): Promise<ChannelRow | undefined> =>
+    (
+      await db
+        .select()
+        .from(channels)
+        .where(and(eq(channels.workspaceId, workspaceId), eq(channels.dmKey, dmKey)))
+        .limit(1)
+    )[0];
+
+  const existing = await fetchExisting();
+  if (existing) {
+    const mem = await db
+      .select({ lastReadMsgId: channelMembers.lastReadMsgId, notifyLevel: channelMembers.notifyLevel })
+      .from(channelMembers)
+      .where(and(eq(channelMembers.channelId, existing.id), eq(channelMembers.userId, callerId)))
+      .limit(1);
+    return toChannelDTO(existing, {
+      isMember: true,
+      lastReadMsgId: mem[0]?.lastReadMsgId,
+      notifyLevel: mem[0]?.notifyLevel,
+      memberIds,
+    });
+  }
+
+  const id = newId();
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(channels).values({
+        id,
+        workspaceId,
+        name: null,
+        kind,
+        dmKey,
+        isPrivate: true, // always private (phase2.md §1)
+        createdBy: callerId,
+      });
+      await tx.insert(channelMembers).values(memberIds.map((uid) => ({ channelId: id, userId: uid })));
+    });
+  } catch (err: unknown) {
+    if (isUniqueViolation(err)) {
+      const winner = await fetchExisting();
+      if (winner) return toChannelDTO(winner, { isMember: true, memberIds });
+    }
+    throw err;
+  }
+
+  const created = (await db.select().from(channels).where(eq(channels.id, id)).limit(1))[0]!;
+  const dto = toChannelDTO(created, { isMember: true, memberIds });
+  const ts = new Date().toISOString();
+  // channel.created tells the creator's sockets; member.joined (one per member)
+  // updates every participant's gateway membership cache and prompts clients to
+  // refresh their channel list (same contract as channel joins).
+  publishEvent(subjectMeta(workspaceId), {
+    type: 'channel.created',
+    workspaceId,
+    channelId: id,
+    ts,
+    data: dto,
+  });
+  for (const uid of memberIds) {
+    publishEvent(subjectMeta(workspaceId), {
+      type: 'member.joined',
+      workspaceId,
+      channelId: id,
+      ts,
+      data: { userId: uid, channelId: id, workspaceId },
+    });
+  }
+  return dto;
+}
+
 /** Joined + public channels of a workspace, with unread counts for joined ones. */
 export async function listChannels(workspaceId: string, userId: string): Promise<ChannelDTO[]> {
   await requireMembership(workspaceId, userId);
@@ -71,6 +189,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     .select({
       c: channels,
       lastReadMsgId: channelMembers.lastReadMsgId,
+      notifyLevel: channelMembers.notifyLevel,
       isMember: sql<boolean>`(${channelMembers.userId} IS NOT NULL)`,
     })
     .from(channels)
@@ -82,6 +201,8 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     .orderBy(channels.name);
 
   const visible = rows.filter((r) => !r.c.isPrivate || r.isMember);
+  const dmIds = visible.filter((r) => r.c.kind !== 'standard').map((r) => r.c.id);
+  const dmMembers = await dmMemberIds(dmIds);
   const result: ChannelDTO[] = [];
   for (const r of visible) {
     let unreadCount = 0;
@@ -92,7 +213,15 @@ export async function listChannels(workspaceId: string, userId: string): Promise
       const cnt = await db.select({ n: sql<number>`count(*)::int` }).from(messages).where(cond);
       unreadCount = cnt[0]?.n ?? 0;
     }
-    result.push(toChannelDTO(r.c, { isMember: r.isMember, lastReadMsgId: r.lastReadMsgId, unreadCount }));
+    result.push(
+      toChannelDTO(r.c, {
+        isMember: r.isMember,
+        lastReadMsgId: r.lastReadMsgId,
+        unreadCount,
+        notifyLevel: r.notifyLevel ?? 1,
+        memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
+      }),
+    );
   }
   return result;
 }
@@ -118,6 +247,8 @@ export async function requireChannelAccess(channelId: string, userId: string) {
 
 export async function joinChannel(channelId: string, userId: string): Promise<ChannelDTO> {
   const { chan, isMember } = await requireChannelAccess(channelId, userId);
+  if (chan.kind !== 'standard') throw badRequest('dm_channel', 'cannot join a DM via channel endpoints');
+  if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
   if (chan.isPrivate && !isMember) throw forbidden('cannot join a private channel without an invite');
   if (!isMember) {
     await db.insert(channelMembers).values({ channelId, userId }).onConflictDoNothing();
@@ -130,6 +261,106 @@ export async function joinChannel(channelId: string, userId: string): Promise<Ch
     });
   }
   return toChannelDTO(chan, { isMember: true });
+}
+
+/**
+ * Invite/add a member (phase2.md §5): private channels → any existing channel
+ * member may add; public channels → any workspace member may add. Target must
+ * be a workspace member. DMs never gain members this way (a wider group DM is
+ * a new channel, §1).
+ */
+export async function addMember(channelId: string, actorId: string, targetUserId: string): Promise<void> {
+  const { chan, isMember } = await requireChannelAccess(channelId, actorId);
+  if (chan.kind !== 'standard') throw badRequest('dm_channel', 'DM membership is fixed; start a new group DM instead');
+  if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
+  if (chan.isPrivate && !isMember) throw forbidden('only channel members can invite to a private channel');
+  const target = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, chan.workspaceId), eq(workspaceMembers.userId, targetUserId)))
+    .limit(1);
+  if (!target[0]) throw badRequest('bad_user', 'user is not a member of this workspace');
+  const inserted = await db
+    .insert(channelMembers)
+    .values({ channelId, userId: targetUserId })
+    .onConflictDoNothing()
+    .returning();
+  if (inserted.length > 0) {
+    publishEvent(subjectMeta(chan.workspaceId), {
+      type: 'member.joined',
+      workspaceId: chan.workspaceId,
+      channelId,
+      ts: new Date().toISOString(),
+      data: { userId: targetUserId, channelId, workspaceId: chan.workspaceId },
+    });
+  }
+}
+
+/**
+ * Remove a member (phase2.md §5): self-removal is "leave"; removing someone
+ * else requires workspace admin/owner (with channel access). Leaving is
+ * allowed for group DMs but not 1:1 DMs (§1).
+ */
+export async function removeMember(channelId: string, actorId: string, targetUserId: string): Promise<void> {
+  const { chan, isMember } = await requireChannelAccess(channelId, actorId);
+  const self = actorId === targetUserId;
+  if (chan.kind === 'dm') throw badRequest('dm_channel', 'cannot leave a 1:1 DM');
+  if (chan.kind === 'group_dm' && !self) throw forbidden('group DM members can only remove themselves');
+  if (self) {
+    if (!isMember) throw badRequest('not_member', 'not a member of this channel');
+    if (chan.kind === 'standard' && chan.name === 'general') throw badRequest('general_channel', 'cannot leave #general');
+  } else {
+    const actor = await requireMembership(chan.workspaceId, actorId);
+    if (actor.role !== 'owner' && actor.role !== 'admin') throw forbidden('only owners and admins can remove members');
+  }
+  const deleted = await db
+    .delete(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, targetUserId)))
+    .returning();
+  if (deleted.length > 0) {
+    publishEvent(subjectMeta(chan.workspaceId), {
+      type: 'member.left',
+      workspaceId: chan.workspaceId,
+      channelId,
+      ts: new Date().toISOString(),
+      data: { userId: targetUserId, channelId, workspaceId: chan.workspaceId },
+    });
+  }
+}
+
+/** Archive (phase2.md §5): workspace admin/owner or the channel creator. Read-only afterwards. */
+export async function archiveChannel(channelId: string, actorId: string): Promise<ChannelDTO> {
+  const { chan, isMember } = await requireChannelAccess(channelId, actorId);
+  if (chan.kind !== 'standard') throw badRequest('dm_channel', 'DMs cannot be archived');
+  if (chan.name === 'general') throw badRequest('general_channel', 'cannot archive #general');
+  const actor = await requireMembership(chan.workspaceId, actorId);
+  const allowed = actor.role === 'owner' || actor.role === 'admin' || chan.createdBy === actorId;
+  if (!allowed) throw forbidden('only owners, admins, or the channel creator can archive');
+  if (chan.archivedAt) return toChannelDTO(chan, { isMember }); // idempotent
+  const updated = await db
+    .update(channels)
+    .set({ archivedAt: new Date() })
+    .where(eq(channels.id, channelId))
+    .returning();
+  const dto = toChannelDTO(updated[0]!, { isMember });
+  publishEvent(subjectMeta(chan.workspaceId), {
+    type: 'channel.archived',
+    workspaceId: chan.workspaceId,
+    channelId,
+    ts: new Date().toISOString(),
+    data: dto,
+  });
+  return dto;
+}
+
+/** Per-user notify level (operator ruling, decision log 2026-07-18): 0=mute 1=mentions 2=all. */
+export async function setNotifyLevel(channelId: string, userId: string, level: 0 | 1 | 2): Promise<void> {
+  const { isMember } = await requireChannelAccess(channelId, userId);
+  if (!isMember) throw forbidden('join the channel first');
+  await db
+    .update(channelMembers)
+    .set({ notifyLevel: level })
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
 }
 
 export async function markRead(channelId: string, userId: string, lastReadMsgId: string): Promise<void> {

@@ -19,4 +19,13 @@ export const config = {
   inviteUrlBase: process.env.INVITE_URL_BASE ?? 'myapp://invite/',
   sessionTtlDays: 30,
   inviteTtlDays: 7,
+  /** Local blob-store directory (phase2.md §3); object storage swaps in behind the same interface in phase 3. */
+  get fileDir(): string {
+    return process.env.MYCHAT_FILE_DIR ?? path.join(pkgRoot, '.files');
+  },
+  maxFileBytes: 20 * 1024 * 1024, // 20 MB/file (phase2.md §3)
+  maxFilesPerMessage: 10,
+  thumbMaxPx: 512,
+  avatarPx: 512,
+  orphanFileTtlHours: 24, // unattached files older than this are swept (decision log ruling 5)
 } as const;

@@ -2,16 +2,23 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { z, ZodTypeAny } from 'zod';
 import {
   AcceptInviteBody,
+  AddChannelMemberBody,
   CreateChannelBody,
+  CreateDmBody,
   CreateInviteBody,
   CreateWorkspaceBody,
   EditMessageBody,
+  EmojiParam,
   ListMessagesQuery,
+  ListNotificationsQuery,
   ListThreadQuery,
   LoginBody,
+  MarkNotificationsReadBody,
   MarkReadBody,
+  PatchMeBody,
   RegisterBody,
   SendMessageBody,
+  SetNotifyLevelBody,
   type UserDTO,
 } from '@mychat/shared';
 import { ApiError, badRequest, unauthorized } from '../lib/errors.js';
@@ -19,6 +26,10 @@ import * as auth from '../services/auth.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
 import * as msg from '../services/messages.js';
+import * as rx from '../services/reactions.js';
+import * as fl from '../services/files.js';
+import * as nt from '../services/notifications.js';
+import * as us from '../services/users.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -42,6 +53,14 @@ async function requireAuth(req: FastifyRequest): Promise<void> {
   const token = header.slice('Bearer '.length).trim();
   req.bearerToken = token;
   req.user = await auth.authenticate(token);
+}
+
+/** Read a single multipart file part into a buffer (20 MB cap enforced by the plugin). */
+async function readUpload(req: FastifyRequest): Promise<{ filename: string; mimeType: string; data: Buffer }> {
+  const part = await (req as FastifyRequest & { file(): Promise<undefined | { filename?: string; mimetype: string; toBuffer(): Promise<Buffer> }> }).file();
+  if (!part) throw badRequest('no_file', 'multipart file field required');
+  const data = await part.toBuffer();
+  return { filename: part.filename ?? 'file', mimeType: part.mimetype, data };
 }
 
 export function registerRoutes(app: FastifyInstance): void {
@@ -81,9 +100,46 @@ export function registerRoutes(app: FastifyInstance): void {
   // ---- me ------------------------------------------------------
   app.get('/v1/me', { preHandler: requireAuth }, async (req) => req.user);
 
+  app.patch('/v1/me', { preHandler: requireAuth }, async (req) => {
+    const body = parse(PatchMeBody, req.body);
+    return us.patchMe(req.user.id, body);
+  });
+
+  app.post('/v1/me/avatar', { preHandler: requireAuth }, async (req) => {
+    const { mimeType, data } = await readUpload(req);
+    return us.setAvatar(req.user.id, data, mimeType);
+  });
+
   app.get('/v1/me/workspaces', { preHandler: requireAuth }, async (req) => ({
     workspaces: await ws.myWorkspaces(req.user.id),
   }));
+
+  app.get('/v1/me/notifications', { preHandler: requireAuth }, async (req) => {
+    const q = parse(ListNotificationsQuery, req.query);
+    return nt.listNotifications(req.user.id, q.before, q.limit);
+  });
+
+  app.post('/v1/me/notifications/read', { preHandler: requireAuth }, async (req) => {
+    const body = parse(MarkNotificationsReadBody, req.body);
+    await nt.markNotificationsRead(req.user.id, body.upToId);
+    return { ok: true };
+  });
+
+  // ---- users / avatars -----------------------------------------
+  app.get('/v1/users/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return us.getUser(id, req.user.id);
+  });
+
+  app.get('/v1/avatars/:key', { preHandler: requireAuth }, async (req, reply) => {
+    const { key } = req.params as { key: string };
+    const data = await us.getAvatar(key);
+    return reply
+      .header('content-type', 'image/webp')
+      .header('cache-control', 'private, max-age=31536000, immutable') // key changes per upload
+      .header('x-content-type-options', 'nosniff')
+      .send(data);
+  });
 
   // ---- workspaces ----------------------------------------------
   app.post('/v1/workspaces', { preHandler: requireAuth }, async (req, reply) => {
@@ -127,9 +183,49 @@ export function registerRoutes(app: FastifyInstance): void {
     return { channels: await ch.listChannels(id, req.user.id) };
   });
 
+  // DM upsert (phase2.md §1): returns the existing channel for this member set or creates it
+  app.post('/v1/workspaces/:id/dms', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(CreateDmBody, req.body);
+    const dto = await ch.createDm(id, req.user.id, body.userIds);
+    return reply.status(201).send(dto);
+  });
+
   app.post('/v1/channels/:id/join', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return ch.joinChannel(id, req.user.id);
+  });
+
+  // ---- channel membership management (phase2.md §5) ------------
+  app.post('/v1/channels/:id/members', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(AddChannelMemberBody, req.body);
+    await ch.addMember(id, req.user.id, body.userId);
+    return reply.status(201).send({ ok: true });
+  });
+
+  app.delete('/v1/channels/:id/members/:userId', { preHandler: requireAuth }, async (req) => {
+    const { id, userId } = req.params as { id: string; userId: string };
+    await ch.removeMember(id, req.user.id, userId);
+    return { ok: true };
+  });
+
+  app.post('/v1/channels/:id/leave', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ch.removeMember(id, req.user.id, req.user.id);
+    return { ok: true };
+  });
+
+  app.post('/v1/channels/:id/archive', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ch.archiveChannel(id, req.user.id);
+  });
+
+  app.put('/v1/channels/:id/notify', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SetNotifyLevelBody, req.body);
+    await ch.setNotifyLevel(id, req.user.id, body.level);
+    return { ok: true };
   });
 
   app.post('/v1/channels/:id/read', { preHandler: requireAuth }, async (req) => {
@@ -149,7 +245,15 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/channels/:id/messages', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(SendMessageBody, req.body);
-    const dto = await msg.sendMessage(id, req.user.id, body.clientMsgId, body.body, body.threadRootId);
+    const dto = await msg.sendMessage(
+      id,
+      req.user.id,
+      body.clientMsgId,
+      body.body,
+      body.threadRootId,
+      body.fileIds,
+      body.mentions,
+    );
     return reply.status(201).send(dto);
   });
 
@@ -169,5 +273,47 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const q = parse(ListThreadQuery, req.query);
     return msg.listThread(id, req.user.id, q.after, q.limit);
+  });
+
+  // ---- reactions (phase2.md §2) --------------------------------
+  app.put('/v1/messages/:id/reactions/:emoji', { preHandler: requireAuth }, async (req) => {
+    const { id, emoji } = req.params as { id: string; emoji: string };
+    const parsed = parse(EmojiParam, decodeURIComponent(emoji));
+    return { reactions: await rx.addReaction(id, req.user.id, parsed) };
+  });
+
+  app.delete('/v1/messages/:id/reactions/:emoji', { preHandler: requireAuth }, async (req) => {
+    const { id, emoji } = req.params as { id: string; emoji: string };
+    const parsed = parse(EmojiParam, decodeURIComponent(emoji));
+    return { reactions: await rx.removeReaction(id, req.user.id, parsed) };
+  });
+
+  // ---- files (phase2.md §3) ------------------------------------
+  app.post('/v1/workspaces/:id/files', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { filename, mimeType, data } = await readUpload(req);
+    const dto = await fl.uploadFile(id, req.user.id, filename, mimeType, data);
+    return reply.status(201).send(dto);
+  });
+
+  app.get('/v1/files/:id', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const f = await fl.getFileContent(id, req.user.id);
+    return reply
+      .header('content-type', f.mimeType)
+      .header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`)
+      .header('x-content-type-options', 'nosniff') // never execute uploaded HTML on our origin
+      .send(f.data);
+  });
+
+  app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const f = await fl.getThumbContent(id, req.user.id);
+    return reply
+      .header('content-type', f.mimeType)
+      .header('content-disposition', 'inline')
+      .header('cache-control', 'private, max-age=31536000, immutable') // thumbs never change for a file id
+      .header('x-content-type-options', 'nosniff')
+      .send(f.data);
   });
 }

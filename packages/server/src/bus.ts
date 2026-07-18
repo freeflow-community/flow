@@ -36,6 +36,15 @@ export function subjectWorkspaceAll(workspaceId: string): string {
 export function subjectUserMeta(userId: string): string {
   return `user.${userId}.meta`;
 }
+/**
+ * Per-user notification subject (phase2.md §4). User-global rather than
+ * workspace-scoped — approved deviation (decision log 2026-07-18): matches the
+ * user.{id}.meta pattern, one subscription per socket; the event envelope
+ * already carries workspaceId/channelId.
+ */
+export function subjectUserNotify(userId: string): string {
+  return `user.${userId}.notify`;
+}
 
 export function publishEvent(subject: string, event: Event): void {
   // Fire-and-forget: core NATS, loss-tolerant — clients backfill over REST.

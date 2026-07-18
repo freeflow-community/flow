@@ -1,0 +1,82 @@
+// Emoji reactions (phase2.md §2). Unicode emoji only; idempotent add/remove;
+// events on the channel's msg subject; aggregates computed per message page.
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import type { ReactionAggDTO } from '@mychat/shared';
+import { db, schema } from '../db/index.js';
+import { badRequest, notFound } from '../lib/errors.js';
+import { requireChannelAccess } from './channels.js';
+import { publishEvent, subjectMsg } from '../bus.js';
+
+const { reactions, messages } = schema;
+
+async function loadMessage(messageId: string, userId: string) {
+  const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+  const row = rows[0];
+  if (!row) throw notFound('message not found');
+  const { chan } = await requireChannelAccess(row.channelId, userId);
+  if (row.deletedAt) throw badRequest('message_deleted', 'cannot react to a deleted message');
+  return { row, chan };
+}
+
+export async function addReaction(messageId: string, userId: string, emoji: string): Promise<ReactionAggDTO[]> {
+  const { row, chan } = await loadMessage(messageId, userId);
+  const inserted = await db
+    .insert(reactions)
+    .values({ messageId, userId, emoji })
+    .onConflictDoNothing()
+    .returning();
+  if (inserted.length > 0) {
+    publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
+      type: 'reaction.added',
+      workspaceId: chan.workspaceId,
+      channelId: row.channelId,
+      ts: new Date().toISOString(),
+      data: { messageId, channelId: row.channelId, emoji, userId },
+    });
+  }
+  return (await reactionsForMessages([messageId])).get(messageId) ?? [];
+}
+
+export async function removeReaction(messageId: string, userId: string, emoji: string): Promise<ReactionAggDTO[]> {
+  const { row, chan } = await loadMessage(messageId, userId);
+  const deleted = await db
+    .delete(reactions)
+    .where(and(eq(reactions.messageId, messageId), eq(reactions.userId, userId), eq(reactions.emoji, emoji)))
+    .returning();
+  if (deleted.length > 0) {
+    publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
+      type: 'reaction.removed',
+      workspaceId: chan.workspaceId,
+      channelId: row.channelId,
+      ts: new Date().toISOString(),
+      data: { messageId, channelId: row.channelId, emoji, userId },
+    });
+  }
+  return (await reactionsForMessages([messageId])).get(messageId) ?? [];
+}
+
+/**
+ * Aggregated reactions for a message page (phase2.md §2: one grouped query per
+ * page). Emoji groups ordered by first reaction; userIds in reaction order.
+ */
+export async function reactionsForMessages(messageIds: string[]): Promise<Map<string, ReactionAggDTO[]>> {
+  const out = new Map<string, ReactionAggDTO[]>();
+  if (messageIds.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(reactions)
+    .where(inArray(reactions.messageId, messageIds))
+    .orderBy(asc(reactions.createdAt));
+  for (const r of rows) {
+    const list = out.get(r.messageId) ?? [];
+    let agg = list.find((a) => a.emoji === r.emoji);
+    if (!agg) {
+      agg = { emoji: r.emoji, count: 0, userIds: [] };
+      list.push(agg);
+    }
+    agg.count += 1;
+    agg.userIds.push(r.userId);
+    out.set(r.messageId, list);
+  }
+  return out;
+}

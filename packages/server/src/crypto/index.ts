@@ -96,6 +96,30 @@ export function decryptBody(row: {
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
 }
 
+// ---- file blobs (phase2.md §3) ---------------------------------
+// Same envelope scheme and data-key registry as message bodies, but the nonce
+// is prepended to the blob (files have no dedicated nonce column):
+//   blob = nonce(12) || ciphertext || gcm_tag(16)
+
+export function encryptBlob(plaintext: Buffer): { blob: Buffer; encKeyId: string } {
+  const { keyId, key } = requireKey();
+  const nonce = randomBytes(NONCE_LEN);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce);
+  const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return { blob: Buffer.concat([nonce, ct, cipher.getAuthTag()]), encKeyId: keyId };
+}
+
+export function decryptBlob(blob: Buffer, encKeyId: string): Buffer {
+  if (blob.length < NONCE_LEN + TAG_LEN) throw new Error('blob too short');
+  const { key } = requireKey(encKeyId);
+  const nonce = blob.subarray(0, NONCE_LEN);
+  const ct = blob.subarray(NONCE_LEN, blob.length - TAG_LEN);
+  const tag = blob.subarray(blob.length - TAG_LEN);
+  const decipher = createDecipheriv('aes-256-gcm', key, nonce);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]);
+}
+
 /** For tests only. */
 export function _resetCryptoForTests(): void {
   activeKey = null;

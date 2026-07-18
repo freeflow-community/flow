@@ -22,6 +22,7 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
     email: u.email,
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
+    timezone: u.timezone,
     createdAt: u.createdAt.toISOString(),
   };
 }

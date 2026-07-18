@@ -68,6 +68,56 @@ switch (mode) {
   case 'messages':
     await api('GET', `/v1/channels/${need('channel')}/messages?limit=${opts.limit ?? 20}`);
     break;
+  case 'react': // add (default) or remove with --remove true
+    await api(opts.remove ? 'DELETE' : 'PUT',
+      `/v1/messages/${need('message')}/reactions/${encodeURIComponent(need('emoji'))}`);
+    break;
+  case 'dm': // upsert a DM channel: --workspace W --users "id1,id2"
+    await api('POST', `/v1/workspaces/${need('workspace')}/dms`, {
+      userIds: need('users').split(','),
+    });
+    break;
+  case 'upload': { // --workspace W --path /file.png [--mime image/png]; prints FileDTO
+    const path = need('path');
+    const blob = new Blob([fs.readFileSync(path)], { type: opts.mime ?? 'application/octet-stream' });
+    const form = new FormData();
+    form.append('file', blob, path.split('/').pop());
+    const res = await fetch(`${API}/v1/workspaces/${need('workspace')}/files`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${need('token')}` },
+      body: form,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error(`upload -> ${res.status}: ${JSON.stringify(json)}`); process.exit(1); }
+    console.log(JSON.stringify(json, null, 2));
+    break;
+  }
+  case 'send-file': // send a message with attachments: --channel C --body B --files "id1,id2"
+    await api('POST', `/v1/channels/${need('channel')}/messages`, {
+      clientMsgId: crypto.randomUUID(),
+      body: need('body'),
+      fileIds: need('files').split(','),
+    });
+    break;
+  case 'mention': // send a message mentioning users: --channel C --body B --users "id1,id2"
+    await api('POST', `/v1/channels/${need('channel')}/messages`, {
+      clientMsgId: crypto.randomUUID(),
+      body: need('body'),
+      mentions: need('users').split(','),
+    });
+    break;
+  case 'notifications':
+    await api('GET', `/v1/me/notifications?limit=${opts.limit ?? 20}`);
+    break;
+  case 'notify-level': // --channel C --level 0|1|2
+    await api('PUT', `/v1/channels/${need('channel')}/notify`, { level: Number(need('level')) });
+    break;
+  case 'profile': // --name "New Name" and/or --tz "America/New_York"
+    await api('PATCH', '/v1/me', {
+      ...(opts.name ? { displayName: opts.name } : {}),
+      ...(opts.tz ? { timezone: opts.tz } : {}),
+    });
+    break;
   case 'listen': {
     const eventsPath = need('events');
     const token = need('token');
@@ -105,6 +155,6 @@ switch (mode) {
     break;
   }
   default:
-    console.error('usage: qa-bot.mjs listen|send|edit|delete|read|messages --token T ...');
+    console.error('usage: qa-bot.mjs listen|send|edit|delete|read|messages|react|dm|upload|send-file|mention|notifications|notify-level|profile --token T ...');
     process.exit(2);
 }

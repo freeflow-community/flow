@@ -6,6 +6,8 @@ import * as schema from './schema.js';
 export const pg = postgres(config.databaseUrl, { max: 10, onnotice: () => {} });
 export const db = drizzle(pg, { schema });
 export type DB = typeof db;
+/** The transaction handle passed to db.transaction callbacks. */
+export type Tx = Parameters<Parameters<DB['transaction']>[0]>[0];
 export { schema };
 
 export async function closeDb(): Promise<void> {

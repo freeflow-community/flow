@@ -12,9 +12,11 @@ import {
   subjectPresence,
   subjectTyping,
   subjectUserMeta,
+  subjectUserNotify,
   subjectWorkspaceAll,
   subscribeBus,
 } from '../bus.js';
+import { online } from '../presence.js';
 
 const { workspaceMembers, channels, channelMembers } = schema;
 
@@ -32,8 +34,8 @@ interface SocketState {
   subs: { unsubscribe(): void }[];
 }
 
-// single-node presence: userId -> open socket count
-const online = new Map<string, number>();
+// single-node presence: the userId -> socket-count map lives in ../presence.js
+// (shared with the notification service for <!here> resolution).
 // userId -> workspaces (for presence fan-out on disconnect)
 const socketsByUser = new Map<string, Set<SocketState>>();
 
@@ -83,6 +85,9 @@ function applyMetaEvent(state: SocketState, event: Event): void {
   } else if (event.type === 'member.joined') {
     const data = event.data as { userId: string; channelId?: string };
     if (data.userId === state.userId && event.channelId) state.member.add(event.channelId);
+  } else if (event.type === 'member.left') {
+    const data = event.data as { userId: string; channelId?: string };
+    if (data.userId === state.userId && event.channelId) state.member.delete(event.channelId);
   }
 }
 
@@ -103,8 +108,12 @@ function attachWorkspaceSub(s: SocketState, sock: WebSocket, wsId: string): void
     for await (const m of sub) {
       try {
         const event = JSON.parse(new TextDecoder().decode(m.data)) as Event;
+        // visibility straddles membership changes: an invite (member.joined) is
+        // only visible AFTER the cache updates; one's own departure
+        // (member.left) only BEFORE. Check both sides of the update.
+        const visibleBefore = visible(s, event);
         if (m.subject.endsWith('.meta')) applyMetaEvent(s, event);
-        if (visible(s, event)) send(sock, { op: 'event', event });
+        if (visibleBefore || visible(s, event)) send(sock, { op: 'event', event });
       } catch {
         /* skip malformed */
       }
@@ -203,6 +212,21 @@ export function attachGateway(server: HttpServer): { close(): void } {
                     );
                   }
                   sendPresenceSnapshot(s, sock, event.workspaceId);
+                } catch {
+                  /* skip malformed */
+                }
+              }
+            })();
+
+            // per-user notification stream (phase2.md §4; user-global subject
+            // per approved deviation) — always forwarded, no channel filter
+            const notifySub = subscribeBus(subjectUserNotify(s.userId));
+            s.subs.push(notifySub);
+            void (async () => {
+              for await (const m of notifySub) {
+                try {
+                  const event = JSON.parse(new TextDecoder().decode(m.data)) as Event;
+                  send(sock, { op: 'event', event });
                 } catch {
                   /* skip malformed */
                 }

@@ -6,6 +6,7 @@ import { initCrypto } from './crypto/index.js';
 import { connectBus, closeBus } from './bus.js';
 import { attachGateway } from './gateway/index.js';
 import { purgeExpiredSessions } from './services/auth.js';
+import { startOrphanSweep } from './services/files.js';
 
 async function main(): Promise<void> {
   initCrypto();
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
   app.log.info(`ws gateway attached at ws://${config.host}:${config.port}/v1/ws`);
 
   void purgeExpiredSessions().catch(() => {});
+  startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
 
   const shutdown = async () => {
     gateway.close();
