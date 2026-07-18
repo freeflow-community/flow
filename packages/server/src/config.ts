@@ -1,0 +1,22 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+export const config = {
+  databaseUrl: process.env.DATABASE_URL ?? 'postgres://mychat:mychat_dev@localhost:5442/mychat',
+  natsUrl: process.env.NATS_URL ?? 'nats://127.0.0.1:4222',
+  port: Number(process.env.PORT ?? 8787),
+  host: process.env.HOST ?? '127.0.0.1', // local server only in phase 1
+  /** Sealed data-key file for local dev (KMS stand-in). Auto-created on first boot, chmod 600. */
+  get dataKeyFile(): string {
+    return process.env.MYCHAT_DATA_KEY_FILE ?? path.join(pkgRoot, '.keys', 'data.key.json');
+  },
+  /** Raw base64 data key override (tests/CI). Takes precedence over the file. */
+  get dataKeyInline(): string | undefined {
+    return process.env.MYCHAT_DATA_KEY;
+  },
+  inviteUrlBase: process.env.INVITE_URL_BASE ?? 'myapp://invite/',
+  sessionTtlDays: 30,
+  inviteTtlDays: 7,
+} as const;

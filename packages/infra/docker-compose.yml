@@ -1,0 +1,31 @@
+name: mychat
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mychat-postgres
+    environment:
+      POSTGRES_USER: mychat
+      POSTGRES_PASSWORD: mychat_dev
+      POSTGRES_DB: mychat
+    ports:
+      - "5442:5432" # host 5432 is occupied by another postgres on this machine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mychat -d mychat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: mychat-nats
+    # Core NATS only — JetStream deferred per decision log (no -js flag)
+    command: ["-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222" # monitoring
+
+volumes:
+  pgdata:

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.env.local
+# local dev sealed data key lives outside git
+packages/server/.keys/
+# swift / xcode
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
