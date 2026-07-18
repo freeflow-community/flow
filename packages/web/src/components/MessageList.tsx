@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO, WorkspaceMemberDTO } from '@mychat/shared';
 import { api, blobUrl } from '../lib/api';
-import { bytesLabel, displayTime, renderBody } from '../lib/format';
+import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
 import { useAuth, useSelection } from '../state';
 import { useToggleReaction } from '../hooks';
 import { Avatar, AuthImg } from './Avatar';
@@ -175,10 +175,10 @@ function MessageRow({
         ) : (
           <>
             {message.body.trim() && (
-              <p className="text-sm leading-normal break-words whitespace-pre-wrap">
-                {renderBody(message.body, names, auth.user.id)}
+              <div className="text-sm leading-normal break-words whitespace-pre-wrap">
+                {renderBlocks(message.body, names, auth.user.id)}
                 {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
-              </p>
+              </div>
             )}
             {message.files.map((f) => (
               <Attachment key={f.id} file={f} />

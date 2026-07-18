@@ -433,32 +433,46 @@ actor SyncEngine {
     /// Expands shortcodes and resolves mention sugar against the channel's
     /// workspace members: "@Display Name" → "<@userId>" (longest-name-first so
     /// "Bob Smith" wins over "Bob"), "@channel|here|everyone" → "<!token>".
+    /// Fenced code regions (``` blocks, phase-3.5 ruling 2) pass through
+    /// byte-for-byte: the body is split on fence boundaries and only the
+    /// non-code runs get shortcode expansion and mention substitution.
     private func prepareOutgoing(_ body: String, channelId: String) async -> (String, [String]) {
-        var text = EmojiCatalog.expandShortcodes(body)
-        guard text.contains("@") else { return (text, []) }
-        for token in ["channel", "here", "everyone"] {
-            text = text.replacingOccurrences(of: "@\(token)", with: "<!\(token)>")
-        }
-        let wsId: String? = try? await db.reader.read { db in
-            try String.fetchOne(db, sql: "SELECT workspaceId FROM channel WHERE id = ?", arguments: [channelId])
-        }
-        guard let wsId else { return (text, []) }
-        let members: [(id: String, name: String)] = (try? await db.reader.read { db in
-            try Row.fetchAll(
-                db,
-                sql: "SELECT u.id AS id, u.displayName AS name FROM member m JOIN user u ON u.id = m.userId WHERE m.workspaceId = ?",
-                arguments: [wsId]
-            ).map { (id: $0["id"] as String, name: $0["name"] as String) }
-        }) ?? []
-        var mentions: [String] = []
-        for m in members.sorted(by: { $0.name.count > $1.name.count }) where !m.name.isEmpty {
-            let needle = "@\(m.name)"
-            if text.contains(needle) {
-                text = text.replacingOccurrences(of: needle, with: "<@\(m.id)>")
-                mentions.append(m.id)
+        let needsMentions = MarkdownBlocks.fenceSplit(body)
+            .contains { !$0.isCode && $0.text.contains("@") }
+        var members: [(id: String, name: String)] = []
+        if needsMentions {
+            let wsId: String? = try? await db.reader.read { db in
+                try String.fetchOne(db, sql: "SELECT workspaceId FROM channel WHERE id = ?", arguments: [channelId])
+            }
+            if let wsId {
+                members = (try? await db.reader.read { db in
+                    try Row.fetchAll(
+                        db,
+                        sql: "SELECT u.id AS id, u.displayName AS name FROM member m JOIN user u ON u.id = m.userId WHERE m.workspaceId = ?",
+                        arguments: [wsId]
+                    ).map { (id: $0["id"] as String, name: $0["name"] as String) }
+                }) ?? []
             }
         }
-        return (text, mentions)
+        // Longest-name-first so "Bob Smith" wins over "Bob".
+        let sorted = members.sorted { $0.name.count > $1.name.count }
+        var mentions: [String] = []
+        let out = MarkdownBlocks.mapNonCode(body) { run in
+            var text = EmojiCatalog.expandShortcodes(run)
+            guard text.contains("@") else { return text }
+            for token in ["channel", "here", "everyone"] {
+                text = text.replacingOccurrences(of: "@\(token)", with: "<!\(token)>")
+            }
+            for m in sorted where !m.name.isEmpty {
+                let needle = "@\(m.name)"
+                if text.contains(needle) {
+                    text = text.replacingOccurrences(of: needle, with: "<@\(m.id)>")
+                    if !mentions.contains(m.id) { mentions.append(m.id) }
+                }
+            }
+            return text
+        }
+        return (out, mentions)
     }
 
     // MARK: - Reactions

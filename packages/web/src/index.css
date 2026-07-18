@@ -26,6 +26,46 @@ html, body, #root {
   height: 100%;
 }
 
+/* Composer contenteditable (phase 3.5 item 2): live block styling per line.
+   The editor holds one <div> per draft line; composerDom.ts assigns cmp-*
+   classes as you type. */
+.mc-composer {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 20px;
+}
+.mc-composer:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-faint);
+  pointer-events: none;
+}
+.mc-composer > .cmp-quote {
+  border-left: 3px solid var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 6%, transparent);
+  color: var(--color-ink-soft);
+  padding-left: 9px;
+}
+.mc-composer > .cmp-code {
+  background: #f4f2ee;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  padding-left: 9px;
+  padding-right: 9px;
+}
+.mc-composer > .cmp-fence {
+  color: var(--color-muted);
+}
+.mc-composer > .cmp-code-start {
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  padding-top: 3px;
+}
+.mc-composer > .cmp-code-end {
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  padding-bottom: 3px;
+}
+
 /* thin scrollbars for panels */
 .mc-scroll::-webkit-scrollbar { width: 8px; }
 .mc-scroll::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.15); border-radius: 4px; }

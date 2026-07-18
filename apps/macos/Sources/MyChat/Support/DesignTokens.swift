@@ -15,6 +15,7 @@ enum MC {
     static let hairline2 = Color(hex: 0xDDD8CF)
     static let hairline3 = Color(hex: 0xEEE7DC)
     static let daypill = Color(hex: 0xF0EDE7)
+    static let codeBg = Color(hex: 0xF4F2EE) // warm code-block background
     static let accent = Color(hex: 0x6B30AF) // oklch(0.46 0.19 300)
     static let accentDeep = Color(hex: 0x6529A9)
     static let accentSoft = Color(hex: 0x52339B) // oklch(0.42 0.16 292)

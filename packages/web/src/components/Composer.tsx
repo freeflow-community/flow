@@ -3,6 +3,7 @@ import type { FileDTO } from '@mychat/shared';
 import { emojiMatches } from '@mychat/shared';
 import { uploadFile } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
+import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';
 import { useLive, useSelection } from '../state';
 import { useMembers, useSendMessage } from '../hooks';
 import EmojiPicker from './EmojiPicker';
@@ -25,9 +26,42 @@ export default function Composer({
   const [uploading, setUploading] = useState(0);
   const [showEmoji, setShowEmoji] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Contenteditable editor (phase 3.5 item 2): the DOM is the source of truth
+  // for the draft; `text` mirrors it (normalized to "\n" newlines) for the
+  // autocomplete/send/disable logic below.
+  const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const testPrefix = threadRootId ? 'thread-composer' : 'composer';
+
+  /** After a native input event: mirror the DOM into state and restyle lines. */
+  const syncFromDom = () => {
+    const el = editorRef.current;
+    if (!el) return;
+    const value = domToText(el);
+    decorate(el, value);
+    setText(value);
+    if (value) live.sendTyping(channelId);
+  };
+
+  /** Programmatic draft change: rebuild the editor DOM, park the caret, keep focus. */
+  const setDraft = (value: string, caret: number = value.length) => {
+    setText(value);
+    const el = editorRef.current;
+    if (!el) return;
+    rebuild(el, value);
+    el.focus();
+    setCaretAt(el, Math.max(0, Math.min(caret, value.length)));
+  };
+
+  /** Splice text at the current selection (Shift+Enter newline, sanitized text paste). */
+  const insertAtCaret = (insert: string) => {
+    const el = editorRef.current;
+    if (!el) return;
+    const value = domToText(el);
+    const [start, end] = getSelectionOffsets(el) ?? [value.length, value.length];
+    setDraft(value.slice(0, start) + insert + value.slice(end), start + insert.length);
+    live.sendTyping(channelId);
+  };
 
   // trailing-token autocomplete for @mentions and :shortcodes:
   const token = trailingToken(text);
@@ -35,8 +69,7 @@ export default function Composer({
 
   const applySuggestion = (insert: string) => {
     if (!token) return;
-    setText(text.slice(0, text.length - token.length) + insert);
-    inputRef.current?.focus();
+    setDraft(text.slice(0, text.length - token.length) + insert);
   };
 
   const doSend = () => {
@@ -52,7 +85,7 @@ export default function Composer({
       },
       { onError: (err) => setError(err instanceof Error ? err.message : 'send failed') },
     );
-    setText('');
+    setDraft('');
     setAttachments([]);
     setError(null);
   };
@@ -73,18 +106,31 @@ export default function Composer({
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  // Image paste (phase 3.5 item 3): pasted images upload like picked files;
-  // text-only pastes fall through untouched.
-  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  // Image paste (phase 3.5 item 3): pasted images upload like picked files.
+  // Everything else is spliced in as text/plain — no rich HTML can leak into
+  // the editor even if "plaintext-only" is unsupported.
+  const onPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const images = Array.from(e.clipboardData.items)
       .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
       .map((it) => it.getAsFile())
       .filter((f): f is File => f !== null);
-    if (images.length === 0) return;
+    if (images.length > 0) {
+      e.preventDefault();
+      void pickFiles(
+        images.map((f, i) => (f.name ? f : new File([f], `pasted-${Date.now() + i}.png`, { type: f.type }))),
+      );
+      return;
+    }
     e.preventDefault();
-    void pickFiles(
-      images.map((f, i) => (f.name ? f : new File([f], `pasted-${Date.now() + i}.png`, { type: f.type }))),
-    );
+    const pasted = e.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
+    if (pasted) insertAtCaret(pasted);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    if (e.shiftKey) insertAtCaret('\n');
+    else doSend();
   };
 
   return (
@@ -125,23 +171,18 @@ export default function Composer({
       {error && <p className="mb-1 text-xs text-red-600">{error}</p>}
 
       <div className="rounded-xl border border-hairline2 bg-white px-3.5 py-3 focus-within:border-accent/40">
-        <textarea
-          ref={inputRef}
+        <div
+          ref={editorRef}
+          contentEditable="plaintext-only"
+          suppressContentEditableWarning
+          role="textbox"
+          aria-multiline="true"
+          aria-label={placeholder}
           data-testid={`${testPrefix}-input`}
-          className="max-h-40 w-full resize-none bg-transparent text-sm outline-none placeholder:text-faint"
-          rows={1}
-          placeholder={placeholder}
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            if (e.target.value) live.sendTyping(channelId);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              doSend();
-            }
-          }}
+          data-placeholder={placeholder}
+          className="mc-composer mc-scroll max-h-40 w-full overflow-y-auto text-sm outline-none"
+          onInput={syncFromDom}
+          onKeyDown={onKeyDown}
           onPaste={onPaste}
         />
         <div className="mt-1.5 flex items-center gap-3 text-[15px] text-faint">
@@ -165,7 +206,7 @@ export default function Composer({
           <button
             className="hover:text-ink"
             title="Mention someone"
-            onClick={() => { setText((t) => t + '@'); inputRef.current?.focus(); }}
+            onClick={() => setDraft(text + '@')}
           >
             @
           </button>
@@ -186,8 +227,7 @@ export default function Composer({
           <EmojiPicker
             onPick={(emoji) => {
               setShowEmoji(false);
-              setText((t) => t + emoji);
-              inputRef.current?.focus();
+              setDraft(text + emoji);
             }}
             onClose={() => setShowEmoji(false)}
           />

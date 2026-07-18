@@ -1,7 +1,6 @@
 import AppKit
 import GRDB
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ComposerView: View {
     let channelId: String
@@ -13,7 +12,7 @@ struct ComposerView: View {
     @State private var text = ""
     @State private var attachments: [FileAttachment] = []
     @State private var uploading = 0
-    @FocusState private var focused: Bool
+    @State private var focusRequest = 0
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
 
     var body: some View {
@@ -34,23 +33,35 @@ struct ComposerView: View {
                 .help("Attach files")
                 .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
 
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...8)
-                    .focused($focused)
-                    .onSubmit(send)
-                    .onChange(of: text) { _, newValue in
-                        guard !newValue.isEmpty else { return }
-                        Task { await app.engine.typing(channelId: channelId) }
+                // NSTextView-backed input with live blockquote/code-fence
+                // styling (phase-3.5 ruling 2). Same AX identifiers as the
+                // old TextField; the AX role becomes text area. Image paste
+                // is intercepted in the subclass and routed to uploads.
+                ZStack(alignment: .topLeading) {
+                    MarkdownComposerTextView(
+                        text: $text,
+                        axIdentifier: threadRootId == nil ? "composer.input" : "thread.composer.input",
+                        focusRequest: focusRequest,
+                        onSend: send,
+                        onPasteImages: handlePasteImages
+                    )
+                    if text.isEmpty {
+                        Text(placeholder)
+                            .font(.system(size: 13))
+                            .foregroundStyle(MC.muted)
+                            .padding(.leading, 5) // line-fragment padding
+                            .padding(.top, 2) // text-container inset
+                            .allowsHitTesting(false)
                     }
-                    .accessibilityIdentifier(threadRootId == nil ? "composer.input" : "thread.composer.input")
-                    // Image paste → upload as attachment. `.string` is
-                    // deliberately absent so plain-text paste stays native.
-                    .onPasteCommand(of: [.png, .tiff, .jpeg, .fileURL], perform: handlePaste)
+                }
+                .onChange(of: text) { _, newValue in
+                    guard !newValue.isEmpty else { return }
+                    Task { await app.engine.typing(channelId: channelId) }
+                }
 
                 Button {
                     // Operator ruling: macOS uses the native character palette.
-                    focused = true
+                    focusRequest += 1
                     NSApplication.shared.orderFrontCharacterPalette(nil)
                 } label: {
                     Image(systemName: "face.smiling")
@@ -81,7 +92,6 @@ struct ComposerView: View {
         )
         .padding([.horizontal, .bottom], 22)
         .padding(.top, 4)
-        .onAppear { focused = true }
         .task(id: workspaceId) {
             guard let wsId = workspaceId else { return }
             members.start(db: app.db, reset: []) { db in
@@ -155,7 +165,7 @@ struct ComposerView: View {
                         if let range = text.range(of: s.token, options: .backwards) {
                             text.replaceSubrange(range, with: item.insert)
                         }
-                        focused = true
+                        focusRequest += 1
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -226,18 +236,21 @@ struct ComposerView: View {
         }
     }
 
-    // MARK: - Image paste (phase 3.5 item 3)
+    // MARK: - Image paste (phase 3.5 item 3, via the NSTextView paste override)
 
-    /// Uploads pasted images through the same attachment flow as the
-    /// paperclip picker (cap 10, shared uploading counter).
-    private func handlePaste(_ providers: [NSItemProvider]) {
-        guard let wsId = workspaceId else { return }
-        for provider in providers {
-            uploading += 1
+    /// Called from MarkdownNSTextView.paste. Returns true when the pasteboard
+    /// held images that were routed to the attachment flow (cap 10, shared
+    /// uploading counter — same pipeline as the paperclip picker); false lets
+    /// the text view paste normally (plain text).
+    private func handlePasteImages(_ pasteboard: NSPasteboard) -> Bool {
+        guard let wsId = workspaceId else { return false }
+        let urls = Self.pastedImageFileURLs(from: pasteboard)
+        guard !urls.isEmpty else { return false }
+        uploading += urls.count
+        for url in urls {
             Task { @MainActor in
                 defer { uploading -= 1 }
                 do {
-                    guard let url = try await Self.pastedImageFileURL(from: provider) else { return }
                     let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: url)
                     if attachments.count < 10 { attachments.append(file) }
                 } catch {
@@ -245,52 +258,39 @@ struct ComposerView: View {
                 }
             }
         }
+        return true
     }
 
     private static let pastedImageExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "webp", "tiff", "tif", "heic", "bmp",
     ]
 
-    /// Resolves a pasted item to a local image file URL. File URLs are used
-    /// as-is (image extensions only); raw image data is written to a temp
-    /// PNG (non-PNG data converted via NSBitmapImageRep). Returns nil for
-    /// non-image content.
-    private static func pastedImageFileURL(from provider: NSItemProvider) async throws -> URL? {
-        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            let data = try await loadData(from: provider, type: .fileURL)
-            guard let url = URL(dataRepresentation: data, relativeTo: nil),
-                  pastedImageExtensions.contains(url.pathExtension.lowercased())
-            else { return nil }
-            return url
+    /// Resolves pasteboard contents to local image file URLs. File URLs are
+    /// used as-is (image extensions only); otherwise raw image data is
+    /// written to a temp PNG (non-PNG data converted via NSBitmapImageRep).
+    /// Returns [] for non-image content.
+    private static func pastedImageFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !urls.isEmpty {
+            return urls.filter { pastedImageExtensions.contains($0.pathExtension.lowercased()) }
         }
-        for type in [UTType.png, .tiff, .jpeg]
-        where provider.hasItemConformingToTypeIdentifier(type.identifier) {
-            let data = try await loadData(from: provider, type: type)
-            let png = type == .png
+        let types: [(NSPasteboard.PasteboardType, isPNG: Bool)] = [
+            (.png, true), (.tiff, false), (NSPasteboard.PasteboardType("public.jpeg"), false),
+        ]
+        for (type, isPNG) in types {
+            guard let data = pasteboard.data(forType: type) else { continue }
+            let png = isPNG
                 ? data
                 : NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:])
-            guard let png else { return nil }
+            guard let png else { continue }
             let epochMs = Int(Date().timeIntervalSince1970 * 1000)
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("pasted-\(epochMs).png")
-            try png.write(to: url)
-            return url
+            do { try png.write(to: url) } catch { continue }
+            return [url]
         }
-        return nil
-    }
-
-    private static func loadData(from provider: NSItemProvider, type: UTType) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            _ = provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, error in
-                if let data {
-                    continuation.resume(returning: data)
-                } else {
-                    continuation.resume(throwing: error ?? APIError(
-                        status: 0, code: "paste", message: "Couldn't read pasted item"
-                    ))
-                }
-            }
-        }
+        return []
     }
 
     // MARK: - Send

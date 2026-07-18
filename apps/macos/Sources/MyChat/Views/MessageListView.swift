@@ -164,23 +164,9 @@ struct MessageRow: View {
                         .italic()
                         .foregroundStyle(.tertiary)
                 } else {
-                    if !message.body.trimmingCharacters(in: .whitespaces).isEmpty {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(MentionRendering.attributed(
-                                message.body, names: userNames, currentUserId: currentUserId
-                            ))
-                            .font(.callout)
-                            .textSelection(.enabled)
-                            if message.editedAt != nil {
-                                Text("(edited)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            if message.pending {
-                                ProgressView()
-                                    .controlSize(.mini)
-                            }
-                        }
+                    let segments = MarkdownBlocks.segments(message.body)
+                    if !segments.isEmpty {
+                        bodyContent(segments)
                     } else if message.pending {
                         ProgressView().controlSize(.mini)
                     }
@@ -254,6 +240,79 @@ struct MessageRow: View {
                 Button("Edit…") { onEdit(message) }
                 Button("Delete", role: .destructive) { onDelete(message) }
             }
+        }
+    }
+
+    // MARK: - Body blocks (phase-3.5 ruling 2)
+
+    /// Block-level body rendering: paragraphs keep the existing inline
+    /// attributed pass (mention pills, inline markdown); quote runs get a
+    /// 3pt accent bar with "> " markers stripped; fenced code renders as
+    /// monospaced text in a warm block with the fence markers hidden (no
+    /// pills or markdown inside code).
+    @ViewBuilder
+    private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
+        if segments.count == 1, case .paragraph(let text) = segments[0] {
+            // Fast path: single plain paragraph keeps the original inline
+            // layout (baseline-aligned edited/pending markers).
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                paragraphText(text)
+                trailingMarkers
+            }
+        } else {
+            HStack(alignment: .bottom, spacing: 4) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                        segmentView(segment)
+                    }
+                }
+                trailingMarkers
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func segmentView(_ segment: MarkdownBlocks.Segment) -> some View {
+        switch segment {
+        case .paragraph(let text):
+            paragraphText(text)
+        case .quote(let text):
+            HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(MC.accent.opacity(0.55))
+                    .frame(width: 3)
+                paragraphText(text)
+                    .foregroundStyle(MC.inkSoft)
+            }
+            .accessibilityIdentifier("msg.quoteBlock")
+        case .code(let text):
+            Text(text.isEmpty ? " " : text)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(MC.ink)
+                .textSelection(.enabled)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(MC.codeBg))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+                .accessibilityIdentifier("msg.codeBlock")
+        }
+    }
+
+    private func paragraphText(_ text: String) -> some View {
+        Text(MentionRendering.attributed(text, names: userNames, currentUserId: currentUserId))
+            .font(.callout)
+            .textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private var trailingMarkers: some View {
+        if message.editedAt != nil {
+            Text("(edited)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        if message.pending {
+            ProgressView().controlSize(.mini)
         }
     }
 
