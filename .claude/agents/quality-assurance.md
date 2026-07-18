@@ -207,7 +207,17 @@ Practical notes:
    replies → assert in bob-events.
 8. Mention: Bob `mention`s Alice in #general → `toolbar.notifications` unread
    increments; Alice's dump shows the message with the `@Alice` pill text.
-9. Bob quits → assert Bob flips to `offline` in Alice's sidebar.
+9. Status (design 3a): Alice opens the status footer (`sidebar.statusFooter`) →
+   `status.picker` → clicks `status.option.1` → footer AX value reflects the
+   status AND `user.updated` with her statusEmoji lands in bob-events. Bob sets
+   a status via REST (`profile --status-emoji 🚀 --status-text "..."`) → status
+   surfaces in Alice's dump (member row / profile). Clear via `status.clear`
+   → cleared in bob-events.
+10. Bob quits → assert Bob flips to `offline` in Alice's sidebar.
+
+Note (post-retheme): the sidebar is custom rows — selection is exposed via the
+AX isSelected trait, not List selection; the footer is `sidebar.statusFooter`
+whose value carries "Connected/…; <status>".
 
 ### FULL tier (on request)
 
@@ -289,6 +299,17 @@ Items (tag bodies with the runid as always):
 11. Thread: alice replies --thread to bob's runid root → `thread-open-<id>`
     affordance appears; click → `thread-panel` shows both; reply from
     `thread-composer-input` → assert thread.reply in alice's events.
+12. Status (design 3a): click `status-footer` → `status-picker` → `status-option-1`
+    → `status-footer-label` updates and alice's events show user.updated with
+    bob's status; alice sets hers via qa-bot `profile --status-emoji/--status-text`
+    → her member row / `status-avatar-badge` updates live in the browser;
+    `status-clear` clears (verify in alice's events).
+
+Post-retheme layout notes ("Quiet, in violet"): a 64px workspace rail exists
+(`rail-workspace-<slug>`, `rail-add-workspace`); the notifications bell lives in
+the CHANNEL header now; `sidebar-new-dm` is in the sidebar header;
+`connection-status` is a dot inside the status footer (state via its `title`
+attribute, no visible text).
 
 Evidence: screenshots via the MCP screenshot tool + DOM assertions; same
 PASS/FAIL table format. Leave the browser tab open or close it — but never
