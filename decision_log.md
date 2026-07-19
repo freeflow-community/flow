@@ -117,6 +117,18 @@ Operator rulings on the phase-3.5 pre-flight (six client features before phase 3
 
 Build order: item 4 (click→DM) → 1 (footer split) → 3 (image paste) → color → width → markdown last. Same working agreement as phase 2 (milestone commits, QA alongside, idle-gate/authorized UI automation, checkpoint stop for operator review when all six are feature-complete and QA-green on both clients).
 
+## 2026-07-18 — Phase 4 rulings (pre-implementation; phase 3 deferred, phase 4 pulled forward)
+
+Operator resequencing: phase 3 (Railway/OAuth/email/prod keys) is DEFERRED, not cancelled; phase 4 next. Pre-flight dependency audit found all of phase 4 buildable locally. Rulings:
+
+1. **App-management UI is web-only** (admin surface; REST endpoints exist regardless; macOS UI can follow later if wanted).
+2. **Key-rotation CLI DEFERRED TO PHASE 3** (operator override of the PM recommendation to adapt it to the sealed key file now): phase 4 is Slack app compatibility ONLY. No multi-key file adaptation, no rotation tooling; the phase-1 rotation IOU stays parked until phase 3's real key management (master key wrapping `data_keys` rows).
+3. **Slack SDK test dependencies approved** (`@slack/web-api`, minimal Bolt harness) — test-only devDependencies, the "existing Slack bots work" proof.
+4. **No rate limiting / 429s on the compat surface** until phase 3 (consistent with the phase-2 deferral); Slack SDKs tolerate their absence.
+5. **Event set = core + channel lifecycle**: message.channels / message.groups / message.im, app_mention, reaction_added / reaction_removed, member_joined_channel, PLUS channel_created, channel_archive, member_left_channel. Echo suppression by `bot_user_id`.
+
+Ratified implementation plans: SPA-fallback exemption extends to `/api/*`; mrkdwn converter covers bold/italic/strike/code/links/mentions with `<#channelId>` degrading to `#name` and Slack special tokens degrading to fallback text (documented lossy edges); bot users are real `users` rows (`is_bot`) appearing in users.list and reading offline in presence; bots become workspace members at app creation and join channels explicitly. Events delivery via the `pending_app_events` Postgres outbox (Ruling 3 of 2026-07-18) written in the same transaction as the triggering write.
+
 ## 2026-07-18 — Design adoption: "Quiet, in violet" (design 3a) + user status
 
 Operator delivered a high-fidelity design package (~/Downloads "Slack clone design
