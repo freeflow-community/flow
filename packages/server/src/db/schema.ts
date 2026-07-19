@@ -41,6 +41,14 @@ export const sessions = pgTable('sessions', {
   clientInfo: text('client_info'),
 });
 
+/** One-time web-to-app auth handoff codes (myapp://signin deep link). */
+export const appLinkCodes = pgTable('app_link_codes', {
+  codeHash: bytea('code_hash').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey(),
   slug: citext('slug').notNull().unique(),

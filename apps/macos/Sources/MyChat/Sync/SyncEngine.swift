@@ -80,6 +80,17 @@ actor SyncEngine {
         await didSignIn(user: resp.user, token: resp.token)
     }
 
+    /// Web-to-app handoff (myapp://signin deep link): exchanges the one-time
+    /// code minted by the web session for this app's own session.
+    func loginWithLinkCode(_ code: String) async throws {
+        let resp: AuthResponse = try await api.post(
+            "/v1/auth/app-link/exchange",
+            body: AppLinkExchangeBody(code: code)
+        )
+        await api.setToken(resp.token)
+        await didSignIn(user: resp.user, token: resp.token)
+    }
+
     func logout() async {
         let _: OkResponse? = try? await api.post("/v1/auth/logout")
         Keychain.deleteToken()

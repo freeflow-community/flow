@@ -213,7 +213,33 @@ final class AppState: ObservableObject {
     }
 
     func handleDeepLink(_ url: URL) {
-        guard url.scheme == "myapp", url.host == "invite" else { return }
-        acceptInvite(url.lastPathComponent)
+        guard url.scheme == "myapp" else { return }
+        switch url.host {
+        case "invite":
+            acceptInvite(url.lastPathComponent)
+        case "signin":
+            let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "code" }?.value ?? ""
+            signInFromLink(code: code)
+        default:
+            break
+        }
+    }
+
+    /// Web-to-app handoff: myapp://signin?code=<one-time code>. Any existing
+    /// session is signed out first (the link may be for a different account,
+    /// and the local cache must not mix users).
+    func signInFromLink(code: String) {
+        guard !code.isEmpty else { return }
+        Task {
+            do {
+                if currentUser != nil {
+                    await engine.logout()
+                }
+                try await engine.loginWithLinkCode(code)
+            } catch {
+                errorMessage = "Couldn't sign in from the app link: \(error.localizedDescription)"
+            }
+        }
     }
 }

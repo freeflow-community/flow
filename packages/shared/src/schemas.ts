@@ -14,6 +14,11 @@ export const LoginBody = z.object({
 });
 export type LoginBody = z.infer<typeof LoginBody>;
 
+export const AppLinkExchangeBody = z.object({
+  code: z.string().min(1).max(512),
+});
+export type AppLinkExchangeBody = z.infer<typeof AppLinkExchangeBody>;
+
 // ---- workspaces ------------------------------------------------
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 

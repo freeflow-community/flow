@@ -25,6 +25,17 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — Web-to-app auth handoff
+- Web is the auth surface: signed-in web shows "Open the desktop app" CTAs
+  (workspace-chooser button + dismissible top banner). `[web]`
+- Clicking mints a one-time 2-minute code (`POST /v1/auth/app-link`, new
+  `app_link_codes` table, migration 0005) and deep-links
+  `myapp://signin?code=…`; the native app exchanges it
+  (`POST /v1/auth/app-link/exchange`, single-use, replay-rejected) for its
+  own session — raw tokens never ride in the URL. `[server] [macos]`
+- macOS deep-link handler: signs out any existing session first (no
+  cross-user cache mixing), then signs in as the code's user. `[macos]`
+
 ### 2026-07-19 — Phase 6: text + PDF file previews
 - Text-ish files (mime `text/*`, JSON/JS/XML/sh/yaml, extension allowlist)
   render an inline monospace preview: first 10 lines, Expand/Collapse,

@@ -10,6 +10,7 @@ import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import ThreadPanel from './ThreadPanel';
+import { OpenInAppBanner } from './OpenInApp';
 import NotificationsBell from './NotificationsBell';
 
 export default function Main() {
@@ -157,27 +158,30 @@ export default function Main() {
 
   return (
     <LiveContext.Provider value={live}>
-      <div className="flex h-full bg-base text-ink">
-        <WorkspaceRail />
-        <Sidebar />
-        <div className="flex min-h-0 min-w-0 flex-1">
-          {sel.channelId ? (
-            <>
-              <ChannelView key={sel.channelId} channelId={sel.channelId} />
-              {sel.threadRootId && (
-                <ThreadPanel key={sel.threadRootId} rootId={sel.threadRootId} />
-              )}
-            </>
-          ) : (
-            <div className="flex min-w-0 flex-1 flex-col">
-              <div className="flex h-[60px] items-center justify-end border-b border-hairline px-[22px]">
-                <NotificationsBell />
+      <div className="flex h-full flex-col bg-base text-ink">
+        <OpenInAppBanner />
+        <div className="flex min-h-0 flex-1">
+          <WorkspaceRail />
+          <Sidebar />
+          <div className="flex min-h-0 min-w-0 flex-1">
+            {sel.channelId ? (
+              <>
+                <ChannelView key={sel.channelId} channelId={sel.channelId} />
+                {sel.threadRootId && (
+                  <ThreadPanel key={sel.threadRootId} rootId={sel.threadRootId} />
+                )}
+              </>
+            ) : (
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex h-[60px] items-center justify-end border-b border-hairline px-[22px]">
+                  <NotificationsBell />
+                </div>
+                <div className="flex flex-1 items-center justify-center text-faint">
+                  Select a channel
+                </div>
               </div>
-              <div className="flex flex-1 items-center justify-center text-faint">
-                Select a channel
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </LiveContext.Provider>

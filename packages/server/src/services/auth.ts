@@ -7,7 +7,10 @@ import { hashToken, newToken } from '../lib/tokens.js';
 import { conflict, unauthorized } from '../lib/errors.js';
 import { config } from '../config.js';
 
-const { users, sessions } = schema;
+const { users, sessions, appLinkCodes } = schema;
+
+/** Web-to-app handoff codes are single-use and short-lived. */
+const APP_LINK_TTL_MS = 2 * 60_000;
 
 const ARGON2_OPTS: argon2.Options = {
   type: argon2.argon2id,
@@ -97,6 +100,35 @@ export async function authenticate(token: string): Promise<UserDTO> {
       .where(and(eq(sessions.tokenHash, tokenHash), lt(sessions.expiresAt, slideThreshold)));
   }
   return toUserDTO(row.user);
+}
+
+/**
+ * Web-to-app auth handoff (myapp://signin): an authenticated (web) session
+ * mints a one-time code the native app exchanges for its own session. The
+ * raw session token never rides in the deep-link URL.
+ */
+export async function createAppLink(userId: string): Promise<{ code: string; expiresAt: string }> {
+  // opportunistic cleanup — the table only ever holds in-flight handoffs
+  await db.delete(appLinkCodes).where(lt(appLinkCodes.expiresAt, sql`now()`));
+  const code = newToken();
+  const expiresAt = new Date(Date.now() + APP_LINK_TTL_MS);
+  await db.insert(appLinkCodes).values({ codeHash: hashToken(code), userId, expiresAt });
+  return { code, expiresAt: expiresAt.toISOString() };
+}
+
+/** Single-use exchange: atomically consumes the code, then issues a session. */
+export async function exchangeAppLink(code: string, clientInfo?: string): Promise<AuthResponse> {
+  const consumed = await db
+    .delete(appLinkCodes)
+    .where(and(eq(appLinkCodes.codeHash, hashToken(code)), gt(appLinkCodes.expiresAt, sql`now()`)))
+    .returning({ userId: appLinkCodes.userId });
+  const userId = consumed[0]?.userId;
+  if (!userId) throw unauthorized('invalid or expired app link code');
+  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  const user = rows[0];
+  if (!user) throw unauthorized('invalid or expired app link code');
+  const token = await issueSession(user.id, clientInfo);
+  return { token, user: toUserDTO(user) };
 }
 
 /** Purge expired sessions (called opportunistically at boot). */

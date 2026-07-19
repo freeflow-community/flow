@@ -344,6 +344,9 @@ struct LoginBody: Encodable, Sendable {
     let email: String
     let password: String
 }
+struct AppLinkExchangeBody: Encodable, Sendable {
+    let code: String
+}
 struct CreateWorkspaceBody: Encodable, Sendable {
     let name: String
     let slug: String

@@ -182,3 +182,27 @@ Implementation rulings (coordinator):
 - **macOS "Download" saves to ~/Downloads** (uniqued on collision) and reveals in
   Finder — the platform equivalent of the browser download the web client gets
   for free.
+
+## 2026-07-19 — Web-to-app auth handoff (operator feature)
+
+Operator direction: sign-up/login happen on the web; after web sign-in a CTA
+opens the native app, which signs in via URL. Coordinator rulings:
+
+- **One-time code exchange, not token-in-URL**: the web session mints a
+  single-use 2-minute code (`app_link_codes`, sha256-hashed like sessions,
+  migration 0005); the app exchanges it for its own session. Deep-link URLs
+  land in logs/LaunchServices — the raw session token never rides in one.
+  Exchange consumes the code atomically (DELETE … RETURNING); expired rows
+  are swept opportunistically on mint.
+- **CTA placement**: prominent button on the workspace chooser + slim
+  dismissible banner (localStorage) across the top of the signed-in app.
+- **macOS replaces any existing session** on a signin link (logout first —
+  the code may be for a different account and the local cache must not mix
+  users).
+- **Multi-instance caveat (QA setups)**: LaunchServices delivers myapp://
+  URLs to one running instance of the bundle — with several MYCHAT_PROFILE
+  instances running, the code signs in whichever instance receives it.
+  Normal single-instance usage is unaffected; during QA, fire links only
+  with the intended instance running. Also: delivery can fail silently in
+  the first seconds after launching the raw binary (before LS registration
+  settles) — verified working once the instance is registered.

@@ -4,6 +4,7 @@ import type { WorkspaceDTO } from '@mychat/shared';
 import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useWorkspaces } from '../hooks';
+import { OpenInAppButton } from './OpenInApp';
 
 export default function WorkspaceChooser() {
   const auth = useAuth();
@@ -45,6 +46,7 @@ export default function WorkspaceChooser() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-base">
       <h1 className="text-2xl font-bold text-ink">Choose a Workspace</h1>
+      <OpenInAppButton />
       <div className="w-96 space-y-2">
         {(workspaces.data ?? []).map((ws) => (
           <button

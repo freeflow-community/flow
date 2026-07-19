@@ -12,6 +12,7 @@ import {
   ListMessagesQuery,
   ListNotificationsQuery,
   ListThreadQuery,
+  AppLinkExchangeBody,
   LoginBody,
   MarkNotificationsReadBody,
   MarkReadBody,
@@ -99,6 +100,16 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/auth/logout', { preHandler: requireAuth }, async (req) => {
     await auth.logout(req.bearerToken);
     return { ok: true };
+  });
+
+  // Web-to-app handoff: mint a one-time code (auth'd), exchange it (open).
+  app.post('/v1/auth/app-link', { preHandler: requireAuth }, async (req, reply) => {
+    return reply.status(201).send(await auth.createAppLink(req.user.id));
+  });
+
+  app.post('/v1/auth/app-link/exchange', async (req) => {
+    const body = parse(AppLinkExchangeBody, req.body);
+    return auth.exchangeAppLink(body.code, req.headers['user-agent']);
   });
 
   // ---- me ------------------------------------------------------
