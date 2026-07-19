@@ -349,6 +349,16 @@ export default function Composer({
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
+        // Clicking anywhere on the card (padding, whitespace) focuses the
+        // input; buttons and the editor keep their own click handling.
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('button, [contenteditable]')) return;
+          const el = editorRef.current;
+          if (el && document.activeElement !== el) {
+            el.focus();
+            setCaretAt(el, domToText(el).length);
+          }
+        }}
       >
         <div
           ref={editorRef}

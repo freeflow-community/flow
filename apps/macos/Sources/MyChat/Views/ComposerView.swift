@@ -101,6 +101,10 @@ struct ComposerView: View {
                         .strokeBorder(dropTargeted ? MC.accent : MC.hairline2, lineWidth: 1)
                 )
         )
+        // Clicking anywhere on the card (padding, whitespace) focuses the
+        // input; buttons and the text view keep their own click handling.
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture { focusRequest += 1 }
         // Drops on the card outside the text view (the text view routes its own).
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             for provider in providers {

@@ -25,6 +25,10 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — interactive fixes (post-phase-5)
+- Composer: clicking anywhere on the card (padding/whitespace) focuses the
+  input — no longer requires hitting the text itself. `[web] [macos]`
+
 ### 2026-07-19 — Phase 5: attachment/image UX + thread panel
 - Attachments: Download icon on hover (images, file chips, lightbox); macOS
   saves to ~/Downloads (uniqued) + reveals in Finder. `[web] [macos]`
