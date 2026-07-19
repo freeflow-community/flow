@@ -100,9 +100,12 @@ enum ComposerMarkdownStyler {
                     .paragraphStyle: quoteParagraph,
                 ], range: range)
             case .fence:
+                // Fence markers are hidden in the composer (operator fix):
+                // the block reads as one code area; the tiny invisible rows
+                // become its top/bottom padding.
                 storage.addAttributes([
-                    .font: codeFont,
-                    .foregroundColor: fenceMarker,
+                    .font: NSFont.monospacedSystemFont(ofSize: 5, weight: .regular),
+                    .foregroundColor: codeBackground,
                     .backgroundColor: codeBackground,
                 ], range: range)
             case .code:
@@ -245,25 +248,111 @@ struct MarkdownComposerTextView: NSViewRepresentable {
             self.onSend = onSend
         }
 
+        private var autoClosing = false
+
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
+            if !autoClosing { autoCloseFence(textView) }
             ComposerMarkdownStyler.restyle(textView)
             if text.wrappedValue != textView.string {
                 text.wrappedValue = textView.string
             }
         }
 
+        /// Typing the third backtick of a new opening fence turns it into an
+        /// enterable code block: the closing fence is inserted and the caret
+        /// parked on the empty line between (operator fix, phase 3.5).
+        private func autoCloseFence(_ tv: NSTextView) {
+            let ns = tv.string as NSString
+            let sel = tv.selectedRange()
+            let caret = sel.location
+            guard sel.length == 0, caret > 0, caret <= ns.length else { return }
+            let lineRange = ns.lineRange(for: NSRange(location: caret - 1, length: 0))
+            var line = ns.substring(with: lineRange)
+            var contentLen = (line as NSString).length
+            if line.hasSuffix("\n") { line.removeLast(); contentLen -= 1 }
+            guard line == "```", caret == lineRange.location + contentLen else { return }
+            // must be an OPENING fence (even fence count before) with no fence after
+            let before = ns.substring(to: lineRange.location)
+            let fencesBefore = MarkdownBlocks.kinds(of: MarkdownBlocks.lines(before))
+                .filter { $0 == .fence }.count
+            guard fencesBefore % 2 == 0 else { return }
+            let after = ns.substring(from: min(ns.length, NSMaxRange(lineRange)))
+            let fenceAfter = MarkdownBlocks.kinds(of: MarkdownBlocks.lines(after)).contains(.fence)
+            guard !fenceAfter else { return }
+            autoClosing = true
+            tv.insertText("\n\n```", replacementRange: NSRange(location: caret, length: 0))
+            tv.setSelectedRange(NSRange(location: caret + 1, length: 0))
+            autoClosing = false
+        }
+
+        /// Escape or Delete inside a code block with no content removes the
+        /// whole block (operator fix, phase 3.5). Returns true when handled.
+        private func removeEmptyFenceBlock(_ tv: NSTextView) -> Bool {
+            let sel = tv.selectedRange()
+            guard sel.length == 0 else { return false }
+            let caret = sel.location
+            let ranges = MarkdownBlocks.classifiedLineRanges(tv.string)
+            guard !ranges.isEmpty else { return false }
+            let i = ranges.firstIndex { caret < NSMaxRange($0.range) } ?? ranges.count - 1
+            guard ranges[i].kind == .code || ranges[i].kind == .fence else { return false }
+            // locate the fence pair (or unclosed trailing fence) containing line i
+            var openIdx: Int?
+            var found: (open: Int, close: Int?)?
+            for (j, r) in ranges.enumerated() where r.kind == .fence {
+                if let o = openIdx {
+                    if o <= i, i <= j { found = (o, j) }
+                    openIdx = nil
+                    if found != nil { break }
+                } else {
+                    openIdx = j
+                }
+            }
+            if found == nil, let o = openIdx, o <= i { found = (o, nil) }
+            guard let region = found else { return false }
+            let ns = tv.string as NSString
+            let interiorEnd = region.close ?? ranges.count
+            let interior = ranges[(region.open + 1)..<interiorEnd]
+                .filter { $0.kind == .code }
+                .map { ns.substring(with: $0.range) }
+                .joined()
+            guard interior.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            let start = ranges[region.open].range.location
+            let end = region.close.map { NSMaxRange(ranges[$0].range) } ?? ns.length
+            let removal = NSRange(location: start, length: end - start)
+            guard tv.shouldChangeText(in: removal, replacementString: "") else { return false }
+            tv.textStorage?.replaceCharacters(in: removal, with: "")
+            tv.didChangeText()
+            tv.setSelectedRange(NSRange(location: start, length: 0))
+            return true
+        }
+
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             if let onCommand, onCommand(commandSelector) { return true }
+            if commandSelector == #selector(NSResponder.cancelOperation(_:))
+                || commandSelector == #selector(NSResponder.deleteBackward(_:)) {
+                if removeEmptyFenceBlock(textView) { return true }
+            }
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                // Shift+Return inserts a newline; plain Return sends.
+                // Shift+Return inserts a newline; plain Return sends — except
+                // inside a code block, where Return types a code line (leave
+                // the block with ↓/End, or Esc/Delete when empty).
                 if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                     return false
                 }
+                if caretInsideCode(textView) { return false }
                 onSend()
                 return true
             }
             return false
+        }
+
+        private func caretInsideCode(_ tv: NSTextView) -> Bool {
+            let caret = tv.selectedRange().location
+            let ranges = MarkdownBlocks.classifiedLineRanges(tv.string)
+            guard !ranges.isEmpty else { return false }
+            let i = ranges.firstIndex { caret < NSMaxRange($0.range) } ?? ranges.count - 1
+            return ranges[i].kind == .code
         }
     }
 }

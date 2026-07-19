@@ -53,7 +53,11 @@ html, body, #root {
   padding-right: 9px;
 }
 .mc-composer > .cmp-fence {
-  color: var(--color-muted);
+  /* fence markers hidden in the composer (operator fix): the tiny invisible
+     rows read as the code block's top/bottom padding */
+  color: transparent;
+  font-size: 4px;
+  line-height: 8px;
 }
 .mc-composer > .cmp-code-start {
   border-top-left-radius: 8px;

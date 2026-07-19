@@ -38,9 +38,89 @@ export default function Composer({
     const el = editorRef.current;
     if (!el) return;
     const value = domToText(el);
+    if (maybeAutoCloseFence(el, value)) return; // rebuilt via setDraft
     decorate(el, value);
     setText(value);
     if (value) live.sendTyping(channelId);
+  };
+
+  /** Typing the third backtick of a new opening fence turns it into an
+   * enterable code block: closing fence inserted, caret parked inside. */
+  const maybeAutoCloseFence = (el: HTMLDivElement, value: string): boolean => {
+    const off = getSelectionOffsets(el);
+    if (!off || off[0] !== off[1]) return false;
+    const caret = off[0];
+    const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
+    const nl = value.indexOf('\n', caret);
+    const lineEnd = nl === -1 ? value.length : nl;
+    if (value.slice(lineStart, lineEnd) !== '```' || caret !== lineEnd) return false;
+    const isFenceLine = (l: string) => l.trimStart().startsWith('```');
+    const fencesBefore = value.slice(0, lineStart).split('\n').filter(isFenceLine).length;
+    if (fencesBefore % 2 === 1) return false; // this closes an existing block
+    if (value.slice(lineEnd).split('\n').some(isFenceLine)) return false;
+    setDraft(value.slice(0, lineEnd) + '\n\n```' + value.slice(lineEnd), caret + 1);
+    live.sendTyping(channelId);
+    return true;
+  };
+
+  /** Escape/Backspace inside a code block with no content removes the block. */
+  const removeEmptyFenceBlock = (): boolean => {
+    const el = editorRef.current;
+    if (!el) return false;
+    const off = getSelectionOffsets(el);
+    if (!off || off[0] !== off[1]) return false;
+    const caret = off[0];
+    const lines = text.split('\n');
+    // classify lines and find offsets
+    let inCode = false;
+    let pos = 0;
+    let openStart = -1;
+    let lineNo = 0;
+    let region: { start: number; end: number; interior: string } | null = null;
+    let interior = '';
+    for (const line of lines) {
+      const end = pos + line.length;
+      const isFence = line.trimStart().startsWith('```');
+      if (isFence && !inCode) {
+        inCode = true;
+        openStart = pos;
+        interior = '';
+      } else if (isFence && inCode) {
+        inCode = false;
+        if (caret >= openStart && caret <= end + 1) {
+          region = { start: openStart, end: Math.min(text.length, end + 1), interior };
+          break;
+        }
+      } else if (inCode) {
+        interior += line;
+      }
+      pos = end + 1;
+      lineNo += 1;
+    }
+    if (!region && inCode && caret >= openStart) {
+      region = { start: openStart, end: text.length, interior }; // unclosed
+    }
+    if (!region || region.interior.trim() !== '') return false;
+    setDraft(text.slice(0, region.start) + text.slice(region.end), region.start);
+    return true;
+  };
+
+  /** Is the caret on an interior code line? (Enter should type, not send.) */
+  const caretInsideCode = (): boolean => {
+    const el = editorRef.current;
+    const off = el ? getSelectionOffsets(el) : null;
+    if (!off) return false;
+    const caret = off[0];
+    let inCode = false;
+    let pos = 0;
+    for (const line of text.split('\n')) {
+      const end = pos + line.length;
+      const isFence = line.trimStart().startsWith('```');
+      if (isFence) inCode = !inCode;
+      else if (inCode && caret >= pos && caret <= end) return true;
+      pos = end + 1;
+    }
+    return false;
   };
 
   /** Programmatic draft change: rebuild the editor DOM, park the caret, keep focus. */
@@ -155,9 +235,15 @@ export default function Composer({
         return;
       }
     }
+    if (e.key === 'Escape' || e.key === 'Backspace') {
+      if (removeEmptyFenceBlock()) {
+        e.preventDefault();
+        return;
+      }
+    }
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    if (e.shiftKey) insertAtCaret('\n');
+    if (e.shiftKey || caretInsideCode()) insertAtCaret('\n');
     else doSend();
   };
 
