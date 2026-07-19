@@ -131,3 +131,20 @@ export interface MessagePage {
   messages: MessageDTO[];
   hasMore: boolean;
 }
+
+// ---- Phase 4: Slack app compatibility ---------------------------
+
+/** Slack-compat app registration (phase4.md §1). Bot token is returned once at creation. */
+export interface AppDTO {
+  id: string;
+  workspaceId: string;
+  name: string;
+  botUserId: string;
+  eventUrl: string | null;
+  eventTypes: string[];
+  createdBy: string;
+  createdAt: string;
+  disabledAt: string | null;
+  /** true once the event_url answered the url_verification challenge */
+  eventUrlVerified: boolean;
+}

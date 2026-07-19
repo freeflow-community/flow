@@ -17,8 +17,10 @@ import {
   MarkReadBody,
   PatchMeBody,
   RegisterBody,
+  CreateAppBody,
   SendMessageBody,
   SetNotifyLevelBody,
+  UpdateAppBody,
   UpdateWorkspaceBody,
   type UserDTO,
 } from '@mychat/shared';
@@ -31,6 +33,7 @@ import * as rx from '../services/reactions.js';
 import * as fl from '../services/files.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
+import * as ap from '../services/apps.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -159,6 +162,35 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = parse(UpdateWorkspaceBody, req.body);
     return ws.updateWorkspace(id, req.user.id, body);
+  });
+
+  // ---- Slack-compat app management (phase 4, owner/admin, web-only UI) ----
+  app.post('/v1/workspaces/:id/apps', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(CreateAppBody, req.body);
+    const res = await ap.createApp(id, req.user.id, body.name);
+    return reply.status(201).send(res); // { app, botToken } — token shown once
+  });
+
+  app.get('/v1/workspaces/:id/apps', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { apps: await ap.listApps(id, req.user.id) };
+  });
+
+  app.patch('/v1/apps/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(UpdateAppBody, req.body);
+    return ap.updateApp(id, req.user.id, body);
+  });
+
+  app.post('/v1/apps/:id/disable', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ap.setAppDisabled(id, req.user.id, true);
+  });
+
+  app.post('/v1/apps/:id/enable', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ap.setAppDisabled(id, req.user.id, false);
   });
 
   app.post('/v1/workspaces/:id/invites', { preHandler: requireAuth }, async (req, reply) => {

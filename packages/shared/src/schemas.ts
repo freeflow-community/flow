@@ -161,3 +161,31 @@ export const PatchMeBody = z
     'statusEmoji and statusText must be set together',
   );
 export type PatchMeBody = z.infer<typeof PatchMeBody>;
+
+// ---- Phase 4: Slack app compatibility ---------------------------
+/** Outgoing Events API types an app may subscribe to (operator ruling 5). */
+export const APP_EVENT_TYPES = [
+  'message.channels',
+  'message.groups',
+  'message.im',
+  'app_mention',
+  'reaction_added',
+  'reaction_removed',
+  'member_joined_channel',
+  'member_left_channel',
+  'channel_created',
+  'channel_archive',
+] as const;
+
+export const CreateAppBody = z.object({
+  name: z.string().min(1).max(80),
+});
+export type CreateAppBody = z.infer<typeof CreateAppBody>;
+
+export const UpdateAppBody = z
+  .object({
+    eventUrl: z.string().url().max(500).nullable().optional(),
+    eventTypes: z.array(z.enum(APP_EVENT_TYPES)).max(APP_EVENT_TYPES.length).optional(),
+  })
+  .refine((b) => b.eventUrl !== undefined || b.eventTypes !== undefined, 'nothing to update');
+export type UpdateAppBody = z.infer<typeof UpdateAppBody>;

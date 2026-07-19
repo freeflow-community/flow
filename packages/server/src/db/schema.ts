@@ -5,6 +5,7 @@ import {
   customType,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -26,6 +27,7 @@ export const users = pgTable('users', {
   displayName: text('display_name').notNull(),
   avatarUrl: text('avatar_url'),
   timezone: text('timezone').notNull().default('UTC'),
+  isBot: boolean('is_bot').notNull().default(false), // phase 4: app bot users
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -183,4 +185,44 @@ export const notifications = pgTable(
     readAt: timestamp('read_at', { withTimezone: true }),
   },
   (t) => [index('notifications_user_idx').on(t.userId, t.readAt, t.id.desc())],
+);
+
+// ---- Phase 4: Slack app compatibility ---------------------------
+
+export const apps = pgTable(
+  'apps',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    botUserId: uuid('bot_user_id').notNull().references(() => users.id),
+    botTokenHash: bytea('bot_token_hash').notNull().unique(),
+    signingSecret: text('signing_secret').notNull(),
+    eventUrl: text('event_url'),
+    eventUrlVerifiedAt: timestamp('event_url_verified_at', { withTimezone: true }),
+    eventTypes: text('event_types').array().notNull().default([]),
+    createdBy: uuid('created_by').notNull().references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  },
+  (t) => [index('apps_workspace_idx').on(t.workspaceId)],
+);
+
+/** Events API outbox (decision log 2026-07-18 ruling 3). */
+export const pendingAppEvents = pgTable(
+  'pending_app_events',
+  {
+    id: uuid('id').primaryKey(),
+    appId: uuid('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull(),
+    payload: jsonb('payload').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('pending_app_events_due').on(t.nextAttemptAt).where(sql`delivered_at IS NULL AND failed_at IS NULL`),
+  ],
 );
