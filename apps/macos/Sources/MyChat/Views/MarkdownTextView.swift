@@ -333,26 +333,66 @@ struct MarkdownComposerTextView: NSViewRepresentable {
                 || commandSelector == #selector(NSResponder.deleteBackward(_:)) {
                 if removeEmptyFenceBlock(textView) { return true }
             }
+            if commandSelector == #selector(NSResponder.moveRight(_:)) {
+                if exitCodeBlockIfAtEnd(textView) { return true }
+            }
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 // Shift+Return inserts a newline; plain Return sends — except
-                // inside a code block, where Return types a code line (leave
-                // the block with ↓/End, or Esc/Delete when empty).
+                // inside a code block, where Return types a code line. Return
+                // on an EMPTY code line drops that line and submits.
                 if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                     return false
                 }
-                if caretInsideCode(textView) { return false }
+                if let line = caretCodeLine(textView) {
+                    guard line.isEmpty else { return false }
+                    if textView.shouldChangeText(in: line.range, replacementString: "") {
+                        textView.textStorage?.replaceCharacters(in: line.range, with: "")
+                        textView.didChangeText()
+                    }
+                    onSend()
+                    return true
+                }
                 onSend()
                 return true
             }
             return false
         }
 
-        private func caretInsideCode(_ tv: NSTextView) -> Bool {
+        /// (range incl. trailing newline, emptiness) of the caret's line when
+        /// it is an interior code line; nil otherwise.
+        private func caretCodeLine(_ tv: NSTextView) -> (range: NSRange, isEmpty: Bool)? {
             let caret = tv.selectedRange().location
+            let ranges = MarkdownBlocks.classifiedLineRanges(tv.string)
+            guard !ranges.isEmpty else { return nil }
+            let i = ranges.firstIndex { caret < NSMaxRange($0.range) } ?? ranges.count - 1
+            guard ranges[i].kind == .code else { return nil }
+            let content = (tv.string as NSString).substring(with: ranges[i].range)
+            return (ranges[i].range, content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+
+        /// → at the end of the last code line jumps past the closing fence
+        /// onto a plain line after the block (created if needed).
+        private func exitCodeBlockIfAtEnd(_ tv: NSTextView) -> Bool {
+            let sel = tv.selectedRange()
+            guard sel.length == 0 else { return false }
+            let caret = sel.location
             let ranges = MarkdownBlocks.classifiedLineRanges(tv.string)
             guard !ranges.isEmpty else { return false }
             let i = ranges.firstIndex { caret < NSMaxRange($0.range) } ?? ranges.count - 1
-            return ranges[i].kind == .code
+            guard ranges[i].kind == .code, i + 1 < ranges.count, ranges[i + 1].kind == .fence
+            else { return false }
+            let ns = tv.string as NSString
+            let content = ns.substring(with: ranges[i].range)
+            let contentEnd = NSMaxRange(ranges[i].range) - (content.hasSuffix("\n") ? 1 : 0)
+            guard caret == contentEnd else { return false }
+            let closeRange = ranges[i + 1].range
+            var target = NSMaxRange(closeRange)
+            if !ns.substring(with: closeRange).hasSuffix("\n") {
+                tv.insertText("\n", replacementRange: NSRange(location: target, length: 0))
+                target += 1
+            }
+            tv.setSelectedRange(NSRange(location: target, length: 0))
+            return true
         }
     }
 }

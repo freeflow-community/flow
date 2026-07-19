@@ -105,22 +105,33 @@ export default function Composer({
     return true;
   };
 
-  /** Is the caret on an interior code line? (Enter should type, not send.) */
-  const caretInsideCode = (): boolean => {
+  /** Caret's interior-code-line context, or null when not on a code line. */
+  const codeCaret = (): {
+    caret: number; lineStart: number; lineEnd: number; empty: boolean;
+    nextIsClose: boolean; closeEnd: number | null;
+  } | null => {
     const el = editorRef.current;
     const off = el ? getSelectionOffsets(el) : null;
-    if (!off) return false;
+    if (!off || off[0] !== off[1]) return null;
     const caret = off[0];
+    const lines = text.split('\n');
     let inCode = false;
     let pos = 0;
-    for (const line of text.split('\n')) {
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li]!;
       const end = pos + line.length;
-      const isFence = line.trimStart().startsWith('```');
-      if (isFence) inCode = !inCode;
-      else if (inCode && caret >= pos && caret <= end) return true;
+      if (line.trimStart().startsWith('```')) inCode = !inCode;
+      else if (inCode && caret >= pos && caret <= end) {
+        const next = lines[li + 1];
+        const nextIsClose = next !== undefined && next.trimStart().startsWith('```');
+        return {
+          caret, lineStart: pos, lineEnd: end, empty: line.trim() === '',
+          nextIsClose, closeEnd: nextIsClose ? end + 1 + next.length : null,
+        };
+      }
       pos = end + 1;
     }
-    return false;
+    return null;
   };
 
   /** Programmatic draft change: rebuild the editor DOM, park the caret, keep focus. */
@@ -157,8 +168,8 @@ export default function Composer({
     setSelIndex(0);
   };
 
-  const doSend = () => {
-    const raw = text.trim();
+  const doSend = (override?: string) => {
+    const raw = (override ?? text).trim();
     if ((!raw && attachments.length === 0) || uploading > 0) return;
     const { body, mentions } = transformOutgoing(raw || ' ', members.data ?? []);
     send.mutate(
@@ -241,10 +252,30 @@ export default function Composer({
         return;
       }
     }
+    const ctx = codeCaret();
+    // → at the end of the code content exits the block onto a plain line.
+    if (e.key === 'ArrowRight' && ctx && ctx.caret === ctx.lineEnd && ctx.nextIsClose) {
+      e.preventDefault();
+      if (ctx.closeEnd! >= text.length) setDraft(text + '\n');
+      else if (editorRef.current) setCaretAt(editorRef.current, ctx.closeEnd! + 1);
+      return;
+    }
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    if (e.shiftKey || caretInsideCode()) insertAtCaret('\n');
-    else doSend();
+    if (e.shiftKey) {
+      insertAtCaret('\n');
+    } else if (ctx) {
+      if (ctx.empty) {
+        // Return on an empty code line: drop the line and submit.
+        const cleaned = text.slice(0, ctx.lineStart) + text.slice(Math.min(text.length, ctx.lineEnd + 1));
+        setDraft(cleaned);
+        doSend(cleaned);
+      } else {
+        insertAtCaret('\n');
+      }
+    } else {
+      doSend();
+    }
   };
 
   // Drag-and-drop files anywhere on the composer → upload-then-attach.
@@ -344,7 +375,7 @@ export default function Composer({
             className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
             title="Send"
             disabled={(!text.trim() && attachments.length === 0) || uploading > 0}
-            onClick={doSend}
+            onClick={() => doSend()}
           >
             ➤
           </button>
