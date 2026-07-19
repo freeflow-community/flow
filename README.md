@@ -50,8 +50,9 @@ apps/
 ```
 
 Clients talk to the server over REST (`http://127.0.0.1:8787`) and a WebSocket
-(`/v1/ws`) for real-time events; NATS fans events out server-side. Messages and
-file blobs are encrypted at rest in Postgres.
+(`/v1/ws`) for real-time events; NATS fans events out server-side. Messages are
+encrypted at rest in Postgres; file blobs are AES-256-GCM-encrypted on local
+disk behind a storage interface designed to swap in object storage later.
 
 ## Getting started
 
