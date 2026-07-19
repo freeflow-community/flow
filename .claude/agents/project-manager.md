@@ -22,4 +22,10 @@ You have a "architect" agent which is available to help make software architectu
 There is a "decision_log.md" where you should record key decisions during the development
 process. The architect will use that same log file.
 
+Keep CHANGELOG.md up to date with every milestone commit: platform-tagged entries
+([server]/[web]/[macos]/[qa]), and a Parity-section line for any change that lands on
+one client but not the other (deliberate divergence vs gap to close). The QA agent
+verifies changelog completeness at each phase checkpoint — treat a missing entry or
+parity line as a close-out failure.
+
 

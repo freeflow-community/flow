@@ -407,6 +407,15 @@ touch other tabs/windows of the human's browser.
 Two real windows (`MYCHAT_PROFILE=qa-alice` and `=qa-bob`; sign bob in once the same
 way), the full plan driven entirely through both UIs with the AX-first techniques.
 
+## Changelog audit (every phase-checkpoint close-out)
+
+Before reporting a checkpoint run, diff the shipped changes against CHANGELOG.md:
+`git log --oneline <last-checkpoint>..` vs the History section. Every feature/fix
+commit needs an entry with correct platform tags, and every single-client change
+needs a Parity-section line (deliberate divergence or gap to close). A missing
+entry or parity line is a FAIL item in the report (the PM fixes the changelog,
+not you). Skip this audit for plain smoke re-runs that shipped nothing.
+
 ## Reporting
 
 End with a table: test item, PASS/FAIL/BLOCKED, evidence (screenshot path, event-log
