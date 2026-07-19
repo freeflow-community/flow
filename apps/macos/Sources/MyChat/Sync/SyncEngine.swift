@@ -410,10 +410,7 @@ actor SyncEngine {
         try? await db.writer.write { db in
             try local.save(db)
             if let root = threadRootId {
-                try db.execute(
-                    sql: "UPDATE message SET replyCount = replyCount + 1, lastReplyAt = ? WHERE id = ?",
-                    arguments: [now, root]
-                )
+                try Self.bumpThreadRollup(db, rootId: root, replyAt: now, authorId: uid)
             }
         }
         do {
@@ -552,6 +549,25 @@ actor SyncEngine {
             .appendingPathComponent("MyChatDownloads-\(file.id)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(file.name)
+        try data.write(to: dest)
+        return dest
+    }
+
+    /// Saves a file's original bytes into ~/Downloads (uniqued name on
+    /// collision) — backs the attachment/lightbox Download buttons.
+    func saveToDownloads(_ file: FileAttachment) async throws -> URL {
+        let data = try await api.getData("/v1/files/\(file.id)")
+        let dir = try FileManager.default.url(
+            for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
+        let base = (file.name as NSString).deletingPathExtension
+        let ext = (file.name as NSString).pathExtension
+        var dest = dir.appendingPathComponent(file.name)
+        var n = 1
+        while FileManager.default.fileExists(atPath: dest.path) {
+            n += 1
+            dest = dir.appendingPathComponent(ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)")
+        }
         try data.write(to: dest)
         return dest
     }
@@ -880,14 +896,25 @@ actor SyncEngine {
             try m.save(db)
             let isNew = !existed && pendingDeleted == 0
             if isNew, let root = m.threadRootId {
-                try db.execute(
-                    sql: "UPDATE message SET replyCount = replyCount + 1, lastReplyAt = ? WHERE id = ?",
-                    arguments: [m.createdAt, root]
-                )
+                try Self.bumpThreadRollup(db, rootId: root, replyAt: m.createdAt, authorId: m.userId)
             }
             return isNew
         }
         return isNew ?? false
+    }
+
+    /// Local mirror of the server's thread rollup: bump replyCount/lastReplyAt
+    /// on the root and merge the reply author into the first-4 participant set.
+    private static func bumpThreadRollup(
+        _ db: Database, rootId: String, replyAt: String, authorId: String
+    ) throws {
+        guard var root = try Message.filter(key: rootId).fetchOne(db) else { return }
+        root.replyCount += 1
+        root.lastReplyAt = replyAt
+        if root.replyParticipantUserIds.count < 4, !root.replyParticipantUserIds.contains(authorId) {
+            root.replyParticipantUserIds.append(authorId)
+        }
+        try root.save(db)
     }
 
     /// Bulk store for history/backfill pages (no unread or reply-count bumps:

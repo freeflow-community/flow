@@ -33,6 +33,35 @@ actor ImageLoader {
     }
 }
 
+/// NSImageView-backed authenticated image that plays animated GIFs — SwiftUI's
+/// Image renders only the first frame of a multi-frame NSImage; NSImageView
+/// with `animates` plays them. Same load/cache path as AuthImage.
+struct AnimatedAuthImage: NSViewRepresentable {
+    let path: String
+
+    func makeNSView(context: Context) -> NSImageView {
+        let view = NSImageView()
+        view.animates = true
+        view.imageScaling = .scaleProportionallyUpOrDown
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        return view
+    }
+
+    func updateNSView(_ view: NSImageView, context: Context) {
+        guard context.coordinator.loadedPath != path else { return }
+        context.coordinator.loadedPath = path
+        Task { @MainActor in
+            view.image = await ImageLoader.shared.image(path: path)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator { var loadedPath: String? }
+}
+
 /// SwiftUI wrapper: renders an authenticated remote image with a placeholder.
 struct AuthImage<Placeholder: View>: View {
     let path: String

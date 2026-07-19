@@ -145,6 +145,12 @@ struct AppDatabase: Sendable {
                 t.add(column: "sidebarColor", .text)
             }
         }
+        // Phase 5 (item 7): reply-avatar stack — first 4 distinct reply authors.
+        migrator.registerMigration("v5") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "replyParticipantUserIds", .text).notNull().defaults(to: "[]") // JSON
+            }
+        }
         try migrator.migrate(writer)
     }
 

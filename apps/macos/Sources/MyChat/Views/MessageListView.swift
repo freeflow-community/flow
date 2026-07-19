@@ -184,11 +184,33 @@ struct MessageRow: View {
                     Button {
                         onOpenThread(message.id)
                     } label: {
-                        Label(
-                            "\(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies")",
-                            systemImage: "bubble.left.and.bubble.right"
-                        )
-                        .font(.caption)
+                        HStack(spacing: 6) {
+                            // First-4 reply-author avatars (phase 5 item 7).
+                            if !message.replyParticipantUserIds.isEmpty {
+                                HStack(spacing: -6) {
+                                    ForEach(message.replyParticipantUserIds, id: \.self) { uid in
+                                        AvatarChip(
+                                            userId: uid,
+                                            name: userNames[uid] ?? "Unknown",
+                                            avatarPath: app.avatarPaths[uid],
+                                            size: 20,
+                                            radius: 6
+                                        )
+                                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.white, lineWidth: 1.5))
+                                    }
+                                }
+                                .accessibilityIdentifier("msg.threadParticipants")
+                                .accessibilityLabel(
+                                    message.replyParticipantUserIds
+                                        .map { userNames[$0] ?? "Unknown" }.joined(separator: ", ")
+                                )
+                            }
+                            Label(
+                                "\(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies")",
+                                systemImage: "bubble.left.and.bubble.right"
+                            )
+                            .font(.caption)
+                        }
                     }
                     .buttonStyle(.link)
                 }
@@ -355,47 +377,42 @@ struct MessageRow: View {
 
 // MARK: - Attachments
 
+/// Collapsed-image state (phase 5 ruling): persisted per device, capped list.
+enum CollapsedImages {
+    private static let key = "collapsedImages" + Profile.suffix
+    private static let cap = 500
+
+    static func contains(_ fileId: String) -> Bool {
+        (UserDefaults.standard.stringArray(forKey: key) ?? []).contains(fileId)
+    }
+
+    static func set(_ fileId: String, collapsed: Bool) {
+        var ids = (UserDefaults.standard.stringArray(forKey: key) ?? []).filter { $0 != fileId }
+        if collapsed { ids.append(fileId) }
+        UserDefaults.standard.set(Array(ids.suffix(cap)), forKey: key)
+    }
+}
+
 struct AttachmentView: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
     @State private var opening = false
+    @State private var saving = false
+    @State private var hovering = false
+    @State private var collapsed: Bool
+    @State private var showLightbox = false
+
+    init(file: FileAttachment) {
+        self.file = file
+        _collapsed = State(initialValue: CollapsedImages.contains(file.id))
+    }
 
     var body: some View {
         Group {
             if file.isImage {
-                AuthImage(path: "/v1/files/\(file.id)/thumb") {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.secondary.opacity(0.1))
-                        .overlay(ProgressView().controlSize(.small))
-                }
-                .scaledToFit()
-                .frame(maxWidth: 280, maxHeight: thumbHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .contentShape(Rectangle())
-                .onTapGesture(perform: open)
+                imageAttachment
             } else {
-                Button(action: open) {
-                    HStack(spacing: 8) {
-                        Image(systemName: iconName)
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(file.name)
-                                .font(.callout)
-                                .lineLimit(1)
-                            Text(file.sizeLabel)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        if opening {
-                            ProgressView().controlSize(.mini)
-                        }
-                    }
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.08)))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
+                fileChip
             }
         }
         .padding(.top, 3)
@@ -403,9 +420,125 @@ struct AttachmentView: View {
         .accessibilityIdentifier("msg.file.\(file.name)")
     }
 
-    private var thumbHeight: CGFloat {
-        guard let w = file.width, let h = file.height, w > 0 else { return 200 }
-        return min(240, 280 * CGFloat(h) / CGFloat(w))
+    private var isGif: Bool { file.mimeType == "image/gif" }
+
+    // MARK: image attachments
+
+    private var imageAttachment: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Button {
+                    collapsed.toggle()
+                    CollapsedImages.set(file.id, collapsed: collapsed)
+                } label: {
+                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 12)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(MC.faint)
+                .help(collapsed ? "Show image" : "Hide image")
+                .accessibilityIdentifier("msg.file.collapse.\(file.name)")
+                Text(file.name)
+                    .font(.system(size: 11))
+                    .foregroundStyle(MC.faint)
+                    .lineLimit(1)
+            }
+            if !collapsed {
+                imageBody
+            }
+        }
+    }
+
+    private var imageBody: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                // GIFs skip the static webp thumb and animate from the original.
+                if isGif {
+                    AnimatedAuthImage(path: "/v1/files/\(file.id)")
+                } else {
+                    AuthImage(path: "/v1/files/\(file.id)/thumb") {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.secondary.opacity(0.1))
+                            .overlay(ProgressView().controlSize(.small))
+                    }
+                    .scaledToFit()
+                }
+            }
+            .frame(width: displaySize.width, height: displaySize.height)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+            .onTapGesture { showLightbox = true }
+
+            if hovering || saving {
+                downloadButton
+                    .padding(6)
+            }
+        }
+        .onHover { hovering = $0 }
+        .sheet(isPresented: $showLightbox) {
+            ImageLightboxView(file: file)
+        }
+    }
+
+    private var displaySize: CGSize {
+        guard let w = file.width, let h = file.height, w > 0, h > 0 else {
+            return CGSize(width: 240, height: 180)
+        }
+        let scale = min(1, 280 / CGFloat(w), 240 / CGFloat(h))
+        return CGSize(width: max(60, CGFloat(w) * scale), height: max(60, CGFloat(h) * scale))
+    }
+
+    // MARK: non-image chip
+
+    private var fileChip: some View {
+        HStack(spacing: 6) {
+            Button(action: open) {
+                HStack(spacing: 8) {
+                    Image(systemName: iconName)
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(file.name)
+                            .font(.callout)
+                            .lineLimit(1)
+                        Text(file.sizeLabel)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if opening {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(.secondary.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            if hovering || saving {
+                downloadButton
+            }
+        }
+        .onHover { hovering = $0 }
+    }
+
+    private var downloadButton: some View {
+        Button(action: saveToDownloads) {
+            Group {
+                if saving {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.down.to.line")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+            }
+            .frame(width: 24, height: 24)
+            .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.92)))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MC.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help("Download")
+        .accessibilityIdentifier("msg.file.download.\(file.name)")
     }
 
     private var iconName: String {
@@ -430,6 +563,113 @@ struct AttachmentView: View {
                 NSWorkspace.shared.open(url)
             } catch {
                 app.showError("Couldn't open \(file.name): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func saveToDownloads() {
+        guard !saving else { return }
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                let dest = try await app.engine.saveToDownloads(file)
+                NSWorkspace.shared.activateFileViewerSelecting([dest])
+            } catch {
+                app.showError("Couldn't download \(file.name): \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+/// In-app image popup (phase 5 item 5): original bytes, open-external and
+/// download as icon buttons. Esc / ✕ closes.
+struct ImageLightboxView: View {
+    let file: FileAttachment
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var busy = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Text(file.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                if busy { ProgressView().controlSize(.mini) }
+                Spacer()
+                Button(action: openExternal) {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .help("Open external")
+                .accessibilityIdentifier("lightbox.openExternal")
+                Button(action: download) {
+                    Image(systemName: "arrow.down.to.line")
+                }
+                .help("Download")
+                .accessibilityIdentifier("lightbox.download")
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .help("Close")
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("lightbox.close")
+            }
+            .buttonStyle(.borderless)
+
+            Group {
+                if file.mimeType == "image/gif" {
+                    AnimatedAuthImage(path: "/v1/files/\(file.id)")
+                } else {
+                    AuthImage(path: "/v1/files/\(file.id)") {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.secondary.opacity(0.1))
+                            .overlay(ProgressView())
+                    }
+                    .scaledToFit()
+                }
+            }
+            .frame(width: displaySize.width, height: displaySize.height)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(14)
+        .accessibilityIdentifier("lightbox")
+    }
+
+    private var displaySize: CGSize {
+        guard let w = file.width, let h = file.height, w > 0, h > 0 else {
+            return CGSize(width: 640, height: 480)
+        }
+        let scale = min(1, 860 / CGFloat(w), 600 / CGFloat(h))
+        return CGSize(width: max(280, CGFloat(w) * scale), height: max(200, CGFloat(h) * scale))
+    }
+
+    private func openExternal() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let url = try await app.engine.downloadFile(file)
+                NSWorkspace.shared.open(url)
+            } catch {
+                app.showError("Couldn't open \(file.name): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func download() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let dest = try await app.engine.saveToDownloads(file)
+                NSWorkspace.shared.activateFileViewerSelecting([dest])
+            } catch {
+                app.showError("Couldn't download \(file.name): \(error.localizedDescription)")
             }
         }
     }

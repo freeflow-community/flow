@@ -210,6 +210,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var deletedAt: String?
     var replyCount: Int
     var lastReplyAt: String?
+    /// First (up to) 4 distinct reply authors in thread order (reply-avatar stack).
+    var replyParticipantUserIds: [String]
     var reactions: [ReactionAgg]
     var files: [FileAttachment]
     /// Local-only: true for optimistic rows not yet confirmed by the server.
@@ -220,13 +222,14 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
         case createdAt, editedAt, deletedAt, replyCount, lastReplyAt
-        case reactions, files, pending
+        case replyParticipantUserIds, reactions, files, pending
     }
 
     init(
         id: String, channelId: String, userId: String, threadRootId: String?,
         clientMsgId: String, body: String, createdAt: String, editedAt: String?,
         deletedAt: String?, replyCount: Int, lastReplyAt: String?,
+        replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [], pending: Bool
     ) {
         self.id = id
@@ -240,6 +243,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.deletedAt = deletedAt
         self.replyCount = replyCount
         self.lastReplyAt = lastReplyAt
+        self.replyParticipantUserIds = replyParticipantUserIds
         self.reactions = reactions
         self.files = files
         self.pending = pending
@@ -258,6 +262,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         deletedAt = try c.decodeIfPresent(String.self, forKey: .deletedAt)
         replyCount = try c.decodeIfPresent(Int.self, forKey: .replyCount) ?? 0
         lastReplyAt = try c.decodeIfPresent(String.self, forKey: .lastReplyAt)
+        replyParticipantUserIds = try c.decodeIfPresent([String].self, forKey: .replyParticipantUserIds) ?? []
         reactions = try c.decodeIfPresent([ReactionAgg].self, forKey: .reactions) ?? []
         files = try c.decodeIfPresent([FileAttachment].self, forKey: .files) ?? []
         pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false

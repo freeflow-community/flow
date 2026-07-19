@@ -151,3 +151,34 @@ orchestrator across server/web/macOS (commits 304ebe1, b44aad3, 5502801).
   (not List) — selection exposed via AX isSelected trait.
 - **Dev note**: rebuilding packages/web/dist requires a server restart to re-register
   static asset routes (@fastify/static wildcard:false snapshots files at boot).
+
+## 2026-07-19 — Phase 5 pre-flight: operator rulings
+
+Pre-flight Q&A before implementing phase5.md (attachment/image UX, thread panel
+upgrades). Operator rulings:
+
+1. **Animated GIFs autoplay inline** (not click/hover-to-play). Clients render the
+   original file for `image/gif` instead of the static webp thumb — web `<img>` on
+   the original blob; macOS via a new `AnimatedAuthImage` (NSImageView `animates`,
+   SwiftUI `Image` renders only the first frame). No server change; thumbnails stay
+   static webp for non-GIF paths and composer previews.
+2. **Image collapse state is persisted per device** (Slack-like), not session-only:
+   web `localStorage['mychat.collapsedImages']`, macOS `UserDefaults` — both capped
+   at 500 ids, oldest dropped.
+3. **Built directly by the coordinator in-session** (operator chose this over the
+   usual PM delegation for phase-scale work).
+
+Implementation rulings (coordinator):
+- **Reply participants (item 7) are computed on read, not denormalized**: new
+  `MessageDTO.replyParticipantUserIds` (first 4 distinct reply authors in
+  first-reply order) hydrated per page via one `DISTINCT ON (thread_root_id,
+  user_id)` query — Postgres has no `min(uuid)` aggregate, so DISTINCT ON picks
+  each author's first reply and JS orders/caps. macOS mirrors the rollup locally
+  when replies arrive (same first-4 semantics); web refetches via react-query
+  invalidation, so it needs no client-side merge.
+- **Thread panel width follows the sidebar-width ruling**: local per-device
+  preference (web localStorage, macOS @AppStorage), clamped 280–560 (macOS,
+  default 340) / 280–560 (web, default 384), double-click/tap resets.
+- **macOS "Download" saves to ~/Downloads** (uniqued on collision) and reveals in
+  Finder — the platform equivalent of the browser download the web client gets
+  for free.

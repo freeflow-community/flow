@@ -268,27 +268,54 @@ struct ComposerView: View {
 
     private var attachmentBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(alignment: .bottom, spacing: 6) {
                 ForEach(attachments) { file in
-                    HStack(spacing: 4) {
-                        Image(systemName: file.isImage ? "photo" : "doc")
-                            .font(.caption)
-                        Text(file.name)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .frame(maxWidth: 140)
-                        Button {
-                            attachments.removeAll { $0.id == file.id }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
+                    if file.isImage {
+                        // Real thumbnail preview in the prompt area (phase 5 item 4).
+                        ZStack(alignment: .topTrailing) {
+                            AuthImage(path: "/v1/files/\(file.id)/thumb") {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(.secondary.opacity(0.1))
+                            }
+                            .scaledToFill()
+                            .frame(width: 46, height: 46)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary, lineWidth: 1))
+                            Button {
+                                attachments.removeAll { $0.id == file.id }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .background(Circle().fill(.white))
+                            }
+                            .buttonStyle(.plain)
+                            .offset(x: 4, y: -4)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.top, 4)
+                        .help(file.name)
+                        .accessibilityIdentifier("composer.attachment.\(file.name)")
+                    } else {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc")
+                                .font(.caption)
+                            Text(file.name)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .frame(maxWidth: 140)
+                            Button {
+                                attachments.removeAll { $0.id == file.id }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(.secondary.opacity(0.12)))
+                        .accessibilityIdentifier("composer.attachment.\(file.name)")
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(.secondary.opacity(0.12)))
-                    .accessibilityIdentifier("composer.attachment.\(file.name)")
                 }
                 if uploading > 0 {
                     HStack(spacing: 4) {
@@ -298,7 +325,7 @@ struct ComposerView: View {
                 }
             }
         }
-        .frame(height: 26)
+        .frame(height: attachments.contains(where: \.isImage) ? 54 : 26)
     }
 
     private func pickFiles() {

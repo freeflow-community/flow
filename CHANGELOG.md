@@ -20,9 +20,28 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 ### Deliberate divergences (ruled)
 - Emoji picker: custom grid + search on web; native character palette on macOS.
 - App management UI (Slack-compat apps): web only.
-- Sidebar width preference: local per device, not synced (ruled).
+- Local per-device (not synced) prefs: sidebar width, thread-panel width,
+  image collapsed/expanded state (ruled).
 
 ## History
+
+### 2026-07-19 — Phase 5: attachment/image UX + thread panel
+- Attachments: Download icon on hover (images, file chips, lightbox); macOS
+  saves to ~/Downloads (uniqued) + reveals in Finder. `[web] [macos]`
+- Animated GIFs play inline (original file for `image/gif`; macOS
+  `AnimatedAuthImage` NSImageView wrapper). `[web] [macos]`
+- Images: hide/show chevron + filename header; collapsed state persisted per
+  device (capped 500). Open by default. `[web] [macos]`
+- Clicking an image opens an in-app lightbox (original bytes) with
+  open-external + download icon buttons; Esc/✕ closes. `[web] [macos]`
+- Composer: pending image attachments show real thumbnails with ✕ overlay
+  (files keep the name chip). `[web] [macos]`
+- Thread panel width drag-resizable (double-click/tap resets; local pref,
+  same ruling as sidebar width). `[web] [macos]`
+- "N replies" affordance shows first-4 reply-author avatar stack; new
+  `MessageDTO.replyParticipantUserIds` hydrated via DISTINCT ON (no
+  `min(uuid)` in Postgres); macOS mirrors the rollup locally (GRDB v5
+  migration). `[server] [web] [macos]`
 
 ### 2026-07-19 — interactive fixes (operator session)
 - Code blocks: ``` auto-materializes an enterable block (fences hidden, caret

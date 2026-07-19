@@ -96,6 +96,8 @@ export interface MessageDTO {
   deletedAt: string | null;
   replyCount: number;
   lastReplyAt: string | null;
+  /** first (up to) 4 distinct reply authors in thread order — drives the reply-avatar stack */
+  replyParticipantUserIds: string[];
   reactions: ReactionAggDTO[];
   files: FileDTO[];
 }

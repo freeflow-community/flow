@@ -18,6 +18,18 @@ struct MainView: View {
         min(Self.maxSidebarWidth, max(Self.minSidebarWidth, sidebarWidth))
     }
 
+    // Phase 5 item 6: thread panel width, same local-preference treatment.
+    @AppStorage("threadWidth" + Profile.suffix) private var threadWidth: Double = 340
+    @State private var threadDragStartWidth: Double?
+
+    private static let minThreadWidth: Double = 280
+    private static let maxThreadWidth: Double = 560
+    private static let defaultThreadWidth: Double = 340
+
+    private var clampedThreadWidth: Double {
+        min(Self.maxThreadWidth, max(Self.minThreadWidth, threadWidth))
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             WorkspaceRailView()
@@ -88,6 +100,41 @@ struct MainView: View {
             .accessibilityValue("\(Int(clampedSidebarWidth)) points")
     }
 
+    /// Drag strip on the chat/thread boundary (phase 5 item 6): dragging left
+    /// widens the panel; double-tap resets. Renders the hairline the old
+    /// Divider provided.
+    private var threadResizer: some View {
+        Rectangle()
+            .fill(MC.base)
+            .frame(width: 5)
+            .overlay(Rectangle().fill(MC.hairline).frame(width: 1))
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { threadWidth = Self.defaultThreadWidth }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        let base = threadDragStartWidth ?? clampedThreadWidth
+                        if threadDragStartWidth == nil { threadDragStartWidth = base }
+                        threadWidth = min(
+                            Self.maxThreadWidth,
+                            max(Self.minThreadWidth, base - value.translation.width)
+                        )
+                    }
+                    .onEnded { _ in threadDragStartWidth = nil }
+            )
+            .onHover { inside in
+                if inside {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .accessibilityElement()
+            .accessibilityIdentifier("thread.resizer")
+            .accessibilityLabel("Resize thread panel")
+            .accessibilityValue("\(Int(clampedThreadWidth)) points")
+    }
+
     @ViewBuilder
     private var detail: some View {
         if let channelId = app.selectedChannelId {
@@ -95,9 +142,9 @@ struct MainView: View {
                 ChannelView(channelId: channelId)
                     .frame(maxWidth: .infinity)
                 if let rootId = app.openThreadRootId {
-                    Divider().overlay(MC.hairline)
+                    threadResizer
                     ThreadPanelView(rootId: rootId)
-                        .frame(width: 340)
+                        .frame(width: clampedThreadWidth)
                         .id(rootId)
                 }
             }

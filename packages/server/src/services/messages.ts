@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO } from '@mychat/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -19,6 +19,7 @@ export type HydratedMessageRow = MessageRow;
 interface DtoExtras {
   reactions?: ReactionAggDTO[] | undefined;
   files?: FileDTO[] | undefined;
+  replyParticipants?: string[] | undefined;
 }
 
 export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
@@ -34,16 +35,61 @@ export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
     deletedAt: row.deletedAt?.toISOString() ?? null,
     replyCount: row.replyCount,
     lastReplyAt: row.lastReplyAt?.toISOString() ?? null,
+    replyParticipantUserIds: extras?.replyParticipants ?? [],
     reactions: extras?.reactions ?? [],
     files: extras?.files ?? [],
   };
 }
 
+/** Reply-avatar stack cap (phase5.md item 7): first 4 distinct authors per thread. */
+const REPLY_PARTICIPANTS_MAX = 4;
+
+/**
+ * First (up to) 4 distinct reply authors per thread root, in order of each
+ * author's first reply (message ids are uuidv7 → time-ordered). Grouped query
+ * over the roots on the page, same shape as reactions/files hydration.
+ */
+async function replyParticipantsForRoots(rows: MessageRow[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const rootIds = rows.filter((r) => r.threadRootId === null && r.replyCount > 0).map((r) => r.id);
+  if (rootIds.length === 0) return out;
+  // Postgres has no min(uuid) aggregate; DISTINCT ON picks each author's
+  // first reply instead, then JS orders authors by that reply and caps at 4.
+  const grouped = await db
+    .selectDistinctOn([messages.threadRootId, messages.userId], {
+      rootId: messages.threadRootId,
+      userId: messages.userId,
+      firstId: messages.id,
+    })
+    .from(messages)
+    .where(inArray(messages.threadRootId, rootIds))
+    .orderBy(asc(messages.threadRootId), asc(messages.userId), asc(messages.id));
+  grouped.sort((a, b) => (a.firstId < b.firstId ? -1 : 1));
+  for (const r of grouped) {
+    const list = out.get(r.rootId!) ?? [];
+    if (list.length < REPLY_PARTICIPANTS_MAX) {
+      list.push(r.userId);
+      out.set(r.rootId!, list);
+    }
+  }
+  return out;
+}
+
 /** Page hydration (phase2.md §2/§3): one grouped reactions query + one files join per page. */
 async function hydrate(rows: MessageRow[]): Promise<MessageDTO[]> {
   const ids = rows.map((r) => r.id);
-  const [reactions, files] = await Promise.all([reactionsForMessages(ids), filesForMessages(ids)]);
-  return rows.map((r) => toMessageDTO(r, { reactions: reactions.get(r.id), files: files.get(r.id) }));
+  const [reactions, files, participants] = await Promise.all([
+    reactionsForMessages(ids),
+    filesForMessages(ids),
+    replyParticipantsForRoots(rows),
+  ]);
+  return rows.map((r) =>
+    toMessageDTO(r, {
+      reactions: reactions.get(r.id),
+      files: files.get(r.id),
+      replyParticipants: participants.get(r.id),
+    }),
+  );
 }
 
 /**

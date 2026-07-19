@@ -215,6 +215,21 @@ function MessageRow({
             className="mt-1 flex items-center gap-2 rounded-[10px] border border-hairline bg-white py-[5px] pr-2.5 pl-1.5 text-xs hover:border-hairline2"
             onClick={() => sel.openThread(message.id)}
           >
+            {(message.replyParticipantUserIds ?? []).length > 0 && (
+              <span className="flex -space-x-1.5" data-testid={`thread-participants-${message.id}`}>
+                {message.replyParticipantUserIds.map((id) => (
+                  <Avatar
+                    key={id}
+                    userId={id}
+                    name={names[id] ?? 'Unknown'}
+                    avatarUrl={membersById[id]?.avatarUrl}
+                    size={20}
+                    radius={6}
+                    className="ring-2 ring-white"
+                  />
+                ))}
+              </span>
+            )}
             <span className="font-[650] text-accent-soft">
               {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
             </span>
@@ -279,8 +294,28 @@ function MessageRow({
   );
 }
 
+// Collapsed-image state (phase 5 ruling): persisted per device, capped list.
+const COLLAPSE_KEY = 'mychat.collapsedImages';
+const COLLAPSE_CAP = 500;
+function collapsedIds(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]');
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+function persistCollapsed(fileId: string, collapsed: boolean): void {
+  const ids = collapsedIds().filter((id) => id !== fileId);
+  if (collapsed) ids.push(fileId);
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids.slice(-COLLAPSE_CAP)));
+}
+
 function Attachment({ file }: { file: FileDTO }) {
-  const open = async () => {
+  const [collapsed, setCollapsed] = useState(() => collapsedIds().includes(file.id));
+  const [lightbox, setLightbox] = useState(false);
+
+  const download = async () => {
     const url = await blobUrl(`/v1/files/${file.id}`);
     const a = document.createElement('a');
     a.href = url;
@@ -288,24 +323,139 @@ function Attachment({ file }: { file: FileDTO }) {
     a.click();
   };
 
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      persistCollapsed(file.id, !c);
+      return !c;
+    });
+  };
+
   if (file.hasThumb) {
+    // GIFs skip the static webp thumb and render the original so they animate.
+    const imgPath = file.mimeType === 'image/gif' ? `/v1/files/${file.id}` : `/v1/files/${file.id}/thumb`;
     return (
-      <button data-testid={`file-${file.name}`} className="mt-1 block" onClick={() => void open()} title={file.name}>
-        <AuthImg path={`/v1/files/${file.id}/thumb`} alt={file.name} className="max-h-60 max-w-72 rounded-lg border border-hairline" />
-      </button>
+      <div className="mt-1">
+        <div className="flex items-center gap-1 text-[11px] text-faint">
+          <button
+            data-testid={`file-collapse-${file.name}`}
+            className="w-4 hover:text-ink"
+            title={collapsed ? 'Show image' : 'Hide image'}
+            onClick={toggleCollapsed}
+          >
+            {collapsed ? '▸' : '▾'}
+          </button>
+          <span className="truncate">{file.name}</span>
+        </div>
+        {!collapsed && (
+          <div className="group/att relative mt-0.5 w-fit">
+            <button data-testid={`file-${file.name}`} className="block" onClick={() => setLightbox(true)} title={file.name}>
+              <AuthImg path={imgPath} alt={file.name} className="max-h-60 max-w-72 rounded-lg border border-hairline" />
+            </button>
+            <button
+              data-testid={`file-download-${file.name}`}
+              className="absolute top-1.5 right-1.5 hidden h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white/90 text-sm shadow-sm hover:bg-white group-hover/att:flex"
+              title="Download"
+              onClick={() => void download()}
+            >
+              ⤓
+            </button>
+          </div>
+        )}
+        {lightbox && <ImageLightbox file={file} onClose={() => setLightbox(false)} onDownload={download} />}
+      </div>
     );
   }
   return (
-    <button
-      data-testid={`file-${file.name}`}
-      className="mt-1 flex items-center gap-2 rounded-[10px] border border-hairline bg-white px-3 py-2 text-left text-sm hover:border-hairline2"
-      onClick={() => void open()}
+    <div className="group/att relative mt-1 w-fit">
+      <button
+        data-testid={`file-${file.name}`}
+        className="flex items-center gap-2 rounded-[10px] border border-hairline bg-white py-2 pr-10 pl-3 text-left text-sm hover:border-hairline2"
+        onClick={() => void download()}
+      >
+        <span>📄</span>
+        <span>
+          <span className="block font-medium">{file.name}</span>
+          <span className="block text-xs text-muted">{bytesLabel(file.sizeBytes)}</span>
+        </span>
+      </button>
+      <button
+        data-testid={`file-download-${file.name}`}
+        className="absolute top-1/2 right-2 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-sm text-faint hover:bg-daypill hover:text-ink group-hover/att:flex"
+        title="Download"
+        onClick={() => void download()}
+      >
+        ⤓
+      </button>
+    </div>
+  );
+}
+
+/** In-app image popup (phase 5 item 5): original file, open-external + download icons. */
+function ImageLightbox({
+  file,
+  onClose,
+  onDownload,
+}: {
+  file: FileDTO;
+  onClose: () => void;
+  onDownload: () => Promise<void>;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); }).catch(() => {});
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      alive = false;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [file.id, onClose]);
+  return (
+    <div
+      data-testid="lightbox"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75"
+      onMouseDown={onClose}
     >
-      <span>📄</span>
-      <span>
-        <span className="block font-medium">{file.name}</span>
-        <span className="block text-xs text-muted">{bytesLabel(file.sizeBytes)}</span>
+      <div className="absolute top-4 right-5 flex gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
+        <button
+          data-testid="lightbox-open-external"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Open external"
+          onClick={() => { if (url) window.open(url, '_blank'); }}
+        >
+          ↗
+        </button>
+        <button
+          data-testid="lightbox-download"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Download"
+          onClick={() => void onDownload()}
+        >
+          ⤓
+        </button>
+        <button
+          data-testid="lightbox-close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Close"
+          onClick={onClose}
+        >
+          ✕
+        </button>
+      </div>
+      {url ? (
+        <img
+          src={url}
+          alt={file.name}
+          className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain"
+          onMouseDown={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <span className="text-sm text-white/70">Loading…</span>
+      )}
+      <span className="mt-3 max-w-[80vw] truncate text-xs text-white/70" onMouseDown={(e) => e.stopPropagation()}>
+        {file.name}
       </span>
-    </button>
+    </div>
   );
 }
