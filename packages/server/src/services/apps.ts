@@ -6,7 +6,7 @@
 // only the hash is stored, raw token shown once at creation.
 import { randomBytes } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
-import type { AppDTO, UserDTO } from '@mychat/shared';
+import type { AppDTO, UserDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
@@ -55,7 +55,7 @@ export async function createApp(
   await db.transaction(async (tx) => {
     await tx.insert(users).values({
       id: botUserId,
-      email: `bot-${appId}@apps.mychat.local`, // unique, never a login (random unusable hash)
+      email: `bot-${appId}@apps.flow.local`, // unique, never a login (random unusable hash)
       passwordHash: `!bot:${randomBytes(24).toString('hex')}`,
       displayName: name,
       isBot: true,

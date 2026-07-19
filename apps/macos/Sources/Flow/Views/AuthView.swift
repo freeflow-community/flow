@@ -15,7 +15,7 @@ struct AuthView: View {
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 44))
                 .foregroundStyle(.tint)
-            Text("MyChat")
+            Text("Flow")
                 .font(.largeTitle.bold())
 
             Picker("", selection: $isRegister) {

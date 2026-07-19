@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FileDTO, MessageDTO, WorkspaceMemberDTO } from '@mychat/shared';
+import type { FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api, blobUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
 import { useAuth, useSelection } from '../state';
@@ -295,7 +295,7 @@ function MessageRow({
 }
 
 // Collapsed-image state (phase 5 ruling): persisted per device, capped list.
-const COLLAPSE_KEY = 'mychat.collapsedImages';
+const COLLAPSE_KEY = 'flow.collapsedImages';
 const COLLAPSE_CAP = 500;
 function collapsedIds(): string[] {
   try {

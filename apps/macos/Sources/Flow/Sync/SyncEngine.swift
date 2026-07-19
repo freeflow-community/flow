@@ -80,7 +80,7 @@ actor SyncEngine {
         await didSignIn(user: resp.user, token: resp.token)
     }
 
-    /// Web-to-app handoff (myapp://signin deep link): exchanges the one-time
+    /// Web-to-app handoff (flow://signin deep link): exchanges the one-time
     /// code minted by the web session for this app's own session.
     func loginWithLinkCode(_ code: String) async throws {
         let resp: AuthResponse = try await api.post(
@@ -557,7 +557,7 @@ actor SyncEngine {
     func downloadFile(_ file: FileAttachment) async throws -> URL {
         let data = try await api.getData("/v1/files/\(file.id)")
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MyChatDownloads-\(file.id)", isDirectory: true)
+            .appendingPathComponent("FlowDownloads-\(file.id)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(file.name)
         try data.write(to: dest)

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct MyChatApp: App {
+struct FlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppState()
 

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import type { FileDTO } from '@mychat/shared';
-import { emojiMatches } from '@mychat/shared';
+import type { FileDTO } from '@flow/shared';
+import { emojiMatches } from '@flow/shared';
 import { uploadFile } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
 import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';

@@ -1,7 +1,7 @@
 // Emoji reactions (phase2.md §2). Unicode emoji only; idempotent add/remove;
 // events on the channel's msg subject; aggregates computed per message page.
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import type { ReactionAggDTO } from '@mychat/shared';
+import type { ReactionAggDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { requireChannelAccess } from './channels.js';

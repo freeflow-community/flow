@@ -4,7 +4,7 @@ import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { inArray, eq } from 'drizzle-orm';
-import type { ClientFrame, Event, ServerFrame } from '@mychat/shared';
+import type { ClientFrame, Event, ServerFrame } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import * as auth from '../services/auth.js';
 import {
@@ -20,7 +20,7 @@ import { online } from '../presence.js';
 
 const { workspaceMembers, channels, channelMembers } = schema;
 
-const HEARTBEAT_MS = Number(process.env.MYCHAT_HEARTBEAT_MS ?? 30_000); // spec: 30s; env override for tests
+const HEARTBEAT_MS = Number(process.env.FLOW_HEARTBEAT_MS ?? 30_000); // spec: 30s; env override for tests
 const AUTH_TIMEOUT_MS = 10_000;
 
 interface SocketState {

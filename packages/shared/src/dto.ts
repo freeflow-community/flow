@@ -38,7 +38,7 @@ export interface InviteDTO {
   id: string;
   workspaceId: string;
   email: string;
-  inviteUrl: string; // myapp://invite/<token> — raw token returned once
+  inviteUrl: string; // flow://invite/<token> — raw token returned once
   expiresAt: string;
 }
 

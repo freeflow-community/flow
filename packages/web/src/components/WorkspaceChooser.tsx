@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { WorkspaceDTO } from '@mychat/shared';
+import type { WorkspaceDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useWorkspaces } from '../hooks';

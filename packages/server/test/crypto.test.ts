@@ -9,7 +9,7 @@ import {
 } from '../src/crypto/index.js';
 
 beforeAll(() => {
-  process.env.MYCHAT_DATA_KEY = randomBytes(32).toString('base64');
+  process.env.FLOW_DATA_KEY = randomBytes(32).toString('base64');
   // config reads env at import time in the running app; for tests we reset and re-init
   _resetCryptoForTests();
 });

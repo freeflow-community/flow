@@ -2,8 +2,8 @@
 //
 // AES-256-GCM. The data key is identified by `enc_key_id` and never lives in
 // Postgres. In production the data key is unwrapped once at boot via KMS; in
-// local dev the KMS stand-in is a sealed key file (MYCHAT_DATA_KEY_FILE,
-// chmod 600, gitignored) auto-generated on first boot. MYCHAT_DATA_KEY (raw
+// local dev the KMS stand-in is a sealed key file (FLOW_DATA_KEY_FILE,
+// chmod 600, gitignored) auto-generated on first boot. FLOW_DATA_KEY (raw
 // base64) overrides for tests/CI. The key is held only in memory.
 //
 // Only the message service calls this module — routes, gateway and clients
@@ -39,7 +39,7 @@ export function initCrypto(): void {
   if (activeKey) return;
   if (config.dataKeyInline) {
     const key = Buffer.from(config.dataKeyInline, 'base64');
-    if (key.length !== 32) throw new Error('MYCHAT_DATA_KEY must be 32 bytes (base64)');
+    if (key.length !== 32) throw new Error('FLOW_DATA_KEY must be 32 bytes (base64)');
     activeKey = { keyId: 'env-1', key };
   } else {
     const file = config.dataKeyFile;

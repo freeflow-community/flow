@@ -2,7 +2,7 @@
 // sidebar bottom; clicking it opens a popover of canned emoji+label statuses.
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { UserDTO } from '@mychat/shared';
+import type { UserDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useLive } from '../state';
 import { Avatar } from './Avatar';

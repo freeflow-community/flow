@@ -1,5 +1,5 @@
 // REST client: same-origin (Vite proxy in dev, Fastify static in prod).
-import type { FileDTO } from '@mychat/shared';
+import type { FileDTO } from '@flow/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -11,7 +11,7 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = 'mychat.token';
+const TOKEN_KEY = 'flow.token';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

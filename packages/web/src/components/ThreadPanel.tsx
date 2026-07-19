@@ -5,7 +5,7 @@ import MessageList from './MessageList';
 import Composer from './Composer';
 
 // Thread panel width (phase 5 item 6): local per-device preference, like the sidebar.
-const WIDTH_KEY = 'mychat.threadWidth';
+const WIDTH_KEY = 'flow.threadWidth';
 const DEFAULT_WIDTH = 384;
 const clampWidth = (w: number) => Math.min(560, Math.max(280, w));
 function storedWidth(): number {

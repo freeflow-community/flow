@@ -24,7 +24,7 @@ import {
   UpdateAppBody,
   UpdateWorkspaceBody,
   type UserDTO,
-} from '@mychat/shared';
+} from '@flow/shared';
 import { ApiError, badRequest, unauthorized } from '../lib/errors.js';
 import * as auth from '../services/auth.js';
 import * as ws from '../services/workspaces.js';

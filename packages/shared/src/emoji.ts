@@ -1,7 +1,7 @@
 // Emoji catalog shared by web clients (phase2.md §8): shortcode → unicode map
 // and the quick-reaction set. Bodies store plain unicode — shortcodes are a
 // client-side composer affordance only. The macOS client keeps a Swift copy
-// (apps/macos/Sources/MyChat/Support/EmojiCatalog.swift) — keep them aligned.
+// (apps/macos/Sources/Flow/Support/EmojiCatalog.swift) — keep them aligned.
 
 export const EMOJI_SHORTCODES: Record<string, string> = {
   smile: '😄', grin: '😁', joy: '😂', rofl: '🤣', slightly_smiling_face: '🙂',

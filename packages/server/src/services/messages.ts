@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
-import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO } from '@mychat/shared';
+import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';

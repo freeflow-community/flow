@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
-import type { ChannelDTO, ChannelKind, NotifyLevel } from '@mychat/shared';
+import type { ChannelDTO, ChannelKind, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';

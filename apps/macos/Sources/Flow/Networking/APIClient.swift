@@ -16,7 +16,7 @@ struct APIError: Error, LocalizedError, Sendable {
     var errorDescription: String? { message }
 }
 
-/// REST client for the MyChat backend. Holds the bearer token; all requests
+/// REST client for the Flow backend. Holds the bearer token; all requests
 /// are async/await over URLSession.
 actor APIClient {
     private let baseURL: URL
@@ -71,7 +71,7 @@ actor APIClient {
     func upload<T: Decodable & Sendable>(
         _ path: String, filename: String, mimeType: String, data: Data
     ) async throws -> T {
-        let boundary = "mychat-\(UUID().uuidString)"
+        let boundary = "flow-\(UUID().uuidString)"
         var body = Data()
         body.append(Data("--\(boundary)\r\n".utf8))
         body.append(Data(

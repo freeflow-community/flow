@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AuthResponse } from '@mychat/shared';
+import type { AuthResponse } from '@flow/shared';
 import { api } from '../lib/api';
 
 export default function AuthScreen({ onSignedIn }: { onSignedIn: (r: AuthResponse) => void }) {
@@ -30,7 +30,7 @@ export default function AuthScreen({ onSignedIn }: { onSignedIn: (r: AuthRespons
   return (
     <div className="flex h-full items-center justify-center bg-base">
       <form onSubmit={submit} className="w-80 rounded-xl border border-hairline bg-white p-6 shadow-sm">
-        <h1 className="mb-1 text-center text-2xl font-bold text-ink">MyChat</h1>
+        <h1 className="mb-1 text-center text-2xl font-bold text-ink">Flow</h1>
         <div className="mb-4 flex justify-center gap-2 text-sm" data-testid="auth-mode">
           <button
             type="button"

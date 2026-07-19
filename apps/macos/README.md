@@ -1,6 +1,6 @@
-# MyChat macOS Client
+# Flow macOS Client
 
-SwiftUI client for the Phase 1 MyChat backend.
+SwiftUI client for the Phase 1 Flow backend.
 
 ## Requirements
 
@@ -11,13 +11,13 @@ SwiftUI client for the Phase 1 MyChat backend.
 
 1. Open `Package.swift` in Xcode (File > Open… and pick this folder or the Package.swift file).
 2. Wait for package resolution (GRDB).
-3. Select the **MyChat** scheme, destination **My Mac**, then Run (Cmd-R).
+3. Select the **Flow** scheme, destination **My Mac**, then Run (Cmd-R).
 
 ## Run from the command line
 
 ```sh
 cd apps/macos
-swift run MyChat
+swift run Flow
 ```
 
 ## Tests
@@ -26,6 +26,6 @@ swift run MyChat
 
 ## Notes
 
-- Local cache: SQLite (GRDB) at `~/Library/Application Support/MyChat/mychat.sqlite`. Channels and messages render instantly from cache and survive offline.
+- Local cache: SQLite (GRDB) at `~/Library/Application Support/Flow/flow.sqlite`. Channels and messages render instantly from cache and survive offline.
 - Session token is stored in the Keychain.
-- Invites: paste the `myapp://invite/<token>` link (or just the token) into "Accept Invite…". The `.onOpenURL` deep-link handler is implemented, but the `myapp://` URL scheme only gets registered with LaunchServices when the app is wrapped in a proper `.app` bundle (a bare SwiftPM executable has no Info.plist), so pasting is the reliable path in this setup.
+- Invites: paste the `flow://invite/<token>` link (or just the token) into "Accept Invite…". The `.onOpenURL` deep-link handler is implemented, but the `flow://` URL scheme only gets registered with LaunchServices when the app is wrapped in a proper `.app` bundle (a bare SwiftPM executable has no Info.plist), so pasting is the reliable path in this setup.

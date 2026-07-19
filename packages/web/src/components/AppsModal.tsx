@@ -3,8 +3,8 @@
 // outgoing Events API subscription, and disable/enable apps.
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { APP_EVENT_TYPES } from '@mychat/shared';
-import type { AppDTO } from '@mychat/shared';
+import { APP_EVENT_TYPES } from '@flow/shared';
+import type { AppDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useApps } from '../hooks';
 import { Modal } from './modals';
@@ -212,7 +212,7 @@ function AppRow({
           <input
             data-testid={`app-eventurl-${app.name}`}
             className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
-            placeholder="https://example.com/mychat/events"
+            placeholder="https://example.com/flow/events"
             value={eventUrl}
             onChange={(e) => setEventUrl(e.target.value)}
           />

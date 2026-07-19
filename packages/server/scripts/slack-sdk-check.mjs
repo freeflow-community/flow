@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Real-SDK proof for the Slack-compat surface (phase4.md §1): drives the
-// off-the-shelf @slack/web-api WebClient against a running MyChat server.
+// off-the-shelf @slack/web-api WebClient against a running Flow server.
 // Happy path only — no rate limits exist yet (deferred per 2026-07-18 ruling 4),
 // so retries are disabled.
 //

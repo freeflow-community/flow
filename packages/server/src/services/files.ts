@@ -12,7 +12,7 @@
 import path from 'node:path';
 import sharp from 'sharp';
 import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
-import type { FileDTO } from '@mychat/shared';
+import type { FileDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, notFound } from '../lib/errors.js';

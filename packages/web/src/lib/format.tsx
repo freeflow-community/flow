@@ -6,8 +6,8 @@
 // (shortcodes, mentions) is not expanded inside fenced code regions.
 import { Fragment } from 'react';
 import type { ReactNode } from 'react';
-import type { WorkspaceMemberDTO } from '@mychat/shared';
-import { expandShortcodes } from '@mychat/shared';
+import type { WorkspaceMemberDTO } from '@flow/shared';
+import { expandShortcodes } from '@flow/shared';
 
 const TOKEN_RE = /<@([0-9a-fA-F-]{36})>|<!(channel|here|everyone)>/g;
 

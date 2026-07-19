@@ -206,3 +206,29 @@ opens the native app, which signs in via URL. Coordinator rulings:
   with the intended instance running. Also: delivery can fail silently in
   the first seconds after launching the raw binary (before LS registration
   settles) — verified working once the instance is registered.
+
+## 2026-07-19 — Rename: MyChat → Flow (deep rename, operator ruling)
+
+Operator chose the DEEP rename (over branding-only) plus the flow:// scheme:
+
+- **Renamed**: product strings/titles (web + macOS), Flow.app bundle
+  (CFBundleName/Identifier com.flow.macos, executable Flow), SwiftPM package/
+  target/dirs (Sources/Flow, FlowTests), @flow/* package scope, root package,
+  FLOW_* env vars (FLOW_PROFILE, FLOW_DATA_KEY*, FLOW_FILE_DIR), web
+  localStorage keys flow.*, Keychain service ai.biztrip.flow, macOS app-support
+  dir Flow<suffix>, docker project/containers (flow, flow-postgres, flow-nats),
+  Postgres role/db/password flow/flow/flow_dev, NATS client name, deep-link
+  scheme myapp:// → flow:// (invite + signin), bot email domain
+  apps.flow.local (new bots only; existing bot rows keep their emails).
+- **Data preserved** via pg_dump → new flow stack → restore (139 users /
+  351 messages / migrations intact verified). Old mychat containers removed;
+  old volume left behind (mychat_pgdata — deletable).
+- **Deliberate leftovers**: repo directory path /Users/scottp/mychat (can't
+  rename the live working dir; cosmetic); the codesigning cert is still
+  named "MyChat Dev Signing" (renaming means minting + trusting a new cert —
+  the identity name is dev-keychain-only); historical docs (CHANGELOG,
+  decision_log, phase*.md) keep old-name mentions.
+- **Consequences accepted with deep rename**: all clients signed out (new
+  Keychain service + localStorage key) — both QA app instances re-signed-in
+  via the new flow://signin handoff (dogfooded, works); local GRDB caches
+  reset (resync); web prefs (sidebar/thread widths, collapse state) reset.

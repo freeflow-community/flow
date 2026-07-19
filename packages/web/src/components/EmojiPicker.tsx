@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { EMOJI_SHORTCODES, QUICK_REACTIONS } from '@mychat/shared';
+import { EMOJI_SHORTCODES, QUICK_REACTIONS } from '@flow/shared';
 
 /** Custom emoji grid + search (operator ruling: web gets the custom picker). */
 export default function EmojiPicker({

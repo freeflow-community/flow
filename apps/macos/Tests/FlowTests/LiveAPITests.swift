@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 
-@testable import MyChat
+@testable import Flow
 
 /// Integration smoke test against the live local backend at 127.0.0.1:8787.
 /// Verifies that APIClient decoding matches the server's actual JSON shapes.
@@ -108,7 +108,7 @@ final class LiveAPITests: XCTestCase {
             "/v1/workspaces/\(ws.id)/invites",
             body: CreateInviteBody(email: "invitee\(stamp)@test.local")
         )
-        XCTAssertTrue(invite.inviteUrl.hasPrefix("myapp://invite/"))
+        XCTAssertTrue(invite.inviteUrl.hasPrefix("flow://invite/"))
 
         // Error envelope decoding
         do {

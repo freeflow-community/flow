@@ -25,6 +25,17 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — Renamed MyChat → Flow (deep rename)
+- All user-visible naming: Flow.app (com.flow.macos), web title, UI strings.
+  `[server] [web] [macos]`
+- Internals too (operator ruling): @flow/* packages, FLOW_* env vars,
+  flow.* localStorage keys, Keychain service ai.biztrip.flow, docker
+  project/containers, Postgres role/db (data preserved via dump/restore),
+  deep-link scheme myapp:// → flow://. All clients signed out once
+  (re-sign-in via web CTA / flow://signin handoff). `[server] [web] [macos]`
+- Leftovers (ruled): repo dir path, "MyChat Dev Signing" cert name,
+  old-name mentions in historical docs.
+
 ### 2026-07-19 — Web-to-app auth handoff
 - Web is the auth surface: signed-in web shows "Open the desktop app" CTAs
   (workspace-chooser button + dismissible top banner). `[web]`

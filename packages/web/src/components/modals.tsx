@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { SIDEBAR_COLORS } from '@mychat/shared';
-import type { ChannelDTO, InviteDTO, UserDTO } from '@mychat/shared';
+import { SIDEBAR_COLORS } from '@flow/shared';
+import type { ChannelDTO, InviteDTO, UserDTO } from '@flow/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useMembers, useWorkspaces } from '../hooks';

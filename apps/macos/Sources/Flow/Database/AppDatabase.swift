@@ -14,10 +14,10 @@ struct AppDatabase: Sendable {
             appropriateFor: nil, create: true
         )
         let dir = support.appendingPathComponent(
-            "MyChat" + Profile.suffix, isDirectory: true
+            "Flow" + Profile.suffix, isDirectory: true
         )
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let pool = try DatabasePool(path: dir.appendingPathComponent("mychat.sqlite").path)
+        let pool = try DatabasePool(path: dir.appendingPathComponent("flow.sqlite").path)
         let db = AppDatabase(writer: pool)
         try db.migrate()
         return db

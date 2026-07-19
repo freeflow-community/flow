@@ -1,5 +1,5 @@
 #!/bin/bash
-# MyChat phase-2 REST smoke test: DMs, reactions, files, membership, notify
+# Flow phase-2 REST smoke test: DMs, reactions, files, membership, notify
 # levels, mentions/notifications, profiles. Requires the server running.
 set -u
 API=http://127.0.0.1:8787
@@ -134,7 +134,7 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' "$API/v1/files/$FID" -H "authoriza
 [ "$CODE" = 404 ] && ok "outsider file access -> 404" || fail "outsider file" "got $CODE"
 
 # encryption at rest: stored blob must not contain the PNG magic
-BLOB=$(find "${MYCHAT_FILE_DIR:-$(dirname "$0")/../.files}/files" -name "$FID" 2>/dev/null | head -1)
+BLOB=$(find "${FLOW_FILE_DIR:-$(dirname "$0")/../.files}/files" -name "$FID" 2>/dev/null | head -1)
 if [ -n "$BLOB" ]; then
   python3 -c "import sys; d=open('$BLOB','rb').read(); sys.exit(0 if b'\x89PNG' not in d else 1)" \
     && ok "file blob is ciphertext on disk (no PNG magic)" || fail "file encryption" "plaintext PNG found in $BLOB"

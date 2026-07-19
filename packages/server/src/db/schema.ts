@@ -41,7 +41,7 @@ export const sessions = pgTable('sessions', {
   clientInfo: text('client_info'),
 });
 
-/** One-time web-to-app auth handoff codes (myapp://signin deep link). */
+/** One-time web-to-app auth handoff codes (flow://signin deep link). */
 export const appLinkCodes = pgTable('app_link_codes', {
   codeHash: bytea('code_hash').primaryKey(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

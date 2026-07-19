@@ -15,7 +15,7 @@ import type {
   UserDTO,
   WorkspaceDTO,
   WorkspaceMemberDTO,
-} from '@mychat/shared';
+} from '@flow/shared';
 import { api } from './lib/api';
 
 export function useWorkspaces() {

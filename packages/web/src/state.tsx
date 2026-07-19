@@ -1,7 +1,7 @@
 // App-level contexts: auth, selection, and ephemeral live state
 // (presence/typing/connection/unread-notifications).
 import { createContext, useContext } from 'react';
-import type { UserDTO } from '@mychat/shared';
+import type { UserDTO } from '@flow/shared';
 import type { SocketStatus } from './lib/ws';
 
 export interface AuthState {

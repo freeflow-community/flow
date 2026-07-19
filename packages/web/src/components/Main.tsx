@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { sidebarColor } from '@mychat/shared';
-import type { Event, NotificationDTO, TypingData, PresenceData } from '@mychat/shared';
+import { sidebarColor } from '@flow/shared';
+import type { Event, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';

@@ -4,12 +4,12 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 
-const DISMISS_KEY = 'mychat.appCtaDismissed';
+const DISMISS_KEY = 'flow.appCtaDismissed';
 
-/** Mint a one-time handoff code and open the native app via myapp://signin. */
+/** Mint a one-time handoff code and open the native app via flow://signin. */
 export async function openInApp(): Promise<void> {
   const { code } = await api<{ code: string; expiresAt: string }>('POST', '/v1/auth/app-link');
-  window.location.href = `myapp://signin?code=${encodeURIComponent(code)}`;
+  window.location.href = `flow://signin?code=${encodeURIComponent(code)}`;
 }
 
 /** Prominent CTA for the workspace chooser. */
@@ -38,7 +38,7 @@ export function OpenInAppBanner() {
       data-testid="open-in-app-banner"
       className="flex shrink-0 items-center justify-center gap-3 border-b border-hairline bg-white px-4 py-1.5 text-sm"
     >
-      <span className="text-muted">MyChat works best in the desktop app.</span>
+      <span className="text-muted">Flow works best in the desktop app.</span>
       <button
         data-testid="open-in-app-banner-open"
         className="font-semibold text-accent-soft hover:underline"

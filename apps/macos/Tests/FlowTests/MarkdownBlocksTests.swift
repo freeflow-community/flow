@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 
-@testable import MyChat
+@testable import Flow
 
 final class MarkdownBlocksTests: XCTestCase {
     // MARK: - Line classification

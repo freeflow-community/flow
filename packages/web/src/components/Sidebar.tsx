@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { sidebarColor } from '@mychat/shared';
-import type { ChannelDTO } from '@mychat/shared';
+import { sidebarColor } from '@flow/shared';
+import type { ChannelDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useLive, useSelection } from '../state';
 import { useChannels, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
@@ -10,7 +10,7 @@ import { AppsModal } from './AppsModal';
 import StatusFooter from './StatusPicker';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
-const WIDTH_KEY = 'mychat.sidebarWidth';
+const WIDTH_KEY = 'flow.sidebarWidth';
 const DEFAULT_WIDTH = 240;
 const clampWidth = (w: number) => Math.min(360, Math.max(180, w));
 function storedWidth(): number {

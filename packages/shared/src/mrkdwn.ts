@@ -1,4 +1,4 @@
-// Slack mrkdwn <-> MyChat markdown conversion (phase4.md §1 "Formatting").
+// Slack mrkdwn <-> Flow markdown conversion (phase4.md §1 "Formatting").
 //
 // Inbound (mrkdwnToMarkdown): what Slack SDKs send us -> what we store.
 // Outbound (markdownToMrkdwn): what we store -> what Slack SDKs expect back.

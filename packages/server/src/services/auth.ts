@@ -1,6 +1,6 @@
 import argon2 from 'argon2';
 import { and, eq, gt, lt, sql } from 'drizzle-orm';
-import type { AuthResponse, UserDTO } from '@mychat/shared';
+import type { AuthResponse, UserDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
@@ -103,7 +103,7 @@ export async function authenticate(token: string): Promise<UserDTO> {
 }
 
 /**
- * Web-to-app auth handoff (myapp://signin): an authenticated (web) session
+ * Web-to-app auth handoff (flow://signin): an authenticated (web) session
  * mints a one-time code the native app exchanges for its own session. The
  * raw session token never rides in the deep-link URL.
  */

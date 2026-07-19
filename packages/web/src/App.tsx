@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { UserDTO, AuthResponse } from '@mychat/shared';
+import type { UserDTO, AuthResponse } from '@flow/shared';
 import { api, getToken, setToken } from './lib/api';
 import { AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
 import WorkspaceChooser from './components/WorkspaceChooser';
 import Main from './components/Main';
 
-const ACTIVE_WS_KEY = 'mychat.activeWorkspace';
+const ACTIVE_WS_KEY = 'flow.activeWorkspace';
 
 export default function App() {
   const qc = useQueryClient();

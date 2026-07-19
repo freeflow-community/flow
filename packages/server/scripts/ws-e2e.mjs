@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // WS gateway end-to-end test: two clients, message fan-out, typing, presence,
 // private-channel filtering, heartbeat ping/pong.
-// Requires the server running (optionally with MYCHAT_HEARTBEAT_MS=2000 to
+// Requires the server running (optionally with FLOW_HEARTBEAT_MS=2000 to
 // exercise the heartbeat quickly).
 import WebSocket from 'ws';
 

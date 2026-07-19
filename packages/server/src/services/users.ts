@@ -6,7 +6,7 @@
 // URL embeds a fresh key per upload, so clients may cache immutably.
 import sharp from 'sharp';
 import { and, eq, inArray } from 'drizzle-orm';
-import type { UserDTO } from '@mychat/shared';
+import type { UserDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { blobStore } from '../storage/index.js';

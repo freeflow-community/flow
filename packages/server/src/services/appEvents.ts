@@ -8,7 +8,7 @@
 // challenge; sustained failure auto-clears the verification (flagged in UI).
 import { createHmac, randomBytes } from 'node:crypto';
 import { and, desc, eq, isNull, lte, sql } from 'drizzle-orm';
-import { EMOJI_SHORTCODES, markdownToMrkdwn } from '@mychat/shared';
+import { EMOJI_SHORTCODES, markdownToMrkdwn } from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { tsFromUuid } from '../slackcompat/ts.js';

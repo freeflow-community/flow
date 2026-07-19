@@ -1,5 +1,5 @@
 #!/bin/bash
-# MyChat phase-4 smoke: Slack compat surface (Web API + Events API outbox).
+# Flow phase-4 smoke: Slack compat surface (Web API + Events API outbox).
 # Requires the server running and jq-free (python3 for JSON).
 set -u
 API=http://127.0.0.1:8787
@@ -26,7 +26,7 @@ R=$(curl -s -X POST "$API/v1/workspaces/$WS/apps" -H "authorization: Bearer $AT"
 APPID=$(echo "$R" | j "['app']['id']"); BT=$(echo "$R" | j "['botToken']"); BOTUID=$(echo "$R" | j "['app']['botUserId']")
 case "$BT" in xoxb-*) ok "app created, xoxb- token issued once" ;; *) fail "app create" "$R" ;; esac
 
-SECRET=$(docker exec mychat-postgres psql -U mychat -d mychat -t -A -c "SELECT signing_secret FROM apps WHERE id='$APPID'")
+SECRET=$(docker exec flow-postgres psql -U flow -d flow -t -A -c "SELECT signing_secret FROM apps WHERE id='$APPID'")
 
 # ---- Web API: auth + basics ----
 AUTH=$(curl -s -X POST $API/api/auth.test -H "authorization: Bearer $BT")

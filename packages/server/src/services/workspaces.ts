@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { SIDEBAR_COLOR_IDS, type InviteDTO, type MemberRole, type WorkspaceDTO, type WorkspaceMemberDTO } from '@mychat/shared';
+import { SIDEBAR_COLOR_IDS, type InviteDTO, type MemberRole, type WorkspaceDTO, type WorkspaceMemberDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';

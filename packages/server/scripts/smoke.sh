@@ -1,5 +1,5 @@
 #!/bin/bash
-# MyChat phase-1 REST smoke test (steps 1-3 verification)
+# Flow phase-1 REST smoke test (steps 1-3 verification)
 set -u
 API=http://127.0.0.1:8787
 PASS=0; FAIL=0
@@ -217,7 +217,7 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' $API/v1/me -H "authorization: Bear
 [ "$CODE" = 401 ] && ok "logout revokes token" || fail "logout" "got $CODE"
 
 # ---- encryption at rest: raw DB row must not contain plaintext ----
-RAW=$(docker exec mychat-postgres psql -U mychat -d mychat -t -A -c \
+RAW=$(docker exec flow-postgres psql -U flow -d flow -t -A -c \
   "SELECT enc_scheme || '|' || enc_key_id || '|' || encode(body,'escape') FROM messages WHERE id='$M1ID'")
 echo "$RAW" | grep -q "hello" && fail "encryption at rest" "plaintext found in DB!" || ok "message body is ciphertext in DB (no plaintext)"
 echo "$RAW" | grep -q "^1|" && ok "enc_scheme=1 (aes-256-gcm-v1) with key id" || fail "enc metadata" "$RAW"

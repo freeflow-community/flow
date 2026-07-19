@@ -17,7 +17,7 @@ import {
   type ChannelDTO,
   type FileDTO,
   type MessageDTO,
-} from '@mychat/shared';
+} from '@flow/shared';
 import { config } from '../config.js';
 import { newId } from '../lib/ids.js';
 import type { BotAuth } from '../services/apps.js';

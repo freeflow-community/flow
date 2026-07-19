@@ -5,14 +5,14 @@
 //   ws.{workspaceId}.presence
 //   ws.{workspaceId}.meta
 import { connect, type NatsConnection, type Subscription } from 'nats';
-import type { Event } from '@mychat/shared';
+import type { Event } from '@flow/shared';
 import { config } from './config.js';
 
 let nc: NatsConnection | null = null;
 
 export async function connectBus(): Promise<NatsConnection> {
   if (!nc) {
-    nc = await connect({ servers: config.natsUrl, name: 'mychat-server' });
+    nc = await connect({ servers: config.natsUrl, name: 'flow-server' });
   }
   return nc;
 }

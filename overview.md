@@ -1,4 +1,4 @@
-# MyChat
+# Flow
 
 We are building a complete, production ready Slack clone.
 

@@ -10,7 +10,7 @@
 // user several ways: dm > mention > thread_reply > activity — one row per
 // (user, message). notify_level 0 (mute) suppresses everything, including DMs.
 import { and, desc, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
-import { GROUP_MENTION_RE, type NotificationDTO, type NotificationKind, type NotificationPage } from '@mychat/shared';
+import { GROUP_MENTION_RE, type NotificationDTO, type NotificationKind, type NotificationPage } from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest } from '../lib/errors.js';
@@ -134,7 +134,7 @@ export async function insertNotifications(
 /** Post-commit fan-out on the per-user notify subject. */
 export function publishNotifications(
   planned: PlannedNotification[],
-  message: import('@mychat/shared').MessageDTO,
+  message: import('@flow/shared').MessageDTO,
   workspaceId: string,
   ts: string,
 ): void {

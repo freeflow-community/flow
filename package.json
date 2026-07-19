@@ -1,5 +1,5 @@
 {
-  "name": "mychat",
+  "name": "flow",
   "private": true,
   "version": "0.1.0",
   "engines": {
@@ -7,11 +7,14 @@
   },
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
-    "onlyBuiltDependencies": ["argon2", "esbuild"]
+    "onlyBuiltDependencies": [
+      "argon2",
+      "esbuild"
+    ]
   },
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "dev": "pnpm --filter @mychat/server dev"
+    "dev": "pnpm --filter @flow/server dev"
   }
 }

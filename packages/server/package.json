@@ -1,5 +1,5 @@
 {
-  "name": "@mychat/server",
+  "name": "@flow/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "@fastify/formbody": "^8.0.2",
     "@fastify/multipart": "^10.1.0",
     "@fastify/static": "^10.1.0",
-    "@mychat/shared": "workspace:*",
+    "@flow/shared": "workspace:*",
     "argon2": "^0.41.1",
     "drizzle-orm": "^0.36.4",
     "fastify": "^5.1.0",

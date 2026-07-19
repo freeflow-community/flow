@@ -195,10 +195,10 @@ final class AppState: ObservableObject {
         Task { await engine.openThread(rootId: rootId) }
     }
 
-    /// Handles myapp://invite/<token> deep links (and pasted URLs/tokens).
+    /// Handles flow://invite/<token> deep links (and pasted URLs/tokens).
     func acceptInvite(_ raw: String) {
         var token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: token), url.scheme == "myapp" {
+        if let url = URL(string: token), url.scheme == "flow" {
             token = url.lastPathComponent
         }
         guard !token.isEmpty else { return }
@@ -213,7 +213,7 @@ final class AppState: ObservableObject {
     }
 
     func handleDeepLink(_ url: URL) {
-        guard url.scheme == "myapp" else { return }
+        guard url.scheme == "flow" else { return }
         switch url.host {
         case "invite":
             acceptInvite(url.lastPathComponent)
@@ -226,7 +226,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Web-to-app handoff: myapp://signin?code=<one-time code>. Any existing
+    /// Web-to-app handoff: flow://signin?code=<one-time code>. Any existing
     /// session is signed out first (the link may be for a different account,
     /// and the local cache must not mix users).
     func signInFromLink(code: String) {

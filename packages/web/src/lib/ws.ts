@@ -1,7 +1,7 @@
 // Thin WS client mirroring the macOS SocketClient (phase1.md §4): auth frame,
 // ping→pong, reconnect with backoff. Online-only client: every reconnect is
 // followed by query invalidation (the REST refetch IS the backfill).
-import type { Event, ServerFrame } from '@mychat/shared';
+import type { Event, ServerFrame } from '@flow/shared';
 
 export type SocketStatus = 'connecting' | 'connected' | 'reconnecting';
 

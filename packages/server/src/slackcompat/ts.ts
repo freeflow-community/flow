@@ -1,6 +1,6 @@
 // Slack `ts` <-> UUIDv7 codec (phase4.md §1 "The ts problem").
 //
-// Slack identifies messages by channel + ts ("1726063573.123456"); MyChat uses
+// Slack identifies messages by channel + ts ("1726063573.123456"); Flow uses
 // UUIDv7 message ids. The mapping is DERIVED, not stored:
 //
 //   seconds  = the uuid's 48-bit millisecond timestamp / 1000

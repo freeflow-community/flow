@@ -139,10 +139,10 @@ struct AcceptInviteSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Accept Invite").font(.headline)
-            Text("Paste an invite token or a full myapp://invite/… link.")
+            Text("Paste an invite token or a full flow://invite/… link.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextField("myapp://invite/… or token", text: $tokenText)
+            TextField("flow://invite/… or token", text: $tokenText)
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Spacer()

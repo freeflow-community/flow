@@ -1,26 +1,26 @@
-name: mychat
+name: flow
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: mychat-postgres
+    container_name: flow-postgres
     environment:
-      POSTGRES_USER: mychat
-      POSTGRES_PASSWORD: mychat_dev
-      POSTGRES_DB: mychat
+      POSTGRES_USER: flow
+      POSTGRES_PASSWORD: flow_dev
+      POSTGRES_DB: flow
     ports:
       - "5442:5432" # host 5432 is occupied by another postgres on this machine
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mychat -d mychat"]
+      test: ["CMD-SHELL", "pg_isready -U flow -d flow"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   nats:
     image: nats:2.10-alpine
-    container_name: mychat-nats
+    container_name: flow-nats
     # Core NATS only — JetStream deferred per decision log (no -js flag)
     command: ["-m", "8222"]
     ports:
