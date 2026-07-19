@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { useAuth, useLive, useSelection } from '../state';
 import { useChannels, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, UserCard, WorkspaceColorModal } from './modals';
+import { AppsModal } from './AppsModal';
 import StatusFooter from './StatusPicker';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
@@ -38,6 +39,7 @@ export default function Sidebar() {
   const [showInvite, setShowInvite] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showColor, setShowColor] = useState(false);
+  const [showApps, setShowApps] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
   const [memberMenuFor, setMemberMenuFor] = useState<string | null>(null);
@@ -112,9 +114,14 @@ export default function Sidebar() {
               Invite People…
             </MenuItem>
             {isAdmin && (
-              <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
-                Workspace color…
-              </MenuItem>
+              <>
+                <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
+                  Workspace color…
+                </MenuItem>
+                <MenuItem testid="menu-apps" onClick={() => { setWsMenuOpen(false); setShowApps(true); }}>
+                  Manage Apps…
+                </MenuItem>
+              </>
             )}
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
@@ -253,6 +260,7 @@ export default function Sidebar() {
       {showInvite && sel.workspaceId && <InviteModal workspaceId={sel.workspaceId} onClose={() => setShowInvite(false)} />}
       {showNewDm && sel.workspaceId && <NewDmModal workspaceId={sel.workspaceId} onClose={() => setShowNewDm(false)} />}
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
+      {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
       {profileUserId && <UserCard userId={profileUserId} onClose={() => setProfileUserId(null)} />}
     </aside>

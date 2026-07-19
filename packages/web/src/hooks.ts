@@ -7,6 +7,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import type {
+  AppDTO,
   ChannelDTO,
   MessageDTO,
   MessagePage,
@@ -57,6 +58,16 @@ export function useMemberMap(workspaceId: string | null): Record<string, Workspa
   const map: Record<string, WorkspaceMemberDTO> = {};
   for (const m of members.data ?? []) map[m.userId] = m;
   return map;
+}
+
+/** Slack-compat apps for a workspace (phase4.md §1). Admin-only endpoint. */
+export function useApps(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ['apps', workspaceId],
+    queryFn: () => api<{ apps: AppDTO[] }>('GET', `/v1/workspaces/${workspaceId}/apps`),
+    select: (d) => d.apps,
+    enabled: workspaceId !== null,
+  });
 }
 
 export function useMessages(channelId: string | null) {

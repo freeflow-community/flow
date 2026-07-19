@@ -7,7 +7,17 @@ import { useAuth, useSelection } from '../state';
 import { useMembers, useWorkspaces } from '../hooks';
 import { AuthImg } from './Avatar';
 
-function Modal({ children, onClose, testid }: { children: React.ReactNode; onClose: () => void; testid?: string }) {
+export function Modal({
+  children,
+  onClose,
+  testid,
+  wide,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  testid?: string;
+  wide?: boolean;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -17,7 +27,7 @@ function Modal({ children, onClose, testid }: { children: React.ReactNode; onClo
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onMouseDown={onClose}>
       <div
         data-testid={testid}
-        className="w-96 rounded-xl bg-white p-5 text-ink shadow-2xl"
+        className={`${wide ? 'w-[560px]' : 'w-96'} rounded-xl bg-white p-5 text-ink shadow-2xl`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {children}
