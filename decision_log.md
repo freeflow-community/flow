@@ -223,7 +223,6 @@ Operator chose the DEEP rename (over branding-only) plus the flow:// scheme:
 - **Data preserved** via pg_dump → new flow stack → restore (139 users /
   351 messages / migrations intact verified). Old mychat containers removed;
   old volume left behind (mychat_pgdata — deletable).
-- **Deliberate leftovers**: repo directory path /Users/scottp/mychat (can't
   rename the live working dir; cosmetic); the codesigning cert is still
   named "MyChat Dev Signing" (renaming means minting + trusting a new cert —
   the identity name is dev-keychain-only); historical docs (CHANGELOG,
@@ -232,3 +231,12 @@ Operator chose the DEEP rename (over branding-only) plus the flow:// scheme:
   Keychain service + localStorage key) — both QA app instances re-signed-in
   via the new flow://signin handoff (dogfooded, works); local GRDB caches
   reset (resync); web prefs (sidebar/thread widths, collapse state) reset.
+
+### Addendum (same day): repo directory renamed too
+
+Operator follow-up: /Users/scottp/mychat → /Users/scottp/flow. Dev server and
+app instances stopped, directory moved, server restarted from the new path,
+Flow.app instances relaunched and re-registered with LaunchServices (flow://
+now binds to the new bundle path). Claude project memory migrated to the new
+project directory. Remaining old-name artifacts: the "MyChat Dev Signing"
+cert and old-name mentions in historical docs only.
