@@ -44,8 +44,19 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc signature: required for UserNotifications + Keychain on modern macOS.
-codesign --force -s - "$APP" >/dev/null 2>&1 || echo "warning: codesign failed (banners may not work)"
+# Signature: required for UserNotifications + Keychain on modern macOS.
+# Prefer the stable "MyChat Dev Signing" identity (self-signed, in the login
+# keychain): a persistent identity means Keychain ACLs survive rebuilds, so
+# the token-access prompt happens once ever instead of once per build.
+# Fall back to ad-hoc when the identity is absent (fresh machines, CI).
+IDENTITY="MyChat Dev Signing"
+if security find-identity -p codesigning -v 2>/dev/null | grep -q "$IDENTITY"; then
+  codesign --force -s "$IDENTITY" "$APP" >/dev/null 2>&1 \
+    || codesign --force -s - "$APP" >/dev/null 2>&1 \
+    || echo "warning: codesign failed (banners may not work)"
+else
+  codesign --force -s - "$APP" >/dev/null 2>&1 || echo "warning: codesign failed (banners may not work)"
+fi
 
 # Register the myapp:// scheme with LaunchServices.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
