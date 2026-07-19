@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fastify/formbody": "^8.0.2",
     "@fastify/multipart": "^10.1.0",
     "@fastify/static": "^10.1.0",
     "@mychat/shared": "workspace:*",
@@ -25,6 +26,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@slack/web-api": "^8.0.0",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "drizzle-kit": "^0.28.1",

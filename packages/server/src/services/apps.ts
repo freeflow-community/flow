@@ -108,7 +108,15 @@ export async function updateApp(
   }> = {};
   if (patch.eventUrl !== undefined && patch.eventUrl !== app.eventUrl) {
     set.eventUrl = patch.eventUrl;
-    set.eventUrlVerifiedAt = null; // re-verify on change
+    set.eventUrlVerifiedAt = null;
+    // Slack-style url_verification challenge, synchronous at config time; on
+    // failure the URL is stored unverified (UI flags it; deliveries blocked).
+    if (patch.eventUrl) {
+      const { verifyEventUrl } = await import('./appEvents.js');
+      if (await verifyEventUrl(patch.eventUrl, app.signingSecret)) {
+        set.eventUrlVerifiedAt = new Date();
+      }
+    }
   }
   if (patch.eventTypes !== undefined) set.eventTypes = patch.eventTypes;
   if (Object.keys(set).length === 0) return toAppDTO(app);

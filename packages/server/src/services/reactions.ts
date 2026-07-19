@@ -5,6 +5,7 @@ import type { ReactionAggDTO } from '@mychat/shared';
 import { db, schema } from '../db/index.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { requireChannelAccess } from './channels.js';
+import { enqueueReactionEvent } from './appEvents.js';
 import { publishEvent, subjectMsg } from '../bus.js';
 
 const { reactions, messages } = schema;
@@ -20,11 +21,17 @@ async function loadMessage(messageId: string, userId: string) {
 
 export async function addReaction(messageId: string, userId: string, emoji: string): Promise<ReactionAggDTO[]> {
   const { row, chan } = await loadMessage(messageId, userId);
-  const inserted = await db
-    .insert(reactions)
-    .values({ messageId, userId, emoji })
-    .onConflictDoNothing()
-    .returning();
+  const inserted = await db.transaction(async (tx) => {
+    const ins = await tx
+      .insert(reactions)
+      .values({ messageId, userId, emoji })
+      .onConflictDoNothing()
+      .returning();
+    if (ins.length > 0) {
+      await enqueueReactionEvent(tx, chan, true, { messageId, userId, emoji, itemAuthorId: row.userId });
+    }
+    return ins;
+  });
   if (inserted.length > 0) {
     publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
       type: 'reaction.added',
@@ -39,10 +46,16 @@ export async function addReaction(messageId: string, userId: string, emoji: stri
 
 export async function removeReaction(messageId: string, userId: string, emoji: string): Promise<ReactionAggDTO[]> {
   const { row, chan } = await loadMessage(messageId, userId);
-  const deleted = await db
-    .delete(reactions)
-    .where(and(eq(reactions.messageId, messageId), eq(reactions.userId, userId), eq(reactions.emoji, emoji)))
-    .returning();
+  const deleted = await db.transaction(async (tx) => {
+    const del = await tx
+      .delete(reactions)
+      .where(and(eq(reactions.messageId, messageId), eq(reactions.userId, userId), eq(reactions.emoji, emoji)))
+      .returning();
+    if (del.length > 0) {
+      await enqueueReactionEvent(tx, chan, false, { messageId, userId, emoji, itemAuthorId: row.userId });
+    }
+    return del;
+  });
   if (deleted.length > 0) {
     publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
       type: 'reaction.removed',

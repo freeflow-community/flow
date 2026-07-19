@@ -4,6 +4,7 @@ import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { isUniqueViolation, requireMembership } from './workspaces.js';
+import { enqueueChannelEvent, enqueueMemberEvent } from './appEvents.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
 const { channels, channelMembers, messages, workspaceMembers } = schema;
@@ -75,6 +76,8 @@ export async function createChannel(
         createdBy: userId,
       });
       await tx.insert(channelMembers).values({ channelId: id, userId });
+      const created = (await tx.select().from(channels).where(eq(channels.id, id)).limit(1))[0]!;
+      await enqueueChannelEvent(tx, created, 'channel_created', userId);
     });
   } catch (err: unknown) {
     if (isUniqueViolation(err)) throw conflict('channel_exists', 'a channel with this name already exists');
@@ -251,7 +254,10 @@ export async function joinChannel(channelId: string, userId: string): Promise<Ch
   if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
   if (chan.isPrivate && !isMember) throw forbidden('cannot join a private channel without an invite');
   if (!isMember) {
-    await db.insert(channelMembers).values({ channelId, userId }).onConflictDoNothing();
+    await db.transaction(async (tx) => {
+      const ins = await tx.insert(channelMembers).values({ channelId, userId }).onConflictDoNothing().returning();
+      if (ins.length > 0) await enqueueMemberEvent(tx, chan, true, userId);
+    });
     publishEvent(subjectMeta(chan.workspaceId), {
       type: 'member.joined',
       workspaceId: chan.workspaceId,
@@ -280,11 +286,15 @@ export async function addMember(channelId: string, actorId: string, targetUserId
     .where(and(eq(workspaceMembers.workspaceId, chan.workspaceId), eq(workspaceMembers.userId, targetUserId)))
     .limit(1);
   if (!target[0]) throw badRequest('bad_user', 'user is not a member of this workspace');
-  const inserted = await db
-    .insert(channelMembers)
-    .values({ channelId, userId: targetUserId })
-    .onConflictDoNothing()
-    .returning();
+  const inserted = await db.transaction(async (tx) => {
+    const ins = await tx
+      .insert(channelMembers)
+      .values({ channelId, userId: targetUserId })
+      .onConflictDoNothing()
+      .returning();
+    if (ins.length > 0) await enqueueMemberEvent(tx, chan, true, targetUserId);
+    return ins;
+  });
   if (inserted.length > 0) {
     publishEvent(subjectMeta(chan.workspaceId), {
       type: 'member.joined',
@@ -313,10 +323,14 @@ export async function removeMember(channelId: string, actorId: string, targetUse
     const actor = await requireMembership(chan.workspaceId, actorId);
     if (actor.role !== 'owner' && actor.role !== 'admin') throw forbidden('only owners and admins can remove members');
   }
-  const deleted = await db
-    .delete(channelMembers)
-    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, targetUserId)))
-    .returning();
+  const deleted = await db.transaction(async (tx) => {
+    const del = await tx
+      .delete(channelMembers)
+      .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, targetUserId)))
+      .returning();
+    if (del.length > 0 && chan.kind === 'standard') await enqueueMemberEvent(tx, chan, false, targetUserId);
+    return del;
+  });
   if (deleted.length > 0) {
     publishEvent(subjectMeta(chan.workspaceId), {
       type: 'member.left',
@@ -337,11 +351,15 @@ export async function archiveChannel(channelId: string, actorId: string): Promis
   const allowed = actor.role === 'owner' || actor.role === 'admin' || chan.createdBy === actorId;
   if (!allowed) throw forbidden('only owners, admins, or the channel creator can archive');
   if (chan.archivedAt) return toChannelDTO(chan, { isMember }); // idempotent
-  const updated = await db
-    .update(channels)
-    .set({ archivedAt: new Date() })
-    .where(eq(channels.id, channelId))
-    .returning();
+  const updated = await db.transaction(async (tx) => {
+    const up = await tx
+      .update(channels)
+      .set({ archivedAt: new Date() })
+      .where(eq(channels.id, channelId))
+      .returning();
+    await enqueueChannelEvent(tx, up[0]!, 'channel_archive', actorId);
+    return up;
+  });
   const dto = toChannelDTO(updated[0]!, { isMember });
   publishEvent(subjectMeta(chan.workspaceId), {
     type: 'channel.archived',

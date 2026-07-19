@@ -8,6 +8,7 @@ import { requireChannelAccess } from './channels.js';
 import { reactionsForMessages } from './reactions.js';
 import { filesForMessages, validateAttachments, toFileDTO } from './files.js';
 import { computeRecipients, insertNotifications, publishNotifications } from './notifications.js';
+import { enqueueMessageEvents } from './appEvents.js';
 import { publishEvent, subjectMsg } from '../bus.js';
 
 const { messages, channelMembers, messageFiles } = schema;
@@ -122,6 +123,13 @@ export async function sendMessage(
     }
     // notification rows in the same transaction (phase2.md §4)
     planned = await insertNotifications(tx, recipients, id, channelId);
+    // Slack-compat Events API outbox rows, same transaction (phase4.md §1)
+    await enqueueMessageEvents(
+      tx,
+      chan,
+      { id, userId, body, threadRootId: threadRootId ?? null },
+      mentions ?? [],
+    );
   });
 
   if (!row) {

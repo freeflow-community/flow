@@ -7,6 +7,7 @@ import { connectBus, closeBus } from './bus.js';
 import { attachGateway } from './gateway/index.js';
 import { purgeExpiredSessions } from './services/auth.js';
 import { startOrphanSweep } from './services/files.js';
+import { startAppEventsWorker } from './services/appEvents.js';
 
 async function main(): Promise<void> {
   initCrypto();
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
 
   void purgeExpiredSessions().catch(() => {});
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
+  startAppEventsWorker(app.log); // Events API outbox drain (phase 4)
 
   const shutdown = async () => {
     gateway.close();
