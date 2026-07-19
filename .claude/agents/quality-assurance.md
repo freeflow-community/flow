@@ -377,6 +377,13 @@ Phase-4 addition (WEB smoke item 19 — Slack app admin UI, web-only feature):
     #general → grep an event_callback with that text in the events file
     (signed: no `"sig_ok": false` lines). `app-disable-…` → curl
     /api/auth.test with the token → invalid_auth. Close alice's tab when done.
+    CAVEAT (learned in w689912): the web client keeps ONE token in
+    localStorage['mychat.token'] shared across same-origin tabs — signing
+    alice in makes bob's tab call the API as alice. Sequence around it (do
+    bob-side actions before/after the alice segment, or swap the stored token
+    for the specific call and restore it, verifying actor ids in evidence).
+    Also: form_input on React checkboxes doesn't reach component state — use a
+    real click; the JS bridge redacts xoxb tokens — read them from screenshots.
 
 Phase-4 suites (run before UI tiers, no desktop needed):
 `bash packages/server/scripts/smoke4.sh` (24 checks: envelopes, ts round-trip,
