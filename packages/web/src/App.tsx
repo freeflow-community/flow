@@ -7,11 +7,16 @@ import AuthScreen from './components/AuthScreen';
 import WorkspaceChooser from './components/WorkspaceChooser';
 import Main from './components/Main';
 
+const ACTIVE_WS_KEY = 'mychat.activeWorkspace';
+
 export default function App() {
   const qc = useQueryClient();
   const [user, setUser] = useState<UserDTO | null>(null);
   const [booting, setBooting] = useState(true);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  // Active workspace survives reloads/restarts (phase 3.5 fixes).
+  const [workspaceId, setWorkspaceId] = useState<string | null>(
+    () => localStorage.getItem(ACTIVE_WS_KEY),
+  );
   const [channelId, setChannelId] = useState<string | null>(null);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
 
@@ -63,6 +68,8 @@ export default function App() {
           threadRootId,
           selectWorkspace: (id) => {
             setWorkspaceId(id);
+            if (id) localStorage.setItem(ACTIVE_WS_KEY, id);
+            else localStorage.removeItem(ACTIVE_WS_KEY);
             setChannelId(null);
             setThreadRootId(null);
           },

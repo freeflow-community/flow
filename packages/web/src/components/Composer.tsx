@@ -63,13 +63,18 @@ export default function Composer({
     live.sendTyping(channelId);
   };
 
-  // trailing-token autocomplete for @mentions and :shortcodes:
+  // trailing-token autocomplete for @mentions and :shortcodes: — first match
+  // pre-selected (Enter inserts), ↑/↓ move, Esc dismisses for this token.
+  const [selIndex, setSelIndex] = useState(0);
+  const [suppressedToken, setSuppressedToken] = useState<string | null>(null);
   const token = trailingToken(text);
-  const suggestions = token ? buildSuggestions(token, members.data ?? []) : [];
+  const suggestions = token && token !== suppressedToken ? buildSuggestions(token, members.data ?? []) : [];
+  const selected = Math.min(selIndex, Math.max(0, suggestions.length - 1));
 
   const applySuggestion = (insert: string) => {
     if (!token) return;
     setDraft(text.slice(0, text.length - token.length) + insert);
+    setSelIndex(0);
   };
 
   const doSend = () => {
@@ -127,21 +132,54 @@ export default function Composer({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    if (e.nativeEvent.isComposing) return;
+    if (suggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelIndex((i) => (i + 1) % suggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSuppressedToken(token);
+        return;
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault();
+        applySuggestion(suggestions[selected]!.insert);
+        return;
+      }
+    }
+    if (e.key !== 'Enter') return;
     e.preventDefault();
     if (e.shiftKey) insertAtCaret('\n');
     else doSend();
   };
 
+  // Drag-and-drop files anywhere on the composer → upload-then-attach.
+  const [dragOver, setDragOver] = useState(false);
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) void pickFiles(e.dataTransfer.files);
+  };
+
   return (
     <div className="relative px-[22px] pb-[22px]">
       {suggestions.length > 0 && (
-        <div className="absolute bottom-full left-[22px] z-20 mb-1 flex gap-1 rounded-lg border border-hairline bg-white p-1 shadow-lg">
-          {suggestions.map((s) => (
+        <div className="mc-scroll absolute bottom-full left-[22px] z-20 mb-1 flex max-h-56 min-w-48 flex-col overflow-y-auto rounded-lg border border-hairline bg-white p-1 shadow-lg">
+          {suggestions.map((s, i) => (
             <button
               key={s.label}
               data-testid={`suggestion-${s.label}`}
-              className="rounded px-2 py-1 text-sm hover:bg-daypill"
+              data-selected={i === selected}
+              className={`rounded px-2 py-1 text-left text-sm ${i === selected ? 'bg-accent/10 font-semibold' : 'hover:bg-daypill'}`}
+              onMouseEnter={() => setSelIndex(i)}
               onClick={() => applySuggestion(s.insert)}
             >
               {s.label}
@@ -170,7 +208,12 @@ export default function Composer({
 
       {error && <p className="mb-1 text-xs text-red-600">{error}</p>}
 
-      <div className="rounded-xl border border-hairline2 bg-white px-3.5 py-3 focus-within:border-accent/40">
+      <div
+        className={`rounded-xl border bg-white px-3.5 py-3 focus-within:border-accent/40 ${dragOver ? 'border-accent' : 'border-hairline2'}`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+      >
         <div
           ref={editorRef}
           contentEditable="plaintext-only"

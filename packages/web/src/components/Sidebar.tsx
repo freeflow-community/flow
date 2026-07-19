@@ -5,7 +5,7 @@ import type { ChannelDTO } from '@mychat/shared';
 import { api } from '../lib/api';
 import { useAuth, useLive, useSelection } from '../state';
 import { useChannels, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
-import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, UserCard, WorkspaceColorModal } from './modals';
+import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
 import StatusFooter from './StatusPicker';
 
@@ -20,7 +20,7 @@ function storedWidth(): number {
 
 export function dmTitle(c: ChannelDTO, names: Record<string, string>, me: string): string {
   const others = (c.memberIds ?? []).filter((id) => id !== me);
-  if (others.length === 0) return 'Just you';
+  if (others.length === 0) return `${names[me] ?? 'You'} (you)`; // persistent self-DM
   return others.map((id) => names[id] ?? 'Unknown').sort().join(', ');
 }
 
@@ -41,8 +41,6 @@ export default function Sidebar() {
   const [showColor, setShowColor] = useState(false);
   const [showApps, setShowApps] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
-  const [profileUserId, setProfileUserId] = useState<string | null>(null);
-  const [memberMenuFor, setMemberMenuFor] = useState<string | null>(null);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
   const wsMenuRef = useRef<HTMLDivElement>(null);
@@ -68,6 +66,38 @@ export default function Sidebar() {
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
   const color = sidebarColor(ws?.sidebarColor);
+
+  // Restored-workspace guard + default channel: a stale persisted workspace id
+  // falls back to the chooser; a workspace opened with no channel selected
+  // lands on #general (phase 3.5 fixes).
+  useEffect(() => {
+    if (workspaces.data && sel.workspaceId && !workspaces.data.some((w) => w.id === sel.workspaceId)) {
+      sel.selectWorkspace(null);
+    }
+  }, [workspaces.data, sel]);
+  useEffect(() => {
+    if (sel.channelId || !channels.data) return;
+    const general = channels.data.find((c) => c.isMember && c.name === 'general');
+    const fallback = channels.data.find((c) => c.isMember && c.kind === 'standard');
+    const target = general ?? fallback;
+    if (target) sel.selectChannel(target.id);
+  }, [channels.data, sel]);
+
+  // Persistent self-DM: ensure "<Name> (you)" always exists under Direct
+  // Messages (upsert — the server dedupes by dm_key, so this is idempotent).
+  const ensuredSelfDm = useRef<string | null>(null);
+  useEffect(() => {
+    const wsId = sel.workspaceId;
+    if (!wsId || !channels.data || ensuredSelfDm.current === wsId) return;
+    const haveSelf = channels.data.some(
+      (c) => c.kind === 'dm' && (c.memberIds ?? []).every((id) => id === auth.user.id),
+    );
+    if (haveSelf) { ensuredSelfDm.current = wsId; return; }
+    ensuredSelfDm.current = wsId;
+    void api('POST', `/v1/workspaces/${wsId}/dms`, { userIds: [auth.user.id] })
+      .then(() => qc.invalidateQueries({ queryKey: ['channels', wsId] }))
+      .catch(() => { ensuredSelfDm.current = null; });
+  }, [sel.workspaceId, channels.data, auth.user.id, qc]);
 
   const openDm = async (userId: string) => {
     if (!sel.workspaceId) return;
@@ -153,8 +183,9 @@ export default function Sidebar() {
               statusEmoji={c.kind === 'dm' ? status?.statusEmoji : ''}
               statusTitle={c.kind === 'dm' ? status?.statusText : ''}
               leading={
-                c.kind === 'dm' && otherId ? (
-                  <PresenceDot online={!!live.presence[otherId]} />
+                c.kind === 'dm' ? (
+                  // self-DM: you're online by definition (this client is connected)
+                  <PresenceDot online={otherId ? !!live.presence[otherId] : true} />
                 ) : (
                   <span className="text-xs text-white/60">👥</span>
                 )
@@ -185,45 +216,6 @@ export default function Sidebar() {
           </>
         )}
 
-        <SectionHeader label="Members" />
-        {(members.data ?? []).map((m) => (
-          <div
-            key={m.userId}
-            className="group relative flex items-center gap-[9px] rounded-lg px-2 py-[7px] hover:bg-white/10"
-          >
-            <button
-              data-testid={`sidebar-member-${m.displayName}`}
-              data-presence={live.presence[m.userId] ? 'online' : 'offline'}
-              className="flex min-w-0 flex-1 items-center gap-[9px] text-left text-white/82"
-              onClick={() => void openDm(m.userId)}
-            >
-              <PresenceDot online={!!live.presence[m.userId]} />
-              <span className="truncate">{m.displayName}</span>
-              {m.statusEmoji && (
-                <span className="ml-0.5 text-sm" title={m.statusText}>{m.statusEmoji}</span>
-              )}
-              {m.userId === auth.user.id && <span className="text-xs text-white/55">(you)</span>}
-              {m.role !== 'member' && <span className="ml-auto text-xs text-white/55">{m.role}</span>}
-            </button>
-            <button
-              data-testid={`member-menu-${m.displayName}`}
-              className="hidden rounded px-1 text-xs text-white/55 group-hover:block hover:text-white"
-              onClick={() => setMemberMenuFor((v) => (v === m.userId ? null : m.userId))}
-            >
-              ⋯
-            </button>
-            {memberMenuFor === m.userId && (
-              <div className="absolute top-full right-2 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
-                <MenuItem
-                  testid={`member-profile-${m.displayName}`}
-                  onClick={() => { setMemberMenuFor(null); setProfileUserId(m.userId); }}
-                >
-                  View profile
-                </MenuItem>
-              </div>
-            )}
-          </div>
-        ))}
       </div>
 
       <StatusFooter />
@@ -262,7 +254,6 @@ export default function Sidebar() {
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
-      {profileUserId && <UserCard userId={profileUserId} onClose={() => setProfileUserId(null)} />}
     </aside>
   );
 }
