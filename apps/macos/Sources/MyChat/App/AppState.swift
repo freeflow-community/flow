@@ -158,11 +158,29 @@ final class AppState: ObservableObject {
 
     // MARK: - UI actions
 
+    private static let activeWorkspaceKey = "activeWorkspaceId" + Profile.suffix
+
     func selectWorkspace(_ id: String?) {
         selectedWorkspaceId = id
         selectedChannelId = nil
         openThreadRootId = nil
+        // Active workspace survives relaunch (phase 3.5 fixes).
+        if let id {
+            UserDefaults.standard.set(id, forKey: Self.activeWorkspaceKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.activeWorkspaceKey)
+        }
         Task { await engine.selectWorkspace(id) }
+    }
+
+    /// Restore the last active workspace at launch (validated by the caller
+    /// against the workspace list once it loads).
+    func restoreActiveWorkspace() {
+        guard selectedWorkspaceId == nil,
+              let saved = UserDefaults.standard.string(forKey: Self.activeWorkspaceKey)
+        else { return }
+        selectedWorkspaceId = saved
+        Task { await engine.selectWorkspace(saved) }
     }
 
     func selectChannel(_ id: String?) {

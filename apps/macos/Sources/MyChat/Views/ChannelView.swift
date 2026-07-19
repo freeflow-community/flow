@@ -9,6 +9,7 @@ struct ChannelView: View {
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
     @StateObject private var userStatuses = DBObserved<[String: String]>(initial: [:])
+    @StateObject private var memberIds = DBObserved<[String]>(initial: [])
     @State private var editingMessage: Message?
     @State private var profileUserId: String?
 
@@ -76,6 +77,18 @@ struct ChannelView: View {
                     }
                 )
             }
+            if let wsId = app.selectedWorkspaceId {
+                memberIds.start(db: app.db, reset: []) { db in
+                    try String.fetchAll(
+                        db,
+                        sql: """
+                            SELECT m.userId FROM member m JOIN user u ON u.id = m.userId
+                            WHERE m.workspaceId = ? ORDER BY u.displayName COLLATE NOCASE
+                            """,
+                        arguments: [wsId]
+                    )
+                }
+            }
         }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
@@ -138,10 +151,41 @@ struct ChannelView: View {
                 }
             }
             Spacer()
+            headerAvatars
         }
         .padding(.horizontal, 22)
         .frame(height: 60)
         .background(MC.base)
+    }
+
+    /// Design 3a: overlapping member avatars + "+N" at the header's right edge
+    /// (channel members for DMs, workspace members otherwise).
+    private var headerAvatars: some View {
+        let ids = (channel.value?.isDM == true ? channel.value?.memberIds : nil) ?? memberIds.value
+        let shown = Array(ids.prefix(3))
+        let extra = ids.count - shown.count
+        return HStack(spacing: 4) {
+            HStack(spacing: -10) {
+                ForEach(shown, id: \.self) { id in
+                    AvatarChip(
+                        userId: id,
+                        name: userNames.value[id] ?? "?",
+                        avatarPath: app.avatarPaths[id],
+                        size: 26,
+                        radius: 13
+                    )
+                    .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(MC.base, lineWidth: 2))
+                }
+            }
+            if extra > 0 {
+                Text("+\(extra)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(MC.muted)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("channel.memberAvatars")
+        .accessibilityValue("\(ids.count) members")
     }
 
     private var headerIcon: String {

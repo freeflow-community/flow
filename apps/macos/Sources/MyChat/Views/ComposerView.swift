@@ -13,6 +13,9 @@ struct ComposerView: View {
     @State private var attachments: [FileAttachment] = []
     @State private var uploading = 0
     @State private var focusRequest = 0
+    @State private var suggestionIndex = 0
+    @State private var suppressedToken: String?
+    @State private var dropTargeted = false
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
 
     var body: some View {
@@ -43,7 +46,12 @@ struct ComposerView: View {
                         axIdentifier: threadRootId == nil ? "composer.input" : "thread.composer.input",
                         focusRequest: focusRequest,
                         onSend: send,
-                        onPasteImages: handlePasteImages
+                        onPasteImages: handlePasteImages,
+                        onCommand: handleCommand,
+                        onDropFiles: { urls in
+                            uploadFiles(urls)
+                            return true
+                        }
                     )
                     if text.isEmpty {
                         Text(placeholder)
@@ -88,8 +96,23 @@ struct ComposerView: View {
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(.white)
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MC.hairline2, lineWidth: 1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(dropTargeted ? MC.accent : MC.hairline2, lineWidth: 1)
+                )
         )
+        // Drops on the card outside the text view (the text view routes its own).
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            for provider in providers {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url, url.isFileURL {
+                        Task { @MainActor in uploadFiles([url]) }
+                    }
+                }
+            }
+            return true
+        }
+        .onChange(of: autocomplete?.token) { _, _ in suggestionIndex = 0 }
         .padding([.horizontal, .bottom], 22)
         .padding(.top, 4)
         .task(id: workspaceId) {
@@ -134,6 +157,7 @@ struct ComposerView: View {
             let before = text[text.index(before: sigilIdx)]
             guard before.isWhitespace else { return nil }
         }
+        if token == suppressedToken { return nil } // Esc dismissed this token
         if token.first == "@" {
             guard query.count >= 1, !query.contains("@") else { return nil }
             let lower = query.lowercased()
@@ -156,24 +180,88 @@ struct ComposerView: View {
         }
     }
 
+    /// Vertical suggestion list; first match pre-selected so Return inserts it
+    /// (phase-3.5 fixes). ↑/↓ move, Esc dismisses — see handleCommand.
     private func suggestionBar(_ s: Suggestions) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(Array(s.items.enumerated()), id: \.offset) { _, item in
-                    Button(item.label) {
-                        // replace the trailing token with the completion
-                        if let range = text.range(of: s.token, options: .backwards) {
-                            text.replaceSubrange(range, with: item.insert)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(s.items.enumerated()), id: \.offset) { index, item in
+                    Button {
+                        apply(s, item: item)
+                    } label: {
+                        HStack {
+                            Text(item.label)
+                                .font(.system(size: 13, weight: index == selectedSuggestion(s) ? .semibold : .regular))
+                            Spacer(minLength: 0)
                         }
-                        focusRequest += 1
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(index == selectedSuggestion(s) ? MC.accent.opacity(0.12) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .accessibilityIdentifier("composer.suggestion.\(item.label)")
+                    .accessibilityAddTraits(index == selectedSuggestion(s) ? [.isSelected] : [])
                 }
             }
         }
-        .frame(height: 26)
+        .frame(maxWidth: 280, maxHeight: 160)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func selectedSuggestion(_ s: Suggestions) -> Int {
+        min(suggestionIndex, max(0, s.items.count - 1))
+    }
+
+    private func apply(_ s: Suggestions, item: (insert: String, label: String)) {
+        if let range = text.range(of: s.token, options: .backwards) {
+            text.replaceSubrange(range, with: item.insert)
+        }
+        suggestionIndex = 0
+        focusRequest += 1
+    }
+
+    /// Key routing while the suggestion list is visible (from the text view's
+    /// doCommandBy hook). Return true = consumed.
+    private func handleCommand(_ selector: Selector) -> Bool {
+        guard let s = autocomplete, !s.items.isEmpty else { return false }
+        switch selector {
+        case #selector(NSResponder.moveDown(_:)):
+            suggestionIndex = (selectedSuggestion(s) + 1) % s.items.count
+            return true
+        case #selector(NSResponder.moveUp(_:)):
+            suggestionIndex = (selectedSuggestion(s) + s.items.count - 1) % s.items.count
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            suppressedToken = s.token
+            return true
+        case #selector(NSResponder.insertNewline(_:)) where NSApp.currentEvent?.modifierFlags.contains(.shift) != true,
+             #selector(NSResponder.insertTab(_:)):
+            apply(s, item: s.items[selectedSuggestion(s)])
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Shared upload pipeline (paperclip, image paste, drag-and-drop).
+    private func uploadFiles(_ urls: [URL]) {
+        guard let wsId = workspaceId else { return }
+        uploading += urls.count
+        for url in urls {
+            Task { @MainActor in
+                defer { uploading -= 1 }
+                do {
+                    let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: url)
+                    if attachments.count < 10 { attachments.append(file) }
+                } catch {
+                    app.showError("Couldn't upload \(url.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     // MARK: - Attachments

@@ -27,6 +27,7 @@ struct SidebarView: View {
     @State private var showColorPicker = false
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
+    @State private var ensuredSelfDmWs: String?
 
     private var currentWorkspace: Workspace? {
         workspaces.value.first { $0.id == app.selectedWorkspaceId }
@@ -103,10 +104,6 @@ struct SidebarView: View {
                         }
                     }
 
-                    sectionHeader("Members") {}
-                    ForEach(members.value) { member in
-                        memberRow(member)
-                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
@@ -115,6 +112,26 @@ struct SidebarView: View {
             StatusFooterView(palette: palette)
         }
         .background(palette.gradient)
+        // Default channel + persistent self-DM (phase 3.5 fixes): a workspace
+        // opened with nothing selected lands on #general; every workspace gets
+        // a "<Name> (you)" DM (idempotent server upsert).
+        .onChange(of: channels.value) { _, chans in
+            guard let wsId = app.selectedWorkspaceId, !chans.isEmpty else { return }
+            if app.selectedChannelId == nil {
+                let target = chans.first { $0.isMember && $0.name == "general" }
+                    ?? chans.first { $0.isMember && !$0.isDM }
+                if let target { app.selectChannel(target.id) }
+            }
+            if let me = app.currentUser?.id, ensuredSelfDmWs != wsId {
+                ensuredSelfDmWs = wsId
+                let hasSelfDm = chans.contains {
+                    $0.kind == "dm" && $0.isMember && ($0.memberIds ?? []).allSatisfy { $0 == me }
+                }
+                if !hasSelfDm {
+                    Task { _ = try? await app.engine.createDm(workspaceId: wsId, userIds: [me]) }
+                }
+            }
+        }
         .task {
             workspaces.start(db: app.db) { db in
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
@@ -262,8 +279,9 @@ struct SidebarView: View {
             app.selectChannel(channel.id)
         } label: {
             HStack(spacing: 9) {
-                if channel.kind == "dm", let otherId {
-                    presenceDot(online: app.presence[otherId] == true)
+                if channel.kind == "dm" {
+                    // self-DM (no other member): online by definition
+                    presenceDot(online: otherId.map { app.presence[$0] == true } ?? true)
                         .frame(width: 14)
                 } else {
                     Image(systemName: "person.2")
@@ -301,6 +319,11 @@ struct SidebarView: View {
         .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
         .accessibilityAddTraits(active ? [.isSelected] : [])
         .contextMenu {
+            if channel.kind == "dm" {
+                Button("View Profile") {
+                    profileUserId = otherId ?? app.currentUser?.id
+                }
+            }
             notifyMenu(channel)
             if channel.kind == "group_dm" {
                 Button("Leave Conversation", role: .destructive) { leave(channel) }

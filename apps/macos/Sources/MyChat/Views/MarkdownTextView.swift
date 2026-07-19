@@ -24,6 +24,27 @@ final class MarkdownNSTextView: NSTextView {
         super.paste(sender)
     }
 
+    /// Files dropped on the composer attach (with preview) instead of
+    /// inserting their filesystem paths as text (phase-3.5 fix).
+    var onDropFiles: (([URL]) -> Bool)?
+
+    private static func droppedFileURLs(_ info: NSDraggingInfo) -> [URL] {
+        (info.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL]) ?? []
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if onDropFiles != nil, !Self.droppedFileURLs(sender).isEmpty { return .copy }
+        return super.draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.droppedFileURLs(sender)
+        if !urls.isEmpty, let onDropFiles, onDropFiles(urls) { return true }
+        return super.performDragOperation(sender)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if wantsInitialFocus, let window {
@@ -112,6 +133,12 @@ struct MarkdownComposerTextView: NSViewRepresentable {
     var focusRequest: Int
     let onSend: () -> Void
     let onPasteImages: (NSPasteboard) -> Bool
+    /// Consulted first for key commands (arrows/Return/Tab/Escape) so the
+    /// autocomplete popup can navigate/accept/dismiss. Return true = consumed.
+    var onCommand: ((Selector) -> Bool)? = nil
+    /// Files dropped onto the text view route here (upload-then-attach)
+    /// instead of inserting their paths as text. Return true = consumed.
+    var onDropFiles: (([URL]) -> Bool)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, onSend: onSend)
@@ -162,8 +189,10 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.text = $text
         coordinator.onSend = onSend
+        coordinator.onCommand = onCommand
         guard let textView = scroll.documentView as? MarkdownNSTextView else { return }
         textView.onPasteImages = onPasteImages
+        textView.onDropFiles = onDropFiles
         if textView.string != text {
             // Programmatic replace (suggestion inserted, message sent, …):
             // caret-to-end is the agreed behavior after external writes.
@@ -207,6 +236,7 @@ struct MarkdownComposerTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         var onSend: () -> Void
+        var onCommand: ((Selector) -> Bool)?
         var lastFocusRequest = 0
         weak var textView: MarkdownNSTextView?
 
@@ -224,6 +254,7 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if let onCommand, onCommand(commandSelector) { return true }
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 // Shift+Return inserts a newline; plain Return sends.
                 if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {

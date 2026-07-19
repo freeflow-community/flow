@@ -14,6 +14,7 @@ struct RootView: View {
             case .signedIn:
                 if app.selectedWorkspaceId == nil {
                     WorkspaceSwitcherView()
+                        .onAppear { app.restoreActiveWorkspace() }
                 } else {
                     MainView()
                 }
