@@ -41,7 +41,7 @@ actor SyncEngine {
         await api.setToken(token)
         do {
             let me: User = try await api.get("/v1/me")
-            await didSignIn(user: me, token: token)
+            await didSignIn(user: me, token: token, persistToken: false)
         } catch let e as APIError where e.status == 401 {
             Keychain.deleteToken()
             await api.setToken(nil)
@@ -96,9 +96,12 @@ actor SyncEngine {
         await appState?.didSignOut()
     }
 
-    private func didSignIn(user: User, token: String) async {
+    /// `persistToken: false` when the token was just read from the Keychain
+    /// (bootstrap): re-saving would be a second Keychain ACL prompt after every
+    /// rebuild (SecItemDelete on an item the new binary isn't trusted for yet).
+    private func didSignIn(user: User, token: String, persistToken: Bool = true) async {
         currentUser = user
-        Keychain.saveToken(token)
+        if persistToken { Keychain.saveToken(token) }
         UserDefaults.standard.set(user.id, forKey: Self.currentUserIdKey)
         try? await db.writer.write { db in try user.save(db) }
         await appState?.setPhase(.signedIn(user))
