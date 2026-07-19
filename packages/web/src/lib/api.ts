@@ -76,6 +76,19 @@ export async function uploadAvatar(file: File): Promise<unknown> {
 // File/thumb/avatar URLs are immutable per key, so cache forever.
 const blobCache = new Map<string, Promise<string>>();
 
+/** Authenticated text fetch for inline file previews (same immutable-URL cache). */
+const textCache = new Map<string, Promise<string>>();
+
+export function fileText(path: string): Promise<string> {
+  let cached = textCache.get(path);
+  if (!cached) {
+    cached = blobUrl(path).then((u) => fetch(u).then((r) => r.text()));
+    cached.catch(() => textCache.delete(path));
+    textCache.set(path, cached);
+  }
+  return cached;
+}
+
 export function blobUrl(path: string): Promise<string> {
   let cached = blobCache.get(path);
   if (!cached) {

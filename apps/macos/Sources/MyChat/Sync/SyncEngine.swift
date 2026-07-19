@@ -553,6 +553,13 @@ actor SyncEngine {
         return dest
     }
 
+    /// Fetches a text-ish file's original bytes decoded as UTF-8 (lossy on
+    /// invalid sequences) — backs the inline text preview.
+    func fileText(_ file: FileAttachment) async throws -> String {
+        let data = try await api.getData("/v1/files/\(file.id)")
+        return String(decoding: data, as: UTF8.self)
+    }
+
     /// Saves a file's original bytes into ~/Downloads (uniqued name on
     /// collision) — backs the attachment/lightbox Download buttons.
     func saveToDownloads(_ file: FileAttachment) async throws -> URL {

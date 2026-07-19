@@ -25,6 +25,18 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — Phase 6: text + PDF file previews
+- Text-ish files (mime `text/*`, JSON/JS/XML/sh/yaml, extension allowlist)
+  render an inline monospace preview: first 10 lines, Expand/Collapse,
+  expanded output capped at 100 KB with a visible truncation notice.
+  `[web] [macos]`
+- PDFs render a mid-size first-page preview; clicking opens an in-app full
+  reader (browser-native `<embed>` on web — no pdf.js dep; PDFKit thumbnail
+  + PDFView sheet on macOS) with open-external/download buttons.
+  `[web] [macos]`
+- All preview cards share the image-card chrome: chevron+name header,
+  per-device collapse persistence, hover Download. `[web] [macos]`
+
 ### 2026-07-19 — interactive fixes (post-phase-5)
 - Composer: clicking anywhere on the card (padding/whitespace) focuses the
   input — no longer requires hitting the text itself. `[web] [macos]`

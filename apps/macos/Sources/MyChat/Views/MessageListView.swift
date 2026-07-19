@@ -411,6 +411,10 @@ struct AttachmentView: View {
         Group {
             if file.isImage {
                 imageAttachment
+            } else if file.isPDF {
+                PdfAttachmentView(file: file)
+            } else if file.isTextPreviewable {
+                TextAttachmentView(file: file)
             } else {
                 fileChip
             }

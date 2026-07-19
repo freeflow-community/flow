@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO, WorkspaceMemberDTO } from '@mychat/shared';
-import { api, blobUrl } from '../lib/api';
+import { api, blobUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
 import { useAuth, useSelection } from '../state';
 import { useToggleReaction } from '../hooks';
@@ -311,60 +311,277 @@ function persistCollapsed(fileId: string, collapsed: boolean): void {
   localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids.slice(-COLLAPSE_CAP)));
 }
 
-function Attachment({ file }: { file: FileDTO }) {
-  const [collapsed, setCollapsed] = useState(() => collapsedIds().includes(file.id));
-  const [lightbox, setLightbox] = useState(false);
+/** ASCII-ish formats that get an inline monospace preview (phase 6). */
+const TEXT_EXTS = new Set([
+  'txt', 'md', 'markdown', 'log', 'json', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
+  'py', 'rb', 'go', 'rs', 'java', 'c', 'cc', 'cpp', 'h', 'hpp', 'm', 'swift', 'kt',
+  'sh', 'bash', 'zsh', 'fish', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'xml',
+  'html', 'htm', 'css', 'scss', 'less', 'sql', 'csv', 'tsv', 'env', 'gitignore',
+]);
+const TEXT_MIMES = new Set([
+  'application/json', 'application/javascript', 'application/xml',
+  'application/x-sh', 'application/x-yaml',
+]);
+function isTextFile(file: FileDTO): boolean {
+  if (file.mimeType.startsWith('text/') || TEXT_MIMES.has(file.mimeType)) return true;
+  return TEXT_EXTS.has(file.name.split('.').pop()?.toLowerCase() ?? '');
+}
 
-  const download = async () => {
+const TEXT_PREVIEW_LINES = 10;
+const TEXT_EXPAND_MAX = 100_000; // chars shown when expanded (phase 6 ruling)
+
+function useCollapsed(fileId: string): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => collapsedIds().includes(fileId));
+  const toggle = () =>
+    setCollapsed((c) => {
+      persistCollapsed(fileId, !c);
+      return !c;
+    });
+  return [collapsed, toggle];
+}
+
+function useDownload(file: FileDTO): () => Promise<void> {
+  return async () => {
     const url = await blobUrl(`/v1/files/${file.id}`);
     const a = document.createElement('a');
     a.href = url;
     a.download = file.name;
     a.click();
   };
+}
 
-  const toggleCollapsed = () => {
-    setCollapsed((c) => {
-      persistCollapsed(file.id, !c);
-      return !c;
-    });
-  };
+function CardHeader({
+  file,
+  collapsed,
+  onToggle,
+}: {
+  file: FileDTO;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 text-[11px] text-faint">
+      <button
+        data-testid={`file-collapse-${file.name}`}
+        className="w-4 hover:text-ink"
+        title={collapsed ? 'Show preview' : 'Hide preview'}
+        onClick={onToggle}
+      >
+        {collapsed ? '▸' : '▾'}
+      </button>
+      <span className="truncate">{file.name}</span>
+    </div>
+  );
+}
 
-  if (file.hasThumb) {
-    // GIFs skip the static webp thumb and render the original so they animate.
-    const imgPath = file.mimeType === 'image/gif' ? `/v1/files/${file.id}` : `/v1/files/${file.id}/thumb`;
-    return (
-      <div className="mt-1">
-        <div className="flex items-center gap-1 text-[11px] text-faint">
-          <button
-            data-testid={`file-collapse-${file.name}`}
-            className="w-4 hover:text-ink"
-            title={collapsed ? 'Show image' : 'Hide image'}
-            onClick={toggleCollapsed}
-          >
-            {collapsed ? '▸' : '▾'}
+function DownloadHoverButton({ file, onDownload }: { file: FileDTO; onDownload: () => Promise<void> }) {
+  return (
+    <button
+      data-testid={`file-download-${file.name}`}
+      className="absolute top-1.5 right-1.5 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white/90 text-sm shadow-sm hover:bg-white group-hover/att:flex"
+      title="Download"
+      onClick={() => void onDownload()}
+    >
+      ⤓
+    </button>
+  );
+}
+
+function Attachment({ file }: { file: FileDTO }) {
+  if (file.hasThumb) return <ImageAttachment file={file} />;
+  if (file.mimeType === 'application/pdf') return <PdfAttachment file={file} />;
+  if (isTextFile(file)) return <TextAttachment file={file} />;
+  return <FileChip file={file} />;
+}
+
+function ImageAttachment({ file }: { file: FileDTO }) {
+  const [collapsed, toggleCollapsed] = useCollapsed(file.id);
+  const [lightbox, setLightbox] = useState(false);
+  const download = useDownload(file);
+
+  // GIFs skip the static webp thumb and render the original so they animate.
+  const imgPath = file.mimeType === 'image/gif' ? `/v1/files/${file.id}` : `/v1/files/${file.id}/thumb`;
+  return (
+    <div className="mt-1">
+      <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
+      {!collapsed && (
+        <div className="group/att relative mt-0.5 w-fit">
+          <button data-testid={`file-${file.name}`} className="block" onClick={() => setLightbox(true)} title={file.name}>
+            <AuthImg path={imgPath} alt={file.name} className="max-h-60 max-w-72 rounded-lg border border-hairline" />
           </button>
-          <span className="truncate">{file.name}</span>
+          <DownloadHoverButton file={file} onDownload={download} />
         </div>
-        {!collapsed && (
-          <div className="group/att relative mt-0.5 w-fit">
-            <button data-testid={`file-${file.name}`} className="block" onClick={() => setLightbox(true)} title={file.name}>
-              <AuthImg path={imgPath} alt={file.name} className="max-h-60 max-w-72 rounded-lg border border-hairline" />
-            </button>
-            <button
-              data-testid={`file-download-${file.name}`}
-              className="absolute top-1.5 right-1.5 hidden h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white/90 text-sm shadow-sm hover:bg-white group-hover/att:flex"
-              title="Download"
-              onClick={() => void download()}
+      )}
+      {lightbox && <ImageLightbox file={file} onClose={() => setLightbox(false)} onDownload={download} />}
+    </div>
+  );
+}
+
+/** Inline monospace preview for text-ish files (phase 6): first lines +
+ * Expand, expanded output capped with a visible truncation notice. */
+function TextAttachment({ file }: { file: FileDTO }) {
+  const [collapsed, toggleCollapsed] = useCollapsed(file.id);
+  const [expanded, setExpanded] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const download = useDownload(file);
+
+  useEffect(() => {
+    let alive = true;
+    void fileText(`/v1/files/${file.id}`)
+      .then((t) => { if (alive) setText(t); })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [file.id]);
+
+  if (failed) return <FileChip file={file} />;
+
+  const lines = text === null ? [] : text.split('\n');
+  const preview = lines.slice(0, TEXT_PREVIEW_LINES).join('\n');
+  const canExpand = text !== null && text.length > preview.length;
+  const expandTruncated = text !== null && text.length > TEXT_EXPAND_MAX;
+  const shown = text === null ? 'Loading…' : expanded ? text.slice(0, TEXT_EXPAND_MAX) : preview;
+
+  return (
+    <div className="mt-1 max-w-[560px]">
+      <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
+      {!collapsed && (
+        <div className="mt-0.5">
+          <div className="group/att relative">
+            <pre
+              data-testid={`file-text-${file.name}`}
+              className="mc-scroll overflow-x-auto rounded-lg border border-hairline bg-white px-3 py-2 font-mono text-[11px] leading-4 whitespace-pre text-ink"
             >
-              ⤓
-            </button>
+              {shown}
+            </pre>
+            <DownloadHoverButton file={file} onDownload={download} />
           </div>
-        )}
-        {lightbox && <ImageLightbox file={file} onClose={() => setLightbox(false)} onDownload={download} />}
+          {expanded && expandTruncated && (
+            <p className="mt-0.5 text-[11px] text-faint">Showing the first 100 KB — download for the full file.</p>
+          )}
+          {canExpand && (
+            <button
+              data-testid={`file-text-expand-${file.name}`}
+              className="mt-0.5 text-xs font-semibold text-accent-soft hover:underline"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? 'Collapse ▴' : 'Expand ▾'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Mid-size PDF preview via the browser's native renderer (phase 6 ruling:
+ * no pdf.js dependency); click opens the in-app full reader. */
+function PdfAttachment({ file }: { file: FileDTO }) {
+  const [collapsed, toggleCollapsed] = useCollapsed(file.id);
+  const [url, setUrl] = useState<string | null>(null);
+  const [reader, setReader] = useState(false);
+  const download = useDownload(file);
+
+  useEffect(() => {
+    let alive = true;
+    void blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); }).catch(() => {});
+    return () => { alive = false; };
+  }, [file.id]);
+
+  return (
+    <div className="mt-1">
+      <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
+      {!collapsed && (
+        <div className="group/att relative mt-0.5 h-[400px] w-[320px]">
+          {url ? (
+            <embed
+              src={`${url}#toolbar=0&navpanes=0`}
+              type="application/pdf"
+              className="h-full w-full rounded-lg border border-hairline"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center rounded-lg border border-hairline bg-white text-xs text-faint">
+              Loading…
+            </div>
+          )}
+          {/* the embed swallows clicks — a transparent overlay opens the reader */}
+          <button
+            data-testid={`file-${file.name}`}
+            className="absolute inset-0 cursor-pointer"
+            title={`Open ${file.name}`}
+            onClick={() => setReader(true)}
+          />
+          <DownloadHoverButton file={file} onDownload={download} />
+        </div>
+      )}
+      {reader && url && (
+        <PdfReader file={file} url={url} onClose={() => setReader(false)} onDownload={download} />
+      )}
+    </div>
+  );
+}
+
+/** In-app full PDF reader overlay (browser viewer, toolbar enabled). */
+function PdfReader({
+  file,
+  url,
+  onClose,
+  onDownload,
+}: {
+  file: FileDTO;
+  url: string;
+  onClose: () => void;
+  onDownload: () => Promise<void>;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div
+      data-testid="pdf-reader"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75"
+      onMouseDown={onClose}
+    >
+      <div className="absolute top-4 right-5 flex gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
+        <button
+          data-testid="pdf-reader-open-external"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Open external"
+          onClick={() => window.open(url, '_blank')}
+        >
+          ↗
+        </button>
+        <button
+          data-testid="pdf-reader-download"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Download"
+          onClick={() => void onDownload()}
+        >
+          ⤓
+        </button>
+        <button
+          data-testid="pdf-reader-close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Close"
+          onClick={onClose}
+        >
+          ✕
+        </button>
       </div>
-    );
-  }
+      <div className="h-[90vh] w-[80vw]" onMouseDown={(e) => e.stopPropagation()}>
+        <embed src={url} type="application/pdf" className="h-full w-full rounded-lg" />
+      </div>
+      <span className="mt-2 max-w-[80vw] truncate text-xs text-white/70" onMouseDown={(e) => e.stopPropagation()}>
+        {file.name}
+      </span>
+    </div>
+  );
+}
+
+function FileChip({ file }: { file: FileDTO }) {
+  const download = useDownload(file);
   return (
     <div className="group/att relative mt-1 w-fit">
       <button
