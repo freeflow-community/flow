@@ -129,6 +129,14 @@ export interface AuthResponse {
   user: UserDTO;
 }
 
+/** Registration that must be completed by clicking the emailed verify link. */
+export interface RegisterPendingResponse {
+  requiresVerification: true;
+  email: string;
+}
+
+export type RegisterResponse = AuthResponse | RegisterPendingResponse;
+
 export interface MessagePage {
   messages: MessageDTO[];
   hasMore: boolean;

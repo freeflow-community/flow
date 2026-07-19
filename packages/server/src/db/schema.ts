@@ -30,8 +30,22 @@ export const users = pgTable('users', {
   isBot: boolean('is_bot').notNull().default(false), // phase 4: app bot users
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
+  emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Single-use emailed tokens: verify-email and password-reset links. */
+export const emailTokens = pgTable(
+  'email_tokens',
+  {
+    tokenHash: bytea('token_hash').primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    purpose: text('purpose', { enum: ['verify_email', 'password_reset'] }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('email_tokens_user_purpose_idx').on(t.userId, t.purpose)],
+);
 
 export const sessions = pgTable('sessions', {
   tokenHash: bytea('token_hash').primaryKey(),

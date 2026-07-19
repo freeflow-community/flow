@@ -59,6 +59,7 @@ export async function createApp(
       passwordHash: `!bot:${randomBytes(24).toString('hex')}`,
       displayName: name,
       isBot: true,
+      emailVerifiedAt: new Date(), // bots never do the email flow
     });
     await tx.insert(workspaceMembers).values({ workspaceId, userId: botUserId, role: 'member' });
     await tx.insert(apps).values({

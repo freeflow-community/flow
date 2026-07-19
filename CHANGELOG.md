@@ -16,6 +16,9 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
   (macOS profiles handle multi-account). Candidate phase-3-adjacent fix.
 - macOS: workspace-chooser tiles ignore AX activation (real click required) — a11y gap.
 - No syntax highlighting in code blocks (both clients; never scoped).
+- macOS has no email-verification or password-reset UI; its in-app register
+  relies on the dev-only `autoVerify` bypass. In production, registration and
+  reset go through the web (+ app-link handoff) until macOS closes this.
 
 ### Deliberate divergences (ruled)
 - Emoji picker: custom grid + search on web; native character palette on macOS.
@@ -24,6 +27,29 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
   image collapsed/expanded state (ruled).
 
 ## History
+
+### 2026-07-19 — Email verification + password reset (phase-3 email flows, local-first)
+- Email seam (`src/email/`, mirrors the blob-store seam): dev driver logs each
+  message and drops it as JSON in gitignored `.emails/`; `FLOW_EMAIL_DRIVER=
+  cloudflare` reserved for the deploy step (fails loudly until wired). `[server]`
+- Registration now requires email verification: `POST /v1/auth/register`
+  returns `{requiresVerification, email}` (no session); emailed link
+  (`/?verify=<token>`, 48 h, single-use, sha256-hashed at rest in new
+  `email_tokens` table, migration 0006) signs the user in on click. Login for
+  unverified users → 403 `email_not_verified`. Existing accounts grandfathered
+  verified; bot users created verified. `[server]`
+- Dev/QA escape hatch: `autoVerify: true` in the register body — honored only
+  on the dev email driver, never in production. QA scripts and macOS
+  registration use it. `[server] [qa] [macos]`
+- Password reset: `POST /v1/auth/password/forgot` (never leaks account
+  existence) emails `/?reset=<token>` (60 min, single-use); reset sets the new
+  password, revokes all sessions, and signs in fresh. `[server]`
+- Web auth screen: register → "check your email" panel with resend; unverified
+  sign-in shows the same panel; "Forgot password?" flow; `?verify=`/`?reset=`
+  links handled at boot (verify auto-signs-in, reset shows new-password form).
+  `[web]`
+- New e2e: `scripts/email-auth-e2e.mjs` (15 checks: gating, single-use,
+  resend invalidation, revocation, no-leak, autoVerify). `[qa]`
 
 ### 2026-07-19 — Renamed MyChat → Flow (deep rename)
 - All user-visible naming: Flow.app (com.flow.macos), web title, UI strings.

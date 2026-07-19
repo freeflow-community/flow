@@ -1,13 +1,16 @@
 import argon2 from 'argon2';
 import { and, eq, gt, lt, sql } from 'drizzle-orm';
-import type { AuthResponse, UserDTO } from '@flow/shared';
+import type { AuthResponse, RegisterResponse, UserDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
-import { conflict, unauthorized } from '../lib/errors.js';
+import { ApiError, conflict, unauthorized } from '../lib/errors.js';
 import { config } from '../config.js';
+import { emailSender } from '../email/index.js';
 
-const { users, sessions, appLinkCodes } = schema;
+const { users, sessions, appLinkCodes, emailTokens } = schema;
+
+type TokenPurpose = 'verify_email' | 'password_reset';
 
 /** Web-to-app handoff codes are single-use and short-lived. */
 const APP_LINK_TTL_MS = 2 * 60_000;
@@ -44,23 +47,79 @@ async function issueSession(userId: string, clientInfo?: string): Promise<string
   return token;
 }
 
+/** Mint a single-use emailed token; any previous token of the same purpose is invalidated. */
+async function mintEmailToken(userId: string, purpose: TokenPurpose, ttlMs: number): Promise<string> {
+  // opportunistic cleanup, same pattern as app-link codes
+  await db.delete(emailTokens).where(lt(emailTokens.expiresAt, sql`now()`));
+  await db.delete(emailTokens).where(and(eq(emailTokens.userId, userId), eq(emailTokens.purpose, purpose)));
+  const token = newToken();
+  await db.insert(emailTokens).values({
+    tokenHash: hashToken(token),
+    userId,
+    purpose,
+    expiresAt: new Date(Date.now() + ttlMs),
+  });
+  return token;
+}
+
+/** Atomically consume a token → its user row, or null if invalid/expired/wrong purpose. */
+async function consumeEmailToken(token: string, purpose: TokenPurpose): Promise<typeof users.$inferSelect | null> {
+  const consumed = await db
+    .delete(emailTokens)
+    .where(
+      and(
+        eq(emailTokens.tokenHash, hashToken(token)),
+        eq(emailTokens.purpose, purpose),
+        gt(emailTokens.expiresAt, sql`now()`),
+      ),
+    )
+    .returning({ userId: emailTokens.userId });
+  const userId = consumed[0]?.userId;
+  if (!userId) return null;
+  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  return rows[0] ?? null;
+}
+
+async function sendVerificationEmail(user: { id: string; email: string; displayName: string }): Promise<void> {
+  const token = await mintEmailToken(user.id, 'verify_email', config.verifyTokenTtlHours * 3600_000);
+  const link = `${config.webUrlBase}/?verify=${token}`;
+  await emailSender().send({
+    to: user.email,
+    subject: 'Verify your email for Flow',
+    text:
+      `Hi ${user.displayName},\n\n` +
+      `Confirm your email address to finish creating your Flow account:\n\n` +
+      `${link}\n\n` +
+      `This link expires in ${config.verifyTokenTtlHours} hours. ` +
+      `If you didn't create a Flow account, you can ignore this email.\n`,
+  });
+}
+
 export async function register(
   email: string,
   password: string,
   displayName: string,
   clientInfo?: string,
-): Promise<AuthResponse> {
+  autoVerify?: boolean,
+): Promise<RegisterResponse> {
+  // The autoVerify escape hatch (QA scripts, dev macOS registration) only
+  // exists on the local dev email driver — production always verifies.
+  const skipVerification = autoVerify === true && config.emailDriver === 'dev';
   const passwordHash = await argon2.hash(password, ARGON2_OPTS);
   const id = newId();
   const inserted = await db
     .insert(users)
-    .values({ id, email, passwordHash, displayName })
+    .values({ id, email, passwordHash, displayName, emailVerifiedAt: skipVerification ? new Date() : null })
     .onConflictDoNothing({ target: users.email })
     .returning();
   const user = inserted[0];
   if (!user) throw conflict('email_taken', 'an account with this email already exists');
-  const token = await issueSession(user.id, clientInfo);
-  return { token, user: toUserDTO(user) };
+  if (skipVerification) {
+    const token = await issueSession(user.id, clientInfo);
+    return { token, user: toUserDTO(user) };
+  }
+  await sendVerificationEmail(user);
+  return { requiresVerification: true, email: user.email };
 }
 
 export async function login(email: string, password: string, clientInfo?: string): Promise<AuthResponse> {
@@ -69,8 +128,66 @@ export async function login(email: string, password: string, clientInfo?: string
   if (!user) throw unauthorized('invalid email or password');
   const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
   if (!ok) throw unauthorized('invalid email or password');
+  if (!user.emailVerifiedAt && !user.isBot) {
+    throw new ApiError(403, 'email_not_verified', 'verify your email address to sign in');
+  }
   const token = await issueSession(user.id, clientInfo);
   return { token, user: toUserDTO(user) };
+}
+
+/** Verify-link click: consumes the token and signs the user in. */
+export async function verifyEmail(token: string, clientInfo?: string): Promise<AuthResponse> {
+  const user = await consumeEmailToken(token, 'verify_email');
+  if (!user) throw unauthorized('invalid or expired verification link');
+  if (!user.emailVerifiedAt) {
+    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, user.id));
+  }
+  const session = await issueSession(user.id, clientInfo);
+  return { token: session, user: toUserDTO(user) };
+}
+
+/** Always returns ok — never reveals whether the email has an account. */
+export async function resendVerification(email: string): Promise<void> {
+  const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  const user = rows[0];
+  if (user && !user.emailVerifiedAt && !user.isBot) await sendVerificationEmail(user);
+}
+
+/** Always returns ok — never reveals whether the email has an account. */
+export async function forgotPassword(email: string): Promise<void> {
+  const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  const user = rows[0];
+  if (!user || user.isBot) return;
+  const token = await mintEmailToken(user.id, 'password_reset', config.resetTokenTtlMinutes * 60_000);
+  const link = `${config.webUrlBase}/?reset=${token}`;
+  await emailSender().send({
+    to: user.email,
+    subject: 'Reset your Flow password',
+    text:
+      `Hi ${user.displayName},\n\n` +
+      `Someone (hopefully you) asked to reset the password for this Flow account.\n\n` +
+      `${link}\n\n` +
+      `This link expires in ${config.resetTokenTtlMinutes} minutes and can be used once. ` +
+      `If you didn't ask for this, you can ignore this email — your password is unchanged.\n`,
+  });
+}
+
+/**
+ * Reset-link submit: sets the new password, revokes every existing session,
+ * and signs the user in fresh. Clicking the emailed link also proves address
+ * ownership, so an unverified account becomes verified here.
+ */
+export async function resetPassword(token: string, newPassword: string, clientInfo?: string): Promise<AuthResponse> {
+  const user = await consumeEmailToken(token, 'password_reset');
+  if (!user) throw unauthorized('invalid or expired reset link');
+  const passwordHash = await argon2.hash(newPassword, ARGON2_OPTS);
+  await db
+    .update(users)
+    .set({ passwordHash, emailVerifiedAt: user.emailVerifiedAt ?? new Date() })
+    .where(eq(users.id, user.id));
+  await db.delete(sessions).where(eq(sessions.userId, user.id));
+  const session = await issueSession(user.id, clientInfo);
+  return { token: session, user: toUserDTO(user) };
 }
 
 export async function logout(token: string): Promise<void> {

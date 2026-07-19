@@ -1,5 +1,27 @@
 # Decision log
 
+## 2026-07-19 — Email verification + password reset (deploy prep)
+
+- **Target stack ruled by operator**: Railway (app), Neon (Postgres), Cloudflare
+  (blob storage + email). Built local-first: email goes through a driver seam
+  (`src/email/`, same pattern as the blob-store seam) — dev driver writes JSON
+  to `.emails/` and logs the link; the Cloudflare driver is a loud stub until
+  the deploy step wires it.
+- **Verification is default-on with a dev-only bypass**: `/v1/auth/register`
+  has many consumers (macOS, QA seed, smoke/e2e scripts), so instead of a
+  server-wide toggle, clients pass `autoVerify: true`, honored **only when the
+  email driver is `dev`** — production semantics can't be weakened by a client.
+  Existing accounts grandfathered verified in migration 0006; bots created
+  verified.
+- **Emailed tokens reuse the app-link pattern**: single-use, sha256-hashed at
+  rest (`email_tokens`), atomically consumed via DELETE…RETURNING; re-request
+  invalidates prior tokens of the same purpose. Verify = 48 h, reset = 60 min.
+- **Verify link doubles as sign-in** (no separate "now log in" step), and
+  **password reset revokes every session** then issues a fresh one; a used
+  reset link also counts as email verification (it proves address ownership).
+- **Links land on the web root as query params** (`/?verify=`, `/?reset=`) —
+  the SPA has no router; App.tsx strips them via history.replaceState.
+
 ## 2026-07-18 — Phase 1 backend implementation decisions
 
 - **Postgres host port 5442** (not 5432): the dev machine already runs a Postgres on 5432. Container-internal port is standard 5432; only the compose mapping differs. API on 127.0.0.1:8787 (local server only, per mandate).

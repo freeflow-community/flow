@@ -66,8 +66,8 @@ const ts = Date.now();
 const uuid = () => crypto.randomUUID();
 
 // ---- setup over REST ----
-const a = await api('POST', '/v1/auth/register', null, { email: `wsa.${ts}@x.com`, password: 'password123', displayName: 'WsAlice' });
-const b = await api('POST', '/v1/auth/register', null, { email: `wsb.${ts}@x.com`, password: 'password123', displayName: 'WsBob' });
+const a = await api('POST', '/v1/auth/register', null, { email: `wsa.${ts}@x.com`, password: 'password123', displayName: 'WsAlice', autoVerify: true });
+const b = await api('POST', '/v1/auth/register', null, { email: `wsb.${ts}@x.com`, password: 'password123', displayName: 'WsBob', autoVerify: true });
 const w = await api('POST', '/v1/workspaces', a.token, { name: `WsTest ${ts}`, slug: `wstest-${ts}` });
 const inv = await api('POST', `/v1/workspaces/${w.id}/invites`, a.token, { email: `wsb.${ts}@x.com` });
 await api('POST', '/v1/invites/accept', b.token, { token: inv.inviteUrl.split('/').pop() });

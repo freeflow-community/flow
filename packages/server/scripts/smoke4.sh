@@ -13,7 +13,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"; kill $BOTPID 2>/dev/null' EXIT
 
 # ---- setup: fresh workspace so events are isolated ----
 reg() { curl -s -X POST $API/v1/auth/register -H 'content-type: application/json' \
-  -d "{\"email\":\"$1\",\"password\":\"password123\",\"displayName\":\"$2\"}"; }
+  -d "{\"email\":\"$1\",\"password\":\"password123\",\"displayName\":\"$2\",\"autoVerify\":true}"; }
 A=$(reg "owner.$TS@p4.test" "Olivia Owner")
 AT=$(echo "$A" | j "['token']"); AID=$(echo "$A" | j "['user']['id']")
 WS=$(curl -s -X POST $API/v1/workspaces -H "authorization: Bearer $AT" -H 'content-type: application/json' \

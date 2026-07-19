@@ -19,6 +19,24 @@ export const config = {
   inviteUrlBase: process.env.INVITE_URL_BASE ?? 'flow://invite/',
   sessionTtlDays: 30,
   inviteTtlDays: 7,
+  // ---- email (verification + password reset) -------------------
+  /** 'dev' logs + writes emails to emailOutboxDir; 'cloudflare' sends for real (deploy). */
+  get emailDriver(): 'dev' | 'cloudflare' {
+    return process.env.FLOW_EMAIL_DRIVER === 'cloudflare' ? 'cloudflare' : 'dev';
+  },
+  get emailFrom(): string {
+    return process.env.FLOW_EMAIL_FROM ?? 'Flow <no-reply@flow.local>';
+  },
+  /** Dev driver drops each sent email here as a JSON file (gitignored). */
+  get emailOutboxDir(): string {
+    return process.env.FLOW_EMAIL_OUTBOX ?? path.join(pkgRoot, '.emails');
+  },
+  /** Base URL the web client is served from — used in emailed links. */
+  get webUrlBase(): string {
+    return process.env.FLOW_WEB_URL ?? 'http://127.0.0.1:8787';
+  },
+  verifyTokenTtlHours: 48,
+  resetTokenTtlMinutes: 60,
   /** Local blob-store directory (phase2.md §3); object storage swaps in behind the same interface in phase 3. */
   get fileDir(): string {
     return process.env.FLOW_FILE_DIR ?? path.join(pkgRoot, '.files');

@@ -12,21 +12,21 @@ A_EMAIL="alice.$TS@example.com"; B_EMAIL="bob.$TS@example.com"; C_EMAIL="carol.$
 
 # ---- auth ----
 R=$(curl -s -X POST $API/v1/auth/register -H 'content-type: application/json' \
-  -d "{\"email\":\"$A_EMAIL\",\"password\":\"password123\",\"displayName\":\"Alice\"}")
+  -d "{\"email\":\"$A_EMAIL\",\"password\":\"password123\",\"displayName\":\"Alice\",\"autoVerify\":true}")
 AT=$(echo "$R" | j "['token']"); AID=$(echo "$R" | j "['user']['id']")
 [ -n "$AT" ] && ok "register alice" || fail "register alice" "$R"
 
 R=$(curl -s -X POST $API/v1/auth/register -H 'content-type: application/json' \
-  -d "{\"email\":\"$B_EMAIL\",\"password\":\"password123\",\"displayName\":\"Bob\"}")
+  -d "{\"email\":\"$B_EMAIL\",\"password\":\"password123\",\"displayName\":\"Bob\",\"autoVerify\":true}")
 BT=$(echo "$R" | j "['token']"); BID=$(echo "$R" | j "['user']['id']")
 
 R=$(curl -s -X POST $API/v1/auth/register -H 'content-type: application/json' \
-  -d "{\"email\":\"$C_EMAIL\",\"password\":\"password123\",\"displayName\":\"Carol\"}")
+  -d "{\"email\":\"$C_EMAIL\",\"password\":\"password123\",\"displayName\":\"Carol\",\"autoVerify\":true}")
 CT=$(echo "$R" | j "['token']")
 
 # duplicate email → 409
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST $API/v1/auth/register -H 'content-type: application/json' \
-  -d "{\"email\":\"$A_EMAIL\",\"password\":\"password123\",\"displayName\":\"Dup\"}")
+  -d "{\"email\":\"$A_EMAIL\",\"password\":\"password123\",\"displayName\":\"Dup\",\"autoVerify\":true}")
 [ "$CODE" = 409 ] && ok "duplicate register -> 409" || fail "duplicate register" "got $CODE"
 
 # login wrong password → 401

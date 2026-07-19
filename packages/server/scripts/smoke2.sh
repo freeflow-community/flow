@@ -16,7 +16,7 @@ trap 'rm -rf "$TMP"' EXIT
 reg() { # email name -> "token id"
   local R
   R=$(curl -s -X POST $API/v1/auth/register -H 'content-type: application/json' \
-    -d "{\"email\":\"$1\",\"password\":\"password123\",\"displayName\":\"$2\"}")
+    -d "{\"email\":\"$1\",\"password\":\"password123\",\"displayName\":\"$2\",\"autoVerify\":true}")
   echo "$(echo "$R" | j "['token']") $(echo "$R" | j "['user']['id']")"
 }
 

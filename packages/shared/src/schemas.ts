@@ -5,8 +5,32 @@ export const RegisterBody = z.object({
   email: z.string().email().max(320),
   password: z.string().min(8).max(256),
   displayName: z.string().min(1).max(80),
+  /** Dev/test escape hatch: skip email verification. Honored only when the
+   * server's email driver is 'dev' (local); ignored in production. */
+  autoVerify: z.boolean().optional(),
 });
 export type RegisterBody = z.infer<typeof RegisterBody>;
+
+export const VerifyEmailBody = z.object({
+  token: z.string().min(1).max(512),
+});
+export type VerifyEmailBody = z.infer<typeof VerifyEmailBody>;
+
+export const ResendVerifyBody = z.object({
+  email: z.string().email().max(320),
+});
+export type ResendVerifyBody = z.infer<typeof ResendVerifyBody>;
+
+export const ForgotPasswordBody = z.object({
+  email: z.string().email().max(320),
+});
+export type ForgotPasswordBody = z.infer<typeof ForgotPasswordBody>;
+
+export const ResetPasswordBody = z.object({
+  token: z.string().min(1).max(512),
+  password: z.string().min(8).max(256),
+});
+export type ResetPasswordBody = z.infer<typeof ResetPasswordBody>;
 
 export const LoginBody = z.object({
   email: z.string().email().max(320),

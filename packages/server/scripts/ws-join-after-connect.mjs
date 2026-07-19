@@ -60,10 +60,10 @@ const uuid = () => crypto.randomUUID();
 const run = uuid().slice(0, 8);
 
 const a = await api('POST', '/v1/auth/register', null, {
-  email: `join-a-${run}@test.local`, password: 'password-123', displayName: 'JoinA',
+  email: `join-a-${run}@test.local`, password: 'password-123', displayName: 'JoinA', autoVerify: true,
 });
 const b = await api('POST', '/v1/auth/register', null, {
-  email: `join-b-${run}@test.local`, password: 'password-123', displayName: 'JoinB',
+  email: `join-b-${run}@test.local`, password: 'password-123', displayName: 'JoinB', autoVerify: true,
 });
 
 // Both connect BEFORE any workspace exists — the bug scenario.

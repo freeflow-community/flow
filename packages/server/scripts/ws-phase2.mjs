@@ -66,7 +66,7 @@ const uuid = () => crypto.randomUUID();
 const users = {};
 for (const n of ['alice', 'bob', 'carol']) {
   users[n] = await api('POST', '/v1/auth/register', null, {
-    email: `${n}.${TS}@ws2.test`, password: 'password123', displayName: `${n} ws2`,
+    email: `${n}.${TS}@ws2.test`, password: 'password123', displayName: `${n} ws2`, autoVerify: true,
   });
 }
 const A = users.alice, B = users.bob, C = users.carol;

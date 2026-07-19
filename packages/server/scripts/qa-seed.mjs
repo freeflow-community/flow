@@ -33,7 +33,7 @@ async function ensureUser(email, displayName) {
   try {
     return await api('POST', '/v1/auth/login', null, { email, password: PASSWORD });
   } catch {
-    return await api('POST', '/v1/auth/register', null, { email, password: PASSWORD, displayName });
+    return await api('POST', '/v1/auth/register', null, { email, password: PASSWORD, displayName, autoVerify: true });
   }
 }
 

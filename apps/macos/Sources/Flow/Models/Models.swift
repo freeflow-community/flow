@@ -339,6 +339,9 @@ struct RegisterBody: Encodable, Sendable {
     let email: String
     let password: String
     let displayName: String
+    // Dev-only skip of email verification (server honors it only on the local
+    // email driver). Production registration happens on the web, which verifies.
+    let autoVerify = true
 }
 struct LoginBody: Encodable, Sendable {
     let email: String
