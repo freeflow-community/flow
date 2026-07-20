@@ -51,6 +51,19 @@ badOpen.ok === false && badOpen.error === 'invalid_auth'
   ? ok('apps.connections.open rejects bad token')
   : bad('bad token', JSON.stringify(badOpen));
 
+// ---- Python slack_sdk shape: bot token in header, app_token form param ----
+const pyRes = await fetch(`${API}/api/apps.connections.open`, {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${created.botToken}`,
+    'content-type': 'application/x-www-form-urlencoded',
+  },
+  body: `app_token=${encodeURIComponent(created.appToken)}`,
+}).then((r) => r.json());
+pyRes.ok === true && pyRes.url?.startsWith('ws')
+  ? ok('apps.connections.open accepts Python-SDK app_token param')
+  : bad('python-style open', JSON.stringify(pyRes));
+
 // ---- official SDK client connects ----
 const received = [];
 const client = new SocketModeClient({

@@ -89,9 +89,21 @@ function mapApiError(err: ApiError, method: string): string {
 
 export function registerSlackCompat(app: FastifyInstance): void {
   // apps.connections.open authenticates with the app-level "xapp-" token
-  // (not the bot token), so it lives outside the methods table.
+  // (not the bot token), so it lives outside the methods table. SDKs differ
+  // in where they put it: @slack/socket-mode uses the Authorization header,
+  // slack_sdk (Python) keeps the BOT token in the header and sends the app
+  // token as an `app_token` form/query param — accept all of them.
   app.post('/api/apps.connections.open', async (req, reply) => {
-    const token = extractToken(req);
+    const fromRecord = (o: unknown, k: string) =>
+      o && typeof o === 'object' && typeof (o as Record<string, unknown>)[k] === 'string'
+        ? ((o as Record<string, unknown>)[k] as string)
+        : null;
+    const candidates = [
+      fromRecord(req.body, 'app_token'),
+      fromRecord(req.query, 'app_token'),
+      extractToken(req),
+    ];
+    const token = candidates.find((t) => t?.startsWith('xapp-')) ?? null;
     const appRow = token ? await authenticateAppToken(token) : null;
     if (!appRow) return reply.code(200).send({ ok: false, error: 'invalid_auth' });
     const ticket = mintSocketTicket(appRow.id);
