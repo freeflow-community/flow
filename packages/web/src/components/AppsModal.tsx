@@ -14,8 +14,8 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
   const apps = useApps(workspaceId);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [creds, setCreds] = useState<{ botToken: string; signingSecret: string } | null>(null);
+  const [copied, setCopied] = useState<'token' | 'secret' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -23,13 +23,13 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
     setError(null);
     setBusy(true);
     try {
-      const res = await api<{ app: AppDTO; botToken: string }>(
+      const res = await api<{ app: AppDTO; botToken: string; signingSecret: string }>(
         'POST',
         `/v1/workspaces/${workspaceId}/apps`,
         { name: name.trim() },
       );
-      setToken(res.botToken);
-      setCopied(false);
+      setCreds({ botToken: res.botToken, signingSecret: res.signingSecret });
+      setCopied(null);
       setName('');
       await qc.invalidateQueries({ queryKey: ['apps', workspaceId] });
     } catch (err) {
@@ -39,13 +39,13 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
     }
   };
 
-  const copy = async () => {
-    if (!token) return;
+  const copy = async (which: 'token' | 'secret') => {
+    if (!creds) return;
     try {
-      await navigator.clipboard.writeText(token);
-      setCopied(true);
+      await navigator.clipboard.writeText(which === 'token' ? creds.botToken : creds.signingSecret);
+      setCopied(which);
     } catch {
-      setCopied(false);
+      setCopied(null);
     }
   };
 
@@ -76,24 +76,40 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
       </div>
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
 
-      {token && (
+      {creds && (
         <div className="mb-3 rounded-lg border border-hairline2 bg-daypill/40 p-3">
-          <p className="mb-1 text-sm font-semibold">Bot token</p>
           <p className="mb-2 text-xs text-red-600">
-            Copy it now — this token won&rsquo;t be shown again.
+            Copy these now — they won&rsquo;t be shown again.
           </p>
-          <code data-testid="app-token" className="mb-2 block rounded bg-daypill p-2 text-xs break-all select-all">
-            {token}
-          </code>
-          <div className="flex justify-end gap-2">
+          <p className="mb-1 text-sm font-semibold">Bot token</p>
+          <div className="mb-2 flex items-start gap-2">
+            <code data-testid="app-token" className="block grow rounded bg-daypill p-2 text-xs break-all select-all">
+              {creds.botToken}
+            </code>
             <button
               data-testid="app-token-copy"
-              className="rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
-              onClick={() => void copy()}
+              className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+              onClick={() => void copy('token')}
             >
-              {copied ? 'Copied ✓' : 'Copy'}
+              {copied === 'token' ? 'Copied ✓' : 'Copy'}
             </button>
-            <button className="px-3 py-1 text-xs text-ink-soft" onClick={() => setToken(null)}>
+          </div>
+          <p className="mb-1 text-sm font-semibold">Signing secret</p>
+          <p className="mb-1 text-xs text-muted">Verifies the X-Slack-Signature header on event deliveries.</p>
+          <div className="mb-2 flex items-start gap-2">
+            <code data-testid="app-secret" className="block grow rounded bg-daypill p-2 text-xs break-all select-all">
+              {creds.signingSecret}
+            </code>
+            <button
+              data-testid="app-secret-copy"
+              className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+              onClick={() => void copy('secret')}
+            >
+              {copied === 'secret' ? 'Copied ✓' : 'Copy'}
+            </button>
+          </div>
+          <div className="flex justify-end">
+            <button className="px-3 py-1 text-xs text-ink-soft" onClick={() => setCreds(null)}>
               Dismiss
             </button>
           </div>

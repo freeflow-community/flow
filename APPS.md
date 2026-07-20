@@ -90,14 +90,12 @@ Delivery semantics:
   sees only channels it's a member of (join public channels via
   `conversations.join`; invite it to private ones).
 
-## Known issue
+## Credentials
 
-- **The signing secret is not yet surfaced anywhere.** It's generated and
-  stored per app, and every event delivery is signed with it — but the create
-  response returns only `{ app, botToken }` and the UI never displays it, so
-  integrators currently can't verify `X-Slack-Signature`. Fix queued: return
-  it once at creation (like the bot token) and show it in the Apps modal.
-  Until then, event consumers must skip signature verification.
+App creation returns `{ app, botToken, signingSecret }` — **both credentials
+exactly once** (the token is stored hashed; the secret is never exposed by any
+later read). The Apps modal shows both with copy buttons at creation time. If
+either is lost, create a new app (rotation = create + disable old).
 
 ## Local testing recipe
 

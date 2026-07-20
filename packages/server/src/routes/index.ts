@@ -205,7 +205,7 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = parse(CreateAppBody, req.body);
     const res = await ap.createApp(id, req.user.id, body.name);
-    return reply.status(201).send(res); // { app, botToken } — token shown once
+    return reply.status(201).send(res); // { app, botToken, signingSecret } — shown once
   });
 
   app.get('/v1/workspaces/:id/apps', { preHandler: requireAuth }, async (req) => {

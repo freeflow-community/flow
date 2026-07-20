@@ -28,6 +28,13 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — Apps: signing secret surfaced at creation
+- `POST /v1/workspaces/:id/apps` now returns `signingSecret` alongside
+  `botToken` (both one-time; secret was previously generated + used to sign
+  event deliveries but never shown to anyone, so integrators couldn't verify
+  `X-Slack-Signature`). Apps modal shows both with copy buttons. `[server] [web]`
+- New `APPS.md` documents the Slack-compat surface for integrators.
+
 ### 2026-07-19 — UI nits: thread shadow, first-open scroll, typing indicator
 - Thread panel casts a subtle leading-edge shadow so it reads as floating over
   the main chat (Tailwind arbitrary shadow on web; background-shape shadow on

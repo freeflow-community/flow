@@ -41,12 +41,14 @@ async function requireAdmin(workspaceId: string, actorId: string) {
   return m;
 }
 
-/** Create an app: bot user row + workspace membership + token (returned once). */
+/** Create an app: bot user row + workspace membership + credentials.
+ * Bot token AND signing secret are returned once, here only — the token is
+ * stored hashed, and the secret is never exposed by any later read. */
 export async function createApp(
   workspaceId: string,
   actorId: string,
   name: string,
-): Promise<{ app: AppDTO; botToken: string }> {
+): Promise<{ app: AppDTO; botToken: string; signingSecret: string }> {
   await requireAdmin(workspaceId, actorId);
   const appId = newId();
   const botUserId = newId();
@@ -73,7 +75,7 @@ export async function createApp(
     });
   });
   const created = (await db.select().from(apps).where(eq(apps.id, appId)).limit(1))[0]!;
-  return { app: toAppDTO(created), botToken };
+  return { app: toAppDTO(created), botToken, signingSecret };
 }
 
 export async function listApps(workspaceId: string, actorId: string): Promise<AppDTO[]> {
