@@ -49,18 +49,26 @@ struct MessageListView: View {
                         }
                         .id(message.id)
                     }
+                    Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.vertical, 8)
             }
             .onChange(of: messages.last?.id) { _, newId in
-                if let newId {
+                if newId != nil {
                     withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(newId, anchor: .bottom)
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
             }
             // First open must land on the newest message (same rationale as
             // macOS: scrollTo from onAppear runs before lazy rows lay out).
+            // Async avatar/attachment loads grow row heights after the
+            // initial layout, so settle-scroll once shortly after the list
+            // populates or changes.
+            .task(id: messages.count) {
+                try? await Task.sleep(for: .milliseconds(350))
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
             .defaultScrollAnchor(.bottom)
         }
     }
@@ -124,6 +132,8 @@ struct MessageRow: View {
     let onDelete: (Message) -> Void
 
     @EnvironmentObject private var app: AppState
+    @State private var showReactionPicker = false
+    @State private var showDeleteConfirm = false
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
@@ -169,6 +179,10 @@ struct MessageRow: View {
                     } else if message.pending {
                         ProgressView().controlSize(.mini)
                     }
+
+                    if !message.reactions.isEmpty {
+                        reactionChips
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -178,6 +192,92 @@ struct MessageRow: View {
         .padding(.bottom, 1)
         .opacity(message.pending ? 0.55 : 1)
         .contentShape(Rectangle())
+        // Long-press context menu: iOS's answer to the macOS hover menu —
+        // quick reactions, full picker, reply-in-thread, edit/delete (own).
+        .contextMenu {
+            if !message.isDeleted, !message.pending {
+                ControlGroup {
+                    ForEach(Array(EmojiCatalog.quickReactions.prefix(4)), id: \.self) { emoji in
+                        Button(emoji) {
+                            Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                        }
+                    }
+                }
+                .controlGroupStyle(.compactMenu)
+                Button {
+                    showReactionPicker = true
+                } label: {
+                    Label("Add Reaction…", systemImage: "face.smiling")
+                }
+                if showThreadAffordances {
+                    Button {
+                        onOpenThread(message.threadRootId ?? message.id)
+                    } label: {
+                        Label("Reply in Thread", systemImage: "bubble.left.and.bubble.right")
+                    }
+                }
+                if isMine {
+                    Button {
+                        onEdit(message)
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        showDeleteConfirm = true
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { onDelete(message) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can't be undone.")
+        }
+        .sheet(isPresented: $showReactionPicker) {
+            EmojiPickerView { emoji in
+                showReactionPicker = false
+                Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+            }
+            .presentationDetents([.height(340)])
+        }
+    }
+
+    /// Reaction chips with counts; tap toggles the caller's reaction.
+    private var reactionChips: some View {
+        HStack(spacing: 4) {
+            ForEach(message.reactions, id: \.emoji) { agg in
+                let mine = currentUserId.map { agg.userIds.contains($0) } ?? false
+                Button {
+                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: agg.emoji) }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(agg.emoji).font(.system(size: 13))
+                        Text("\(agg.count)")
+                            .font(.caption2.bold())
+                            .foregroundStyle(mine ? MC.accentSoft : MC.inkSoft)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(mine ? MC.accent.opacity(0.10) : .white))
+                    .overlay(
+                        Capsule().strokeBorder(
+                            mine ? MC.accentSoft.opacity(0.4) : MC.hairline, lineWidth: 1
+                        )
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("msg.reaction.\(agg.emoji)")
+                .accessibilityValue("\(agg.count)\(mine ? " including you" : "")")
+            }
+        }
+        .padding(.top, 2)
     }
 
     // MARK: - Body blocks (shared MarkdownBlocks grammar, macOS-parity styling)
@@ -250,5 +350,90 @@ struct MessageRow: View {
         if message.pending {
             ProgressView().controlSize(.mini)
         }
+    }
+}
+
+// MARK: - Emoji picker (reactions)
+
+/// Grid + search picker (web parity), presented as a sheet from the
+/// long-press menu. Reuses the shared EmojiCatalog.
+struct EmojiPickerView: View {
+    let onPick: (String) -> Void
+    @State private var search = ""
+
+    private var results: [String] {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        if q.isEmpty { return EmojiCatalog.quickReactions }
+        var seen = Set<String>()
+        return EmojiCatalog.shortcodes
+            .filter { $0.key.contains(q) }
+            .sorted { ($0.key.count, $0.key) < ($1.key.count, $1.key) }
+            .compactMap { seen.insert($0.value).inserted ? $0.value : nil }
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            TextField("Search emoji", text: $search)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .accessibilityIdentifier("emoji.search")
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
+                    ForEach(results, id: \.self) { emoji in
+                        Button(emoji) { onPick(emoji) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 28))
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(14)
+    }
+}
+
+// MARK: - Edit sheet (operator-ruled: sheet editor, like macOS)
+
+struct EditMessageSheet: View {
+    let message: Message
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(message: Message) {
+        self.message = message
+        _text = State(initialValue: message.body)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                TextField("Message", text: $text, axis: .vertical)
+                    .lineLimit(3...12)
+                    .focused($focused)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(MC.base))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(MC.hairline2))
+                    .padding(14)
+            }
+            .navigationTitle("Edit Message")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task { await app.engine.editMessage(id: message.id, body: text) }
+                        dismiss()
+                    }
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onAppear { focused = true }
+        }
+        .presentationDetents([.medium])
     }
 }

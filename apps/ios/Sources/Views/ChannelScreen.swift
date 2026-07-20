@@ -9,6 +9,7 @@ struct ChannelScreen: View {
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
+    @State private var editingMessage: Message?
 
     private var usersById: [String: User] {
         Dictionary(users.value.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -42,13 +43,19 @@ struct ChannelScreen: View {
                     Task { await app.engine.loadOlder(channelId: channelId) }
                 },
                 onOpenThread: { _ in },
-                onEdit: { _ in },
-                onDelete: { _ in }
+                onEdit: { editingMessage = $0 },
+                onDelete: { msg in
+                    Task { await app.engine.deleteMessage(id: msg.id) }
+                }
             )
             Divider()
             ComposerView(channelId: channelId)
         }
+        .sheet(item: $editingMessage) { message in
+            EditMessageSheet(message: message)
+        }
         .modifier(DebugTestSend(channelId: channelId, app: app))
+        .modifier(DebugMessageActions(channelId: channelId, app: app))
         .background(MC.base)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
