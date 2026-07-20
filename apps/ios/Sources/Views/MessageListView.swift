@@ -176,8 +176,12 @@ struct MessageRow: View {
                     let segments = MarkdownBlocks.segments(message.body)
                     if !segments.isEmpty {
                         bodyContent(segments)
-                    } else if message.pending {
+                    } else if message.pending, message.files.isEmpty {
                         ProgressView().controlSize(.mini)
+                    }
+
+                    ForEach(message.files) { file in
+                        AttachmentView(file: file)
                     }
 
                     if !message.reactions.isEmpty {
