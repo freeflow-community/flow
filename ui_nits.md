@@ -26,4 +26,7 @@ status: done [server] [web] [macos] — topic column existed since 0000_init (no
 - Instead of "Disable" apps we should just Delete them completely
 status: done [server] [web] [macos] — Manage Apps gains Remove… (inline confirm): DELETE /v1/apps/:id removes the app + credentials, pulls the bot from the workspace/channels and member/mention lists, deletes 1:1 bot DMs; macOS refreshes members on workspace-level member.left. (Disable retained for temporary off-switching.)
 - Hover over thread replies icon and count should change cursor to hand
+- Add support for sharing video files, and playing with preview (and expand button) in the chat
+- Add some common missing Slack emojis like :thread:
+- The message context menu "stutters" when you hover over it, blinking in and out so you can't select it easily
 
