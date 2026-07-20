@@ -109,7 +109,8 @@ export const invites = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
   },
-  (t) => [uniqueIndex().on(t.workspaceId, t.email)],
+  // one PENDING invite per email; accepted invites are history, not locks
+  (t) => [uniqueIndex('invites_pending_unique').on(t.workspaceId, t.email).where(sql`accepted_at IS NULL`)],
 );
 
 export const channelKind = pgEnum('channel_kind', ['standard', 'dm', 'group_dm']);

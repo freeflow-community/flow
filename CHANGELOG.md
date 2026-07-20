@@ -28,6 +28,13 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — interactive fix: re-invite after accepted invite
+- `UNIQUE(workspace_id, email)` on invites counted accepted invites, so an
+  email could never be re-invited once its invite was used (hit when an
+  account is deleted/recreated). Now a partial unique index on pending
+  invites only (migration 0008) — matches the service's existing
+  "one pending invite per email" semantics. `[server]`
+
 ### 2026-07-19 — Email-first registration (operator ruling)
 - Register now takes only an email (`pending_signups` table, migration 0007 —
   no user row until the link is clicked); the emailed link opens a "finish
