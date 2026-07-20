@@ -1,9 +1,10 @@
 # Changelog
 
 Convention: every feature/fix entry tags the platforms it landed on —
-`[server]` `[web]` `[macos]` `[qa]`. A change that lands on one client but not
-the other MUST add a line to **Parity** below (and remove it when closed).
-Updated with every milestone commit (PM) and interactive-session fix (coordinator).
+`[server]` `[web]` `[macos]` `[ios]` `[qa]`. A change that lands on one client
+but not the others MUST add a line to **Parity** below (and remove it when
+closed). Updated with every milestone commit (PM) and interactive-session fix
+(coordinator).
 
 ## Parity
 
@@ -16,6 +17,9 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
   (macOS profiles handle multi-account). Candidate phase-3-adjacent fix.
 - macOS: workspace-chooser tiles ignore AX activation (real click required) — a11y gap.
 - No syntax highlighting in code blocks (both clients; never scoped).
+- iOS is an early vertical slice: no threads, reactions, files, typing, rich
+  markdown, or in-app registration yet (web/macOS have them). Reuses the shared
+  data layer, so these are view work, not protocol work.
 - macOS has no in-app registration or password-reset against real servers —
   by design it links to the web (email-first flow + app-link handoff); the
   dev-only autoVerify register remains for the local dev server.
@@ -27,6 +31,25 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
   image collapsed/expanded state (ruled).
 
 ## History
+
+### 2026-07-20 — iOS app: working vertical slice (new client)
+- New `apps/ios` native SwiftUI client (iOS 17+), generated via xcodegen from
+  `project.yml`. **Reuses the macOS app's entire platform-agnostic stack**
+  (Models, APIClient, SocketClient, GRDB `AppDatabase`, `SyncEngine`,
+  `AppState`, and cross-platform `Support/`) unchanged — only the touch UI and
+  a UIKit `ImageLoader`/`Banners` shim are new. `[ios]`
+- Slice that runs (verified in the iOS 17 simulator against both prod and the
+  local QA server): sign-in → workspace switcher → channel + DM list (unread
+  badges) → message list (authenticated avatars, @-mention rendering,
+  timestamps, author grouping) → send a message round-tripping through the
+  real server. `[ios]`
+- Defaults to `https://app.flowtoo.org` (Server.swift resolution, same as
+  macOS); `NSAllowsLocalNetworking` ATS exception allows the local http dev
+  server while keeping prod HTTPS-enforced. DEBUG-only env hooks
+  (FLOW_DEBUG_EMAIL/PASSWORD/OPEN_CHANNEL/SEND) allow headless simulator QA.
+  `[ios] [qa]`
+- Not yet ported (later increments): threads, reactions, files/previews,
+  typing indicators, rich markdown, in-app registration. See Parity.
 
 ### 2026-07-19 — fix: avatars missing in web thread panel
 - ThreadPanel rendered MessageList without `membersById`, so every avatar in a

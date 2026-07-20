@@ -1,0 +1,52 @@
+name: FlowiOS
+options:
+  bundleIdPrefix: com.flow
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: 7.0.0
+targets:
+  Flow:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    # Reuse the macOS app's platform-agnostic layers (data model, API/socket,
+    # GRDB cache, SyncEngine, AppState, cross-platform Support helpers).
+    # AppKit-tainted files (ImageLoader, Banners, macOS App entry, all Views)
+    # are excluded and reimplemented for iOS under Sources/.
+    sources:
+      - path: Sources
+      - path: ../macos/Sources/Flow/Models
+      - path: ../macos/Sources/Flow/Networking
+        excludes: [ImageLoader.swift]
+      - path: ../macos/Sources/Flow/Database
+      - path: ../macos/Sources/Flow/Sync
+      - path: ../macos/Sources/Flow/App/AppState.swift
+      - path: ../macos/Sources/Flow/Support
+        excludes: [Banners.swift]
+    dependencies:
+      - package: GRDB
+    info:
+      path: Sources/Generated-Info.plist
+      properties:
+        FlowServerURL: https://app.flowtoo.org
+        CFBundleDisplayName: Flow
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+        # Allow cleartext HTTP only to loopback/.local (dev server); prod
+        # (app.flowtoo.org) stays HTTPS-enforced under ATS.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.flow.ios
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGNING_ALLOWED: NO
