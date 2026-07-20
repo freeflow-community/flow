@@ -24,3 +24,6 @@ status: done [server] [web] [macos] — topic column existed since 0000_init (no
 - Emoji search should do substring match in the emoji name, not just prefix
 - App tokens should be visible when managing apps. No need to hide those.
 - Instead of "Disable" apps we should just Delete them completely
+status: done [server] [web] [macos] — Manage Apps gains Remove… (inline confirm): DELETE /v1/apps/:id removes the app + credentials, pulls the bot from the workspace/channels and member/mention lists, deletes 1:1 bot DMs; macOS refreshes members on workspace-level member.left. (Disable retained for temporary off-switching.)
+- Hover over thread replies icon and count should change cursor to hand
+

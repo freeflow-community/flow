@@ -245,6 +245,12 @@ export function registerRoutes(app: FastifyInstance): void {
     return ap.setAppDisabled(id, req.user.id, false);
   });
 
+  app.delete('/v1/apps/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ap.deleteApp(id, req.user.id);
+    return { ok: true };
+  });
+
   app.post('/v1/workspaces/:id/invites', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(CreateInviteBody, req.body);

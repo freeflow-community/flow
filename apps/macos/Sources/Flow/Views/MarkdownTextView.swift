@@ -54,6 +54,22 @@ final class MarkdownNSTextView: NSTextView {
     }
 }
 
+/// Scroll view that pins its document view's width to the clip width on
+/// every tile pass. The composer's wrap width must always equal the visible
+/// width, but SwiftUI's sizing probes and delta-based autoresizing can each
+/// leave the text view at a stale width — wrapping freezes mid-field (text
+/// "erases and restarts" on line 2) or runs past the right edge. Re-asserting
+/// the width here makes those states self-healing.
+final class ComposerScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        if let doc = documentView, contentSize.width > 0,
+           abs(doc.frame.width - contentSize.width) > 0.5 {
+            doc.setFrameSize(NSSize(width: contentSize.width, height: doc.frame.height))
+        }
+    }
+}
+
 // MARK: - Live styling
 
 /// Attribute-only markdown styling for the composer's NSTextStorage.
@@ -179,7 +195,7 @@ struct MarkdownComposerTextView: NSViewRepresentable {
             ComposerMarkdownStyler.restyle(textView)
         }
 
-        let scroll = NSScrollView()
+        let scroll = ComposerScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -196,6 +212,12 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         guard let textView = scroll.documentView as? MarkdownNSTextView else { return }
         textView.onPasteImages = onPasteImages
         textView.onDropFiles = onDropFiles
+        // Heal any stale width left by sizing probes before text is (re)laid
+        // out — the wrap width must match the visible width.
+        let clipWidth = scroll.contentSize.width
+        if clipWidth > 0, abs(textView.frame.width - clipWidth) > 0.5 {
+            textView.setFrameSize(NSSize(width: clipWidth, height: textView.frame.height))
+        }
         if textView.string != text {
             // Programmatic replace (suggestion inserted, message sent, …):
             // caret-to-end is the agreed behavior after external writes.
@@ -221,16 +243,20 @@ struct MarkdownComposerTextView: NSViewRepresentable {
               let container = textView.textContainer,
               let layout = textView.layoutManager
         else { return nil }
-        let width = proposal.width ?? textView.frame.width
-        guard width > 0, width.isFinite else { return nil }
-        if abs(textView.frame.width - width) > 0.5 {
-            textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
-        }
-        layout.ensureLayout(for: container)
         let insets = textView.textContainerInset.height * 2
         let lineHeight = layout.defaultLineHeight(for: ComposerMarkdownStyler.bodyFont)
         let minHeight = ceil(lineHeight + insets)
         let maxHeight = ceil(lineHeight * 8 + insets)
+        // Probe handling: never answer from (possibly stale) frame state.
+        // nil = ideal-size probe, defer; 0 = min probe, fully compressible;
+        // infinity = max probe, fully expandable.
+        guard let width = proposal.width else { return nil }
+        if width == 0 { return CGSize(width: 0, height: minHeight) }
+        guard width.isFinite else { return nil }
+        if abs(textView.frame.width - width) > 0.5 {
+            textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+        }
+        layout.ensureLayout(for: container)
         let used = ceil(layout.usedRect(for: container).height + insets)
         return CGSize(width: width, height: max(minHeight, min(maxHeight, used)))
     }

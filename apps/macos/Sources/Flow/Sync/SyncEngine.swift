@@ -861,6 +861,13 @@ actor SyncEngine {
             }
 
         case .memberLeft(let ml):
+            if ml.channelId == nil {
+                // Workspace-level departure (member removed / app deleted):
+                // refresh so the member and mention lists drop them.
+                if event.workspaceId == activeWorkspaceId {
+                    await refreshMembers(workspaceId: event.workspaceId)
+                }
+            }
             if ml.userId == currentUser?.id, let chId = ml.channelId {
                 try? await db.writer.write { db in
                     try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [chId])

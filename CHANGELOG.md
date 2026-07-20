@@ -33,6 +33,30 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — App removal (uninstall)
+- Apps can now be removed, not just disabled: `DELETE /v1/apps/:id`
+  (owner/admin) deletes the app row (credentials + queued event deliveries via
+  cascade), removes the bot user from the workspace and its channels, and
+  deletes 1:1 DMs with the bot. The bot's user row survives so message
+  authorship keeps its name. Emits per-channel and workspace-level
+  `member.left` so live clients drop the bot from member/mention lists and the
+  DM from sidebars. `[server]`
+- Manage Apps modal: "Remove…" button with inline confirm alongside
+  Disable/Enable. `[web]` (app management stays web-only — ruled divergence)
+- Workspace-level `member.left` (no channelId) now refreshes the member list,
+  so a removed app's bot disappears from mentions immediately. `[macos]`
+
+### 2026-07-20 — macOS composer wrap-width fix
+- Fix: the composer could wrap text at a stale, too-narrow width (typing looked
+  like it "erased" and restarted at the left — the field stayed one line tall
+  while text wrapped onto an invisible second line). The NSTextView's wrap
+  width could desync from the visible field after SwiftUI sizing probes or a
+  resize; the scroll view now pins the document width to the clip width on
+  every tile pass, `updateNSView` heals it on every render, and `sizeThatFits`
+  answers SwiftUI's min/ideal/max probes explicitly instead of leaking stale
+  frame widths. Verified in an offscreen layout harness (empty-state collapse,
+  narrow/re-widen resize, long-wrap growth). `[macos]`
+
 ### 2026-07-20 — Passwordless sign-in link (magic link)
 - Sign-in screen gains an "Email me a sign-in link" button: enter an email (no
   password) and we send a one-time link that logs an existing account straight

@@ -173,6 +173,7 @@ function AppRow({
   const [types, setTypes] = useState<Set<string>>(() => new Set(app.eventTypes));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const disabled = app.disabledAt !== null;
 
   const act = (fn: () => Promise<unknown>) => {
@@ -197,6 +198,14 @@ function AppRow({
         eventTypes: Array.from(types),
       }),
     );
+
+  const remove = () =>
+    act(async () => {
+      await api('DELETE', `/v1/apps/${app.id}`);
+      // Bot user left the workspace: member/mention lists and DM list change.
+      await qc.invalidateQueries({ queryKey: ['members', workspaceId] });
+      await qc.invalidateQueries({ queryKey: ['channels', workspaceId] });
+    });
 
   return (
     <div data-testid={`app-row-${app.name}`} className="mb-2 rounded-lg border border-hairline2 p-3">
@@ -267,35 +276,70 @@ function AppRow({
             ))}
           </div>
           {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-          <div className="flex items-center justify-between">
-            {disabled ? (
+          {confirmRemove ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-red-600">
+                Remove {app.name}? Its bot leaves the workspace and its DMs are deleted.
+              </p>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  className="rounded border border-hairline px-3 py-1.5 text-sm"
+                  disabled={busy}
+                  onClick={() => setConfirmRemove(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  data-testid={`app-remove-confirm-${app.name}`}
+                  className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                  disabled={busy}
+                  onClick={remove}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div className="flex gap-2">
+                {disabled ? (
+                  <button
+                    data-testid={`app-enable-${app.name}`}
+                    className="rounded border border-hairline px-3 py-1.5 text-sm disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => act(() => api<AppDTO>('POST', `/v1/apps/${app.id}/enable`))}
+                  >
+                    Enable
+                  </button>
+                ) : (
+                  <button
+                    data-testid={`app-disable-${app.name}`}
+                    className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => act(() => api<AppDTO>('POST', `/v1/apps/${app.id}/disable`))}
+                  >
+                    Disable
+                  </button>
+                )}
+                <button
+                  data-testid={`app-remove-${app.name}`}
+                  className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => setConfirmRemove(true)}
+                >
+                  Remove…
+                </button>
+              </div>
               <button
-                data-testid={`app-enable-${app.name}`}
-                className="rounded border border-hairline px-3 py-1.5 text-sm disabled:opacity-50"
+                data-testid={`app-save-${app.name}`}
+                className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
                 disabled={busy}
-                onClick={() => act(() => api<AppDTO>('POST', `/v1/apps/${app.id}/enable`))}
+                onClick={save}
               >
-                Enable
+                Save
               </button>
-            ) : (
-              <button
-                data-testid={`app-disable-${app.name}`}
-                className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-                disabled={busy}
-                onClick={() => act(() => api<AppDTO>('POST', `/v1/apps/${app.id}/disable`))}
-              >
-                Disable
-              </button>
-            )}
-            <button
-              data-testid={`app-save-${app.name}`}
-              className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-              disabled={busy}
-              onClick={save}
-            >
-              Save
-            </button>
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>
