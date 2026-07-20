@@ -22,3 +22,5 @@ status: done [web] [macos] — ↑ in an empty composer edits your message only 
 status: done [server] [web] [macos] — topic column existed since 0000_init (no migration); added PATCH /v1/channels/:id (any channel member; #general keeps its name) + channel.updated WS fan-out; both clients open a name/topic editor from the header name and already rendered the topic sub-headline.
 
 - Emoji search should do substring match in the emoji name, not just prefix
+- App tokens should be visible when managing apps. No need to hide those.
+- Instead of "Disable" apps we should just Delete them completely
