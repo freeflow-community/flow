@@ -78,10 +78,37 @@ Delivery semantics:
   after fixing your endpoint).
 - The bot's own messages don't generate events back to it (loop guard).
 
+## Socket Mode
+
+Flow speaks Slack's Socket Mode, so a bot with **no public URL** (laptop,
+codespace) can receive events. App creation returns an app-level token
+(`xapp-…`, one-time like the others). Standard SDK usage works:
+
+```js
+import { SocketModeClient } from '@slack/socket-mode';
+const sm = new SocketModeClient({
+  appToken: process.env.FLOW_APP_TOKEN,
+  clientOptions: { slackApiUrl: 'https://app.flowtoo.org/api/' },
+});
+sm.on('app_mention', async ({ event, ack }) => { await ack(); /* … */ });
+await sm.start();
+```
+
+(Python: `SocketModeHandler(app, app_token, web_client=WebClient(token=app_token,
+base_url="https://app.flowtoo.org/api/"))` — the custom `web_client` is what
+routes `apps.connections.open` to Flow.)
+
+Under the hood: `apps.connections.open` (app-token-authenticated) returns a
+one-time-ticket `wss://…/api/socket-mode` URL; envelopes are Slack-shaped
+(`events_api` + `envelope_id` acks). Delivery comes from the same outbox as
+HTTP events — a live socket is preferred, verified `eventUrl` is the fallback,
+and either alone is sufficient (no `eventUrl` needed for socket-only bots —
+just set `eventTypes`). Offline socket-only apps drop events after the retry
+window (Slack semantics) but are never auto-disabled.
+
 ## Compatibility gaps (deliberate, phase-4 scope)
 
-- **No Socket Mode / RTM** — bots must expose a public HTTPS events endpoint.
-  Bolt apps built on Socket Mode need to switch to HTTP receiver mode.
+- **No RTM API** (the legacy streaming API predating Socket Mode).
 - **No BlockKit** — `blocks` are ignored; only mrkdwn `text` renders. No
   interactive components (buttons/modals/shortcuts), no `/slash` commands.
 - **No OAuth install flow** — no `oauth.v2.access`; tokens are minted at app

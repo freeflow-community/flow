@@ -5,6 +5,7 @@ import { closeDb } from './db/index.js';
 import { initCrypto } from './crypto/index.js';
 import { connectBus, closeBus } from './bus.js';
 import { attachGateway } from './gateway/index.js';
+import { attachSocketMode } from './gateway/socketMode.js';
 import { purgeExpiredSessions } from './services/auth.js';
 import { startOrphanSweep } from './services/files.js';
 import { startAppEventsWorker } from './services/appEvents.js';
@@ -18,7 +19,9 @@ async function main(): Promise<void> {
   await connectBus();
   await app.listen({ port: config.port, host: config.host });
   const gateway = attachGateway(app.server);
+  const socketMode = attachSocketMode(app.server);
   app.log.info(`ws gateway attached at ws://${config.host}:${config.port}/v1/ws`);
+  app.log.info(`socket-mode compat attached at ws://${config.host}:${config.port}/api/socket-mode`);
 
   void purgeExpiredSessions().catch(() => {});
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
@@ -26,6 +29,7 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     gateway.close();
+    socketMode.close();
     await app.close();
     await closeBus();
     await closeDb();

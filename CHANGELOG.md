@@ -28,6 +28,23 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — Slack Socket Mode compatibility
+- Apps get an app-level `xapp-…` token at creation (hashed, one-time, shown in
+  the Apps modal; migration 0009). `POST /api/apps.connections.open`
+  authenticates with it and returns a one-time-ticket `wss://…/api/socket-mode`
+  URL. `[server] [web]`
+- The socket speaks Slack's protocol — `hello` frame, `events_api` envelopes,
+  `{envelope_id}` acks, server pings for SDK stale-connection detection —
+  verified with the official `@slack/socket-mode` client (new
+  `scripts/socket-mode-e2e.mjs`, 9 checks). `[server] [qa]`
+- Outbox delivery prefers a live socket (ack-confirmed) and falls back to the
+  verified HTTP event URL; socket-only apps that are offline drop events after
+  the normal retries (Slack semantics) but are never auto-disabled — that
+  mechanism remains HTTP-endpoint-only. `[server]`
+- Both WS endpoints (`/v1/ws` gateway + `/api/socket-mode`) now share one
+  upgrade router (`gateway/upgrade.ts`) — two path-scoped `ws` servers on one
+  HTTP server abort each other's handshakes. `[server]`
+
 ### 2026-07-19 — UI nits batch 2: bigger image previews, hover menu parity, edit/delete affordances, channel name+topic editing
 - Inline image previews render ~2x larger (web cap 288×240 → 576×480 CSS px;
   macOS fit box 280×240 → 560×480). Server thumbs remain 512px max, so the

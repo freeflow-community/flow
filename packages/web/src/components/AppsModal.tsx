@@ -14,8 +14,8 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
   const apps = useApps(workspaceId);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-  const [creds, setCreds] = useState<{ botToken: string; signingSecret: string } | null>(null);
-  const [copied, setCopied] = useState<'token' | 'secret' | null>(null);
+  const [creds, setCreds] = useState<{ botToken: string; appToken: string; signingSecret: string } | null>(null);
+  const [copied, setCopied] = useState<'token' | 'appToken' | 'secret' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -23,12 +23,12 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
     setError(null);
     setBusy(true);
     try {
-      const res = await api<{ app: AppDTO; botToken: string; signingSecret: string }>(
+      const res = await api<{ app: AppDTO; botToken: string; appToken: string; signingSecret: string }>(
         'POST',
         `/v1/workspaces/${workspaceId}/apps`,
         { name: name.trim() },
       );
-      setCreds({ botToken: res.botToken, signingSecret: res.signingSecret });
+      setCreds({ botToken: res.botToken, appToken: res.appToken, signingSecret: res.signingSecret });
       setCopied(null);
       setName('');
       await qc.invalidateQueries({ queryKey: ['apps', workspaceId] });
@@ -39,10 +39,11 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
     }
   };
 
-  const copy = async (which: 'token' | 'secret') => {
+  const copy = async (which: 'token' | 'appToken' | 'secret') => {
     if (!creds) return;
+    const value = which === 'token' ? creds.botToken : which === 'appToken' ? creds.appToken : creds.signingSecret;
     try {
-      await navigator.clipboard.writeText(which === 'token' ? creds.botToken : creds.signingSecret);
+      await navigator.clipboard.writeText(value);
       setCopied(which);
     } catch {
       setCopied(null);
@@ -92,6 +93,20 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
               onClick={() => void copy('token')}
             >
               {copied === 'token' ? 'Copied ✓' : 'Copy'}
+            </button>
+          </div>
+          <p className="mb-1 text-sm font-semibold">App-level token</p>
+          <p className="mb-1 text-xs text-muted">For Socket Mode (apps.connections.open) — bots with no public URL.</p>
+          <div className="mb-2 flex items-start gap-2">
+            <code data-testid="app-app-token" className="block grow rounded bg-daypill p-2 text-xs break-all select-all">
+              {creds.appToken}
+            </code>
+            <button
+              data-testid="app-app-token-copy"
+              className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+              onClick={() => void copy('appToken')}
+            >
+              {copied === 'appToken' ? 'Copied ✓' : 'Copy'}
             </button>
           </div>
           <p className="mb-1 text-sm font-semibold">Signing secret</p>

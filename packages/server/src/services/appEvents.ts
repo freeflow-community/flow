@@ -12,6 +12,7 @@ import { EMOJI_SHORTCODES, markdownToMrkdwn } from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { tsFromUuid } from '../slackcompat/ts.js';
+import { deliverEnvelope } from '../gateway/socketMode.js';
 
 const { apps, pendingAppEvents, channels } = schema;
 
@@ -39,8 +40,8 @@ async function eligibleApps(
       and(
         eq(apps.workspaceId, workspaceId),
         isNull(apps.disabledAt),
-        sql`${apps.eventUrl} IS NOT NULL`,
-        sql`${apps.eventUrlVerifiedAt} IS NOT NULL`,
+        // deliverable via verified HTTP endpoint OR Socket Mode (app-level token)
+        sql`((${apps.eventUrl} IS NOT NULL AND ${apps.eventUrlVerifiedAt} IS NOT NULL) OR ${apps.appTokenHash} IS NOT NULL)`,
         sql`${apps.eventTypes} @> ARRAY[${eventType}]::text[]`,
       ),
     );
@@ -233,11 +234,13 @@ export async function drainAppEvents(log: Logger): Promise<number> {
   let delivered = 0;
   for (const { ev, app } of due) {
     // config may have changed since enqueue
-    if (!app.eventUrl || app.eventUrlVerifiedAt === null || app.disabledAt !== null) {
+    const httpCapable = app.eventUrl !== null && app.eventUrlVerifiedAt !== null;
+    const socketCapable = app.appTokenHash !== null;
+    if (app.disabledAt !== null || (!httpCapable && !socketCapable)) {
       await db.update(pendingAppEvents).set({ failedAt: new Date() }).where(eq(pendingAppEvents.id, ev.id));
       continue;
     }
-    const envelope = JSON.stringify({
+    const envelope = {
       token: '',
       team_id: app.workspaceId,
       api_app_id: app.id,
@@ -245,13 +248,19 @@ export async function drainAppEvents(log: Logger): Promise<number> {
       event_id: ev.id,
       event_time: Math.floor(ev.createdAt.getTime() / 1000),
       event: ev.payload,
-    });
+    };
+    // Socket first (ack-confirmed), HTTP as the fallback transport.
     let ok = false;
-    try {
-      const res = await postSigned(app.eventUrl, envelope, app.signingSecret);
-      ok = res.ok;
-    } catch {
-      ok = false;
+    if (socketCapable) {
+      ok = (await deliverEnvelope(app.id, ev.id, envelope, ev.attempts)) === 'acked';
+    }
+    if (!ok && httpCapable) {
+      try {
+        const res = await postSigned(app.eventUrl!, JSON.stringify(envelope), app.signingSecret);
+        ok = res.ok;
+      } catch {
+        ok = false;
+      }
     }
     if (ok) {
       delivered += 1;
@@ -264,7 +273,10 @@ export async function drainAppEvents(log: Logger): Promise<number> {
         .update(pendingAppEvents)
         .set({ failedAt: new Date(), attempts })
         .where(eq(pendingAppEvents.id, ev.id));
-      await maybeAutoDisable(app, log);
+      // Auto-disable exists to stop hammering a dead HTTP endpoint. A
+      // socket-only app that's simply offline just drops the event (Slack
+      // semantics) — disabling it would turn "bot restarting" into an outage.
+      if (httpCapable) await maybeAutoDisable(app, log);
     } else {
       // backoff: 5s, 20s, 80s
       const delayMs = 5_000 * Math.pow(4, attempts - 1);

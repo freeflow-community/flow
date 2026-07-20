@@ -17,6 +17,7 @@ import {
   subscribeBus,
 } from '../bus.js';
 import { online } from '../presence.js';
+import { routeUpgrade } from './upgrade.js';
 
 const { workspaceMembers, channels, channelMembers } = schema;
 
@@ -153,7 +154,10 @@ function sendPresenceSnapshot(s: SocketState, sock: WebSocket, onlyWorkspaceId?:
 }
 
 export function attachGateway(server: HttpServer): { close(): void } {
-  const wss = new WebSocketServer({ server, path: '/v1/ws' });
+  // noServer + shared router — see gateway/upgrade.ts for why {server, path}
+  // can't be used once a second WebSocketServer shares this HTTP server.
+  const wss = new WebSocketServer({ noServer: true });
+  routeUpgrade(server, '/v1/ws', wss);
   const liveness = new Map<WebSocket, boolean>();
 
   wss.on('connection', (sock: WebSocket) => {

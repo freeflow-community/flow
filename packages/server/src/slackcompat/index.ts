@@ -29,7 +29,9 @@
 //   unhandled exception      -> internal_error (still HTTP 200; logged)
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ApiError } from '../lib/errors.js';
-import { authenticateBot } from '../services/apps.js';
+import { config } from '../config.js';
+import { authenticateAppToken, authenticateBot } from '../services/apps.js';
+import { mintSocketTicket } from '../gateway/socketMode.js';
 import { methods, SlackApiError } from './methods.js';
 
 function extractToken(req: FastifyRequest): string | null {
@@ -86,6 +88,20 @@ function mapApiError(err: ApiError, method: string): string {
 }
 
 export function registerSlackCompat(app: FastifyInstance): void {
+  // apps.connections.open authenticates with the app-level "xapp-" token
+  // (not the bot token), so it lives outside the methods table.
+  app.post('/api/apps.connections.open', async (req, reply) => {
+    const token = extractToken(req);
+    const appRow = token ? await authenticateAppToken(token) : null;
+    if (!appRow) return reply.code(200).send({ ok: false, error: 'invalid_auth' });
+    const ticket = mintSocketTicket(appRow.id);
+    const base = new URL(config.webUrlBase);
+    base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+    base.pathname = '/api/socket-mode';
+    base.search = `?ticket=${ticket}`;
+    return reply.code(200).send({ ok: true, url: base.toString() });
+  });
+
   for (const [name, def] of Object.entries(methods)) {
     const handler = async (req: FastifyRequest, reply: FastifyReply) => {
       try {

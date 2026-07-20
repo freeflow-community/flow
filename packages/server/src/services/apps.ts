@@ -42,17 +42,19 @@ async function requireAdmin(workspaceId: string, actorId: string) {
 }
 
 /** Create an app: bot user row + workspace membership + credentials.
- * Bot token AND signing secret are returned once, here only — the token is
- * stored hashed, and the secret is never exposed by any later read. */
+ * Bot token, app-level token (Socket Mode), AND signing secret are returned
+ * once, here only — tokens are stored hashed, and the secret is never
+ * exposed by any later read. */
 export async function createApp(
   workspaceId: string,
   actorId: string,
   name: string,
-): Promise<{ app: AppDTO; botToken: string; signingSecret: string }> {
+): Promise<{ app: AppDTO; botToken: string; appToken: string; signingSecret: string }> {
   await requireAdmin(workspaceId, actorId);
   const appId = newId();
   const botUserId = newId();
   const botToken = `xoxb-${newToken()}`;
+  const appToken = `xapp-1-${newToken()}`; // Slack-shaped prefix; SDKs only check "xapp-"
   const signingSecret = randomBytes(24).toString('hex');
   await db.transaction(async (tx) => {
     await tx.insert(users).values({
@@ -70,12 +72,24 @@ export async function createApp(
       name,
       botUserId,
       botTokenHash: hashToken(botToken),
+      appTokenHash: hashToken(appToken),
       signingSecret,
       createdBy: actorId,
     });
   });
   const created = (await db.select().from(apps).where(eq(apps.id, appId)).limit(1))[0]!;
-  return { app: toAppDTO(created), botToken, signingSecret };
+  return { app: toAppDTO(created), botToken, appToken, signingSecret };
+}
+
+/** App-level ("xapp-…") token → app row, for apps.connections.open. */
+export async function authenticateAppToken(token: string): Promise<AppRow | null> {
+  if (!token.startsWith('xapp-')) return null;
+  const rows = await db
+    .select()
+    .from(apps)
+    .where(and(eq(apps.appTokenHash, hashToken(token)), isNull(apps.disabledAt)))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 export async function listApps(workspaceId: string, actorId: string): Promise<AppDTO[]> {

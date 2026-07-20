@@ -1,5 +1,27 @@
 # Decision log
 
+## 2026-07-19 — Socket Mode compatibility (operator-requested, for local bots)
+
+Built to run the operator's existing Socket-Mode Slack bots against production
+Flow without public endpoints or tunnels. Key rulings:
+
+- **Transport only, outbox stays authoritative**: the socket is a delivery
+  path for the existing `pending_app_events` outbox (live socket preferred,
+  verified eventUrl fallback) — no separate queue, at-least-once preserved.
+  Ack = the client's `{envelope_id}` echo.
+- **Offline socket-only apps drop events after the normal retry window**
+  (matches Slack) but are **never auto-disabled** — auto-disable exists to
+  stop hammering dead HTTP endpoints; applying it to a restarting bot would
+  turn a redeploy into an outage.
+- **App-level token minted at creation** alongside the bot token (same
+  hashed/one-time policy). No scopes — it only opens sockets.
+- **One-time 60s connection tickets, in-memory** (single-node, like presence);
+  reconnects just call `apps.connections.open` again.
+- **Both WS endpoints route through one upgrade router** — `ws` servers with
+  `{server, path}` abort every non-matching upgrade, so two of them on one
+  HTTP server kill each other's handshakes (found live: the SDK's socket
+  connect loop 400'd against the gateway's listener).
+
 ## 2026-07-19 — Channel rename/topic permission: any channel member
 
 `PATCH /v1/channels/:id` (ui_nits item 5) needed a permission rule and none
