@@ -46,13 +46,13 @@ export const pendingSignups = pgTable(
   (t) => [index('pending_signups_email_idx').on(t.email)],
 );
 
-/** Single-use emailed tokens: verify-email and password-reset links. */
+/** Single-use emailed tokens: verify-email, password-reset, and sign-in links. */
 export const emailTokens = pgTable(
   'email_tokens',
   {
     tokenHash: bytea('token_hash').primaryKey(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    purpose: text('purpose', { enum: ['verify_email', 'password_reset'] }).notNull(),
+    purpose: text('purpose', { enum: ['verify_email', 'password_reset', 'signin'] }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },

@@ -9,22 +9,27 @@ import Main from './components/Main';
 
 const ACTIVE_WS_KEY = 'flow.activeWorkspace';
 
-/** Pull ?signup= / ?reset= (emailed links) off the URL before rendering. */
-function consumeEmailLinkParams(): { signupToken: string | null; resetToken: string | null } {
+/** Pull ?signup= / ?reset= / ?signin= (emailed links) off the URL before rendering. */
+function consumeEmailLinkParams(): {
+  signupToken: string | null;
+  resetToken: string | null;
+  signinToken: string | null;
+} {
   const params = new URLSearchParams(location.search);
   const signupToken = params.get('signup');
   const resetToken = params.get('reset');
-  if (signupToken || resetToken) {
+  const signinToken = params.get('signin');
+  if (signupToken || resetToken || signinToken) {
     history.replaceState(null, '', location.pathname);
   }
-  return { signupToken, resetToken };
+  return { signupToken, resetToken, signinToken };
 }
 
 export default function App() {
   const qc = useQueryClient();
   const [user, setUser] = useState<UserDTO | null>(null);
   const [booting, setBooting] = useState(true);
-  const [{ signupToken, resetToken }] = useState(consumeEmailLinkParams);
+  const [{ signupToken, resetToken, signinToken }] = useState(consumeEmailLinkParams);
   // Active workspace survives reloads/restarts (phase 3.5 fixes).
   const [workspaceId, setWorkspaceId] = useState<string | null>(
     () => localStorage.getItem(ACTIVE_WS_KEY),
@@ -69,7 +74,14 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthScreen onSignedIn={signIn} signupToken={signupToken} resetToken={resetToken} />;
+    return (
+      <AuthScreen
+        onSignedIn={signIn}
+        signupToken={signupToken}
+        resetToken={resetToken}
+        signinToken={signinToken}
+      />
+    );
   }
 
   return (
