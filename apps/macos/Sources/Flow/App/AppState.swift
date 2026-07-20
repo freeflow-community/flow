@@ -52,8 +52,8 @@ final class AppState: ObservableObject {
         } catch {
             fatalError("Cannot open local database: \(error)")
         }
-        let api = APIClient(baseURL: URL(string: "http://127.0.0.1:8787")!)
-        let socket = SocketClient(url: URL(string: "ws://127.0.0.1:8787/v1/ws")!)
+        let api = APIClient(baseURL: Server.baseURL)
+        let socket = SocketClient(url: Server.wsURL)
         self.engine = SyncEngine(db: db, api: api, socket: socket)
         Task {
             await ImageLoader.shared.configure(api: api)

@@ -5,10 +5,14 @@
 # QA launch path are untouched.
 #
 # Usage: tools/make-app.sh [debug|release]   (default: debug)
+#   FLOW_SERVER_URL=http://127.0.0.1:8787 tools/make-app.sh   # local-server app
+# Packaged apps default to production; `swift build`/`swift run` (no bundle
+# plist) keep defaulting to the local dev server.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONF=${1:-debug}
+SERVER_URL=${FLOW_SERVER_URL:-https://app.flowtoo.org}
 swift build -c "$CONF"
 
 BIN=".build/$CONF/Flow"
@@ -17,7 +21,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Flow"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -30,6 +34,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>Flow</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>FlowServerURL</key><string>${SERVER_URL}</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>CFBundleURLTypes</key>

@@ -18,14 +18,19 @@ struct AuthView: View {
             Text("Flow")
                 .font(.largeTitle.bold())
 
-            Picker("", selection: $isRegister) {
-                Text("Sign In").tag(false)
-                Text("Register").tag(true)
+            // In-app registration uses the dev-only autoVerify path, so it only
+            // exists against the local dev server. Real servers register via the
+            // web (email-first flow) + "Open the desktop app" handoff.
+            if Server.isDefaultLocal {
+                Picker("", selection: $isRegister) {
+                    Text("Sign In").tag(false)
+                    Text("Register").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 240)
+                .labelsHidden()
+                .accessibilityIdentifier("auth.mode")
             }
-            .pickerStyle(.segmented)
-            .frame(width: 240)
-            .labelsHidden()
-            .accessibilityIdentifier("auth.mode")
 
             VStack(spacing: 10) {
                 if isRegister {
@@ -64,6 +69,18 @@ struct AuthView: View {
             .disabled(busy || !formValid)
             .keyboardShortcut(.defaultAction)
             .accessibilityIdentifier("auth.submit")
+
+            if !Server.isDefaultLocal {
+                Button("New to Flow? Create your account on the web") {
+                    NSWorkspace.shared.open(Server.baseURL)
+                }
+                .buttonStyle(.link)
+                .font(.callout)
+            }
+
+            Text("Server: \(Server.displayName)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

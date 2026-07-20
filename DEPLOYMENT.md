@@ -112,9 +112,10 @@ bootstraps their own workspace.
 
 - **No GitHub auto-deploy** — deploys are `railway up` snapshots. Connect the
   `app` service to `scottpersinger/flow` to ship on push to `main`.
-- **macOS app targets localhost** — needs a configurable server URL before it
-  can talk to production (web-to-app `flow://signin` handoff already mints
-  valid codes; the app just needs to exchange them against the right host).
+- ~~macOS app targets localhost~~ — done: packaged apps default to
+  `https://app.flowtoo.org` (`FlowServerURL` in Info.plist via make-app.sh;
+  `FLOW_SERVER_URL` env overrides; bare `swift run` still defaults local).
+  Per-server storage isolation keeps prod/dev sessions and caches separate.
 - **Blobs on volume, not R2** — the `BlobStore` seam in
   `packages/server/src/storage/` is ready for a Cloudflare R2 driver
   (S3-compatible; credentials already provisioned). That would make the app

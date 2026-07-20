@@ -16,9 +16,9 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
   (macOS profiles handle multi-account). Candidate phase-3-adjacent fix.
 - macOS: workspace-chooser tiles ignore AX activation (real click required) — a11y gap.
 - No syntax highlighting in code blocks (both clients; never scoped).
-- macOS has no email-verification or password-reset UI; its in-app register
-  relies on the dev-only `autoVerify` bypass. In production, registration and
-  reset go through the web (+ app-link handoff) until macOS closes this.
+- macOS has no in-app registration or password-reset against real servers —
+  by design it links to the web (email-first flow + app-link handoff); the
+  dev-only autoVerify register remains for the local dev server.
 
 ### Deliberate divergences (ruled)
 - Emoji picker: custom grid + search on web; native character palette on macOS.
@@ -27,6 +27,18 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
   image collapsed/expanded state (ruled).
 
 ## History
+
+### 2026-07-19 — macOS: configurable server URL (production support)
+- Server resolution: `FLOW_SERVER_URL` env → `FlowServerURL` Info.plist (set by
+  make-app.sh, defaults to https://app.flowtoo.org) → local dev fallback
+  (127.0.0.1:8787, so `swift run` and QA profiles are unchanged). WS URL
+  derived (https→wss). `[macos]`
+- Per-server storage isolation: cache dir, Keychain slot, and prefs keys now
+  suffix with the server host (empty for local — existing caches keep
+  working); window title shows the server when non-local. `[macos]`
+- Auth screen: shows the target server; on non-local servers the dev-only
+  in-app Register is hidden in favor of a link to register on the web
+  (email-first flow + app-link handoff). `[macos]`
 
 ### 2026-07-19 — Apps: signing secret surfaced at creation
 - `POST /v1/workspaces/:id/apps` now returns `signingSecret` alongside

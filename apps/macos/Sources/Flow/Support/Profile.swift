@@ -15,9 +15,16 @@ enum Profile {
         return cleaned.isEmpty ? nil : cleaned
     }()
 
-    /// Suffix appended to storage identifiers ("" or ".alice").
-    static var suffix: String { name.map { ".\($0)" } ?? "" }
+    /// Suffix appended to storage identifiers. Combines the profile dimension
+    /// ("" or ".alice") with the server dimension ("" for local dev, or
+    /// "@app.flowtoo.org" — see Server.storageSuffix) so instances never share
+    /// caches, Keychain slots, or prefs across accounts *or* servers.
+    static var suffix: String { (name.map { ".\($0)" } ?? "") + Server.storageSuffix }
 
-    /// Window title for this instance ("Flow" or "Flow — alice").
-    static var windowTitle: String { name.map { "Flow — \($0)" } ?? "Flow" }
+    /// Window title ("Flow", "Flow — alice", "Flow @ app.flowtoo.org", …).
+    static var windowTitle: String {
+        var title = name.map { "Flow — \($0)" } ?? "Flow"
+        if !Server.isDefaultLocal { title += " @ \(Server.displayName)" }
+        return title
+    }
 }
