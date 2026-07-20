@@ -445,8 +445,17 @@ function DownloadHoverButton({ file, onDownload }: { file: FileDTO; onDownload: 
   );
 }
 
+/** Video formats we render inline (ui_nits); anything the browser can't
+ * decode falls back to the file chip at runtime via the <video> error event. */
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);
+function isVideoFile(file: FileDTO): boolean {
+  if (file.mimeType.startsWith('video/')) return true;
+  return VIDEO_EXTS.has(file.name.split('.').pop()?.toLowerCase() ?? '');
+}
+
 function Attachment({ file }: { file: FileDTO }) {
   if (file.hasThumb) return <ImageAttachment file={file} />;
+  if (isVideoFile(file)) return <VideoAttachment file={file} />;
   if (file.mimeType === 'application/pdf') return <PdfAttachment file={file} />;
   if (isTextFile(file)) return <TextAttachment file={file} />;
   return <FileChip file={file} />;
@@ -474,6 +483,121 @@ function ImageAttachment({ file }: { file: FileDTO }) {
         </div>
       )}
       {lightbox && <ImageLightbox file={file} onClose={() => setLightbox(false)} onDownload={download} />}
+    </div>
+  );
+}
+
+/** Inline video card (ui_nits): preview-card chrome (collapse chevron, hover
+ * Download) + native <video> controls, expand affordance opens a lightbox.
+ * The blob is fetched whole through the authed cache (≤20 MB cap) so the
+ * first frame doubles as the poster and seeking is local; the server also
+ * speaks Range for players that stream the URL directly. */
+function VideoAttachment({ file }: { file: FileDTO }) {
+  const [collapsed, toggleCollapsed] = useCollapsed(file.id);
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [lightbox, setLightbox] = useState(false);
+  const download = useDownload(file);
+
+  useEffect(() => {
+    let alive = true;
+    void blobUrl(`/v1/files/${file.id}`)
+      .then((u) => { if (alive) setUrl(u); })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [file.id]);
+
+  // Browser can't fetch or decode this video (codec/container) → plain chip.
+  if (failed) return <FileChip file={file} />;
+
+  return (
+    <div className="mt-1">
+      <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
+      {!collapsed && (
+        <div className="group/att relative mt-0.5 w-fit">
+          {url ? (
+            <video
+              data-testid={`file-video-${file.name}`}
+              src={url}
+              controls
+              preload="metadata"
+              className="max-h-[480px] max-w-[576px] rounded-lg border border-hairline bg-black"
+              onError={() => setFailed(true)}
+            />
+          ) : (
+            <div className="flex h-[240px] w-[426px] items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">
+              ▶
+            </div>
+          )}
+          <button
+            data-testid={`file-video-expand-${file.name}`}
+            className="absolute top-1.5 right-10 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white/90 text-sm shadow-sm hover:bg-white group-hover/att:flex"
+            title="Expand"
+            onClick={() => setLightbox(true)}
+          >
+            ⤢
+          </button>
+          <DownloadHoverButton file={file} onDownload={download} />
+        </div>
+      )}
+      {lightbox && url && (
+        <VideoLightbox file={file} url={url} onClose={() => setLightbox(false)} onDownload={download} />
+      )}
+    </div>
+  );
+}
+
+/** Full-window video player overlay, matching the image lightbox chrome. */
+function VideoLightbox({
+  file,
+  url,
+  onClose,
+  onDownload,
+}: {
+  file: FileDTO;
+  url: string;
+  onClose: () => void;
+  onDownload: () => Promise<void>;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div
+      data-testid="video-lightbox"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75"
+      onMouseDown={onClose}
+    >
+      <div className="absolute top-4 right-5 flex gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
+        <button
+          data-testid="video-lightbox-download"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Download"
+          onClick={() => void onDownload()}
+        >
+          ⤓
+        </button>
+        <button
+          data-testid="video-lightbox-close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
+          title="Close"
+          onClick={onClose}
+        >
+          ✕
+        </button>
+      </div>
+      <video
+        src={url}
+        controls
+        autoPlay
+        className="max-h-[85vh] max-w-[88vw] rounded-lg bg-black"
+        onMouseDown={(e) => e.stopPropagation()}
+      />
+      <span className="mt-3 max-w-[80vw] truncate text-xs text-white/70" onMouseDown={(e) => e.stopPropagation()}>
+        {file.name}
+      </span>
     </div>
   );
 }

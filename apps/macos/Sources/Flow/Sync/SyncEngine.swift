@@ -616,8 +616,9 @@ actor SyncEngine {
         case "txt", "md", "log": "text/plain"
         case "json": "application/json"
         case "zip": "application/zip"
-        case "mp4": "video/mp4"
+        case "mp4", "m4v": "video/mp4"
         case "mov": "video/quicktime"
+        case "webm": "video/webm"
         default: "application/octet-stream"
         }
     }

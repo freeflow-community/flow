@@ -475,6 +475,9 @@ struct AttachmentView: View {
         Group {
             if file.isImage {
                 imageAttachment
+            } else if file.isPlayableVideo {
+                // webm stays a chip: AVFoundation can't decode it (Parity note).
+                VideoAttachmentView(file: file)
             } else if file.isPDF {
                 PdfAttachmentView(file: file)
             } else if file.isTextPreviewable {

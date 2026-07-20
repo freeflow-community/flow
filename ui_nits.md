@@ -30,4 +30,5 @@ status: done [server] [web] [macos] — Manage Apps gains Remove… (inline conf
 - Hover over thread replies icon and count should change cursor to hand
 status: done [web] [macos] — web: cursor-pointer on the replies pill (Tailwind v4 preflight leaves buttons on the default cursor); macOS: NSCursor.pointingHand push/pop onHover, same pattern as the panel resize handles.
 - Add support for sharing video files, and playing with preview (and expand button) in the chat
+status: done [server] [web] [macos] — GET /v1/files/:id now speaks HTTP Range (Accept-Ranges/206/416; unit-tested + curl-verified byte-for-byte) for seek-by-URL players; uploads already accepted video mimes. Web renders mp4/mov/webm inline (preview-card chrome: collapse chevron, hover Download + Expand; native <video> controls, lightbox overlay; undecodable codecs fall back to the chip). macOS renders mp4/mov/m4v via AVKit behind a play-button placeholder (downloads on first play; no server poster — ruled) with an expanded sheet matching the image lightbox; webm stays a chip (AVFoundation — Parity divergence). iOS still chips video into QuickLook — Parity gap.
 
