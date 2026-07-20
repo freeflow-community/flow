@@ -1,4 +1,4 @@
-# First-class AI Agents (PROPOSED design)
+# First-class AI Agents (APPROVED — operator rulings 2026-07-20, see end)
 
 Slack-compat apps (APPS.md) gave us bots, but they are second-class: separate
 credential universe (xoxb/xapp), separate API surface (/api/*), an outbox with
@@ -10,9 +10,10 @@ like people, speaking the normal /v1 REST + WS protocol — no compat shim.
 
 - `users.is_agent` boolean (new column, default false). Distinct from `is_bot`
   (Slack-compat app bots keep their own lane; nothing merges).
-- `UserDTO.isAgent` flows to all clients; render an **AI** badge next to the
-  display name everywhere a name shows (message author line, member list,
-  mention autocomplete, DM header) — like Slack's APP badge.
+- `UserDTO.isAgent` flows to all clients; render a **small robot emoji (🤖)**
+  next to the display name everywhere a name shows (message author line,
+  member list, mention autocomplete, DM header). Operator ruling: emoji, not
+  a text badge; app bots' existing rendering is untouched.
 - Agents are ordinary members: channels, DMs, group DMs, threads, reactions,
   files, typing, presence (real presence — they hold a live WS) all work with
   **zero special cases**, because nothing downstream branches on the flag.
@@ -76,11 +77,13 @@ Flow WS ──> agent-bridge daemon ──spawn──> claude -p --resume <sess>
   the bridge posts back (`claude -p --output-format json` → `result` field;
   any other CLI → stdout). This is what makes it runtime-agnostic — every
   coding CLI can do "prompt in, text out".
-- **Rich mode (optional per runtime)**: pass `--mcp-config` with a tiny
+- **Rich mode (v1, per operator ruling)**: pass `--mcp-config` with a tiny
   `flow` MCP server exposing `send_message`, `react`, `upload_file`,
   `search_history` — the agent can then post multiple messages, attach
   files, or react instead of one final reply. Claude and Codex both speak
-  MCP; runtimes that don't just stay on the baseline contract.
+  MCP; runtimes that don't just fall back to the baseline contract. System
+  prompt tells the agent MCP-sent messages deliver immediately and its final
+  text is also posted (so keep it short/empty if it already replied).
 - **Working directory is the identity**: agent config names a `cwd` (a repo
   checkout). "@RepoBot fix the failing test" runs the CLI *in that repo* with
   its normal tools. This is the compelling use case Channels can't do
@@ -90,9 +93,15 @@ Flow WS ──> agent-bridge daemon ──spawn──> claude -p --resume <sess>
   reply conventions; mention format `<@userId>`). The user message body is the
   prompt. Thread context beyond the session's own memory can be fetched from
   /v1 history when joining an existing thread mid-way.
-- **Feedback while working**: typing indicator on spawn; with
-  `--output-format stream-json` the bridge can post incremental progress for
-  long tasks (config: silent | typing-only | progress messages).
+- **Feedback while working (thinking steps — v1, per operator ruling)**:
+  typing indicator on spawn, plus the bridge runs the CLI with
+  `--output-format stream-json` and surfaces **tool calls** as a live
+  "thinking…" step in the chat: on the first tool_use it posts one status
+  message (e.g. `🤖 *thinking…* — Bash: pnpm test`) and **edits it in place**
+  as each new tool call streams by (latest step shown; keep it one line).
+  When the run completes, the status message is deleted and the final reply
+  posted fresh (clean unread/notification semantics — no edit-marker on the
+  real reply). Config: `progress = thinking (default) | typing | silent`.
 - **Safety**: per-agent `--permission-mode` / `--allowedTools` (or the
   runtime's sandbox flags) preconfigured in agent config — headless runs use
   pre-granted permissions, so scope them: e.g. read-only repo answers vs a
@@ -131,26 +140,26 @@ remove-agent (generalize deleteApp). ~1 day. (Transport-agnostic — unchanged
 whichever bridge consumer we build.)
 [bridge] packages/agent-bridge daemon: WS consume + session map + spawn/
 collect + reply post; claude runtime template first, codex template stubbed;
-baseline contract only (MCP rich mode later). AGENTS.md integrator doc
-(APPS.md-style).
-[web] AI badge; "Invite an Agent" (admin menu, key shown once); member-list
-remove/regenerate. [macos] AI badge; member-list parity per current gaps.
-[ios] badge only (view work, rides phase 7 patterns).
+stream-json parsing for thinking-step status messages; the `flow` MCP server
+(send_message, react, upload_file, search_history) shipped in v1. AGENTS.md
+integrator doc (APPS.md-style).
+[web] 🤖 emoji on agent names; "Invite an Agent" (admin menu, key shown
+once); member-list remove/regenerate. [macos] 🤖 emoji parity.
+[ios] emoji only (view work, rides phase 7 patterns).
 QA: register a scratch agent against the local server, bridge running `claude
 -p` in a scratch repo; round-trip DM → working indicator → reply; thread
 continuity via --resume; badge render on both clients.
 
-## Pre-flight questions (operator)
+## Operator rulings (2026-07-20)
 
-1. Badge label: "AI" vs "AGENT"? And should app bots' existing rendering
-   adopt the same badge component ("APP") while we're in there?
-2. Event scope default: mentions+DMs only (recommended), full-channel opt-in
-   per agent config?
-3. Agent tokens: non-expiring until revoked (recommended, daemon-friendly) or
-   expiring with refresh?
-4. Does "Invite an Agent" live in the web-only admin surface like apps
-   (consistent), or also macOS?
-5. Progress mode default while the CLI works: typing-indicator only
-   (recommended) or posted progress messages?
-6. Baseline-only for v1 (final-text reply), or include the MCP rich-mode
-   `flow` server (multi-message, files, reactions) from the start?
+1. **Badge**: small robot emoji (🤖) next to agent display names — no text
+   badge component; app bots' rendering untouched.
+2. **Event scope default**: mentions + DMs only; full-channel traffic is a
+   per-agent config opt-in.
+3. **Agent tokens**: non-expiring until revoked (accepted recommendation).
+4. **Invite UI**: web-only admin surface, like Apps.
+5. **Progress mode**: tool calls surfaced automatically as a live
+   "thinking…" status message (edited in place, deleted on completion) —
+   operator upgraded from typing-only; typing indicator also runs.
+6. **Reply contract**: MCP rich mode ships in v1 alongside the baseline
+   final-text contract.

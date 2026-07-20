@@ -381,3 +381,19 @@ Implementation judgment calls (also pending review):
 - **webm plays inline on web only**: AVFoundation has no VP8/VP9/webm
   support, so macOS renders webm attachments as a file chip (Download/open
   externally). Deliberate divergence recorded in CHANGELOG Parity.
+
+## 2026-07-20 — AI Agents phase pre-flight (operator rulings)
+
+- **Agent badge is a small robot emoji (🤖)** next to the display name, not a
+  text badge; Slack-compat app bots' rendering is untouched.
+- **Bridge event scope defaults to mentions + DMs**; full-channel traffic is
+  per-agent config opt-in.
+- **Agent tokens are non-expiring until revoked** (daemon-friendly; sibling
+  of sessions, hash-stored, lastUsedAt tracked).
+- **"Invite an Agent" is web-only admin surface**, same pattern as Apps.
+- **Tool calls surface as a live "thinking…" step**: the bridge parses
+  stream-json, posts one status message on first tool use, edits it in place
+  per tool call, deletes it and posts the final reply fresh on completion.
+  (Operator upgraded from the recommended typing-indicator-only default.)
+- **MCP rich mode ships in v1** (`flow` MCP server: send_message, react,
+  upload_file, search_history) alongside the baseline final-text contract.
