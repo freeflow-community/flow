@@ -12,6 +12,13 @@ let package = Package(
             name: "Flow",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
+            ],
+            linkerSettings: [
+                // swift build autolinks the _AVKit_SwiftUI overlay but not
+                // AVKit.framework itself; without this, instantiating
+                // VideoPlayer aborts at runtime ("failed to demangle
+                // superclass of VideoPlayerView from 'So12AVPlayerViewC'").
+                .linkedFramework("AVKit"),
             ]
         ),
         .testTarget(

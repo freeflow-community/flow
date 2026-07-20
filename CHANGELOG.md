@@ -44,6 +44,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — macOS: fix crash on video playback (AVKit not linked)
+- Pressing play on a video attachment aborted the app: `swift build`
+  autolinks the `_AVKit_SwiftUI` overlay but not `AVKit.framework` itself, so
+  instantiating `VideoPlayer` died in the Swift runtime ("failed to demangle
+  superclass of VideoPlayerView"). Explicit `.linkedFramework("AVKit")` in
+  Package.swift; reproduced and verified fixed in an offscreen harness, and
+  `otool -L` now shows both AVKit and the overlay. `[macos]`
+
 ### 2026-07-20 — UI nits: video sharing with inline playback
 - `GET /v1/files/:id` now supports HTTP Range requests (`Accept-Ranges:
   bytes`, single-range 206s, 416 on unsatisfiable; multi-range served whole
