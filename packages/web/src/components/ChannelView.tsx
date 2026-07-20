@@ -4,9 +4,9 @@ import { useChannels, useMarkRead, useMemberMap, useMembers, useMessages, useNam
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import MessageList from './MessageList';
-import Composer from './Composer';
+import Composer, { arrowUpEdit } from './Composer';
 import NotificationsBell from './NotificationsBell';
-import { UserCard } from './modals';
+import { EditChannelModal, UserCard } from './modals';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -20,6 +20,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const markRead = useMarkRead();
   const lastReadRef = useRef<string | null>(null);
   const [cardUserId, setCardUserId] = useState<string | null>(null);
+  const [editChannel, setEditChannel] = useState(false);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
@@ -61,8 +62,16 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         <div className="min-w-0">
           <h2
             data-testid="channel-header"
-            className={`truncate text-[15px] font-bold ${dmOtherId ? 'cursor-pointer hover:underline' : ''}`}
-            onClick={dmOtherId ? () => setCardUserId(dmOtherId) : undefined}
+            className={`truncate text-[15px] font-bold ${dmOtherId || channel?.kind === 'standard' ? 'cursor-pointer hover:underline' : ''}`}
+            title={channel?.kind === 'standard' ? 'Edit name & topic' : undefined}
+            onClick={
+              dmOtherId
+                ? () => setCardUserId(dmOtherId)
+                // Clicking a standard channel's name opens the name/topic editor (ui_nits item 5).
+                : channel?.kind === 'standard'
+                  ? () => setEditChannel(true)
+                  : undefined
+            }
           >
             {channel?.kind === 'standard' ? <><span className="text-muted"># </span>{title}</> : title}
           </h2>
@@ -109,10 +118,15 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       {channel?.archivedAt ? (
         <p className="px-[22px] pb-[22px] text-sm text-muted">This channel is archived and read-only.</p>
       ) : (
-        <Composer channelId={channelId} placeholder={`Message ${channel?.kind === 'standard' ? `#${title}` : title}`} />
+        <Composer
+          channelId={channelId}
+          placeholder={`Message ${channel?.kind === 'standard' ? `#${title}` : title}`}
+          onArrowUpEdit={arrowUpEdit(messages, auth.user.id, sel.setEditingMessage)}
+        />
       )}
 
       {cardUserId && <UserCard userId={cardUserId} onClose={() => setCardUserId(null)} />}
+      {editChannel && channel && <EditChannelModal channel={channel} onClose={() => setEditChannel(false)} />}
     </section>
   );
 }

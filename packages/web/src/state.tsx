@@ -14,9 +14,12 @@ export interface Selection {
   workspaceId: string | null;
   channelId: string | null;
   threadRootId: string | null;
+  /** Message being edited inline (hover menu or composer ↑) — ui_nits item 4. */
+  editingMessageId: string | null;
   selectWorkspace(id: string | null): void;
   selectChannel(id: string | null): void;
   openThread(id: string | null): void;
+  setEditingMessage(id: string | null): void;
 }
 
 export interface LiveState {

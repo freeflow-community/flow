@@ -127,6 +127,7 @@ export default function Main() {
         break;
       }
       case 'channel.created':
+      case 'channel.updated':
       case 'channel.archived':
       case 'member.joined':
       case 'member.left':

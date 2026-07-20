@@ -28,6 +28,28 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — UI nits batch 2: bigger image previews, hover menu parity, edit/delete affordances, channel name+topic editing
+- Inline image previews render ~2x larger (web cap 288×240 → 576×480 CSS px;
+  macOS fit box 280×240 → 560×480). Server thumbs remain 512px max, so the
+  largest previews are soft on retina; thumb pipeline deliberately untouched.
+  `[web] [macos]`
+- macOS gained the web-style message hover menu (overlay card: react,
+  reply-in-thread, and edit/delete on own messages) alongside the existing
+  context menu. `[macos]`
+- Delete now asks for confirmation on both clients (web: small modal; macOS:
+  AX-accessible confirmationDialog, also used by the context-menu Delete);
+  web hover menu already had edit/delete. `[web] [macos]`
+- ↑ in an empty composer starts editing your last message when it is the
+  newest in the channel/thread (Slack semantics); Esc cancels. Message edit
+  state on web moved into the selection context so the composer can start a
+  row edit. `[web] [macos]`
+- Clicking a channel's header name opens a name+topic editor; the topic shows
+  as a sub-headline under the name (both clients already rendered it). New
+  `PATCH /v1/channels/:id` (any channel member; `''` clears the topic;
+  #general keeps its name; 409 on name collision) + `channel.updated` WS
+  fan-out. No migration — the topic column existed since 0000_init.
+  `[server] [web] [macos]`
+
 ### 2026-07-19 — macOS: configurable server URL (production support)
 - Server resolution: `FLOW_SERVER_URL` env → `FlowServerURL` Info.plist (set by
   make-app.sh, defaults to https://app.flowtoo.org) → local dev fallback

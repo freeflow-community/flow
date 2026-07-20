@@ -6,6 +6,7 @@ import { useAuth, useSelection } from '../state';
 import { useToggleReaction } from '../hooks';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
+import { Modal } from './modals';
 
 export default function MessageList({
   messages,
@@ -144,16 +145,24 @@ function MessageRow({
   const sel = useSelection();
   const toggle = useToggleReaction();
   const [showPicker, setShowPicker] = useState(false);
-  const [editing, setEditing] = useState(false);
+  // Editing state lives in the selection context so the composer's ↑-to-edit
+  // (ui_nits item 4) can start an edit on this row.
+  const editing = sel.editingMessageId === message.id;
   const [editText, setEditText] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const mine = message.userId === auth.user.id;
   const sender = names[message.userId] ?? 'Unknown';
   const member = membersById[message.userId];
 
+  useEffect(() => {
+    if (editing) setEditText(message.body);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+
   const saveEdit = async () => {
     const body = editText.trim();
     if (body) await api('PATCH', `/v1/messages/${message.id}`, { body });
-    setEditing(false);
+    sel.setEditingMessage(null);
   };
 
   return (
@@ -192,12 +201,12 @@ function MessageRow({
               onChange={(e) => setEditText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void saveEdit();
-                if (e.key === 'Escape') setEditing(false);
+                if (e.key === 'Escape') sel.setEditingMessage(null);
               }}
               autoFocus
             />
             <button className="text-sm font-semibold text-accent-soft" onClick={() => void saveEdit()}>Save</button>
-            <button className="text-sm text-muted" onClick={() => setEditing(false)}>Cancel</button>
+            <button className="text-sm text-muted" onClick={() => sel.setEditingMessage(null)}>Cancel</button>
           </div>
         ) : (
           <>
@@ -287,22 +296,44 @@ function MessageRow({
           {mine && (
             <>
               <button
+                data-testid={`edit-message-${message.id}`}
                 className="px-1 text-sm hover:bg-daypill"
                 title="Edit"
-                onClick={() => { setEditText(message.body); setEditing(true); }}
+                onClick={() => sel.setEditingMessage(message.id)}
               >
                 ✏️
               </button>
               <button
+                data-testid={`delete-message-${message.id}`}
                 className="px-1 text-sm hover:bg-daypill"
                 title="Delete"
-                onClick={() => void api('DELETE', `/v1/messages/${message.id}`)}
+                onClick={() => setConfirmDelete(true)}
               >
                 🗑
               </button>
             </>
           )}
         </div>
+      )}
+
+      {confirmDelete && (
+        <Modal onClose={() => setConfirmDelete(false)} testid="delete-confirm-modal">
+          <h3 className="mb-2 font-bold">Delete message?</h3>
+          <p className="mb-3 text-sm text-muted">This can't be undone.</p>
+          <div className="flex justify-end gap-2">
+            <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={() => setConfirmDelete(false)}>Cancel</button>
+            <button
+              data-testid="delete-confirm"
+              className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white"
+              onClick={() => {
+                setConfirmDelete(false);
+                void api('DELETE', `/v1/messages/${message.id}`);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </Modal>
       )}
 
       {showPicker && (
@@ -434,7 +465,10 @@ function ImageAttachment({ file }: { file: FileDTO }) {
       {!collapsed && (
         <div className="group/att relative mt-0.5 w-fit">
           <button data-testid={`file-${file.name}`} className="block" onClick={() => setLightbox(true)} title={file.name}>
-            <AuthImg path={imgPath} alt={file.name} className="max-h-60 max-w-72 rounded-lg border border-hairline" />
+            {/* ~2x preview (ui_nits item 1). Thumbs cap at 512px, so an img
+                never stretches past its intrinsic size — large images land at
+                512 CSS px (soft on retina; noted at review). */}
+            <AuthImg path={imgPath} alt={file.name} className="max-h-[480px] max-w-[576px] rounded-lg border border-hairline" />
           </button>
           <DownloadHoverButton file={file} onDownload={download} />
         </div>

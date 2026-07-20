@@ -321,6 +321,22 @@ actor SyncEngine {
         return ch
     }
 
+    /// Rename / set topic (ui_nits item 5; any channel member, server-enforced).
+    /// Only name/topic are written locally — the response DTO carries default
+    /// unread/notify fields that must not clobber the cached row.
+    func updateChannel(channelId: String, name: String?, topic: String?) async throws {
+        let ch: Channel = try await api.patch(
+            "/v1/channels/\(channelId)",
+            body: UpdateChannelBody(name: name, topic: topic)
+        )
+        try? await db.writer.write { db in
+            try db.execute(
+                sql: "UPDATE channel SET name = ?, topic = ? WHERE id = ?",
+                arguments: [ch.name, ch.topic, ch.id]
+            )
+        }
+    }
+
     func joinChannel(_ channelId: String) async throws -> Channel {
         let ch: Channel = try await api.post("/v1/channels/\(channelId)/join")
         try? await db.writer.write { db in try ch.save(db) }
@@ -854,6 +870,14 @@ actor SyncEngine {
                     await appState?.channelBecameUnavailable(chId)
                 }
                 await refreshChannels(workspaceId: event.workspaceId)
+            }
+
+        case .channelUpdated(let ch):
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE channel SET name = ?, topic = ? WHERE id = ?",
+                    arguments: [ch.name, ch.topic, ch.id]
+                )
             }
 
         case .channelArchived(let ch):

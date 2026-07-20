@@ -342,6 +342,44 @@ export async function removeMember(channelId: string, actorId: string, targetUse
   }
 }
 
+/**
+ * Rename / set topic (ui_nits item 5). Any channel member may edit — matches
+ * Slack's default and the codebase's permissive rule for non-destructive ops
+ * (decision_log 2026-07-19). Empty topic clears it; #general keeps its name.
+ */
+export async function updateChannel(
+  channelId: string,
+  actorId: string,
+  patch: { name?: string | undefined; topic?: string | undefined },
+): Promise<ChannelDTO> {
+  const { chan, isMember } = await requireChannelAccess(channelId, actorId);
+  if (chan.kind !== 'standard') throw badRequest('dm_channel', 'DMs have no name or topic');
+  if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
+  if (!isMember) throw forbidden('join the channel first');
+  if (patch.name !== undefined && chan.name === 'general' && patch.name !== 'general') {
+    throw badRequest('general_channel', 'cannot rename #general');
+  }
+  const set: { name?: string; topic?: string | null } = {};
+  if (patch.name !== undefined) set.name = patch.name;
+  if (patch.topic !== undefined) set.topic = patch.topic === '' ? null : patch.topic;
+  let updated: ChannelRow;
+  try {
+    updated = (await db.update(channels).set(set).where(eq(channels.id, channelId)).returning())[0]!;
+  } catch (err: unknown) {
+    if (isUniqueViolation(err)) throw conflict('channel_exists', 'a channel with this name already exists');
+    throw err;
+  }
+  const dto = toChannelDTO(updated, { isMember });
+  publishEvent(subjectMeta(chan.workspaceId), {
+    type: 'channel.updated',
+    workspaceId: chan.workspaceId,
+    channelId,
+    ts: new Date().toISOString(),
+    data: dto,
+  });
+  return dto;
+}
+
 /** Archive (phase2.md §5): workspace admin/owner or the channel creator. Read-only afterwards. */
 export async function archiveChannel(channelId: string, actorId: string): Promise<ChannelDTO> {
   const { chan, isMember } = await requireChannelAccess(channelId, actorId);

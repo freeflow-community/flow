@@ -9,6 +9,7 @@ export type EventType =
   | 'typing'
   | 'presence'
   | 'channel.created'
+  | 'channel.updated' // rename / topic change (ui_nits item 5)
   | 'channel.archived'
   | 'member.joined'
   | 'member.left'
@@ -52,6 +53,7 @@ export interface MemberLeftData {
 
 export type MessageEventData = MessageDTO;
 export type ChannelCreatedData = ChannelDTO;
+export type ChannelUpdatedData = ChannelDTO;
 export type ChannelArchivedData = ChannelDTO;
 export type MemberJoinedData = WorkspaceMemberDTO;
 export type NotificationCreatedData = NotificationDTO;

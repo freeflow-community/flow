@@ -81,6 +81,51 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
   );
 }
 
+/** Edit a standard channel's name + topic (ui_nits item 5); any member. */
+export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState(channel.name ?? '');
+  const [topic, setTopic] = useState(channel.topic ?? '');
+  const [error, setError] = useState<string | null>(null);
+  const isGeneral = channel.name === 'general';
+
+  const save = async () => {
+    try {
+      await api('PATCH', `/v1/channels/${channel.id}`, {
+        ...(isGeneral ? {} : { name: name.toLowerCase().replaceAll(' ', '-') }),
+        topic, // '' clears
+      });
+      await qc.invalidateQueries({ queryKey: ['channels', channel.workspaceId] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="edit-channel-modal">
+      <h3 className="mb-3 font-bold">Channel settings</h3>
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Name</label>
+      <input data-testid="edit-channel-name" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm disabled:opacity-60"
+        placeholder="name (lowercase, a-z 0-9 - _)" value={name} disabled={isGeneral}
+        title={isGeneral ? '#general cannot be renamed' : undefined}
+        onChange={(e) => setName(e.target.value)} autoFocus={!isGeneral} />
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Topic</label>
+      <input data-testid="edit-channel-topic" className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
+        placeholder="What's this channel about?" value={topic} maxLength={250}
+        onChange={(e) => setTopic(e.target.value)} autoFocus={isGeneral}
+        onKeyDown={(e) => { if (e.key === 'Enter') void save(); }} />
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
+        <button data-testid="edit-channel-save"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={!isGeneral && !name.trim()} onClick={() => void save()}>Save</button>
+      </div>
+    </Modal>
+  );
+}
+
 export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const [email, setEmail] = useState('');
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);

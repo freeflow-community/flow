@@ -125,6 +125,7 @@ struct MessageRow: View {
     @EnvironmentObject private var app: AppState
     @State private var hovering = false
     @State private var showReactionPicker = false
+    @State private var showDeleteConfirm = false
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
@@ -216,27 +217,6 @@ struct MessageRow: View {
                 }
             }
             Spacer(minLength: 0)
-
-            // The button must stay mounted while the picker is open: it is the
-            // popover's anchor, and moving the mouse toward the popover leaves
-            // the row (hovering -> false) — unmounting the anchor would tear
-            // the popover down (operator-reported bug at the item-6 checkpoint).
-            if hovering || showReactionPicker, !message.isDeleted, !message.pending {
-                Button {
-                    showReactionPicker = true
-                } label: {
-                    Image(systemName: "face.smiling")
-                }
-                .buttonStyle(.borderless)
-                .help("Add reaction")
-                .accessibilityIdentifier("msg.addReaction")
-                .popover(isPresented: $showReactionPicker) {
-                    EmojiPickerView { emoji in
-                        showReactionPicker = false
-                        Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
-                    }
-                }
-            }
         }
         .padding(.horizontal, 22)
         .padding(.top, showHeader ? 10 : 1)
@@ -244,6 +224,29 @@ struct MessageRow: View {
         .opacity(message.pending ? 0.55 : 1)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        // Hover menu (web parity, ui_nits items 2+3): react / reply-in-thread,
+        // plus edit + delete on the author's own messages. The menu must stay
+        // mounted while the picker is open: the react button is the popover's
+        // anchor, and moving the mouse toward the popover leaves the row
+        // (hovering -> false) — unmounting the anchor would tear the popover
+        // down (operator-reported bug at the item-6 checkpoint).
+        .overlay(alignment: .topTrailing) {
+            if hovering || showReactionPicker || showDeleteConfirm,
+               !message.isDeleted, !message.pending {
+                hoverMenu
+                    .padding(.trailing, 22)
+            }
+        }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { onDelete(message) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can't be undone.")
+        }
         .contextMenu {
             if !message.isDeleted, !message.pending {
                 ForEach(Array(EmojiCatalog.quickReactions.prefix(6)), id: \.self) { emoji in
@@ -260,9 +263,65 @@ struct MessageRow: View {
             }
             if isMine, !message.isDeleted, !message.pending {
                 Button("Edit…") { onEdit(message) }
-                Button("Delete", role: .destructive) { onDelete(message) }
+                Button("Delete", role: .destructive) { showDeleteConfirm = true }
             }
         }
+    }
+
+    /// Web-parity hover menu card: white pill with hairline border, one
+    /// borderless icon button per action (design 3a tokens).
+    private var hoverMenu: some View {
+        HStack(spacing: 2) {
+            Button {
+                showReactionPicker = true
+            } label: {
+                Image(systemName: "face.smiling")
+            }
+            .help("Add reaction")
+            .accessibilityIdentifier("msg.addReaction")
+            .popover(isPresented: $showReactionPicker) {
+                EmojiPickerView { emoji in
+                    showReactionPicker = false
+                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                }
+            }
+            if showThreadAffordances {
+                Button {
+                    onOpenThread(message.threadRootId ?? message.id)
+                } label: {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                }
+                .help("Reply in thread")
+                .accessibilityIdentifier("msg.replyInThread")
+            }
+            if isMine {
+                Button {
+                    onEdit(message)
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .help("Edit")
+                .accessibilityIdentifier("msg.edit")
+                Button {
+                    showDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .help("Delete")
+                .accessibilityIdentifier("msg.delete")
+            }
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: 12))
+        .foregroundStyle(MC.inkSoft)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.white)
+                .shadow(color: MC.ink.opacity(0.08), radius: 2, y: 1)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
     }
 
     // MARK: - Body blocks (phase-3.5 ruling 2)
@@ -485,11 +544,13 @@ struct AttachmentView: View {
         }
     }
 
+    /// ~2x preview (ui_nits item 1). Thumbs cap at 512px (server thumbMaxPx),
+    /// so large images render upscaled/soft here — noted at review.
     private var displaySize: CGSize {
         guard let w = file.width, let h = file.height, w > 0, h > 0 else {
-            return CGSize(width: 240, height: 180)
+            return CGSize(width: 480, height: 360)
         }
-        let scale = min(1, 280 / CGFloat(w), 240 / CGFloat(h))
+        let scale = min(1, 560 / CGFloat(w), 480 / CGFloat(h))
         return CGSize(width: max(60, CGFloat(w) * scale), height: max(60, CGFloat(h) * scale))
     }
 

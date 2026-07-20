@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { FileDTO } from '@flow/shared';
+import type { FileDTO, MessageDTO } from '@flow/shared';
 import { emojiMatches } from '@flow/shared';
 import { uploadFile } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
@@ -13,10 +13,14 @@ export default function Composer({
   channelId,
   threadRootId,
   placeholder,
+  onArrowUpEdit,
 }: {
   channelId: string;
   threadRootId?: string;
   placeholder: string;
+  /** ↑ in an empty composer starts editing the caller's last message when it
+   * is the newest in this channel/thread (ui_nits item 4, Slack semantics). */
+  onArrowUpEdit?: (() => void) | undefined;
 }) {
   const sel = useSelection();
   const live = useLive();
@@ -247,6 +251,11 @@ export default function Composer({
         return;
       }
     }
+    if (e.key === 'ArrowUp' && !text && onArrowUpEdit) {
+      e.preventDefault();
+      onArrowUpEdit();
+      return;
+    }
     if (e.key === 'Escape' || e.key === 'Backspace') {
       if (removeEmptyFenceBlock()) {
         e.preventDefault();
@@ -424,6 +433,18 @@ export default function Composer({
       )}
     </div>
   );
+}
+
+/** onArrowUpEdit builder (ui_nits item 4): defined only when the caller's own
+ * message is the newest in the list — Slack semantics. */
+export function arrowUpEdit(
+  messages: MessageDTO[],
+  userId: string,
+  setEditingMessage: (id: string | null) => void,
+): (() => void) | undefined {
+  const last = messages[messages.length - 1];
+  if (!last || last.userId !== userId || last.deletedAt) return undefined;
+  return () => setEditingMessage(last.id);
 }
 
 function trailingToken(text: string): string | null {

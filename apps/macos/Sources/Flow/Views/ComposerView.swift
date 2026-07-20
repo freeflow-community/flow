@@ -7,6 +7,10 @@ struct ComposerView: View {
     let workspaceId: String?
     let threadRootId: String?
     let placeholder: String
+    /// ↑ in an empty composer: start editing the caller's last message when it
+    /// is the newest here (ui_nits item 4, Slack semantics). Return true when
+    /// an edit was started (consumes the key).
+    var onEditLast: (() -> Bool)? = nil
 
     @EnvironmentObject private var app: AppState
     @State private var text = ""
@@ -231,6 +235,11 @@ struct ComposerView: View {
     /// Key routing while the suggestion list is visible (from the text view's
     /// doCommandBy hook). Return true = consumed.
     private func handleCommand(_ selector: Selector) -> Bool {
+        // ↑ in an empty composer edits the last message (ui_nits item 4);
+        // an empty draft can't have an autocomplete token, so no conflict.
+        if selector == #selector(NSResponder.moveUp(_:)), text.isEmpty, let onEditLast {
+            return onEditLast()
+        }
         guard let s = autocomplete, !s.items.isEmpty else { return false }
         switch selector {
         case #selector(NSResponder.moveDown(_:)):

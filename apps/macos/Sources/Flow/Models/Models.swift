@@ -359,6 +359,11 @@ struct CreateChannelBody: Encodable, Sendable {
     let topic: String?
     let isPrivate: Bool
 }
+/// PATCH /v1/channels/:id — nil field = unchanged; empty topic clears it.
+struct UpdateChannelBody: Encodable, Sendable {
+    let name: String?
+    let topic: String?
+}
 struct CreateInviteBody: Encodable, Sendable { let email: String }
 struct AcceptInviteBody: Encodable, Sendable { let token: String }
 struct SendMessageBody: Encodable, Sendable {
@@ -433,6 +438,7 @@ enum EventPayload: Sendable {
     case typing(TypingData)
     case presence(PresenceData)
     case channel(Channel)
+    case channelUpdated(Channel)
     case channelArchived(Channel)
     case memberJoined(MemberJoinedData)
     case memberLeft(MemberJoinedData)
@@ -467,6 +473,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .presence(try c.decode(PresenceData.self, forKey: .data))
         case "channel.created":
             payload = .channel(try c.decode(Channel.self, forKey: .data))
+        case "channel.updated":
+            payload = .channelUpdated(try c.decode(Channel.self, forKey: .data))
         case "channel.archived":
             payload = .channelArchived(try c.decode(Channel.self, forKey: .data))
         case "member.joined":

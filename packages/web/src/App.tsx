@@ -31,6 +31,7 @@ export default function App() {
   );
   const [channelId, setChannelId] = useState<string | null>(null);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -78,18 +79,22 @@ export default function App() {
           workspaceId,
           channelId,
           threadRootId,
+          editingMessageId,
           selectWorkspace: (id) => {
             setWorkspaceId(id);
             if (id) localStorage.setItem(ACTIVE_WS_KEY, id);
             else localStorage.removeItem(ACTIVE_WS_KEY);
             setChannelId(null);
             setThreadRootId(null);
+            setEditingMessageId(null);
           },
           selectChannel: (id) => {
             setChannelId(id);
             setThreadRootId(null);
+            setEditingMessageId(null);
           },
           openThread: setThreadRootId,
+          setEditingMessage: setEditingMessageId,
         }}
       >
         {workspaceId ? <Main /> : <WorkspaceChooser />}

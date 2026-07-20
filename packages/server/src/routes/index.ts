@@ -25,6 +25,7 @@ import {
   SendMessageBody,
   SetNotifyLevelBody,
   UpdateAppBody,
+  UpdateChannelBody,
   UpdateWorkspaceBody,
   type UserDTO,
 } from '@flow/shared';
@@ -270,6 +271,13 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/channels/:id/join', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return ch.joinChannel(id, req.user.id);
+  });
+
+  // rename / topic (ui_nits item 5): any channel member
+  app.patch('/v1/channels/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(UpdateChannelBody, req.body);
+    return ch.updateChannel(id, req.user.id, { name: body.name, topic: body.topic });
   });
 
   // ---- channel membership management (phase2.md §5) ------------

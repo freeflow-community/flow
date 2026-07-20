@@ -81,6 +81,16 @@ export const CreateChannelBody = z.object({
 });
 export type CreateChannelBody = z.infer<typeof CreateChannelBody>;
 
+/** PATCH /v1/channels/:id — rename and/or set topic (standard channels only;
+ * any channel member, see decision_log 2026-07-19). Empty topic clears it. */
+export const UpdateChannelBody = z
+  .object({
+    name: z.string().regex(CHANNEL_NAME_RE, 'channel name must be lowercase [a-z0-9-_], max 80 chars').optional(),
+    topic: z.string().max(250).optional(),
+  })
+  .refine((b) => b.name !== undefined || b.topic !== undefined, 'nothing to update');
+export type UpdateChannelBody = z.infer<typeof UpdateChannelBody>;
+
 /** POST /v1/workspaces/:id/dms — the caller is implicitly included; 1 other user = dm, more = group_dm. */
 export const CreateDmBody = z.object({
   userIds: z.array(z.string().uuid()).min(1).max(8), // + caller → max 9 members, Slack's group-DM cap

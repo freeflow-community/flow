@@ -1,5 +1,16 @@
 # Decision log
 
+## 2026-07-19 — Channel rename/topic permission: any channel member
+
+`PATCH /v1/channels/:id` (ui_nits item 5) needed a permission rule and none
+existed to copy — the codebase had no rename endpoint. Ruled **any channel
+member** may edit name/topic: it matches Slack's default and the codebase's
+permissive pattern for non-destructive ops (any workspace member creates
+channels, any member adds people to public channels), while destructive ops
+(archive, remove-member) stay owner/admin/creator. Guards: standard channels
+only, not archived, #general cannot be renamed (its topic can change),
+name collisions 409.
+
 ## 2026-07-19 — Email-first registration (operator ruling)
 
 Registration collects **only an email**; name + password are set on the emailed

@@ -85,7 +85,8 @@ struct ThreadPanelView: View {
                     channelId: root.channelId,
                     workspaceId: workspaceId.value,
                     threadRootId: rootId,
-                    placeholder: "Reply in thread"
+                    placeholder: "Reply in thread",
+                    onEditLast: { startEditingLastMessage() }
                 )
             }
         }
@@ -118,5 +119,14 @@ struct ThreadPanelView: View {
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }
+    }
+
+    /// ↑-to-edit (ui_nits item 4): only when my message is the newest in the thread.
+    private func startEditingLastMessage() -> Bool {
+        guard let last = thread.value.last,
+              last.userId == app.currentUser?.id,
+              !last.isDeleted, !last.pending else { return false }
+        editingMessage = last
+        return true
     }
 }

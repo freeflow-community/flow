@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
-import { useSelection } from '../state';
+import { useAuth, useSelection } from '../state';
 import { useNameMap, useThread } from '../hooks';
 import MessageList from './MessageList';
-import Composer from './Composer';
+import Composer, { arrowUpEdit } from './Composer';
 
 // Thread panel width (phase 5 item 6): local per-device preference, like the sidebar.
 const WIDTH_KEY = 'flow.threadWidth';
@@ -14,6 +14,7 @@ function storedWidth(): number {
 }
 
 export default function ThreadPanel({ rootId }: { rootId: string }) {
+  const auth = useAuth();
   const sel = useSelection();
   const thread = useThread(rootId);
   const names = useNameMap(sel.workspaceId);
@@ -77,7 +78,12 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
         showThreadAffordances={false}
       />
       {channelId && (
-        <Composer channelId={channelId} threadRootId={rootId} placeholder="Reply in thread" />
+        <Composer
+          channelId={channelId}
+          threadRootId={rootId}
+          placeholder="Reply in thread"
+          onArrowUpEdit={arrowUpEdit(messages, auth.user.id, sel.setEditingMessage)}
+        />
       )}
     </aside>
   );

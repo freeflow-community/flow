@@ -12,6 +12,7 @@ struct ChannelView: View {
     @StateObject private var memberIds = DBObserved<[String]>(initial: [])
     @State private var editingMessage: Message?
     @State private var profileUserId: String?
+    @State private var showChannelEdit = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,7 +52,8 @@ struct ChannelView: View {
                     channelId: channelId,
                     workspaceId: channel.value?.workspaceId,
                     threadRootId: nil,
-                    placeholder: "Message \(headerTitle)"
+                    placeholder: "Message \(headerTitle)",
+                    onEditLast: { startEditingLastMessage() }
                 )
             }
         }
@@ -99,6 +101,20 @@ struct ChannelView: View {
         )) { target in
             MemberProfileSheet(userId: target.userId)
         }
+        .sheet(isPresented: $showChannelEdit) {
+            if let c = channel.value {
+                ChannelEditSheet(channel: c)
+            }
+        }
+    }
+
+    /// ↑-to-edit (ui_nits item 4): only when my message is the newest.
+    private func startEditingLastMessage() -> Bool {
+        guard let last = messages.value.last,
+              last.userId == app.currentUser?.id,
+              !last.isDeleted, !last.pending else { return false }
+        editingMessage = last
+        return true
     }
 
     /// The non-me member of a 1:1 DM (falls back to me for a self-DM).
@@ -135,10 +151,22 @@ struct ChannelView: View {
                         }
                         .buttonStyle(.plain)
                         .help("View profile")
+                    } else if channel.value?.kind == "standard" {
+                        // Clicking a channel's name opens the name/topic editor
+                        // (ui_nits item 5).
+                        Button {
+                            showChannelEdit = true
+                        } label: {
+                            Text(channel.value?.name ?? "")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(MC.ink)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Edit name & topic")
+                        .accessibilityIdentifier("channel.editHeader")
                     } else {
-                        Text(channel.value?.isDM == true
-                             ? headerTitle
-                             : (channel.value?.name ?? ""))
+                        Text(headerTitle)
                             .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(MC.ink)
                     }
@@ -246,6 +274,7 @@ struct EditMessageSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction) // Esc cancels (ui_nits item 4)
                 Button("Save") {
                     Task { await app.engine.editMessage(id: message.id, body: text) }
                     dismiss()
@@ -256,5 +285,78 @@ struct EditMessageSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+    }
+}
+
+/// Edit a standard channel's name + topic (ui_nits item 5); any member.
+/// Empty topic clears the sub-headline; #general keeps its name.
+struct ChannelEditSheet: View {
+    let channel: Channel
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var topic: String
+    @State private var error: String?
+    @State private var saving = false
+
+    init(channel: Channel) {
+        self.channel = channel
+        _name = State(initialValue: channel.name ?? "")
+        _topic = State(initialValue: channel.topic ?? "")
+    }
+
+    private var isGeneral: Bool { channel.name == "general" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Channel settings").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name").font(.caption).foregroundStyle(.secondary)
+                TextField("name (lowercase, a-z 0-9 - _)", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isGeneral)
+                    .help(isGeneral ? "#general cannot be renamed" : "")
+                    .accessibilityIdentifier("channel.edit.name")
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Topic").font(.caption).foregroundStyle(.secondary)
+                TextField("What's this channel about?", text: $topic)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("channel.edit.topic")
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(saving || (!isGeneral && name.trimmingCharacters(in: .whitespaces).isEmpty))
+                    .accessibilityIdentifier("channel.edit.save")
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private func save() {
+        saving = true
+        let newName = name.lowercased().replacingOccurrences(of: " ", with: "-")
+        Task {
+            defer { saving = false }
+            do {
+                try await app.engine.updateChannel(
+                    channelId: channel.id,
+                    name: isGeneral ? nil : newName,
+                    topic: topic // "" clears
+                )
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 }
