@@ -22,6 +22,7 @@ struct ComposerView: View {
     @State private var uploading = 0
     @State private var showPhotoPicker = false
     @State private var showFilePicker = false
+    @State private var showCamera = false
     @State private var photoSelection: [PhotosPickerItem] = []
 
     var body: some View {
@@ -38,6 +39,13 @@ struct ComposerView: View {
                         showPhotoPicker = true
                     } label: {
                         Label("Photo Library", systemImage: "photo.on.rectangle")
+                    }
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        Button {
+                            showCamera = true
+                        } label: {
+                            Label("Camera", systemImage: "camera")
+                        }
                     }
                     Button {
                         showFilePicker = true
@@ -75,6 +83,12 @@ struct ComposerView: View {
             .padding(.vertical, 8)
         }
         .background(MC.base)
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { image in
+                uploadCameraShot(image)
+            }
+            .ignoresSafeArea()
+        }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoSelection, maxSelectionCount: 10, matching: .images)
         .onChange(of: photoSelection) { _, items in
             guard !items.isEmpty else { return }
@@ -166,6 +180,23 @@ struct ComposerView: View {
                 }
                 await upload(url)
             }
+        }
+    }
+
+    /// Camera capture (stretch goal): JPEG-encode and upload like a photo pick.
+    private func uploadCameraShot(_ image: UIImage) {
+        uploading += 1
+        Task {
+            defer { uploading -= 1 }
+            guard let jpeg = image.jpegData(compressionQuality: 0.9) else {
+                app.showError("Couldn't encode the captured photo")
+                return
+            }
+            let epochMs = Int(Date().timeIntervalSince1970 * 1000)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("camera-\(epochMs).jpg")
+            try? jpeg.write(to: url)
+            await upload(url)
         }
     }
 
@@ -359,6 +390,43 @@ struct ComposerView: View {
 private struct MemberRow: Decodable, FetchableRecord, Equatable, Sendable {
     var userId: String
     var displayName: String
+}
+
+/// Camera capture via UIImagePickerController (only offered when a camera
+/// exists — the menu hides it on simulators/devices without one).
+private struct CameraPicker: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraPicker
+        init(_ parent: CameraPicker) { self.parent = parent }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
 }
 
 /// Typing indicator row (same 5s expiry semantics as web/macOS — the shared
