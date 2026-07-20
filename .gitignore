@@ -11,3 +11,4 @@ packages/server/.keys/
 DerivedData/
 *.xcuserstate
 xcuserdata/
+.claude/worktrees/
