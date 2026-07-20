@@ -37,6 +37,18 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+
+  // A stray unhandled rejection (e.g. from a socket/outbox delivery path)
+  // must not silently cycle the container — log the full stack and keep
+  // serving. An uncaught exception is less safe to swallow: log and let the
+  // process exit so Railway restarts it cleanly (restart policy ON_FAILURE).
+  process.on('unhandledRejection', (reason) => {
+    app.log.error({ err: reason }, 'unhandledRejection (kept alive)');
+  });
+  process.on('uncaughtException', (err) => {
+    app.log.error({ err }, 'uncaughtException (exiting for restart)');
+    process.exit(1);
+  });
 }
 
 main().catch((err) => {
