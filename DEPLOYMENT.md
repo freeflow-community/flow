@@ -16,8 +16,14 @@ Railway project "flow"  (36e91a36-9fa2-4881-9988-d81e45c16d6e)
   │           volume "app-volume" mounted at /data (encrypted file blobs)
   ├─ nats  — nats:2.10-alpine, private-network only (nats.railway.internal)
   │
-  ├──────► Neon Postgres 17 — project "flow" (weathered-mountain-27798470,
-  │          aws-us-east-2), messages AES-256-GCM-encrypted at rest
+  ├──────► Neon Postgres 17 — project "flow-usw" (winter-water-17964134,
+  │          aws-us-west-2, direct endpoint ep-lingering-night-afa8f8k5 — not
+  │          -pooler), messages AES-256-GCM-encrypted at rest.
+  │          Migrated 2026-07-20 from "flow" (weathered-mountain-27798470,
+  │          aws-us-east-2): the app runs in Railway sfo, and the cross-country
+  │          DB cost ~90ms per query (~1s per message send); us-west-2 halves
+  │          it to ~45ms, the practical floor for sfo↔Oregon. Old project kept
+  │          as a fallback snapshot — delete after a few days of green.
   └──────► Cloudflare Email Service — transactional sends from
              noreply@mail.flowtoo.org (signup, reset, account notes)
 ```
