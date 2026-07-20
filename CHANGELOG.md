@@ -17,10 +17,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   (macOS profiles handle multi-account). Candidate phase-3-adjacent fix.
 - macOS: workspace-chooser tiles ignore AX activation (real click required) — a11y gap.
 - No syntax highlighting in code blocks (both clients; never scoped).
-- iOS: no file attachments yet (rendering + upload — phase 7 tier 2 in
-  progress) and no push notifications (deferred to a follow-on phase). Core
-  messaging (threads, reactions, typing, rich markdown, message actions) now
-  at parity.
+- iOS: no push notifications (APNs — deferred to a follow-on phase; needs
+  server device-token registry + Apple push key + device testing). Everything
+  else in core messaging + files is now at parity.
 - macOS has no in-app registration, password-reset, or passwordless sign-in
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
@@ -38,6 +37,24 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   image collapsed/expanded state (ruled).
 
 ## History
+
+### 2026-07-20 — iOS files + unread polish, tiers 2–3 (phase 7)
+- Attachment rendering in chat: image thumbnails with full-screen lightbox
+  (original bytes + share sheet), animated GIFs (new ImageIO-backed
+  AnimatedAuthImage), and name+size chips for every other type that open in
+  QuickLook (text/PDF/media, share built in) — iOS-native equivalent of the
+  phase-6 preview cards. `[ios]`
+- Composer uploads: attach menu with PhotosPicker (multi-select; HEIC
+  re-encoded to JPEG so server thumbnailing works), Files document picker
+  (security-scoped copies), and Camera capture (stretch goal; hidden where no
+  camera exists) — all through the existing engine.uploadFile pipeline, with
+  a thumbnail/chip attachment bar + uploading state, sending fileIds like
+  macOS. `[ios]`
+- Unread polish: real app-icon badge (UNUserNotificationCenter badge count)
+  for unread notifications, matching macOS dock-badge semantics; badge
+  permission requested on sign-in, auto-skipped in DEBUG QA runs. `[ios]`
+- Headless QA hooks for the upload pipeline: FLOW_DEBUG_UPLOAD /
+  FLOW_DEBUG_UPLOAD_SEND. `[qa]`
 
 ### 2026-07-20 — iOS messaging parity, tier 1 (phase 7)
 - Rich markdown message rendering: shared MarkdownBlocks segmentation

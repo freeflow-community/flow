@@ -338,3 +338,22 @@ Implementation judgment calls (also pending review):
   emoji as tofu (missing Apple Color Emoji in screenshots) — chips, counts,
   and highlights verified; glyph rendering itself needs a device/runtime
   spot-check. Not an app bug.
+
+### Phase 7 tier 2–3 addenda (same day) — PM rulings, pending operator review
+
+- **Camera stretch goal reached**: added as a third attach-menu item
+  (UIImagePickerController → JPEG → shared upload pipeline), hidden on
+  hardware without a camera. Simulator cannot exercise capture — device
+  spot-check needed.
+- **iOS local banner notifications stay no-ops** until the push phase: the
+  socket is suspended in the background (no events to bannerize), and
+  foreground banners would double-notify the visible app. The app-icon badge
+  IS live (unread notification count, macOS dock-badge parity).
+- **Badge permission prompt skipped in DEBUG runs with FLOW_DEBUG_* set** so
+  the un-tappable system alert can never wedge headless simulator QA.
+- **HEIC photo picks are re-encoded to JPEG** before upload so the server's
+  thumbnail pipeline (webp thumbs) works; PNG/JPEG/GIF/WebP upload as
+  original bytes.
+- **Mark-read on scroll** judged already-covered: the shared engine marks
+  read on channel open and while the channel is active (same semantics as
+  macOS) — no extra scroll-position tracking added.
