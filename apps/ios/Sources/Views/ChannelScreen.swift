@@ -51,6 +51,7 @@ struct ChannelScreen: View {
                     Task { await app.engine.deleteMessage(id: msg.id) }
                 }
             )
+            TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayName })
             Divider()
             ComposerView(channelId: channelId)
         }
