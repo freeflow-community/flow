@@ -38,6 +38,20 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — UI nits: app tokens viewable in Manage Apps
+- Bot/app-level tokens are now viewable after creation: raw tokens stored
+  alongside their auth hashes (migration 0011; PM ruling pending operator
+  review — auth still verifies hashes only, and the DB already held the
+  signing secret in plaintext). `GET /v1/apps/:id/credentials` (owner/admin)
+  + `POST /v1/apps/:id/credentials/rotate` (regenerates both tokens, old
+  ones stop authenticating). `[server]`
+- Apps modal Configure section grows a Credentials block: bot token,
+  app-level token, and signing secret in monospace with copy buttons
+  (creation-reveal styling). Apps created before the migration show
+  "created before token visibility — regenerate to view" with a
+  confirm-guarded Regenerate button. App management stays web-only
+  (existing ruled divergence). `[web]`
+
 ### 2026-07-20 — UI nits: thread-replies hover cursor
 - Hovering the thread replies pill (avatars + "N replies") now shows the
   pointer/hand cursor: web adds cursor-pointer (Tailwind v4 preflight keeps

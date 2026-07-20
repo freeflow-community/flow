@@ -1,7 +1,8 @@
 // Phase 4 §1: app management (admin-only, web client per ruling 1).
-// Register Slack-compat apps, show the one-time bot token, configure the
-// outgoing Events API subscription, and disable/enable apps.
-import { useState } from 'react';
+// Register Slack-compat apps, show the bot token, configure the outgoing
+// Events API subscription, and disable/enable apps. Tokens stay viewable in
+// Configure (ui_nits) — apps predating token visibility offer Regenerate.
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { APP_EVENT_TYPES } from '@flow/shared';
 import type { AppDTO } from '@flow/shared';
@@ -157,6 +158,49 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
   );
 }
 
+type AppCredentials = { botToken: string | null; appToken: string | null; signingSecret: string };
+
+/** Monospace value + copy button, matching the one-time creation reveal. */
+function CredentialRow({
+  app,
+  label,
+  testid,
+  value,
+}: {
+  app: AppDTO;
+  label: string;
+  testid: string;
+  value: string | null;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (value === null) return null; // pre-visibility apps: covered by the regenerate note
+  return (
+    <div className="mb-1.5">
+      <p className="mb-0.5 text-xs font-semibold">{label}</p>
+      <div className="flex items-start gap-2">
+        <code
+          data-testid={`app-cred-${testid}-${app.name}`}
+          className="block grow rounded bg-daypill p-2 text-xs break-all select-all"
+        >
+          {value}
+        </code>
+        <button
+          data-testid={`app-cred-${testid}-copy-${app.name}`}
+          className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+          onClick={() => {
+            void navigator.clipboard.writeText(value).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            );
+          }}
+        >
+          {copied ? 'Copied ✓' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AppRow({
   app,
   workspaceId,
@@ -174,7 +218,21 @@ function AppRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [creds, setCreds] = useState<AppCredentials | null>(null);
+  const [credsError, setCredsError] = useState<string | null>(null);
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const disabled = app.disabledAt !== null;
+
+  // Tokens stay viewable (ui_nits): fetch on first expand, owner/admin only.
+  useEffect(() => {
+    if (!expanded || creds) return;
+    let alive = true;
+    api<AppCredentials>('GET', `/v1/apps/${app.id}/credentials`)
+      .then((c) => { if (alive) setCreds(c); })
+      .catch((err) => { if (alive) setCredsError(err instanceof Error ? err.message : 'failed'); });
+    return () => { alive = false; };
+  }, [expanded, creds, app.id]);
+
 
   const act = (fn: () => Promise<unknown>) => {
     void (async () => {
@@ -198,6 +256,12 @@ function AppRow({
         eventTypes: Array.from(types),
       }),
     );
+
+  const rotate = () =>
+    act(async () => {
+      setCreds(await api<AppCredentials>('POST', `/v1/apps/${app.id}/credentials/rotate`));
+      setConfirmRotate(false);
+    });
 
   const remove = () =>
     act(async () => {
@@ -248,6 +312,57 @@ function AppRow({
 
       {expanded && (
         <div className="mt-3 border-t border-hairline2 pt-3">
+          <p className="mb-1 text-xs font-semibold text-faint uppercase">Credentials</p>
+          {credsError && <p className="mb-2 text-sm text-red-600">{credsError}</p>}
+          {!creds && !credsError && <p className="mb-2 text-xs text-faint">Loading…</p>}
+          {creds && (
+            <div className="mb-3">
+              <CredentialRow app={app} label="Bot token" testid="bot-token" value={creds.botToken} />
+              <CredentialRow app={app} label="App-level token" testid="app-token" value={creds.appToken} />
+              <CredentialRow app={app} label="Signing secret" testid="signing-secret" value={creds.signingSecret} />
+              {confirmRotate ? (
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <p className="text-xs text-red-600">
+                    Regenerate both tokens? The current ones stop working immediately.
+                  </p>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      className="rounded border border-hairline px-2 py-1 text-xs"
+                      disabled={busy}
+                      onClick={() => setConfirmRotate(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      data-testid={`app-rotate-confirm-${app.name}`}
+                      className="rounded bg-red-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                      disabled={busy}
+                      onClick={rotate}
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-1 flex items-center gap-2">
+                  {(creds.botToken === null || creds.appToken === null) && (
+                    <p className="text-xs text-amber-700">
+                      Created before token visibility — regenerate to view.
+                    </p>
+                  )}
+                  <button
+                    data-testid={`app-rotate-${app.name}`}
+                    className="text-xs text-accent-soft hover:underline"
+                    disabled={busy}
+                    onClick={() => setConfirmRotate(true)}
+                  >
+                    Regenerate tokens…
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <label className="mb-1 block text-xs font-semibold text-faint uppercase">Event URL</label>
           <input
             data-testid={`app-eventurl-${app.name}`}

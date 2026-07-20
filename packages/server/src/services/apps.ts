@@ -44,8 +44,9 @@ async function requireAdmin(workspaceId: string, actorId: string) {
 
 /** Create an app: bot user row + workspace membership + credentials.
  * Bot token, app-level token (Socket Mode), AND signing secret are returned
- * once, here only — tokens are stored hashed, and the secret is never
- * exposed by any later read. */
+ * here and stored (raw alongside the auth hash) so owners/admins can view
+ * them later in Manage Apps (ui_nits; PM ruling pending operator review —
+ * see getAppCredentials). */
 export async function createApp(
   workspaceId: string,
   actorId: string,
@@ -74,6 +75,8 @@ export async function createApp(
       botUserId,
       botTokenHash: hashToken(botToken),
       appTokenHash: hashToken(appToken),
+      botToken,
+      appToken,
       signingSecret,
       createdBy: actorId,
     });
@@ -140,6 +143,48 @@ export async function updateApp(
   if (Object.keys(set).length === 0) return toAppDTO(app);
   const updated = await db.update(apps).set(set).where(eq(apps.id, appId)).returning();
   return toAppDTO(updated[0]!);
+}
+
+export interface AppCredentials {
+  /** null on apps created before token visibility (0011) — regenerate to view. */
+  botToken: string | null;
+  appToken: string | null;
+  signingSecret: string;
+}
+
+/**
+ * Owner/admin read of an app's credentials for the Manage Apps UI (ui_nits:
+ * tokens viewable after creation). PM ruling (pending operator review): raw
+ * tokens are stored next to their hashes rather than encrypted-at-rest — the
+ * DB already holds the signing secret in plaintext, and an app-level
+ * encryption key would live in the same env as the DB creds, so it wouldn't
+ * change the threat model. Apps predating the change return null tokens.
+ */
+export async function getAppCredentials(appId: string, actorId: string): Promise<AppCredentials> {
+  const app = await loadAppForAdmin(appId, actorId);
+  return { botToken: app.botToken, appToken: app.appToken, signingSecret: app.signingSecret };
+}
+
+/**
+ * Regenerate both tokens (owner/admin) — new random values replace the old
+ * ones immediately (old tokens stop authenticating). Covers pre-0011 apps
+ * whose raw tokens are unrecoverable, and doubles as credential rotation.
+ * The signing secret is left untouched (event deliveries keep verifying).
+ */
+export async function rotateAppTokens(appId: string, actorId: string): Promise<AppCredentials> {
+  const app = await loadAppForAdmin(appId, actorId);
+  const botToken = `xoxb-${newToken()}`;
+  const appToken = `xapp-1-${newToken()}`;
+  await db
+    .update(apps)
+    .set({
+      botToken,
+      appToken,
+      botTokenHash: hashToken(botToken),
+      appTokenHash: hashToken(appToken),
+    })
+    .where(eq(apps.id, app.id));
+  return { botToken, appToken, signingSecret: app.signingSecret };
 }
 
 export async function setAppDisabled(appId: string, actorId: string, disabled: boolean): Promise<AppDTO> {

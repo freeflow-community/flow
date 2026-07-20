@@ -235,6 +235,19 @@ export function registerRoutes(app: FastifyInstance): void {
     return ap.updateApp(id, req.user.id, body);
   });
 
+  // Credentials stay viewable after creation (ui_nits; owner/admin only).
+  app.get('/v1/apps/:id/credentials', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ap.getAppCredentials(id, req.user.id);
+  });
+
+  // New bot + app-level tokens; old ones stop working. Pre-0011 apps use this
+  // to become viewable.
+  app.post('/v1/apps/:id/credentials/rotate', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ap.rotateAppTokens(id, req.user.id);
+  });
+
   app.post('/v1/apps/:id/disable', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return ap.setAppDisabled(id, req.user.id, true);
