@@ -72,6 +72,7 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
         </button>
       </header>
       <MessageList
+        key={rootId}
         messages={messages}
         names={names}
         membersById={memberMap}

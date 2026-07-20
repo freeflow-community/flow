@@ -101,7 +101,12 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         </div>
       </header>
 
+      {/* key: fresh list per channel — resets the bottom-pin state and
+          re-runs the open-scroll, so opening a channel always lands at the
+          bottom (a reused instance carried the previous channel's scroll
+          state once caches went warm). */}
       <MessageList
+        key={channelId}
         messages={messages}
         names={names}
         membersById={memberMap}

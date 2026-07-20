@@ -44,6 +44,15 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — Web: always open channels scrolled to the bottom
+- Fix: opening a channel could land mid-list — MessageList was one reused
+  instance across channel switches, so the previous channel's "am I pinned
+  to the bottom" state carried over and the one-shot open-scroll fired
+  before attachments laid out (the old refetch-per-open masked it; warm
+  local-first caches made it the common path). The list now remounts per
+  channel (`key={channelId}`, thread panel per root), resetting the pin and
+  re-running the open scroll. `[web]`
+
 ### 2026-07-20 — Web: local-first send + apply-WS-events (perceived latency)
 - Sending renders instantly: an optimistic pending row (dimmed, actions
   suppressed, attachments included) lands in the query cache before the POST
