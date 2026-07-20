@@ -1,25 +1,28 @@
 import { z } from 'zod';
 
 // ---- auth ------------------------------------------------------
-export const RegisterBody = z.object({
-  email: z.string().email().max(320),
-  password: z.string().min(8).max(256),
-  displayName: z.string().min(1).max(80),
-  /** Dev/test escape hatch: skip email verification. Honored only when the
-   * server's email driver is 'dev' (local); ignored in production. */
-  autoVerify: z.boolean().optional(),
-});
+/** Email-first: registration takes only an email; name + password are set on
+ * the emailed link's "finish your account" form. The autoVerify escape hatch
+ * (dev email driver only — QA scripts, dev macOS) registers in one shot and
+ * must carry password + displayName. */
+export const RegisterBody = z
+  .object({
+    email: z.string().email().max(320),
+    password: z.string().min(8).max(256).optional(),
+    displayName: z.string().min(1).max(80).optional(),
+    autoVerify: z.boolean().optional(),
+  })
+  .refine((b) => !b.autoVerify || (b.password !== undefined && b.displayName !== undefined), {
+    message: 'autoVerify requires password and displayName',
+  });
 export type RegisterBody = z.infer<typeof RegisterBody>;
 
-export const VerifyEmailBody = z.object({
+export const CompleteSignupBody = z.object({
   token: z.string().min(1).max(512),
+  password: z.string().min(8).max(256),
+  displayName: z.string().min(1).max(80),
 });
-export type VerifyEmailBody = z.infer<typeof VerifyEmailBody>;
-
-export const ResendVerifyBody = z.object({
-  email: z.string().email().max(320),
-});
-export type ResendVerifyBody = z.infer<typeof ResendVerifyBody>;
+export type CompleteSignupBody = z.infer<typeof CompleteSignupBody>;
 
 export const ForgotPasswordBody = z.object({
   email: z.string().email().max(320),

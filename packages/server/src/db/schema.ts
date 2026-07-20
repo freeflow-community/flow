@@ -34,6 +34,18 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Email-first registration: a signup link in flight, no user row yet. */
+export const pendingSignups = pgTable(
+  'pending_signups',
+  {
+    tokenHash: bytea('token_hash').primaryKey(),
+    email: citext('email').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('pending_signups_email_idx').on(t.email)],
+);
+
 /** Single-use emailed tokens: verify-email and password-reset links. */
 export const emailTokens = pgTable(
   'email_tokens',

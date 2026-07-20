@@ -13,11 +13,10 @@ import {
   ListNotificationsQuery,
   ListThreadQuery,
   AppLinkExchangeBody,
+  CompleteSignupBody,
   ForgotPasswordBody,
   LoginBody,
-  ResendVerifyBody,
   ResetPasswordBody,
-  VerifyEmailBody,
   MarkNotificationsReadBody,
   MarkReadBody,
   PatchMeBody,
@@ -94,29 +93,22 @@ export function registerRoutes(app: FastifyInstance): void {
     const body = parse(RegisterBody, req.body);
     const res = await auth.register(
       body.email,
-      body.password,
-      body.displayName,
+      { password: body.password, displayName: body.displayName, autoVerify: body.autoVerify },
       req.headers['user-agent'],
-      body.autoVerify,
     );
+    return reply.status(201).send(res);
+  });
+
+  // Signup-link "finish your account" form (email-first registration).
+  app.post('/v1/auth/register/complete', async (req, reply) => {
+    const body = parse(CompleteSignupBody, req.body);
+    const res = await auth.completeSignup(body.token, body.displayName, body.password, req.headers['user-agent']);
     return reply.status(201).send(res);
   });
 
   app.post('/v1/auth/login', async (req) => {
     const body = parse(LoginBody, req.body);
     return auth.login(body.email, body.password, req.headers['user-agent']);
-  });
-
-  // Email verification + password reset (links land on the web client).
-  app.post('/v1/auth/verify-email', async (req) => {
-    const body = parse(VerifyEmailBody, req.body);
-    return auth.verifyEmail(body.token, req.headers['user-agent']);
-  });
-
-  app.post('/v1/auth/verify-email/resend', async (req) => {
-    const body = parse(ResendVerifyBody, req.body);
-    await auth.resendVerification(body.email);
-    return { ok: true };
   });
 
   app.post('/v1/auth/password/forgot', async (req) => {

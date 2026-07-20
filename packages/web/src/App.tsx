@@ -9,23 +9,22 @@ import Main from './components/Main';
 
 const ACTIVE_WS_KEY = 'flow.activeWorkspace';
 
-/** Pull ?verify= / ?reset= (emailed links) off the URL before rendering. */
-function consumeEmailLinkParams(): { verifyToken: string | null; resetToken: string | null } {
+/** Pull ?signup= / ?reset= (emailed links) off the URL before rendering. */
+function consumeEmailLinkParams(): { signupToken: string | null; resetToken: string | null } {
   const params = new URLSearchParams(location.search);
-  const verifyToken = params.get('verify');
+  const signupToken = params.get('signup');
   const resetToken = params.get('reset');
-  if (verifyToken || resetToken) {
+  if (signupToken || resetToken) {
     history.replaceState(null, '', location.pathname);
   }
-  return { verifyToken, resetToken };
+  return { signupToken, resetToken };
 }
 
 export default function App() {
   const qc = useQueryClient();
   const [user, setUser] = useState<UserDTO | null>(null);
   const [booting, setBooting] = useState(true);
-  const [{ verifyToken, resetToken }] = useState(consumeEmailLinkParams);
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [{ signupToken, resetToken }] = useState(consumeEmailLinkParams);
   // Active workspace survives reloads/restarts (phase 3.5 fixes).
   const [workspaceId, setWorkspaceId] = useState<string | null>(
     () => localStorage.getItem(ACTIVE_WS_KEY),
@@ -35,21 +34,6 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      // An emailed verify link signs the (possibly signed-out) visitor in.
-      if (verifyToken) {
-        try {
-          const resp = await api<AuthResponse>('POST', '/v1/auth/verify-email', { token: verifyToken });
-          setToken(resp.token);
-          setUser(resp.user);
-          return;
-        } catch {
-          setToken(null);
-          setAuthNotice('That verification link is invalid or has expired. Sign in to request a new one.');
-          return;
-        } finally {
-          setBooting(false);
-        }
-      }
       if (!getToken()) {
         setBooting(false);
         return;
@@ -62,7 +46,7 @@ export default function App() {
         setBooting(false);
       }
     })();
-  }, [verifyToken]);
+  }, []);
 
   const signIn = useCallback((resp: AuthResponse) => {
     setToken(resp.token);
@@ -84,7 +68,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthScreen onSignedIn={signIn} notice={authNotice} resetToken={resetToken} />;
+    return <AuthScreen onSignedIn={signIn} signupToken={signupToken} resetToken={resetToken} />;
   }
 
   return (

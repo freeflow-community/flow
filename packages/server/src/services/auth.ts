@@ -8,7 +8,7 @@ import { ApiError, conflict, unauthorized } from '../lib/errors.js';
 import { config } from '../config.js';
 import { emailSender } from '../email/index.js';
 
-const { users, sessions, appLinkCodes, emailTokens } = schema;
+const { users, sessions, appLinkCodes, emailTokens, pendingSignups } = schema;
 
 type TokenPurpose = 'verify_email' | 'password_reset';
 
@@ -80,46 +80,101 @@ async function consumeEmailToken(token: string, purpose: TokenPurpose): Promise<
   return rows[0] ?? null;
 }
 
-async function sendVerificationEmail(user: { id: string; email: string; displayName: string }): Promise<void> {
-  const token = await mintEmailToken(user.id, 'verify_email', config.verifyTokenTtlHours * 3600_000);
-  const link = `${config.webUrlBase}/?verify=${token}`;
-  await emailSender().send({
-    to: user.email,
-    subject: 'Verify your email for Flow',
-    text:
-      `Hi ${user.displayName},\n\n` +
-      `Confirm your email address to finish creating your Flow account:\n\n` +
-      `${link}\n\n` +
-      `This link expires in ${config.verifyTokenTtlHours} hours. ` +
-      `If you didn't create a Flow account, you can ignore this email.\n`,
-  });
-}
-
+/**
+ * Email-first registration: the only input is the address, and the response
+ * never reveals whether an account exists (no enumeration). A new address
+ * gets a signup link; an existing account gets a "you already have an
+ * account" note instead. Name + password are only ever set by whoever
+ * clicked the link — proving address ownership first (no pre-hijacking).
+ *
+ * autoVerify (dev email driver only — QA scripts, dev macOS) registers in
+ * one shot with password + displayName and returns a session.
+ */
 export async function register(
   email: string,
-  password: string,
-  displayName: string,
+  opts: { password?: string | undefined; displayName?: string | undefined; autoVerify?: boolean | undefined } = {},
   clientInfo?: string,
-  autoVerify?: boolean,
 ): Promise<RegisterResponse> {
-  // The autoVerify escape hatch (QA scripts, dev macOS registration) only
-  // exists on the local dev email driver — production always verifies.
-  const skipVerification = autoVerify === true && config.emailDriver === 'dev';
+  if (opts.autoVerify === true && config.emailDriver === 'dev') {
+    const passwordHash = await argon2.hash(opts.password ?? '', ARGON2_OPTS);
+    const inserted = await db
+      .insert(users)
+      .values({
+        id: newId(),
+        email,
+        passwordHash,
+        displayName: opts.displayName ?? '',
+        emailVerifiedAt: new Date(),
+      })
+      .onConflictDoNothing({ target: users.email })
+      .returning();
+    const user = inserted[0];
+    if (!user) throw conflict('email_taken', 'an account with this email already exists');
+    const token = await issueSession(user.id, clientInfo);
+    return { token, user: toUserDTO(user) };
+  }
+
+  const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  if (existing[0] && !existing[0].isBot) {
+    await emailSender().send({
+      to: email,
+      subject: 'You already have a Flow account',
+      text:
+        `Hi ${existing[0].displayName},\n\n` +
+        `Someone (hopefully you) tried to create a Flow account with this address, ` +
+        `but it already has one. You can sign in here:\n\n` +
+        `${config.webUrlBase}/\n\n` +
+        `Forgot your password? Use "Forgot password?" on the sign-in screen.\n`,
+    });
+  } else if (!existing[0]) {
+    // re-registering while a signup is pending re-mints and resends the link
+    await db.delete(pendingSignups).where(lt(pendingSignups.expiresAt, sql`now()`));
+    await db.delete(pendingSignups).where(eq(pendingSignups.email, email));
+    const token = newToken();
+    await db.insert(pendingSignups).values({
+      tokenHash: hashToken(token),
+      email,
+      expiresAt: new Date(Date.now() + config.verifyTokenTtlHours * 3600_000),
+    });
+    const link = `${config.webUrlBase}/?signup=${token}`;
+    await emailSender().send({
+      to: email,
+      subject: 'Finish creating your Flow account',
+      text:
+        `Welcome to Flow!\n\n` +
+        `Confirm your email address and finish setting up your account:\n\n` +
+        `${link}\n\n` +
+        `This link expires in ${config.verifyTokenTtlHours} hours. ` +
+        `If you didn't request a Flow account, you can ignore this email.\n`,
+    });
+  }
+  // bot addresses fall through silently — same response, no email
+  return { requiresVerification: true, email };
+}
+
+/** Signup-link submit: consumes the token and creates the account (verified). */
+export async function completeSignup(
+  token: string,
+  displayName: string,
+  password: string,
+  clientInfo?: string,
+): Promise<AuthResponse> {
+  const consumed = await db
+    .delete(pendingSignups)
+    .where(and(eq(pendingSignups.tokenHash, hashToken(token)), gt(pendingSignups.expiresAt, sql`now()`)))
+    .returning({ email: pendingSignups.email });
+  const email = consumed[0]?.email;
+  if (!email) throw unauthorized('invalid or expired signup link');
   const passwordHash = await argon2.hash(password, ARGON2_OPTS);
-  const id = newId();
   const inserted = await db
     .insert(users)
-    .values({ id, email, passwordHash, displayName, emailVerifiedAt: skipVerification ? new Date() : null })
+    .values({ id: newId(), email, passwordHash, displayName, emailVerifiedAt: new Date() })
     .onConflictDoNothing({ target: users.email })
     .returning();
   const user = inserted[0];
   if (!user) throw conflict('email_taken', 'an account with this email already exists');
-  if (skipVerification) {
-    const token = await issueSession(user.id, clientInfo);
-    return { token, user: toUserDTO(user) };
-  }
-  await sendVerificationEmail(user);
-  return { requiresVerification: true, email: user.email };
+  const session = await issueSession(user.id, clientInfo);
+  return { token: session, user: toUserDTO(user) };
 }
 
 export async function login(email: string, password: string, clientInfo?: string): Promise<AuthResponse> {
@@ -129,28 +184,12 @@ export async function login(email: string, password: string, clientInfo?: string
   const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
   if (!ok) throw unauthorized('invalid email or password');
   if (!user.emailVerifiedAt && !user.isBot) {
-    throw new ApiError(403, 'email_not_verified', 'verify your email address to sign in');
+    // Only legacy pre-email-first accounts can be in this state; a password
+    // reset (which proves address ownership) clears it.
+    throw new ApiError(403, 'email_not_verified', 'this email is unverified — use "Forgot password?" to verify it');
   }
   const token = await issueSession(user.id, clientInfo);
   return { token, user: toUserDTO(user) };
-}
-
-/** Verify-link click: consumes the token and signs the user in. */
-export async function verifyEmail(token: string, clientInfo?: string): Promise<AuthResponse> {
-  const user = await consumeEmailToken(token, 'verify_email');
-  if (!user) throw unauthorized('invalid or expired verification link');
-  if (!user.emailVerifiedAt) {
-    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, user.id));
-  }
-  const session = await issueSession(user.id, clientInfo);
-  return { token: session, user: toUserDTO(user) };
-}
-
-/** Always returns ok — never reveals whether the email has an account. */
-export async function resendVerification(email: string): Promise<void> {
-  const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  const user = rows[0];
-  if (user && !user.emailVerifiedAt && !user.isBot) await sendVerificationEmail(user);
 }
 
 /** Always returns ok — never reveals whether the email has an account. */

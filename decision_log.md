@@ -1,5 +1,18 @@
 # Decision log
 
+## 2026-07-19 — Email-first registration (operator ruling)
+
+Registration collects **only an email**; name + password are set on the emailed
+link's "finish your account" page (Slack-style). Ruled over password-at-register
+because it (a) kills register-time account enumeration — the response is always
+"check your email", with an "you already have an account" note sent to existing
+addresses; (b) prevents account pre-hijacking — an attacker who registers a
+victim's email can no longer plant a password, since credentials are only ever
+set by whoever clicked the link; (c) reuses the reset-password machinery. No
+user row exists until completion (`pending_signups`, single-use sha256-hashed
+tokens, 48 h). The dev-driver-only `autoVerify` one-shot register stays for QA
+scripts and macOS dev.
+
 ## 2026-07-19 — Email verification + password reset (deploy prep)
 
 - **Target stack ruled by operator**: Railway (app), Neon (Postgres), Cloudflare

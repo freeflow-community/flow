@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Email-auth end-to-end test: registration → verify link → login gate,
-// resend, forgot/reset password, token single-use + session revocation.
+// Email-first auth end-to-end test: register(email) → signup link → complete
+// (name+password), no-enumeration responses, token single-use, forgot/reset,
+// session revocation, dev autoVerify escape hatch.
 // Requires the server running with the dev email driver (default); reads
-// the verify/reset links out of the .emails/ outbox.
+// the signup/reset links out of the .emails/ outbox.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,53 +39,66 @@ async function lastEmail(to, param) {
   if (!files.length) throw new Error(`no outbox email for ${to}`);
   const msg = JSON.parse(await fs.readFile(path.join(OUTBOX, files.at(-1)), 'utf8'));
   const link = msg.text.match(/https?:\/\/\S+/)?.[0];
-  const token = link ? new URL(link).searchParams.get(param) : null;
+  const token = link && param ? new URL(link).searchParams.get(param) : null;
   return { subject: msg.subject, link, token };
 }
 
 const ts = Date.now();
-const email = `verifyme.${ts}@e2e.test`;
+const email = `signup.${ts}@e2e.test`;
 const password = 'password123';
 
-// ---- registration requires verification ----
-const reg = await api('POST', '/v1/auth/register', null, { email, password, displayName: 'Verify Me' });
+// ---- email-first registration ----
+const reg = await api('POST', '/v1/auth/register', null, { email });
 reg.requiresVerification === true && !reg.token
-  ? ok('register -> requiresVerification, no session')
+  ? ok('register(email) -> requiresVerification, no session')
   : bad('register', JSON.stringify(reg));
 
 const login1 = await raw('POST', '/v1/auth/login', null, { email, password });
-login1.status === 403 && login1.json.error?.code === 'email_not_verified'
-  ? ok('login before verify -> 403 email_not_verified')
-  : bad('login gate', JSON.stringify(login1));
+login1.status === 401 ? ok('login before complete -> 401 (no account yet)') : bad('login gate', JSON.stringify(login1));
 
-// ---- resend invalidates the first token ----
-const first = await lastEmail(email, 'verify');
-await api('POST', '/v1/auth/verify-email/resend', null, { email });
-const second = await lastEmail(email, 'verify');
+// ---- re-register resends and invalidates the first link ----
+const first = await lastEmail(email, 'signup');
+await api('POST', '/v1/auth/register', null, { email });
+const second = await lastEmail(email, 'signup');
 first.token && second.token && first.token !== second.token
-  ? ok('resend mints a fresh token')
-  : bad('resend', `${first.token} vs ${second.token}`);
+  ? ok('re-register mints a fresh signup token')
+  : bad('re-register', `${first.token} vs ${second.token}`);
 
-const stale = await raw('POST', '/v1/auth/verify-email', null, { token: first.token });
-stale.status === 401 ? ok('stale verify token rejected') : bad('stale verify token', stale.status);
+const stale = await raw('POST', '/v1/auth/register/complete', null, {
+  token: first.token, displayName: 'Stale', password,
+});
+stale.status === 401 ? ok('stale signup token rejected') : bad('stale signup token', stale.status);
 
-// ---- verify link signs in ----
-const verified = await api('POST', '/v1/auth/verify-email', null, { token: second.token });
-verified.token && verified.user?.email === email
-  ? ok('verify -> session issued')
-  : bad('verify', JSON.stringify(verified));
+// ---- complete creates the account and signs in ----
+const done = await api('POST', '/v1/auth/register/complete', null, {
+  token: second.token, displayName: 'Signup Me', password,
+});
+done.token && done.user?.email === email && done.user?.displayName === 'Signup Me'
+  ? ok('complete -> account created + session')
+  : bad('complete', JSON.stringify(done));
 
-const replay = await raw('POST', '/v1/auth/verify-email', null, { token: second.token });
-replay.status === 401 ? ok('verify token is single-use') : bad('verify replay', replay.status);
+const replay = await raw('POST', '/v1/auth/register/complete', null, {
+  token: second.token, displayName: 'Replay', password,
+});
+replay.status === 401 ? ok('signup token is single-use') : bad('signup replay', replay.status);
 
 const login2 = await api('POST', '/v1/auth/login', null, { email, password });
-login2.token ? ok('login after verify succeeds') : bad('login after verify', JSON.stringify(login2));
+login2.token ? ok('login after complete succeeds') : bad('login after complete', JSON.stringify(login2));
 
-// ---- unknown email never leaks account existence ----
+// ---- registering an existing email never leaks, notifies instead ----
+const again = await api('POST', '/v1/auth/register', null, { email });
+again.requiresVerification === true
+  ? ok('register(existing email) -> same response (no enumeration)')
+  : bad('register existing', JSON.stringify(again));
+const note = await lastEmail(email);
+note.subject.includes('already have')
+  ? ok('existing email gets "already have an account" note')
+  : bad('existing-account note', note.subject);
+
+// ---- forgot/reset flow ----
 const ghost = await api('POST', '/v1/auth/password/forgot', null, { email: `nobody.${ts}@e2e.test` });
 ghost.ok === true ? ok('forgot for unknown email -> ok (no leak)') : bad('forgot unknown', JSON.stringify(ghost));
 
-// ---- forgot/reset flow ----
 await api('POST', '/v1/auth/password/forgot', null, { email });
 const resetMail = await lastEmail(email, 'reset');
 resetMail.token ? ok('reset email delivered with token') : bad('reset email', JSON.stringify(resetMail));
@@ -110,6 +124,11 @@ const auto = await api('POST', '/v1/auth/register', null, {
   email: `auto.${ts}@e2e.test`, password, displayName: 'Auto', autoVerify: true,
 });
 auto.token ? ok('autoVerify register -> instant session (dev driver)') : bad('autoVerify', JSON.stringify(auto));
+
+const autoDup = await raw('POST', '/v1/auth/register', null, {
+  email: `auto.${ts}@e2e.test`, password, displayName: 'Auto', autoVerify: true,
+});
+autoDup.status === 409 ? ok('autoVerify duplicate -> 409 (dev-only path keeps old contract)') : bad('autoVerify dup', autoDup.status);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

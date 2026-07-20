@@ -28,6 +28,21 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — Email-first registration (operator ruling)
+- Register now takes only an email (`pending_signups` table, migration 0007 —
+  no user row until the link is clicked); the emailed link opens a "finish
+  your account" form (name + password) → `POST /v1/auth/register/complete`
+  creates the account verified and signs in. `[server] [web]`
+- Closes two holes in the password-first flow: register-time account
+  enumeration (409 email_taken → now always "check your email"; existing
+  accounts get a "you already have an account" note instead) and password
+  pre-hijacking (credentials are only ever set by whoever proved address
+  ownership). `[server]`
+- `/v1/auth/verify-email` + `/resend` removed (resend = register again);
+  login's `email_not_verified` gate kept for legacy rows, message now points
+  at password reset. autoVerify one-shot path (dev driver only) unchanged —
+  QA scripts and macOS untouched. `[server] [web] [qa]`
+
 ### 2026-07-19 — Cloudflare email driver wired
 - `FLOW_EMAIL_DRIVER=cloudflare` now sends for real via Cloudflare Email
   Service REST API (flat `from`/`to` strings — not `{email}` objects; bounce
