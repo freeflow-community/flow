@@ -22,34 +22,61 @@ export default function MessageList({
   onLoadOlder: () => void;
   showThreadAffordances: boolean;
 }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true); // at (or near) the bottom, so growth should keep us there
   const lastId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [lastId]);
 
+  // Attachments (images, text previews) finish loading after the initial
+  // scroll and grow the content, leaving a freshly opened channel short of
+  // the bottom. Stay pinned to the bottom as content grows until the user
+  // scrolls away (macOS gets this from defaultScrollAnchor(.bottom)).
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    const content = contentRef.current;
+    if (!scroller || !content) return;
+    const onScroll = () => {
+      pinnedRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    };
+    scroller.addEventListener('scroll', onScroll);
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) scroller.scrollTop = scroller.scrollHeight;
+    });
+    observer.observe(content);
+    return () => {
+      scroller.removeEventListener('scroll', onScroll);
+      observer.disconnect();
+    };
+  }, []);
+
   return (
-    <div className="mc-scroll min-h-0 flex-1 overflow-y-auto py-2" data-testid="message-list">
-      {hasMore && (
-        <div className="py-1 text-center">
-          <button className="text-sm font-semibold text-accent-soft hover:underline" onClick={onLoadOlder}>
-            Load earlier messages
-          </button>
-        </div>
-      )}
-      {messages.map((m, i) => (
-        <div key={m.id}>
-          {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
-          <MessageRow
-            message={m}
-            names={names}
-            membersById={membersById}
-            showHeader={showsHeader(messages, i)}
-            showThreadAffordances={showThreadAffordances}
-          />
-        </div>
-      ))}
-      <div ref={bottomRef} />
+    <div ref={scrollerRef} className="mc-scroll min-h-0 flex-1 overflow-y-auto py-2" data-testid="message-list">
+      <div ref={contentRef}>
+        {hasMore && (
+          <div className="py-1 text-center">
+            <button className="text-sm font-semibold text-accent-soft hover:underline" onClick={onLoadOlder}>
+              Load earlier messages
+            </button>
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={m.id}>
+            {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
+            <MessageRow
+              message={m}
+              names={names}
+              membersById={membersById}
+              showHeader={showsHeader(messages, i)}
+              showThreadAffordances={showThreadAffordances}
+            />
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

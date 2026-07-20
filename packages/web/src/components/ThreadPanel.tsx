@@ -30,7 +30,7 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
   return (
     <aside
       data-testid="thread-panel"
-      className="relative flex shrink-0 flex-col border-l border-hairline"
+      className="relative flex shrink-0 flex-col border-l border-hairline shadow-[-6px_0_16px_rgba(57,52,47,0.10)]"
       style={{ width }}
     >
       {/* Left-edge drag handle: dragging left widens the panel. */}

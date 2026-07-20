@@ -69,6 +69,15 @@ export default function Main() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function clearTyping(channelId: string, userId: string): void {
+    setTyping((prev) => {
+      const chan = prev[channelId];
+      if (!chan || !(userId in chan)) return prev;
+      const { [userId]: _gone, ...rest } = chan;
+      return { ...prev, [channelId]: rest };
+    });
+  }
+
   function handleEvent(event: Event): void {
     const cur = selRef.current;
     switch (event.type) {
@@ -76,7 +85,11 @@ export default function Main() {
       case 'message.updated':
       case 'message.deleted':
       case 'thread.reply': {
-        const data = event.data as { channelId: string; threadRootId: string | null };
+        const data = event.data as { channelId: string; threadRootId: string | null; userId: string };
+        if (event.type === 'message.created' || event.type === 'thread.reply') {
+          // The sender's message arrived — drop their lingering typing entry.
+          clearTyping(data.channelId, data.userId);
+        }
         void qc.invalidateQueries({ queryKey: ['messages', data.channelId] });
         if (data.threadRootId) void qc.invalidateQueries({ queryKey: ['thread', data.threadRootId] });
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
@@ -96,6 +109,16 @@ export default function Main() {
           ...prev,
           [t.channelId]: { ...(prev[t.channelId] ?? {}), [t.userId]: Date.now() },
         }));
+        // The render-time 5s filter never re-renders on its own, so a stale
+        // entry would linger; sweep it once the window has passed.
+        window.setTimeout(() => {
+          setTyping((prev) => {
+            const at = prev[t.channelId]?.[t.userId];
+            if (at === undefined || Date.now() - at < 5000) return prev;
+            const { [t.userId]: _gone, ...rest } = prev[t.channelId]!;
+            return { ...prev, [t.channelId]: rest };
+          });
+        }, 5200);
         break;
       }
       case 'presence': {

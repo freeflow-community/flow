@@ -56,11 +56,11 @@ struct MessageListView: View {
                     }
                 }
             }
-            .onAppear {
-                if let last = messages.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
-                }
-            }
+            // First open must land on the newest message: scrollTo from
+            // onAppear runs before the lazy rows are laid out and
+            // under-scrolls, so anchor the scroll view at the bottom instead
+            // (also keeps the list pinned while attachments finish sizing).
+            .defaultScrollAnchor(.bottom)
         }
     }
 

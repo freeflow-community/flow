@@ -113,6 +113,12 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// A message from this user arrived — drop their lingering typing entry
+    /// instead of waiting out the 5s window.
+    func typingStopped(channelId: String, userId: String) {
+        typing[channelId]?.removeValue(forKey: userId)
+    }
+
     func presenceReceived(userId: String, online: Bool) {
         presence[userId] = online
     }

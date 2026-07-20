@@ -71,6 +71,7 @@ struct ThreadPanelView: View {
                     }
                     .padding(.vertical, 8)
                 }
+                .defaultScrollAnchor(.bottom) // open at the newest reply
                 .onChange(of: thread.value.last?.id) { _, newId in
                     if let newId {
                         proxy.scrollTo(newId, anchor: .bottom)
@@ -88,7 +89,12 @@ struct ThreadPanelView: View {
                 )
             }
         }
-        .background(.background.secondary)
+        // Leading-edge shadow so the panel reads as floating over the chat.
+        .background(
+            Rectangle()
+                .fill(.background.secondary)
+                .shadow(color: MC.ink.opacity(0.12), radius: 8, x: -5, y: 0)
+        )
         .task(id: rootId) {
             thread.start(db: app.db, reset: []) { db in
                 try Message

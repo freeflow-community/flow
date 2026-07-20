@@ -28,6 +28,23 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — UI nits: thread shadow, first-open scroll, typing indicator
+- Thread panel casts a subtle leading-edge shadow so it reads as floating over
+  the main chat (Tailwind arbitrary shadow on web; background-shape shadow on
+  macOS to keep it off the panel's text). `[web] [macos]`
+- Opening a channel now lands fully on the newest message. Web scrolled on
+  data arrival but late-loading attachments (images/text previews) grew the
+  content afterwards — the list now stays pinned to the bottom
+  (ResizeObserver) until the user scrolls away. macOS `scrollTo` from
+  `onAppear`/`onChange` ran before the lazy rows were laid out and
+  under-scrolled — replaced with `defaultScrollAnchor(.bottom)` (channel list
+  + thread panel). `[web] [macos]`
+- Typing indicator no longer lingers after the typist's message arrives:
+  `message.created` / `thread.reply` now clear that user's typing entry on
+  both clients. Web also had no expiry at all (the 5s filter only applied on
+  unrelated re-renders, so "X is typing…" could stick around indefinitely) —
+  added the timed sweep macOS already had. `[web] [macos]`
+
 ### 2026-07-19 — interactive fix: re-invite after accepted invite
 - `UNIQUE(workspace_id, email)` on invites counted accepted invites, so an
   email could never be re-invited once its invite was used (hit when an

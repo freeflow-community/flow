@@ -793,6 +793,10 @@ actor SyncEngine {
         switch event.payload {
         case .message(let m):
             let isNew = await applyServerMessage(m)
+            if event.type == "message.created" || event.type == "thread.reply" {
+                // The sender's message arrived — clear their typing indicator.
+                await appState?.typingStopped(channelId: m.channelId, userId: m.userId)
+            }
             if event.type == "message.created", isNew, m.userId != currentUser?.id {
                 if m.channelId == activeChannelId {
                     await markRead(channelId: m.channelId, lastReadMsgId: m.id)
