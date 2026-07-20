@@ -6,24 +6,36 @@ in the simulator or on a real iPhone in developer mode.
 First landed 2026-07-20. This is the operator-facing overview; `apps/ios/README.md`
 is the terse build cheat-sheet.
 
-## Status: working vertical slice
+## Status: daily-driver parity (phase 7)
 
-A native SwiftUI app (iOS 17+) that signs in and does the core loop. Verified
-in the iOS 17 simulator against both production and the local QA server.
+A native SwiftUI app (iOS 17+) at feature parity with the desktop clients for
+core messaging and files. Verified in the simulator against the local QA
+server (and previously production).
 
 **Works today:**
 - Sign in (email + password) against any Flow server
 - Workspace switcher; channel + DM lists with unread badges
-- Message list: authenticated avatars, `@`-mention rendering, timestamps,
-  consecutive-author grouping, scroll-to-bottom
-- Compose and send a message (round-trips through the real server + live
-  socket updates)
+- Message list: authenticated avatars, timestamps, 5-minute author grouping,
+  day dividers, scroll-to-bottom
+- Rich markdown rendering (shared MarkdownBlocks): bold/italic/inline code,
+  fenced code blocks, blockquotes, mention pills
+- Long-press message actions: quick reactions, emoji picker sheet (grid +
+  search), Reply in Thread, Edit (own, sheet), Delete (own, confirm)
+- Reactions: chips with counts, tap to toggle, own-reaction highlight
+- Threads: reply count + participant stack on parents; pushed thread screen
+  with its own composer
+- Typing indicators (both directions; 5s expiry, shared semantics)
+- Composer: @-mention autocomplete chip bar; attachments via photo library,
+  Files picker, and camera (device only); attachment bar with thumbnails
+- Attachments in chat: image previews + lightbox with share, animated GIFs,
+  QuickLook for text/PDF/everything else
+- App-icon badge with the unread notification count
 - Deep links: `flow://signin?code=…` (web-to-app handoff) and `flow://invite/…`
 
-**Not yet ported** (all *view* work — the data/protocol layer is already
-shared and complete): threads, reactions, file upload/previews, typing
-indicators, rich markdown/code blocks, in-app registration & password reset
-(web-only by design, same as macOS), push notifications.
+**Not yet ported**: push notifications (APNs — deferred to a follow-on phase;
+needs server device-token registry + Apple push key + physical-device
+testing). In-app registration & password reset stay web-only by design, same
+as macOS.
 
 ## Architecture: shared data layer
 
@@ -159,6 +171,16 @@ For driving the simulator without a UI text-input tool. Prefix with
 | `FLOW_DEBUG_EMAIL` / `FLOW_DEBUG_PASSWORD` | auto sign-in once bootstrap resolves to signed-out |
 | `FLOW_DEBUG_OPEN_CHANNEL=<name>` | auto-navigate into that channel |
 | `FLOW_DEBUG_SEND=<text>` | post one message via the composer's engine path |
+| `FLOW_DEBUG_REACT=<emoji>` | toggle that reaction on the newest message |
+| `FLOW_DEBUG_EDIT_LAST=<text>` | edit the newest message |
+| `FLOW_DEBUG_DELETE_LAST=1` | delete the newest message |
+| `FLOW_DEBUG_REPLY_LAST=<text>` | reply in thread to the newest root message |
+| `FLOW_DEBUG_OPEN_THREAD_LAST=1` | push the thread screen for the newest threaded message |
+| `FLOW_DEBUG_UPLOAD=<path>[,<path>…]` | route host files through the composer upload pipeline |
+| `FLOW_DEBUG_UPLOAD_SEND=<text>` | send the uploaded attachments with that body |
+
+Any `FLOW_DEBUG_*` variable also suppresses the badge-permission prompt in
+DEBUG builds (a system alert would wedge headless runs — simctl can't tap).
 
 Example against the local dev server + QA fixtures (alice@qa.local /
 qa-password-1, workspace "QA Lab"):
@@ -173,9 +195,9 @@ xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
 
 ## Known limitations
 
-- Feature set is the vertical slice above; see the **Parity** section of
-  `CHANGELOG.md` for the iOS gap list.
+- No push notifications yet (the one remaining parity gap — see the
+  **Parity** section of `CHANGELOG.md`).
+- Composer input is plain text + @-mention autocomplete (ruled scope) — the
+  live-styled fence/code composer was not ported; rendering is full parity.
 - No CI for the iOS target yet; builds are local.
 - No app icon / launch-screen art (uses defaults).
-- Message rendering is plain text with mention substitution — no rich markdown
-  or code-block styling yet (web/macOS have it).

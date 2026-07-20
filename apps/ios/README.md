@@ -5,10 +5,12 @@ layers — data model, REST/WS clients, GRDB cache, `SyncEngine`, `AppState`, an
 the cross-platform `Support/` helpers — and adds iOS-native views + a UIKit
 image loader. Only the touch UI is new; the whole data/sync stack is reused.
 
-**Status: working vertical slice.** Sign-in → workspace switch → channel &
-DM list → message list (avatars, @-mentions, timestamps, author grouping) →
-send a message. Threads, reactions, files, typing indicators, and rich
-markdown are not yet ported (later increments).
+**Status: daily-driver parity (phase 7).** Sign-in → workspace switch →
+channel & DM list → messaging with rich markdown, mention pills, reactions,
+long-press actions (edit/delete/react/reply), threads (pushed screen),
+typing indicators, attachments (render + upload: photo library / Files /
+camera, QuickLook previews, lightbox), and an unread app-icon badge. The one
+remaining gap is push notifications (deferred; see CHANGELOG Parity).
 
 ## Build & run
 
@@ -59,6 +61,9 @@ Drive the simulator without a UI text-input tool via environment variables
 | `FLOW_DEBUG_EMAIL` / `FLOW_DEBUG_PASSWORD` | auto sign-in once bootstrap resolves |
 | `FLOW_DEBUG_OPEN_CHANNEL=<name>` | auto-push that channel |
 | `FLOW_DEBUG_SEND=<text>` | post one message via the composer's engine path |
+
+Additional hooks (react / edit / delete / thread-reply / open-thread /
+upload) are listed in the repo-root `IOS.md`.
 
 Example (against the local dev server + QA fixtures):
 

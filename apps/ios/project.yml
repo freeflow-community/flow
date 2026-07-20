@@ -43,6 +43,7 @@ targets:
             CFBundleURLSchemes: [flow]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        NSCameraUsageDescription: Take a photo to share in the conversation.
         ITSAppUsesNonExemptEncryption: false
         # Allow cleartext HTTP only to loopback/.local (dev server); prod
         # (app.flowtoo.org) stays HTTPS-enforced under ATS.

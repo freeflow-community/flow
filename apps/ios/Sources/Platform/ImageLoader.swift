@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -32,6 +33,12 @@ actor ImageLoader {
         if let img { cache.setObject(img, forKey: path as NSString) }
         return img
     }
+
+    /// Raw authenticated bytes (uncached) — used for animated GIF decoding.
+    func data(path: String) async -> Data? {
+        guard let api else { return nil }
+        return try? await api.getData(path)
+    }
 }
 
 /// SwiftUI wrapper: renders an authenticated remote image with a placeholder.
@@ -51,5 +58,73 @@ struct AuthImage<Placeholder: View>: View {
         .task(id: path) {
             image = await ImageLoader.shared.image(path: path)
         }
+    }
+}
+
+/// Animated GIF rendering: fetches original bytes and plays all frames via
+/// UIImageView.animationImages (ImageIO decode). iOS counterpart of the
+/// macOS AnimatedAuthImage (NSImageView-based).
+struct AnimatedAuthImage: View {
+    let path: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                AnimatedImageContainer(image: image)
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.secondary.opacity(0.1))
+                    .overlay(ProgressView().controlSize(.small))
+            }
+        }
+        .task(id: path) {
+            guard let data = await ImageLoader.shared.data(path: path) else { return }
+            image = UIImage.animatedGIF(data) ?? UIImage(data: data)
+        }
+    }
+}
+
+private struct AnimatedImageContainer: UIViewRepresentable {
+    let image: UIImage
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView(image: image)
+        view.contentMode = .scaleAspectFit
+        view.clipsToBounds = true
+        // Let SwiftUI's frame win over the image's intrinsic size.
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        view.image = image
+    }
+}
+
+extension UIImage {
+    /// Decodes multi-frame GIF data into an animated UIImage (per-frame
+    /// delays summed; single-frame data falls back to a static image).
+    static func animatedGIF(_ data: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let count = CGImageSourceGetCount(source)
+        guard count > 1 else { return UIImage(data: data) }
+        var frames: [UIImage] = []
+        var duration: Double = 0
+        for i in 0..<count {
+            guard let cg = CGImageSourceCreateImageAtIndex(source, i, nil) else { continue }
+            let props = CGImageSourceCopyPropertiesAtIndex(source, i, nil) as? [CFString: Any]
+            let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+            let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double).flatMap { $0 > 0 ? $0 : nil }
+                ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double)
+                ?? 0.1
+            duration += max(delay, 0.02)
+            frames.append(UIImage(cgImage: cg))
+        }
+        guard !frames.isEmpty else { return nil }
+        return UIImage.animatedImage(with: frames, duration: duration)
     }
 }
