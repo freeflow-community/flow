@@ -405,17 +405,19 @@ async function filesUpload({ auth, args, req }: MethodCtx): Promise<Record<strin
   const mimeType = up.mimeType ?? 'application/octet-stream';
   const file = await fl.uploadFile(auth.app.workspaceId, auth.botUser.id, filename, mimeType, up.data);
 
-  const channelsArg = up.fields['channels'];
+  const channelsArg = up.fields['channels'] ?? up.fields['channel']; // files_upload_v2 sends singular
   if (channelsArg) {
     const comment = up.fields['initial_comment'];
+    const threadTs = up.fields['thread_ts'];
     for (const ref of channelsArg.split(',').map((s) => s.trim()).filter(Boolean)) {
       const channelId = await resolveChannelId(auth, ref);
+      const threadRootId = threadTs ? (await uuidFromTs(channelId, threadTs)) ?? undefined : undefined;
       await msg.sendMessage(
         channelId,
         auth.botUser.id,
         newId(),
         comment ? mrkdwnToMarkdown(comment) : '',
-        undefined,
+        threadRootId,
         [file.id],
       );
     }
