@@ -22,8 +22,8 @@ Railway project "flow"  (36e91a36-9fa2-4881-9988-d81e45c16d6e)
   │          Migrated 2026-07-20 from "flow" (weathered-mountain-27798470,
   │          aws-us-east-2): the app runs in Railway sfo, and the cross-country
   │          DB cost ~90ms per query (~1s per message send); us-west-2 halves
-  │          it to ~45ms, the practical floor for sfo↔Oregon. Old project kept
-  │          as a fallback snapshot — delete after a few days of green.
+  │          it to ~45ms, the practical floor for sfo↔Oregon. Old project
+  │          deleted same day after verifying green (operator call).
   └──────► Cloudflare Email Service — transactional sends from
              noreply@mail.flowtoo.org (signup, reset, account notes)
 ```
