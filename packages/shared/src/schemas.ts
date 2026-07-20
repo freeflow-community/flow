@@ -41,6 +41,18 @@ export const LoginBody = z.object({
 });
 export type LoginBody = z.infer<typeof LoginBody>;
 
+/** Passwordless sign-in: request a one-time link emailed to an existing account. */
+export const SigninLinkBody = z.object({
+  email: z.string().email().max(320),
+});
+export type SigninLinkBody = z.infer<typeof SigninLinkBody>;
+
+/** Sign-in-link redeem: the emailed token, exchanged for a session. */
+export const ConsumeSigninLinkBody = z.object({
+  token: z.string().min(1).max(512),
+});
+export type ConsumeSigninLinkBody = z.infer<typeof ConsumeSigninLinkBody>;
+
 export const AppLinkExchangeBody = z.object({
   code: z.string().min(1).max(512),
 });

@@ -20,9 +20,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - iOS is an early vertical slice: no threads, reactions, files, typing, rich
   markdown, or in-app registration yet (web/macOS have them). Reuses the shared
   data layer, so these are view work, not protocol work.
-- macOS has no in-app registration or password-reset against real servers —
-  by design it links to the web (email-first flow + app-link handoff); the
-  dev-only autoVerify register remains for the local dev server.
+- macOS has no in-app registration, password-reset, or passwordless sign-in
+  link against real servers — by design it links to the web (email-first flow +
+  app-link handoff); the dev-only autoVerify register remains for the local dev
+  server. (iOS same — auth is web-driven.)
 
 ### Deliberate divergences (ruled)
 - Emoji picker: custom grid + search on web; native character palette on macOS.
@@ -31,6 +32,19 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   image collapsed/expanded state (ruled).
 
 ## History
+
+### 2026-07-20 — Passwordless sign-in link (magic link)
+- Sign-in screen gains an "Email me a sign-in link" button: enter an email (no
+  password) and we send a one-time link that logs an existing account straight
+  in. Redeems via a `?signin=` URL param that auto-consumes on load. `[web]`
+- Server: `POST /v1/auth/signin-link` (request, no-enumeration — always `{ok}`)
+  and `POST /v1/auth/signin-link/consume` (redeem → session). Reuses the
+  `email_tokens` machinery with a new `signin` purpose (migration
+  `0010_signin_link.sql`, 15-min TTL). Unlike password reset it does **not**
+  touch the password or revoke other sessions — it's an additional login;
+  clicking the link also verifies a legacy-unverified address. `[server]`
+- Extended `email-auth-e2e.mjs`: no-leak on unknown email, token delivery,
+  consume→session, sessions-left-intact, single-use replay (23/23 pass). `[qa]`
 
 ### 2026-07-20 — iOS app: working vertical slice (new client)
 - New `apps/ios` native SwiftUI client (iOS 17+), generated via xcodegen from

@@ -10,7 +10,7 @@ import { emailSender } from '../email/index.js';
 
 const { users, sessions, appLinkCodes, emailTokens, pendingSignups } = schema;
 
-type TokenPurpose = 'verify_email' | 'password_reset';
+type TokenPurpose = 'verify_email' | 'password_reset' | 'signin';
 
 /** Web-to-app handoff codes are single-use and short-lived. */
 const APP_LINK_TTL_MS = 2 * 60_000;
@@ -225,6 +225,48 @@ export async function resetPassword(token: string, newPassword: string, clientIn
     .set({ passwordHash, emailVerifiedAt: user.emailVerifiedAt ?? new Date() })
     .where(eq(users.id, user.id));
   await db.delete(sessions).where(eq(sessions.userId, user.id));
+  const session = await issueSession(user.id, clientInfo);
+  return { token: session, user: toUserDTO(user) };
+}
+
+/**
+ * Passwordless sign-in: email an existing account a one-time link. Always
+ * returns ok — never reveals whether the address has an account (same
+ * no-enumeration contract as forgotPassword). Bots and unknown addresses fall
+ * through silently. Clicking the link proves address ownership, so it also
+ * doubles as verification for legacy unverified accounts (see consumeSigninLink).
+ */
+export async function sendSigninLink(email: string): Promise<void> {
+  const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  const user = rows[0];
+  if (!user || user.isBot) return;
+  const token = await mintEmailToken(user.id, 'signin', config.signinTokenTtlMinutes * 60_000);
+  const link = `${config.webUrlBase}/?signin=${token}`;
+  await emailSender().send({
+    to: user.email,
+    subject: 'Your Flow sign-in link',
+    text:
+      `Hi ${user.displayName},\n\n` +
+      `Someone (hopefully you) asked to sign in to Flow with this email.\n\n` +
+      `${link}\n\n` +
+      `This link expires in ${config.signinTokenTtlMinutes} minutes and can be used once. ` +
+      `If you didn't ask for this, you can ignore this email — no one can sign in without it.\n`,
+  });
+}
+
+/**
+ * Sign-in-link redeem: consume the token and issue a fresh session — no
+ * password involved. Clicking the emailed link proves address ownership, so an
+ * unverified legacy account becomes verified here (mirrors resetPassword).
+ * Unlike a reset it leaves existing sessions intact — this is an additional
+ * login, not a credential change.
+ */
+export async function consumeSigninLink(token: string, clientInfo?: string): Promise<AuthResponse> {
+  const user = await consumeEmailToken(token, 'signin');
+  if (!user) throw unauthorized('invalid or expired sign-in link');
+  if (!user.emailVerifiedAt) {
+    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, user.id));
+  }
   const session = await issueSession(user.id, clientInfo);
   return { token: session, user: toUserDTO(user) };
 }

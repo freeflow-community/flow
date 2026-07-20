@@ -119,6 +119,28 @@ newPw.token ? ok('new password works') : bad('new password', JSON.stringify(newP
 const resetReplay = await raw('POST', '/v1/auth/password/reset', null, { token: resetMail.token, password: 'x'.repeat(10) });
 resetReplay.status === 401 ? ok('reset token is single-use') : bad('reset replay', resetReplay.status);
 
+// ---- passwordless sign-in link ----
+const ghostLink = await api('POST', '/v1/auth/signin-link', null, { email: `nobody.${ts}@e2e.test` });
+ghostLink.ok === true ? ok('signin-link for unknown email -> ok (no leak)') : bad('signin-link unknown', JSON.stringify(ghostLink));
+
+// A live password session — must survive a sign-in-link redeem (additional login, not a credential change).
+const pwSession = await api('POST', '/v1/auth/login', null, { email, password: newPassword });
+
+await api('POST', '/v1/auth/signin-link', null, { email });
+const signinMail = await lastEmail(email, 'signin');
+signinMail.token ? ok('signin-link email delivered with token') : bad('signin-link email', JSON.stringify(signinMail));
+
+const linkIn = await api('POST', '/v1/auth/signin-link/consume', null, { token: signinMail.token });
+linkIn.token && linkIn.user?.email === email
+  ? ok('signin-link consume -> fresh session, no password')
+  : bad('signin-link consume', JSON.stringify(linkIn));
+
+const stillValid = await raw('GET', '/v1/me', pwSession.token);
+stillValid.status === 200 ? ok('signin-link leaves existing sessions intact') : bad('signin-link session intact', stillValid.status);
+
+const linkReplay = await raw('POST', '/v1/auth/signin-link/consume', null, { token: signinMail.token });
+linkReplay.status === 401 ? ok('signin-link token is single-use') : bad('signin-link replay', linkReplay.status);
+
 // ---- autoVerify escape hatch (dev driver only) ----
 const auto = await api('POST', '/v1/auth/register', null, {
   email: `auto.${ts}@e2e.test`, password, displayName: 'Auto', autoVerify: true,

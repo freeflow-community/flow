@@ -1,8 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AuthResponse, RegisterPendingResponse } from '@flow/shared';
 import { api } from '../lib/api';
 
-type Mode = 'signin' | 'register' | 'forgot' | 'signup-sent' | 'reset-sent' | 'complete' | 'reset';
+type Mode =
+  | 'signin'
+  | 'register'
+  | 'forgot'
+  | 'signup-sent'
+  | 'reset-sent'
+  | 'complete'
+  | 'reset'
+  | 'link-sent'
+  | 'signin-link';
 
 const inputCls = 'mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm';
 const submitCls =
@@ -12,12 +21,16 @@ export default function AuthScreen({
   onSignedIn,
   signupToken,
   resetToken,
+  signinToken,
 }: {
   onSignedIn: (r: AuthResponse) => void;
   signupToken?: string | null;
   resetToken?: string | null;
+  signinToken?: string | null;
 }) {
-  const [mode, setMode] = useState<Mode>(signupToken ? 'complete' : resetToken ? 'reset' : 'signin');
+  const [mode, setMode] = useState<Mode>(
+    signinToken ? 'signin-link' : signupToken ? 'complete' : resetToken ? 'reset' : 'signin',
+  );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -81,6 +94,22 @@ export default function AuthScreen({
       e.preventDefault();
       onSignedIn(await api<AuthResponse>('POST', '/v1/auth/password/reset', { token: resetToken, password }));
     });
+
+  const sendSigninLink = () =>
+    void run(async () => {
+      await api('POST', '/v1/auth/signin-link', { email });
+      setMode('link-sent');
+    });
+
+  // A ?signin= link redeems automatically on mount, then signs the user in.
+  useEffect(() => {
+    if (!signinToken) return;
+    void run(async () => {
+      onSignedIn(await api<AuthResponse>('POST', '/v1/auth/signin-link/consume', { token: signinToken }));
+    });
+    // onSignedIn is stable (useCallback); signinToken never changes after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signinToken]);
 
   const backToSignIn = (
     <button type="button" className="mt-3 w-full text-center text-sm text-muted hover:text-ink" onClick={() => setMode('signin')}>
@@ -192,6 +221,33 @@ export default function AuthScreen({
         </button>
       </form>
     );
+  } else if (mode === 'link-sent') {
+    body = (
+      <div data-testid="auth-link-sent">
+        <h2 className="mb-2 text-center text-lg font-semibold text-ink">Check your email</h2>
+        <p className="mb-3 text-center text-sm text-muted">
+          If <span className="font-semibold text-ink">{email}</span> has an account, we sent it a sign-in link. Click it
+          to sign in — no password needed.
+        </p>
+        {backToSignIn}
+      </div>
+    );
+  } else if (mode === 'signin-link') {
+    body = (
+      <div data-testid="auth-signin-link">
+        <h2 className="mb-2 text-center text-lg font-semibold text-ink">
+          {error ? 'Sign-in link problem' : 'Signing you in…'}
+        </h2>
+        {error ? (
+          <>
+            <p className="mb-3 text-center text-sm text-red-600">{error}</p>
+            {backToSignIn}
+          </>
+        ) : (
+          <p className="text-center text-sm text-muted">One moment while we verify your link.</p>
+        )}
+      </div>
+    );
   } else {
     const isRegister = mode === 'register';
     body = (
@@ -254,6 +310,24 @@ export default function AuthScreen({
         >
           {isRegister ? 'Send me a link' : 'Sign In'}
         </button>
+        {!isRegister && (
+          <>
+            <div className="my-3 flex items-center gap-2 text-xs text-faint">
+              <span className="h-px flex-1 bg-hairline2" />
+              or
+              <span className="h-px flex-1 bg-hairline2" />
+            </div>
+            <button
+              type="button"
+              data-testid="auth-signin-link-btn"
+              className="w-full rounded border border-hairline2 py-2 text-sm font-semibold text-ink hover:bg-base disabled:opacity-50"
+              disabled={busy || !email}
+              onClick={sendSigninLink}
+            >
+              Email me a sign-in link
+            </button>
+          </>
+        )}
       </form>
     );
   }

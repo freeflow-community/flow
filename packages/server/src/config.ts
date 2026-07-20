@@ -49,6 +49,7 @@ export const config = {
   },
   verifyTokenTtlHours: 48,
   resetTokenTtlMinutes: 60,
+  signinTokenTtlMinutes: 15, // passwordless sign-in link — short-lived by design
   /** Local blob-store directory (phase2.md §3); object storage swaps in behind the same interface in phase 3. */
   get fileDir(): string {
     return process.env.FLOW_FILE_DIR ?? path.join(pkgRoot, '.files');

@@ -17,6 +17,8 @@ import {
   ForgotPasswordBody,
   LoginBody,
   ResetPasswordBody,
+  SigninLinkBody,
+  ConsumeSigninLinkBody,
   MarkNotificationsReadBody,
   MarkReadBody,
   PatchMeBody,
@@ -121,6 +123,19 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/auth/password/reset', async (req) => {
     const body = parse(ResetPasswordBody, req.body);
     return auth.resetPassword(body.token, body.password, req.headers['user-agent']);
+  });
+
+  // Passwordless sign-in: request a one-time link (open, no enumeration),
+  // then redeem it for a session (open).
+  app.post('/v1/auth/signin-link', async (req) => {
+    const body = parse(SigninLinkBody, req.body);
+    await auth.sendSigninLink(body.email);
+    return { ok: true };
+  });
+
+  app.post('/v1/auth/signin-link/consume', async (req) => {
+    const body = parse(ConsumeSigninLinkBody, req.body);
+    return auth.consumeSigninLink(body.token, req.headers['user-agent']);
   });
 
   app.post('/v1/auth/logout', { preHandler: requireAuth }, async (req) => {
