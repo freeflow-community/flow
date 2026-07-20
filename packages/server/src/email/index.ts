@@ -31,11 +31,43 @@ class DevMailer implements EmailSender {
   }
 }
 
+/**
+ * Cloudflare Email Service REST API. Note the flat request shape: `from`/`to`
+ * are plain address strings, not {email} objects.
+ * https://developers.cloudflare.com/email-service/api/send-emails/rest-api/
+ */
 class CloudflareMailer implements EmailSender {
-  async send(_msg: EmailMessage): Promise<void> {
-    // Wired up in the deploy phase (Cloudflare Email Service). Failing loudly
-    // beats silently dropping verification emails in a misconfigured deploy.
-    throw new Error('FLOW_EMAIL_DRIVER=cloudflare is not wired up yet');
+  constructor(
+    private readonly accountId: string,
+    private readonly apiToken: string,
+    private readonly from: string,
+  ) {}
+
+  async send(msg: EmailMessage): Promise<void> {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/email/sending/send`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${this.apiToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ from: this.from, to: msg.to, subject: msg.subject, text: msg.text }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      errors?: { code: number; message: string }[];
+      result?: { message_id?: string; permanent_bounces?: string[] };
+    };
+    if (!res.ok || !json.success) {
+      const detail = json.errors?.map((e) => `${e.code}: ${e.message}`).join('; ') ?? `HTTP ${res.status}`;
+      throw new Error(`cloudflare email send failed (${detail})`);
+    }
+    if (json.result?.permanent_bounces?.includes(msg.to)) {
+      throw new Error(`cloudflare email send: permanent bounce for ${msg.to}`);
+    }
+    console.log(`[email:cloudflare] to=${msg.to} subject="${msg.subject}" id=${json.result?.message_id ?? '?'}`);
   }
 }
 
@@ -43,7 +75,16 @@ let sender: EmailSender | null = null;
 
 export function emailSender(): EmailSender {
   if (!sender) {
-    sender = config.emailDriver === 'cloudflare' ? new CloudflareMailer() : new DevMailer(config.emailOutboxDir);
+    if (config.emailDriver === 'cloudflare') {
+      const { cloudflareAccountId: accountId, cloudflareApiToken: apiToken } = config;
+      if (!accountId || !apiToken) {
+        // Failing loudly beats silently dropping verification emails.
+        throw new Error('FLOW_EMAIL_DRIVER=cloudflare requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_KEY');
+      }
+      sender = new CloudflareMailer(accountId, apiToken, config.emailFrom);
+    } else {
+      sender = new DevMailer(config.emailOutboxDir);
+    }
   }
   return sender;
 }

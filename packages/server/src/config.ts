@@ -1,7 +1,13 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Load the repo-root .env (Cloudflare credentials etc.) if present. Real env
+// vars take precedence — loadEnvFile never overrides existing process.env.
+const rootEnv = path.resolve(pkgRoot, '..', '..', '.env');
+if (fs.existsSync(rootEnv)) process.loadEnvFile(rootEnv);
 
 export const config = {
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://flow:flow_dev@localhost:5442/flow',
@@ -25,7 +31,13 @@ export const config = {
     return process.env.FLOW_EMAIL_DRIVER === 'cloudflare' ? 'cloudflare' : 'dev';
   },
   get emailFrom(): string {
-    return process.env.FLOW_EMAIL_FROM ?? 'Flow <no-reply@flow.local>';
+    return process.env.FLOW_EMAIL_FROM ?? 'noreply@mail.flowtoo.org';
+  },
+  get cloudflareAccountId(): string | undefined {
+    return process.env.CLOUDFLARE_ACCOUNT_ID;
+  },
+  get cloudflareApiToken(): string | undefined {
+    return process.env.CLOUDFLARE_API_KEY;
   },
   /** Dev driver drops each sent email here as a JSON file (gitignored). */
   get emailOutboxDir(): string {

@@ -28,6 +28,14 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — Cloudflare email driver wired
+- `FLOW_EMAIL_DRIVER=cloudflare` now sends for real via Cloudflare Email
+  Service REST API (flat `from`/`to` strings — not `{email}` objects; bounce
+  + error surfacing). Needs `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_KEY`;
+  from-address via `FLOW_EMAIL_FROM` (default noreply@mail.flowtoo.org).
+  Server auto-loads repo-root `.env` (real env vars win). Verified with a
+  live send. Local default remains the dev outbox driver. `[server]`
+
 ### 2026-07-19 — Email verification + password reset (phase-3 email flows, local-first)
 - Email seam (`src/email/`, mirrors the blob-store seam): dev driver logs each
   message and drops it as JSON in gitignored `.emails/`; `FLOW_EMAIL_DRIVER=
