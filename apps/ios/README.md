@@ -28,7 +28,7 @@ Command-line build + run in a simulator:
 ```sh
 xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
   -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-  -derivedDataPath .build build
+  -derivedDataPath .build CODE_SIGNING_ALLOWED=NO build
 APP=$(find .build/Build/Products -name Flow.app -path '*iphonesimulator*' | head -1)
 xcrun simctl boot 'iPhone 17 Pro' 2>/dev/null; xcrun simctl install 'iPhone 17 Pro' "$APP"
 xcrun simctl launch 'iPhone 17 Pro' com.flow.ios
