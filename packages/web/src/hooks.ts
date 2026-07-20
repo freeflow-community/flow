@@ -9,6 +9,7 @@ import {
 import type {
   AppDTO,
   ChannelDTO,
+  FileDTO,
   MessageDTO,
   MessagePage,
   NotificationPage,
@@ -17,6 +18,13 @@ import type {
   WorkspaceMemberDTO,
 } from '@flow/shared';
 import { api } from './lib/api';
+import {
+  applyMessageEvent,
+  pendingId,
+  removePendingMessage,
+  type LocalMessage,
+} from './lib/messageCache';
+import { useAuth } from './state';
 
 export function useWorkspaces() {
   return useQuery({
@@ -121,22 +129,59 @@ export function useNotificationUnread() {
   });
 }
 
+interface SendInput {
+  body: string;
+  threadRootId?: string;
+  fileIds?: string[];
+  mentions?: string[];
+  /** Full DTOs of the attached files so the optimistic row renders them. */
+  files?: FileDTO[];
+}
+type SendVars = SendInput & { clientMsgId: string };
+
+/** Local-first send (macOS parity): a pending row lands in the cache before
+ * the POST leaves; the response (or the WS echo, whichever wins) reconciles
+ * it via clientMsgId; a failure removes it and the composer shows the error. */
 export function useSendMessage(channelId: string) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: { body: string; threadRootId?: string; fileIds?: string[]; mentions?: string[] }) =>
+  const auth = useAuth();
+  const mutation = useMutation({
+    mutationFn: (vars: SendVars) =>
       api<MessageDTO>('POST', `/v1/channels/${channelId}/messages`, {
-        clientMsgId: crypto.randomUUID(),
-        body: input.body,
-        ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
-        ...(input.fileIds?.length ? { fileIds: input.fileIds } : {}),
-        ...(input.mentions?.length ? { mentions: input.mentions } : {}),
+        clientMsgId: vars.clientMsgId,
+        body: vars.body,
+        ...(vars.threadRootId ? { threadRootId: vars.threadRootId } : {}),
+        ...(vars.fileIds?.length ? { fileIds: vars.fileIds } : {}),
+        ...(vars.mentions?.length ? { mentions: vars.mentions } : {}),
       }),
-    onSuccess: (_msg, input) => {
-      void qc.invalidateQueries({ queryKey: ['messages', channelId] });
-      if (input.threadRootId) void qc.invalidateQueries({ queryKey: ['thread', input.threadRootId] });
+    onMutate: (vars) => {
+      const optimistic: LocalMessage = {
+        id: pendingId(vars.clientMsgId),
+        channelId,
+        userId: auth.user.id,
+        threadRootId: vars.threadRootId ?? null,
+        clientMsgId: vars.clientMsgId,
+        body: vars.body,
+        createdAt: new Date().toISOString(),
+        editedAt: null,
+        deletedAt: null,
+        replyCount: 0,
+        lastReplyAt: null,
+        replyParticipantUserIds: [],
+        reactions: [],
+        files: vars.files ?? [],
+        pending: true,
+      };
+      applyMessageEvent(qc, optimistic, true);
     },
+    onSuccess: (msg) => applyMessageEvent(qc, msg, true),
+    onError: (_err, vars) => removePendingMessage(qc, channelId, vars.clientMsgId, vars.threadRootId),
   });
+  return {
+    ...mutation,
+    mutate: (input: SendInput, opts?: Parameters<typeof mutation.mutate>[1]) =>
+      mutation.mutate({ ...input, clientMsgId: crypto.randomUUID() }, opts),
+  };
 }
 
 export function useToggleReaction() {

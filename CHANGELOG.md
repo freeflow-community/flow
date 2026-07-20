@@ -44,6 +44,23 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — Web: local-first send + apply-WS-events (perceived latency)
+- Sending renders instantly: an optimistic pending row (dimmed, actions
+  suppressed, attachments included) lands in the query cache before the POST
+  leaves, reconciled by clientMsgId when the response or WS echo arrives —
+  failures remove it and surface the composer error. Matches the macOS
+  SyncEngine's pending-row behavior (parity gap closed; iOS shares the macOS
+  engine). `[web]`
+- message.created/updated/deleted/thread.reply events now apply their full
+  DTO straight into the message/thread caches instead of refetching the whole
+  list per event — receiving messages is instant too, and thread-reply
+  rollups (count/lastReplyAt/participant stack, deduped across optimistic/
+  response/echo) are mirrored client-side like macOS. Sidebar unread still
+  rides the channels query. `[web]`
+- Backdrop: prod DB moved to us-west (same-day migration) halved server time;
+  this removes the remaining 2× round-trip wait. New vitest suite for the
+  cache reducers (9 tests) — web's first test target. `[web]` `[qa]`
+
 ### 2026-07-20 — macOS: fix crash on video playback (AVKit not linked)
 - Pressing play on a video attachment aborted the app: `swift build`
   autolinks the `_AVKit_SwiftUI` overlay but not `AVKit.framework` itself, so

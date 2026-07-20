@@ -4,6 +4,7 @@ import { api, blobUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
 import { useAuth, useSelection } from '../state';
 import { useToggleReaction } from '../hooks';
+import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import { Modal } from './modals';
@@ -153,6 +154,8 @@ function MessageRow({
   const mine = message.userId === auth.user.id;
   const sender = names[message.userId] ?? 'Unknown';
   const member = membersById[message.userId];
+  // Optimistic row awaiting the server echo: dimmed, actions suppressed.
+  const pending = (message as LocalMessage).pending === true;
 
   useEffect(() => {
     if (editing) setEditText(message.body);
@@ -168,7 +171,8 @@ function MessageRow({
   return (
     <div
       data-testid={`message-${message.id}`}
-      className={`group relative flex gap-2.5 px-[22px] hover:bg-daypill/40 ${showHeader ? 'mt-3' : 'py-px'}`}
+      data-pending={pending || undefined}
+      className={`group relative flex gap-2.5 px-[22px] hover:bg-daypill/40 ${showHeader ? 'mt-3' : 'py-px'} ${pending ? 'opacity-55' : ''}`}
     >
       <div className="w-[38px] shrink-0">
         {showHeader && (
@@ -274,7 +278,7 @@ function MessageRow({
         )}
       </div>
 
-      {!message.deletedAt && !editing && (
+      {!message.deletedAt && !editing && !pending && (
         <div className="absolute top-0 right-[22px] hidden gap-1 rounded-lg border border-hairline bg-white px-1 shadow-sm group-hover:flex">
           <button
             data-testid={`add-reaction-${message.id}`}

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
-import type { Event, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
+import type { Event, MessageDTO, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
+import { applyMessageEvent } from '../lib/messageCache';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
@@ -85,13 +86,16 @@ export default function Main() {
       case 'message.updated':
       case 'message.deleted':
       case 'thread.reply': {
-        const data = event.data as { channelId: string; threadRootId: string | null; userId: string };
+        // Events carry the full MessageDTO: apply it to the cache directly
+        // (local-first; no refetch of the whole list per incoming message).
+        const msg = event.data as MessageDTO;
         if (event.type === 'message.created' || event.type === 'thread.reply') {
           // The sender's message arrived — drop their lingering typing entry.
-          clearTyping(data.channelId, data.userId);
+          clearTyping(msg.channelId, msg.userId);
         }
-        void qc.invalidateQueries({ queryKey: ['messages', data.channelId] });
-        if (data.threadRootId) void qc.invalidateQueries({ queryKey: ['thread', data.threadRootId] });
+        const insert = event.type === 'message.created' || event.type === 'thread.reply';
+        applyMessageEvent(qc, msg, insert);
+        // Sidebar unread counts/ordering still come from the channels query.
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         break;
       }

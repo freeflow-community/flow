@@ -183,6 +183,7 @@ export default function Composer({
         ...(threadRootId ? { threadRootId } : {}),
         fileIds: attachments.map((f) => f.id),
         mentions,
+        files: attachments, // full DTOs so the optimistic row renders previews
       },
       { onError: (err) => setError(err instanceof Error ? err.message : 'send failed') },
     );
