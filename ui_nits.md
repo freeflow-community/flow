@@ -22,6 +22,7 @@ status: done [web] [macos] — ↑ in an empty composer edits your message only 
 status: done [server] [web] [macos] — topic column existed since 0000_init (no migration); added PATCH /v1/channels/:id (any channel member; #general keeps its name) + channel.updated WS fan-out; both clients open a name/topic editor from the header name and already rendered the topic sub-headline.
 
 - Emoji search should do substring match in the emoji name, not just prefix
+status: done [web] [macos] [ios] — shared emojiMatches (web :shortcode: composer autocomplete) and EmojiCatalog.matches (macOS composer autocomplete) now substring-match with prefix hits ranked first; the web/macOS/iOS picker grids (already substring) picked up the same prefix-first ranking. Unit tests on both sides.
 - App tokens should be visible when managing apps. No need to hide those.
 - Instead of "Disable" apps we should just Delete them completely
 status: done [server] [web] [macos] — Manage Apps gains Remove… (inline confirm): DELETE /v1/apps/:id removes the app + credentials, pulls the bot from the workspace/channels and member/mention lists, deletes 1:1 bot DMs; macOS refreshes members on workspace-level member.left. (Disable retained for temporary off-switching.)

@@ -38,6 +38,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — UI nits: emoji search substring match
+- Emoji shortcode search matches substrings of the name (not just the
+  prefix), with prefix hits ranked first: shared `emojiMatches` (web
+  `:shortcode:` composer autocomplete), macOS `EmojiCatalog.matches`
+  (composer autocomplete), and the web/macOS/iOS picker grids share the same
+  ranking. Unit tests added (vitest + XCTest). `[web]` `[macos]` `[ios]`
+
 ### 2026-07-20 — iOS files + unread polish, tiers 2–3 (phase 7)
 - Attachment rendering in chat: image thumbnails with full-screen lightbox
   (original bytes + share sheet), animated GIFs (new ImageIO-backed
