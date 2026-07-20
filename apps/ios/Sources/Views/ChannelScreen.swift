@@ -10,6 +10,7 @@ struct ChannelScreen: View {
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @State private var editingMessage: Message?
+    @State private var threadRoute: ThreadRoute?
 
     private var usersById: [String: User] {
         Dictionary(users.value.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -38,11 +39,13 @@ struct ChannelScreen: View {
                 userStatuses: statusesById,
                 currentUserId: app.currentUser?.id,
                 hasMore: app.hasMore[channelId] ?? false,
-                showThreadAffordances: false,
+                showThreadAffordances: true,
                 onLoadOlder: {
                     Task { await app.engine.loadOlder(channelId: channelId) }
                 },
-                onOpenThread: { _ in },
+                onOpenThread: { rootId in
+                    threadRoute = ThreadRoute(rootId: rootId)
+                },
                 onEdit: { editingMessage = $0 },
                 onDelete: { msg in
                     Task { await app.engine.deleteMessage(id: msg.id) }
@@ -54,8 +57,11 @@ struct ChannelScreen: View {
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }
+        .navigationDestination(item: $threadRoute) { route in
+            ThreadScreen(rootId: route.rootId)
+        }
         .modifier(DebugTestSend(channelId: channelId, app: app))
-        .modifier(DebugMessageActions(channelId: channelId, app: app))
+        .modifier(DebugMessageActions(channelId: channelId, app: app) { threadRoute = ThreadRoute(rootId: $0) })
         .background(MC.base)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)

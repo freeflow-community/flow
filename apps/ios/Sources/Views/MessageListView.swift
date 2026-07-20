@@ -184,6 +184,10 @@ struct MessageRow: View {
                         reactionChips
                     }
                 }
+
+                if showThreadAffordances, message.replyCount > 0 {
+                    threadAffordance
+                }
             }
             Spacer(minLength: 0)
         }
@@ -247,6 +251,44 @@ struct MessageRow: View {
             }
             .presentationDetents([.height(340)])
         }
+    }
+
+    /// Reply count + first-4 participant avatar stack; tap pushes the thread.
+    private var threadAffordance: some View {
+        Button {
+            onOpenThread(message.id)
+        } label: {
+            HStack(spacing: 6) {
+                if !message.replyParticipantUserIds.isEmpty {
+                    HStack(spacing: -6) {
+                        ForEach(message.replyParticipantUserIds, id: \.self) { uid in
+                            AvatarChip(
+                                userId: uid,
+                                name: userNames[uid] ?? "Unknown",
+                                avatarPath: app.avatarPaths[uid],
+                                size: 20,
+                                radius: 6
+                            )
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.white, lineWidth: 1.5))
+                        }
+                    }
+                    .accessibilityIdentifier("msg.threadParticipants")
+                    .accessibilityLabel(
+                        message.replyParticipantUserIds
+                            .map { userNames[$0] ?? "Unknown" }.joined(separator: ", ")
+                    )
+                }
+                Label(
+                    "\(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies")",
+                    systemImage: "bubble.left.and.bubble.right"
+                )
+                .font(.caption)
+                .foregroundStyle(MC.accent)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 3)
+        .accessibilityIdentifier("msg.openThread")
     }
 
     /// Reaction chips with counts; tap toggles the caller's reaction.
