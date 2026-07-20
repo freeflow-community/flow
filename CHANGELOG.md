@@ -38,6 +38,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — UI nits: thread-replies hover cursor
+- Hovering the thread replies pill (avatars + "N replies") now shows the
+  pointer/hand cursor: web adds cursor-pointer (Tailwind v4 preflight keeps
+  buttons on the default cursor), macOS pushes NSCursor.pointingHand on hover
+  (same pattern as the panel resize handles). `[web]` `[macos]`
+
 ### 2026-07-20 — UI nits: emoji search substring match
 - Emoji shortcode search matches substrings of the name (not just the
   prefix), with prefix hits ranked first: shared `emojiMatches` (web

@@ -214,6 +214,11 @@ struct MessageRow: View {
                         }
                     }
                     .buttonStyle(.link)
+                    // Hand cursor on hover (ui_nits) — same push/pop pattern as
+                    // the sidebar/thread resize handles in MainView.
+                    .onHover { inside in
+                        if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                    }
                 }
             }
             Spacer(minLength: 0)

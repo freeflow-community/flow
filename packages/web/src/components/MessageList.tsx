@@ -248,7 +248,7 @@ function MessageRow({
         {showThreadAffordances && message.replyCount > 0 && (
           <button
             data-testid={`thread-open-${message.id}`}
-            className="mt-1 flex items-center gap-2 rounded-[10px] border border-hairline bg-white py-[5px] pr-2.5 pl-1.5 text-xs hover:border-hairline2"
+            className="mt-1 flex cursor-pointer items-center gap-2 rounded-[10px] border border-hairline bg-white py-[5px] pr-2.5 pl-1.5 text-xs hover:border-hairline2"
             onClick={() => sel.openThread(message.id)}
           >
             {(message.replyParticipantUserIds ?? []).length > 0 && (
