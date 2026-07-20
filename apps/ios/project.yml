@@ -1,6 +1,6 @@
 name: FlowiOS
 options:
-  bundleIdPrefix: com.flow
+  bundleIdPrefix: org.flowtoo
   createIntermediateGroups: true
   deploymentTarget:
     iOS: "17.0"
@@ -35,6 +35,12 @@ targets:
         FlowServerURL: https://app.flowtoo.org
         CFBundleDisplayName: Flow
         UILaunchScreen: {}
+        # Register flow:// so the web-to-app handoff (flow://signin?code=…) and
+        # invite links (flow://invite/…) open the app — the intended way to
+        # sign in on a phone.
+        CFBundleURLTypes:
+          - CFBundleURLName: org.flowtoo.ios
+            CFBundleURLSchemes: [flow]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
@@ -44,7 +50,7 @@ targets:
           NSAllowsLocalNetworking: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.flow.ios
+        PRODUCT_BUNDLE_IDENTIFIER: org.flowtoo.ios
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"

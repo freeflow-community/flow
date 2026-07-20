@@ -31,7 +31,7 @@ xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
   -derivedDataPath .build CODE_SIGNING_ALLOWED=NO build
 APP=$(find .build/Build/Products -name Flow.app -path '*iphonesimulator*' | head -1)
 xcrun simctl boot 'iPhone 17 Pro' 2>/dev/null; xcrun simctl install 'iPhone 17 Pro' "$APP"
-xcrun simctl launch 'iPhone 17 Pro' com.flow.ios
+xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
 ```
 
 ## Server selection
@@ -67,7 +67,7 @@ SIMCTL_CHILD_FLOW_SERVER_URL=http://127.0.0.1:8787 \
 SIMCTL_CHILD_FLOW_DEBUG_EMAIL=alice@qa.local \
 SIMCTL_CHILD_FLOW_DEBUG_PASSWORD=qa-password-1 \
 SIMCTL_CHILD_FLOW_DEBUG_OPEN_CHANNEL=general \
-xcrun simctl launch 'iPhone 17 Pro' com.flow.ios
+xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
 ```
 
 (Local HTTP is allowed via an `NSAllowsLocalNetworking` ATS exception; prod
