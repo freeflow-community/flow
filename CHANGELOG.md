@@ -28,6 +28,11 @@ Updated with every milestone commit (PM) and interactive-session fix (coordinato
 
 ## History
 
+### 2026-07-19 — fix: avatars missing in web thread panel
+- ThreadPanel rendered MessageList without `membersById`, so every avatar in a
+  thread fell back to initials even when the user had a photo. Now passes
+  `useMemberMap` like the channel view does. `[web]`
+
 ### 2026-07-19 — Slack Socket Mode compatibility
 - Apps get an app-level `xapp-…` token at creation (hashed, one-time, shown in
   the Apps modal; migration 0009). `POST /api/apps.connections.open`

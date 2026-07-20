@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useAuth, useSelection } from '../state';
-import { useNameMap, useThread } from '../hooks';
+import { useMemberMap, useNameMap, useThread } from '../hooks';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 
@@ -18,6 +18,7 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
   const sel = useSelection();
   const thread = useThread(rootId);
   const names = useNameMap(sel.workspaceId);
+  const memberMap = useMemberMap(sel.workspaceId);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
 
@@ -73,6 +74,7 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
       <MessageList
         messages={messages}
         names={names}
+        membersById={memberMap}
         hasMore={false}
         onLoadOlder={() => {}}
         showThreadAffordances={false}
