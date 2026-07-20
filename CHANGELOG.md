@@ -17,21 +17,46 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   (macOS profiles handle multi-account). Candidate phase-3-adjacent fix.
 - macOS: workspace-chooser tiles ignore AX activation (real click required) — a11y gap.
 - No syntax highlighting in code blocks (both clients; never scoped).
-- iOS is an early vertical slice: no threads, reactions, files, typing, rich
-  markdown, or in-app registration yet (web/macOS have them). Reuses the shared
-  data layer, so these are view work, not protocol work.
+- iOS: no file attachments yet (rendering + upload — phase 7 tier 2 in
+  progress) and no push notifications (deferred to a follow-on phase). Core
+  messaging (threads, reactions, typing, rich markdown, message actions) now
+  at parity.
 - macOS has no in-app registration, password-reset, or passwordless sign-in
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
   server. (iOS same — auth is web-driven.)
 
 ### Deliberate divergences (ruled)
-- Emoji picker: custom grid + search on web; native character palette on macOS.
+- Emoji picker: custom grid + search on web and iOS (reaction sheet); native
+  character palette on macOS.
+- iOS composer: plain text + @-mention autocomplete only — no live-styled
+  fence/code composer (PM ruling per phase7.md recommendation, pending
+  operator review). Markdown still renders fully; sugar expands at send time.
+- iOS message actions: long-press context menu (no hover on touch).
 - App management UI (Slack-compat apps): web only.
 - Local per-device (not synced) prefs: sidebar width, thread-panel width,
   image collapsed/expanded state (ruled).
 
 ## History
+
+### 2026-07-20 — iOS messaging parity, tier 1 (phase 7)
+- Rich markdown message rendering: shared MarkdownBlocks segmentation
+  (paragraphs / accent-bar blockquotes / fenced code blocks with horizontal
+  scroll), mention pills via shared MentionRendering, day-divider pills,
+  5-minute author grouping, edited/pending markers, shared AvatarChip. `[ios]`
+- Long-press message actions (touch answer to the macOS hover menu): quick
+  reactions, full emoji picker sheet (grid + search over shared EmojiCatalog),
+  Edit (own, sheet editor), Delete (own, confirm dialog). `[ios]`
+- Reactions: chips with counts under messages, tap to toggle, own-reaction
+  highlight — shared SyncEngine mutations. `[ios]`
+- Threads as a pushed screen: reply count + participant avatar stack on
+  parents, ThreadScreen with root/divider/replies and its own reply composer;
+  engine.openThread keeps reply backfill running across reconnects. `[ios]`
+- Typing indicators: composer emits engine.typing; indicator row renders the
+  shared AppState typing map (5s expiry) in channel + thread screens. `[ios]`
+- Composer: @-mention autocomplete chip bar (group tokens + members). `[ios]`
+- DEBUG-only headless QA hooks: FLOW_DEBUG_REACT / EDIT_LAST / DELETE_LAST /
+  REPLY_LAST / OPEN_THREAD_LAST drive the exact engine paths the UI uses. `[qa]`
 
 ### 2026-07-20 — Passwordless sign-in link (magic link)
 - Sign-in screen gains an "Email me a sign-in link" button: enter an email (no

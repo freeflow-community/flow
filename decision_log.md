@@ -308,3 +308,33 @@ Flow.app instances relaunched and re-registered with LaunchServices (flow://
 now binds to the new bundle path). Claude project memory migrated to the new
 project directory. Remaining old-name artifacts: the "MyChat Dev Signing"
 cert and old-name mentions in historical docs only.
+
+## 2026-07-20 — Phase 7 (iOS parity) — PM rulings, pending operator review
+
+Operator started the phase without answering the phase7.md pre-flight
+questions; the doc's recommendations were applied as PM rulings:
+
+1. **Push notifications (tier 3 item 8): deferred** to a follow-on phase — no
+   server-side APNs work this phase. The Parity section keeps it as the iOS gap.
+2. **Files scope**: photo library + Files document picker; camera is a stretch
+   goal only if time allows.
+3. **Composer**: plain text + @-mention autocomplete only; the live-styled
+   fence/code composer (NSTextView port) is NOT ported. Rendering is full
+   parity; only input styling differs (recorded as deliberate divergence).
+4. **Edit UX**: sheet editor, like macOS.
+
+Implementation judgment calls (also pending review):
+- **iOS reaction picker** = custom grid + search sheet (web parity), since the
+  macOS native character palette has no iOS equivalent for this use.
+- **Autocomplete UI** = horizontal chip bar above the composer (touch idiom)
+  rather than the macOS vertical list; same trailing-token matching logic.
+- **Headless QA limits**: simctl cannot tap, so long-press menu, autocomplete
+  insertion, and outgoing typing emission were verified by code parity +
+  build, with engine-path DEBUG hooks (FLOW_DEBUG_REACT/EDIT_LAST/DELETE_LAST/
+  REPLY_LAST/OPEN_THREAD_LAST) exercising the same mutations end-to-end
+  against the local QA server. Operator spot-check of the touch interactions
+  recommended.
+- **Environment note**: the iOS 26 simulator runtime on this machine renders
+  emoji as tofu (missing Apple Color Emoji in screenshots) — chips, counts,
+  and highlights verified; glyph rendering itself needs a device/runtime
+  spot-check. Not an app bug.
