@@ -13,12 +13,15 @@ use the REST API:
 ```
 POST /v1/workspaces/:id/apps        { "name": "My Bot" }   → { app, botToken }
 GET  /v1/workspaces/:id/apps                               → { apps: [...] }
+GET  /v1/apps/:id/credentials       → { botToken, appToken, signingSecret }
+POST /v1/apps/:id/credentials/rotate → new botToken + appToken (old ones die)
 PATCH /v1/apps/:id                  { eventUrl?, eventTypes? }
 POST /v1/apps/:id/disable | /enable
 ```
 
-- The `xoxb-…` **bot token is returned once** at creation and stored hashed —
-  copy it immediately.
+- The `xoxb-…` **bot token stays viewable** to owners/admins via
+  `/credentials` and the Apps modal (auth still checks only the hash). Apps
+  created before token visibility return `null` tokens — regenerate to view.
 - The app's bot is a real workspace user (`isBot`, appears in member lists,
   can be DM'd, shows presence via API activity).
 - Disabling an app kills token auth and event delivery without deleting
@@ -130,10 +133,13 @@ window (Slack semantics) but are never auto-disabled.
 
 ## Credentials
 
-App creation returns `{ app, botToken, signingSecret }` — **both credentials
-exactly once** (the token is stored hashed; the secret is never exposed by any
-later read). The Apps modal shows both with copy buttons at creation time. If
-either is lost, create a new app (rotation = create + disable old).
+App creation returns `{ app, botToken, appToken, signingSecret }`, and all
+three stay viewable to owners/admins afterward: `GET /v1/apps/:id/credentials`
+backs the Apps modal's Configure section (copy buttons, monospace). Tokens are
+still *authenticated* against hashes only. `POST /v1/apps/:id/credentials/rotate`
+regenerates both tokens (old ones stop working; signing secret unchanged) —
+also the recovery path for apps created before token visibility, whose stored
+raw tokens are `null`.
 
 ## Local testing recipe
 

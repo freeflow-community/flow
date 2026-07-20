@@ -1,10 +1,27 @@
 import AppKit
+import AVKit
 import PDFKit
 import SwiftUI
 
 // Phase 6: inline previews for text-ish files and PDFs.
+// ui_nits: inline video playback (AVKit) with an expanded-sheet lightbox.
 
 extension FileAttachment {
+    static let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "webm"]
+
+    var isVideo: Bool {
+        mimeType.hasPrefix("video/")
+            || Self.videoExtensions.contains((name as NSString).pathExtension.lowercased())
+    }
+
+    /// AVFoundation has no VP8/VP9/webm support — those stay a file chip on
+    /// macOS (deliberate divergence: web plays webm inline; see CHANGELOG Parity).
+    var isPlayableVideo: Bool {
+        guard isVideo else { return false }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return mimeType != "video/webm" && ext != "webm"
+    }
+
     /// ASCII-ish formats that get an inline monospace preview.
     var isTextPreviewable: Bool {
         if isImage { return false }
@@ -384,6 +401,236 @@ struct PdfReaderView: View {
             defer { busy = false }
             do {
                 let url = try await app.engine.downloadFile(file)
+                NSWorkspace.shared.open(url)
+            } catch {
+                app.showError("Couldn't open \(file.name): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func download() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let dest = try await app.engine.saveToDownloads(file)
+                NSWorkspace.shared.activateFileViewerSelecting([dest])
+            } catch {
+                app.showError("Couldn't download \(file.name): \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+// MARK: - Video preview + lightbox (ui_nits)
+
+/// Inline video card: preview-card chrome (collapse chevron, hover Download)
+/// around an AVKit player. A film-icon play placeholder defers the download
+/// (up to 20 MB) until the user hits play — no server-side poster (ruled);
+/// the expand button opens a larger sheet, consistent with the image lightbox.
+struct VideoAttachmentView: View {
+    let file: FileAttachment
+    @EnvironmentObject private var app: AppState
+    @State private var player: AVPlayer?
+    @State private var localURL: URL?
+    @State private var loading = false
+    @State private var failed = false
+    @State private var hovering = false
+    @State private var showLightbox = false
+    @State private var collapsed: Bool
+
+    init(file: FileAttachment) {
+        self.file = file
+        _collapsed = State(initialValue: CollapsedImages.contains(file.id))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            AttachmentCardHeader(file: file, collapsed: $collapsed)
+            if !collapsed {
+                videoBody
+            }
+        }
+    }
+
+    private var videoBody: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let player {
+                    VideoPlayer(player: player)
+                } else {
+                    placeholder
+                }
+            }
+            .frame(width: 480, height: 270)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+            .accessibilityIdentifier("msg.file.video.\(file.name)")
+
+            if hovering {
+                HStack(spacing: 6) {
+                    Button {
+                        showLightbox = true
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 24, height: 24)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.92)))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MC.hairline, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Expand")
+                    .accessibilityIdentifier("msg.file.video.expand.\(file.name)")
+                    DownloadIconButton(file: file)
+                }
+                .padding(6)
+            }
+        }
+        .onHover { hovering = $0 }
+        .sheet(isPresented: $showLightbox) {
+            VideoLightboxView(file: file, localURL: localURL)
+                .environmentObject(app)
+        }
+        .onChange(of: showLightbox) { _, open in
+            if open { player?.pause() }
+        }
+    }
+
+    private var placeholder: some View {
+        Button(action: loadAndPlay) {
+            ZStack {
+                Rectangle().fill(MC.ink.opacity(0.85))
+                VStack(spacing: 8) {
+                    if loading {
+                        ProgressView().controlSize(.small).tint(.white)
+                    } else if failed {
+                        Image(systemName: "film")
+                            .font(.title)
+                            .foregroundStyle(.white.opacity(0.7))
+                        Text("Couldn't load video — Download to play")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.7))
+                    } else {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.white.opacity(0.9))
+                        Text(file.sizeLabel)
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("msg.file.video.play.\(file.name)")
+    }
+
+    private func loadAndPlay() {
+        guard !loading, player == nil else { return }
+        loading = true
+        failed = false
+        Task {
+            defer { loading = false }
+            do {
+                let url = try await app.engine.downloadFile(file)
+                localURL = url
+                let p = AVPlayer(url: url)
+                player = p
+                p.play()
+            } catch {
+                failed = true
+            }
+        }
+    }
+}
+
+/// Expanded video sheet, consistent with ImageLightboxView: open-external +
+/// download icon buttons, Esc / ✕ closes. Reuses the inline card's local
+/// download when it already happened.
+struct VideoLightboxView: View {
+    let file: FileAttachment
+    var localURL: URL?
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    @State private var failed = false
+    @State private var busy = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Text(file.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                if busy { ProgressView().controlSize(.mini) }
+                Spacer()
+                Button(action: openExternal) {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .help("Open external")
+                .accessibilityIdentifier("videoLightbox.openExternal")
+                Button(action: download) {
+                    Image(systemName: "arrow.down.to.line")
+                }
+                .help("Download")
+                .accessibilityIdentifier("videoLightbox.download")
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .help("Close")
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("videoLightbox.close")
+            }
+            .buttonStyle(.borderless)
+
+            Group {
+                if let player {
+                    VideoPlayer(player: player)
+                } else if failed {
+                    Text("Couldn't load video")
+                        .foregroundStyle(MC.faint)
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(width: 860, height: 484)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(14)
+        .accessibilityIdentifier("videoLightbox")
+        .task(id: file.id) { await load() }
+        .onDisappear { player?.pause() }
+    }
+
+    private func load() async {
+        do {
+            let url = try await resolveLocalURL()
+            let p = AVPlayer(url: url)
+            player = p
+            p.play()
+        } catch {
+            failed = true
+        }
+    }
+
+    private func resolveLocalURL() async throws -> URL {
+        if let localURL, FileManager.default.fileExists(atPath: localURL.path) {
+            return localURL
+        }
+        return try await app.engine.downloadFile(file)
+    }
+
+    private func openExternal() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                player?.pause()
+                let url = try await resolveLocalURL()
                 NSWorkspace.shared.open(url)
             } catch {
                 app.showError("Couldn't open \(file.name): \(error.localizedDescription)")

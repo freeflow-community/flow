@@ -24,6 +24,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
   server. (iOS same — auth is web-driven.)
+- iOS: no inline video preview/playback card — video attachments render as a
+  name+size chip that opens in QuickLook (which does play them); web/macOS
+  render inline players with an expand affordance.
 
 ### Deliberate divergences (ruled)
 - Emoji picker: custom grid + search on web and iOS (reaction sheet); native
@@ -35,8 +38,54 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - App management UI (Slack-compat apps): web only.
 - Local per-device (not synced) prefs: sidebar width, thread-panel width,
   image collapsed/expanded state (ruled).
+- webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
+  support, so macOS shows the file chip (Download / open externally) for
+  webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-20 — UI nits: video sharing with inline playback
+- `GET /v1/files/:id` now supports HTTP Range requests (`Accept-Ranges:
+  bytes`, single-range 206s, 416 on unsatisfiable; multi-range served whole
+  per RFC 9110) so video players can seek by URL. Video mimes were already
+  accepted by upload; no poster/thumbnail generation (ruled — no ffmpeg-class
+  dependency). `[server]`
+- Inline video cards (mp4/mov/webm) with the phase-5/6 preview-card chrome:
+  collapse chevron + filename header, hover Download, and a hover Expand
+  that opens a full-window lightbox. Web uses native `<video>` controls over
+  the authed blob cache (first frame doubles as poster; undecodable codecs
+  fall back to the file chip). `[web]`
+- macOS plays mp4/mov/m4v inline via AVKit behind a film play-button
+  placeholder (video downloads on first play, ≤20 MB), with an expanded
+  sheet consistent with the image lightbox (open-external/download/Esc).
+  `.webm`/`.m4v` added to the upload mime map. `[macos]`
+
+### 2026-07-20 — UI nits: app tokens viewable in Manage Apps
+- Bot/app-level tokens are now viewable after creation: raw tokens stored
+  alongside their auth hashes (migration 0011; PM ruling pending operator
+  review — auth still verifies hashes only, and the DB already held the
+  signing secret in plaintext). `GET /v1/apps/:id/credentials` (owner/admin)
+  + `POST /v1/apps/:id/credentials/rotate` (regenerates both tokens, old
+  ones stop authenticating). `[server]`
+- Apps modal Configure section grows a Credentials block: bot token,
+  app-level token, and signing secret in monospace with copy buttons
+  (creation-reveal styling). Apps created before the migration show
+  "created before token visibility — regenerate to view" with a
+  confirm-guarded Regenerate button. App management stays web-only
+  (existing ruled divergence). `[web]`
+
+### 2026-07-20 — UI nits: thread-replies hover cursor
+- Hovering the thread replies pill (avatars + "N replies") now shows the
+  pointer/hand cursor: web adds cursor-pointer (Tailwind v4 preflight keeps
+  buttons on the default cursor), macOS pushes NSCursor.pointingHand on hover
+  (same pattern as the panel resize handles). `[web]` `[macos]`
+
+### 2026-07-20 — UI nits: emoji search substring match
+- Emoji shortcode search matches substrings of the name (not just the
+  prefix), with prefix hits ranked first: shared `emojiMatches` (web
+  `:shortcode:` composer autocomplete), macOS `EmojiCatalog.matches`
+  (composer autocomplete), and the web/macOS/iOS picker grids share the same
+  ranking. Unit tests added (vitest + XCTest). `[web]` `[macos]` `[ios]`
 
 ### 2026-07-20 — iOS files + unread polish, tiers 2–3 (phase 7)
 - Attachment rendering in chat: image thumbnails with full-screen lightbox

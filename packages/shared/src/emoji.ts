@@ -74,13 +74,16 @@ export const QUICK_REACTIONS: string[] = [
   '⚡', '🐛', '💡', '📌', '🎯', '🏆', '🫡', '💀',
 ];
 
-/** Autocomplete candidates for a shortcode prefix, best matches first. */
-export function emojiMatches(prefix: string, limit = 8): { code: string; emoji: string }[] {
-  const lower = prefix.toLowerCase();
+/** Autocomplete candidates for a shortcode query, best matches first.
+ * Substring match (ui_nits): "fire" finds :campfire:-style names too; codes
+ * that start with the query rank ahead of mid-name hits. */
+export function emojiMatches(query: string, limit = 8): { code: string; emoji: string }[] {
+  const lower = query.toLowerCase();
   if (!lower) return [];
+  const rank = (code: string) => (code.startsWith(lower) ? 0 : 1);
   return Object.entries(EMOJI_SHORTCODES)
-    .filter(([code]) => code.startsWith(lower))
-    .sort(([a], [b]) => (a.length - b.length) || a.localeCompare(b))
+    .filter(([code]) => code.includes(lower))
+    .sort(([a], [b]) => (rank(a) - rank(b)) || (a.length - b.length) || a.localeCompare(b))
     .slice(0, limit)
     .map(([code, emoji]) => ({ code, emoji }));
 }

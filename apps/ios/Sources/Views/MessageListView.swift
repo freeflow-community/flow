@@ -413,7 +413,10 @@ struct EmojiPickerView: View {
         var seen = Set<String>()
         return EmojiCatalog.shortcodes
             .filter { $0.key.contains(q) }
-            .sorted { ($0.key.count, $0.key) < ($1.key.count, $1.key) }
+            .sorted {
+                ($0.key.hasPrefix(q) ? 0 : 1, $0.key.count, $0.key)
+                    < ($1.key.hasPrefix(q) ? 0 : 1, $1.key.count, $1.key)
+            }
             .compactMap { seen.insert($0.value).inserted ? $0.value : nil }
     }
 

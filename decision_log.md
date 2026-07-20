@@ -357,3 +357,27 @@ Implementation judgment calls (also pending review):
 - **Mark-read on scroll** judged already-covered: the shared engine marks
   read on channel open and while the channel is active (same semantics as
   macOS) — no extra scroll-position tracking added.
+
+## 2026-07-20 — UI-nits batch (PM rulings, pending operator review)
+
+- **App tokens stored raw alongside their hashes** (migration 0011) so
+  owners/admins can view them later in Manage Apps (ui_nits). Considered
+  encrypt-at-rest instead; rejected as security theater here: the app-level
+  key would live in the same environment as the DB credentials, and the DB
+  already stores each app's signing secret in plaintext, so plaintext raw
+  tokens don't change the threat model. Auth lookups still go through the
+  hash columns only. Apps created before 0011 have NULL raw tokens
+  (irrecoverable from the hash) — the UI labels them "created before token
+  visibility" and offers **Regenerate tokens** (POST
+  /v1/apps/:id/credentials/rotate; new bot+app tokens, old ones stop
+  authenticating, signing secret untouched). PM ruling, pending operator
+  review.
+- **Video previews ship without server-side poster/thumbnail generation**:
+  the web card shows the first frame once the (fully fetched, ≤20 MB) blob
+  loads; the macOS card uses a film-icon play placeholder and only downloads
+  the video when the user hits play. Extracting poster frames server-side
+  would add an ffmpeg-class dependency for marginal benefit — revisit if
+  videos get heavy use.
+- **webm plays inline on web only**: AVFoundation has no VP8/VP9/webm
+  support, so macOS renders webm attachments as a file chip (Download/open
+  externally). Deliberate divergence recorded in CHANGELOG Parity.

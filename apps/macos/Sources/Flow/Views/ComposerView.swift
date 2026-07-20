@@ -179,7 +179,7 @@ struct ComposerView: View {
             return Suggestions(kind: .mention, token: token, items: Array(items.prefix(8)))
         } else {
             guard query.count >= 2 else { return nil }
-            let matches = EmojiCatalog.matches(prefix: query)
+            let matches = EmojiCatalog.matches(query: query)
             return Suggestions(
                 kind: .emoji,
                 token: token,

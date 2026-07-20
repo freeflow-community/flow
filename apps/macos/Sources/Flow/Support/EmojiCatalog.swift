@@ -75,13 +75,18 @@ enum EmojiCatalog {
         "⚡", "🐛", "💡", "📌", "🎯", "🏆", "🫡", "💀",
     ]
 
-    /// Autocomplete candidates for a shortcode prefix, best matches first.
-    static func matches(prefix: String, limit: Int = 8) -> [(code: String, emoji: String)] {
-        guard !prefix.isEmpty else { return [] }
-        let lower = prefix.lowercased()
+    /// Autocomplete candidates for a shortcode query, best matches first.
+    /// Substring match (ui_nits): "fire" finds mid-name hits too; codes that
+    /// start with the query rank ahead of them.
+    static func matches(query: String, limit: Int = 8) -> [(code: String, emoji: String)] {
+        guard !query.isEmpty else { return [] }
+        let lower = query.lowercased()
         return shortcodes
-            .filter { $0.key.hasPrefix(lower) }
-            .sorted { ($0.key.count, $0.key) < ($1.key.count, $1.key) }
+            .filter { $0.key.contains(lower) }
+            .sorted {
+                ($0.key.hasPrefix(lower) ? 0 : 1, $0.key.count, $0.key)
+                    < ($1.key.hasPrefix(lower) ? 0 : 1, $1.key.count, $1.key)
+            }
             .prefix(limit)
             .map { (code: $0.key, emoji: $0.value) }
     }

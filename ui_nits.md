@@ -22,11 +22,15 @@ status: done [web] [macos] — ↑ in an empty composer edits your message only 
 status: done [server] [web] [macos] — topic column existed since 0000_init (no migration); added PATCH /v1/channels/:id (any channel member; #general keeps its name) + channel.updated WS fan-out; both clients open a name/topic editor from the header name and already rendered the topic sub-headline.
 
 - Emoji search should do substring match in the emoji name, not just prefix
+status: done [web] [macos] [ios] — shared emojiMatches (web :shortcode: composer autocomplete) and EmojiCatalog.matches (macOS composer autocomplete) now substring-match with prefix hits ranked first; the web/macOS/iOS picker grids (already substring) picked up the same prefix-first ranking. Unit tests on both sides.
 - App tokens should be visible when managing apps. No need to hide those.
+status: done [server] [web] — raw tokens now stored alongside their auth hashes (migration 0011; PM ruling pending operator review — see decision_log); GET /v1/apps/:id/credentials (owner/admin) backs a Credentials block in the Configure section (monospace + copy, creation-reveal styling). Pre-0011 apps show "created before token visibility — regenerate to view" with a confirm-guarded Regenerate (POST /v1/apps/:id/credentials/rotate).
 - Instead of "Disable" apps we should just Delete them completely
 status: done [server] [web] [macos] — Manage Apps gains Remove… (inline confirm): DELETE /v1/apps/:id removes the app + credentials, pulls the bot from the workspace/channels and member/mention lists, deletes 1:1 bot DMs; macOS refreshes members on workspace-level member.left. (Disable retained for temporary off-switching.)
 - Hover over thread replies icon and count should change cursor to hand
+status: done [web] [macos] — web: cursor-pointer on the replies pill (Tailwind v4 preflight leaves buttons on the default cursor); macOS: NSCursor.pointingHand push/pop onHover, same pattern as the panel resize handles.
 - Add support for sharing video files, and playing with preview (and expand button) in the chat
+status: done [server] [web] [macos] — GET /v1/files/:id now speaks HTTP Range (Accept-Ranges/206/416; unit-tested + curl-verified byte-for-byte) for seek-by-URL players; uploads already accepted video mimes. Web renders mp4/mov/webm inline (preview-card chrome: collapse chevron, hover Download + Expand; native <video> controls, lightbox overlay; undecodable codecs fall back to the chip). macOS renders mp4/mov/m4v via AVKit behind a play-button placeholder (downloads on first play; no server poster — ruled) with an expanded sheet matching the image lightbox; webm stays a chip (AVFoundation — Parity divergence). iOS still chips video into QuickLook — Parity gap.
 - Add some common missing Slack emojis like :thread:
 - The message context menu "stutters" when you hover over it, blinking in and out so you can't select it easily
 

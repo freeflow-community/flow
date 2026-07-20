@@ -233,6 +233,10 @@ export const apps = pgTable(
     botUserId: uuid('bot_user_id').notNull().references(() => users.id),
     botTokenHash: bytea('bot_token_hash').notNull().unique(),
     appTokenHash: bytea('app_token_hash').unique(), // xapp- token (Socket Mode); null = HTTP-events only
+    // Raw tokens, viewable in Manage Apps (ui_nits; PM ruling pending operator
+    // review). NULL on apps created before 0011 — hash can't be reversed.
+    botToken: text('bot_token'),
+    appToken: text('app_token'),
     signingSecret: text('signing_secret').notNull(),
     eventUrl: text('event_url'),
     eventUrlVerifiedAt: timestamp('event_url_verified_at', { withTimezone: true }),

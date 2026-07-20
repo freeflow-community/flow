@@ -28,11 +28,13 @@ export default function EmojiPicker({
   }, [onClose]);
 
   const q = search.trim().toLowerCase();
+  // Substring match, prefix hits first (ui_nits; same ranking as emojiMatches).
+  const rank = (code: string) => (code.startsWith(q) ? 0 : 1);
   const results = q
     ? [...new Set(
         Object.entries(EMOJI_SHORTCODES)
           .filter(([code]) => code.includes(q))
-          .sort(([a], [b]) => (a.length - b.length) || a.localeCompare(b))
+          .sort(([a], [b]) => (rank(a) - rank(b)) || (a.length - b.length) || a.localeCompare(b))
           .map(([, emoji]) => emoji),
       )]
     : QUICK_REACTIONS.concat(

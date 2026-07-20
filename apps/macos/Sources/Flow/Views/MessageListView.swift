@@ -214,6 +214,11 @@ struct MessageRow: View {
                         }
                     }
                     .buttonStyle(.link)
+                    // Hand cursor on hover (ui_nits) — same push/pop pattern as
+                    // the sidebar/thread resize handles in MainView.
+                    .onHover { inside in
+                        if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -470,6 +475,9 @@ struct AttachmentView: View {
         Group {
             if file.isImage {
                 imageAttachment
+            } else if file.isPlayableVideo {
+                // webm stays a chip: AVFoundation can't decode it (Parity note).
+                VideoAttachmentView(file: file)
             } else if file.isPDF {
                 PdfAttachmentView(file: file)
             } else if file.isTextPreviewable {
@@ -752,7 +760,10 @@ struct EmojiPickerView: View {
         var seen = Set<String>()
         return EmojiCatalog.shortcodes
             .filter { $0.key.contains(q) }
-            .sorted { ($0.key.count, $0.key) < ($1.key.count, $1.key) }
+            .sorted {
+                ($0.key.hasPrefix(q) ? 0 : 1, $0.key.count, $0.key)
+                    < ($1.key.hasPrefix(q) ? 0 : 1, $1.key.count, $1.key)
+            }
             .compactMap { seen.insert($0.value).inserted ? $0.value : nil }
     }
 

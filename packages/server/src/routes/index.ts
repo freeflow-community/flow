@@ -32,6 +32,7 @@ import {
   type UserDTO,
 } from '@flow/shared';
 import { ApiError, badRequest, unauthorized } from '../lib/errors.js';
+import { parseByteRange } from '../lib/httpRange.js';
 import * as auth from '../services/auth.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
@@ -235,6 +236,19 @@ export function registerRoutes(app: FastifyInstance): void {
     return ap.updateApp(id, req.user.id, body);
   });
 
+  // Credentials stay viewable after creation (ui_nits; owner/admin only).
+  app.get('/v1/apps/:id/credentials', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ap.getAppCredentials(id, req.user.id);
+  });
+
+  // New bot + app-level tokens; old ones stop working. Pre-0011 apps use this
+  // to become viewable.
+  app.post('/v1/apps/:id/credentials/rotate', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ap.rotateAppTokens(id, req.user.id);
+  });
+
   app.post('/v1/apps/:id/disable', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return ap.setAppDisabled(id, req.user.id, true);
@@ -404,11 +418,22 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/files/:id', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const f = await fl.getFileContent(id, req.user.id);
-    return reply
+    reply
+      .header('accept-ranges', 'bytes') // video players probe this before seeking
       .header('content-type', f.mimeType)
       .header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`)
-      .header('x-content-type-options', 'nosniff') // never execute uploaded HTML on our origin
-      .send(f.data);
+      .header('x-content-type-options', 'nosniff'); // never execute uploaded HTML on our origin
+    const range = parseByteRange(req.headers.range, f.data.length);
+    if (range === 'unsatisfiable') {
+      return reply.status(416).header('content-range', `bytes */${f.data.length}`).send();
+    }
+    if (range) {
+      return reply
+        .status(206)
+        .header('content-range', `bytes ${range.start}-${range.end}/${f.data.length}`)
+        .send(f.data.subarray(range.start, range.end + 1));
+    }
+    return reply.send(f.data);
   });
 
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {
