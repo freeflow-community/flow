@@ -72,10 +72,24 @@ boot, so shipping a migration is just deploying.
 
 ## DNS / domain
 
-Single CNAME in the Cloudflare `flowtoo.org` zone:
-`app` → `d0altnvc.up.railway.app`, **DNS only** (grey cloud). Railway issues
-and renews the TLS cert; the Cloudflare proxy must stay off unless the zone's
-SSL mode is set to Full and you accept Railway's proxy caveats.
+Two records in the Cloudflare `flowtoo.org` zone, both required:
+
+| Type | Name | Value |
+|---|---|---|
+| CNAME | `app` | `8pu0ejce.up.railway.app` — **DNS only** (grey cloud) |
+| TXT | `_railway-verify.app` | `railway-verify=<token from the domain's Railway settings>` |
+
+Hard-won lesson: the CNAME + certificate are **not sufficient** — Railway's
+edge refuses to route the hostname (404 "Application not found", even with a
+valid cert) until domain ownership is verified via the TXT record. The token
+is in the custom domain's status (dashboard, or GraphQL
+`customDomain.status.verificationToken`). If the custom domain is ever deleted
+and re-added, the CNAME target changes — re-check both records.
+
+Railway issues and renews the TLS cert; the Cloudflare proxy must stay off
+unless the zone's SSL mode is set to Full and you accept Railway's proxy
+caveats. If a cert sticks in `VALIDATING_OWNERSHIP`, force it with the
+`customDomainIssueCertificate` GraphQL mutation.
 
 Email DNS (`mail.flowtoo.org` sending domain) was configured in Cloudflare's
 Email Service onboarding, separately from this record.
