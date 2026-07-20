@@ -24,6 +24,8 @@ import {
   PatchMeBody,
   RegisterBody,
   CreateAppBody,
+  CreateAgentInviteBody,
+  RegisterAgentBody,
   SendMessageBody,
   SetNotifyLevelBody,
   UpdateAppBody,
@@ -42,6 +44,7 @@ import * as fl from '../services/files.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
 import * as ap from '../services/apps.js';
+import * as ag from '../services/agents.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -262,6 +265,27 @@ export function registerRoutes(app: FastifyInstance): void {
   app.delete('/v1/apps/:id', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     await ap.deleteApp(id, req.user.id);
+    return { ok: true };
+  });
+
+  // ---- First-class AI agents (AGENTS_DESIGN.md; owner/admin, web-only UI) ----
+  app.post('/v1/workspaces/:id/agent-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(CreateAgentInviteBody, req.body);
+    const dto = await ag.createAgentInvite(id, req.user.id, body.nameHint);
+    return reply.status(201).send(dto); // raw key — shown once
+  });
+
+  // Unauthenticated: the agent consumes its single-use invite key.
+  app.post('/v1/agents/register', async (req, reply) => {
+    const body = parse(RegisterAgentBody, req.body);
+    const res = await ag.registerAgent(body);
+    return reply.status(201).send(res); // raw agent token — shown once
+  });
+
+  app.delete('/v1/workspaces/:id/agents/:userId', { preHandler: requireAuth }, async (req) => {
+    const { id, userId } = req.params as { id: string; userId: string };
+    await ag.removeAgent(id, userId, req.user.id);
     return { ok: true };
   });
 

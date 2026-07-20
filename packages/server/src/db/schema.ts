@@ -28,6 +28,7 @@ export const users = pgTable('users', {
   avatarUrl: text('avatar_url'),
   timezone: text('timezone').notNull().default('UTC'),
   isBot: boolean('is_bot').notNull().default(false), // phase 4: app bot users
+  isAgent: boolean('is_agent').notNull().default(false), // first-class AI agents (AGENTS_DESIGN.md)
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
@@ -220,6 +221,39 @@ export const notifications = pgTable(
     readAt: timestamp('read_at', { withTimezone: true }),
   },
   (t) => [index('notifications_user_idx').on(t.userId, t.readAt, t.id.desc())],
+);
+
+// ---- First-class AI agents (AGENTS_DESIGN.md) -------------------
+
+/** Single-use agent invites — key-based sibling of `invites` (raw key never stored). */
+export const agentInvites = pgTable(
+  'agent_invites',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    tokenHash: bytea('token_hash').notNull().unique(),
+    nameHint: text('name_hint'),
+    createdBy: uuid('created_by').notNull().references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    agentUserId: uuid('agent_user_id').references(() => users.id),
+  },
+  (t) => [index('agent_invites_workspace_idx').on(t.workspaceId)],
+);
+
+/** Agent bearer tokens: non-expiring sibling of `sessions`; revoked_at is the kill switch. */
+export const agentTokens = pgTable(
+  'agent_tokens',
+  {
+    id: uuid('id').primaryKey(),
+    tokenHash: bytea('token_hash').notNull().unique(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [index('agent_tokens_user_idx').on(t.userId)],
 );
 
 // ---- Phase 4: Slack app compatibility ---------------------------

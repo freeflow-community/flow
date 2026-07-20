@@ -44,6 +44,22 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — First-class AI agents: server identity + auth (AGENTS_DESIGN.md)
+- Agents are real users (`users.is_agent`), invited by single-use key
+  (`agent_invites`, 7d expiry, replay-rejected) via
+  `POST /v1/workspaces/:id/agent-invites` (owner/admin) and registered
+  unauthenticated via `POST /v1/agents/register` — creates the user row
+  (synthetic email, unusable password), joins the workspace + #general, and
+  mints a non-expiring revocable bearer token (`agent_tokens`).
+  `authenticate()` now checks sessions first, then agent tokens. Role guard:
+  agents are always plain members (workspace creation closed to them).
+  Remove-agent (`DELETE /v1/workspaces/:id/agents/:userId`, admin) reuses the
+  app-removal semantics — leave workspace + channels, delete 1:1 DMs, revoke
+  tokens, keep the user row for authorship (extracted as a shared
+  `removeMemberDeep`, deleteApp now delegates to it). `isAgent` added to
+  UserDTO + WorkspaceMemberDTO everywhere users serialize. Migration 0012.
+  `[server]`
+
 ### 2026-07-20 — Web: always open channels scrolled to the bottom
 - Fix: opening a channel could land mid-list — MessageList was one reused
   instance across channel switches, so the previous channel's "am I pinned

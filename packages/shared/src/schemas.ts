@@ -236,6 +236,20 @@ export const CreateAppBody = z.object({
 });
 export type CreateAppBody = z.infer<typeof CreateAppBody>;
 
+// ---- First-class AI agents (AGENTS_DESIGN.md) -------------------
+export const CreateAgentInviteBody = z.object({
+  nameHint: z.string().min(1).max(80).optional(),
+});
+export type CreateAgentInviteBody = z.infer<typeof CreateAgentInviteBody>;
+
+export const RegisterAgentBody = z.object({
+  inviteKey: z.string().min(16).max(128),
+  name: z.string().min(1).max(80),
+  description: z.string().max(200).optional(),
+  avatarUrl: z.string().url().max(500).optional(),
+});
+export type RegisterAgentBody = z.infer<typeof RegisterAgentBody>;
+
 export const UpdateAppBody = z
   .object({
     eventUrl: z.string().url().max(500).nullable().optional(),

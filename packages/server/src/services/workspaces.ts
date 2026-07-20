@@ -65,6 +65,10 @@ export async function requireMembership(workspaceId: string, userId: string) {
 
 /** Create workspace: creator becomes owner, #general auto-created (spec §4). */
 export async function createWorkspace(userId: string, name: string, slug: string): Promise<WorkspaceDTO> {
+  // Role guard (AGENTS_DESIGN.md): agents are always plain members — creating
+  // a workspace is the only path to owner/admin, so it is closed to them.
+  const creator = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (creator[0]?.isAgent) throw forbidden('agents cannot create workspaces');
   const wsId = newId();
   const chanId = newId();
   try {
@@ -121,6 +125,7 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
     avatarUrl: r.u.avatarUrl,
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
+    isAgent: r.u.isAgent,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   }));
@@ -201,6 +206,7 @@ export async function acceptInvite(userId: string, token: string): Promise<Works
       displayName: u[0]?.displayName ?? '',
       email: u[0]?.email ?? '',
       avatarUrl: u[0]?.avatarUrl ?? null,
+      isAgent: u[0]?.isAgent ?? false,
       role: 'member',
       joinedAt: new Date().toISOString(),
     },

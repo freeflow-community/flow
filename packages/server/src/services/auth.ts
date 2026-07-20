@@ -8,7 +8,7 @@ import { ApiError, conflict, unauthorized } from '../lib/errors.js';
 import { config } from '../config.js';
 import { emailSender } from '../email/index.js';
 
-const { users, sessions, appLinkCodes, emailTokens, pendingSignups } = schema;
+const { users, sessions, appLinkCodes, emailTokens, pendingSignups, agentTokens } = schema;
 
 type TokenPurpose = 'verify_email' | 'password_reset' | 'signin';
 
@@ -31,6 +31,7 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
     timezone: u.timezone,
     statusEmoji: u.statusEmoji,
     statusText: u.statusText,
+    isAgent: u.isAgent,
     createdAt: u.createdAt.toISOString(),
   };
 }
@@ -275,9 +276,34 @@ export async function logout(token: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token)));
 }
 
+/** How often (at most) an agent token's last_used_at is rewritten. */
+const AGENT_TOKEN_TOUCH_MS = 60_000;
+
 /**
- * Validate a bearer token → user. Sliding 30-day expiry: when a session is
- * used with < 29 days remaining, extend to 30 (cheap: at most one write/day).
+ * Agent bearer token → user (AGENTS_DESIGN.md). Non-expiring by design (a
+ * daemon shouldn't silently die); revoked_at is the kill switch. Touches
+ * last_used_at at most once a minute (cheap liveness signal, not an audit log).
+ */
+async function authenticateAgentToken(tokenHash: Buffer): Promise<UserDTO | null> {
+  const rows = await db
+    .select({ user: users, lastUsedAt: agentTokens.lastUsedAt })
+    .from(agentTokens)
+    .innerJoin(users, eq(users.id, agentTokens.userId))
+    .where(and(eq(agentTokens.tokenHash, tokenHash), sql`${agentTokens.revokedAt} IS NULL`))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const now = new Date();
+  if (!row.lastUsedAt || now.getTime() - row.lastUsedAt.getTime() > AGENT_TOKEN_TOUCH_MS) {
+    await db.update(agentTokens).set({ lastUsedAt: now }).where(eq(agentTokens.tokenHash, tokenHash));
+  }
+  return toUserDTO(row.user);
+}
+
+/**
+ * Validate a bearer token → user. Sessions first (sliding 30-day expiry: when
+ * a session is used with < 29 days remaining, extend to 30 — cheap: at most
+ * one write/day), then agent tokens (non-expiring, revocable).
  */
 export async function authenticate(token: string): Promise<UserDTO> {
   const tokenHash = hashToken(token);
@@ -289,7 +315,11 @@ export async function authenticate(token: string): Promise<UserDTO> {
     .where(and(eq(sessions.tokenHash, tokenHash), gt(sessions.expiresAt, now)))
     .limit(1);
   const row = rows[0];
-  if (!row) throw unauthorized();
+  if (!row) {
+    const agentUser = await authenticateAgentToken(tokenHash);
+    if (agentUser) return agentUser;
+    throw unauthorized();
+  }
   const slideThreshold = new Date(now.getTime() + (config.sessionTtlDays - 1) * 86400_000);
   if (row.expiresAt < slideThreshold) {
     await db

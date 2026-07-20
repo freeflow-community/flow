@@ -5,17 +5,17 @@
 // Bot tokens keep the "xoxb-" prefix for Slack client-library compatibility;
 // only the hash is stored, raw token shown once at creation.
 import { randomBytes } from 'node:crypto';
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { AppDTO, UserDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
 import { forbidden, notFound } from '../lib/errors.js';
-import { publishEvent, subjectMeta } from '../bus.js';
 import { requireMembership } from './workspaces.js';
+import { removeMemberDeep } from './memberRemoval.js';
 import { toUserDTO } from './auth.js';
 
-const { apps, channels, channelMembers, users, workspaceMembers } = schema;
+const { apps, users, workspaceMembers } = schema;
 
 type AppRow = typeof apps.$inferSelect;
 
@@ -208,55 +208,8 @@ export async function setAppDisabled(appId: string, actorId: string, disabled: b
  */
 export async function deleteApp(appId: string, actorId: string): Promise<void> {
   const app = await loadAppForAdmin(appId, actorId);
-  // The bot's channels (all within this workspace — bots never join others).
-  const botChannels = await db
-    .select({ id: channels.id, kind: channels.kind })
-    .from(channelMembers)
-    .innerJoin(channels, eq(channels.id, channelMembers.channelId))
-    .where(eq(channelMembers.userId, app.botUserId));
-  const dmIds = botChannels.filter((c) => c.kind === 'dm').map((c) => c.id);
-  // Human members of those DMs, captured before the cascade deletes the rows.
-  const dmMembers = dmIds.length
-    ? await db
-        .select({ channelId: channelMembers.channelId, userId: channelMembers.userId })
-        .from(channelMembers)
-        .where(and(inArray(channelMembers.channelId, dmIds), ne(channelMembers.userId, app.botUserId)))
-    : [];
-  await db.transaction(async (tx) => {
-    if (dmIds.length) await tx.delete(channels).where(inArray(channels.id, dmIds));
-    await tx.delete(channelMembers).where(eq(channelMembers.userId, app.botUserId));
-    await tx
-      .delete(workspaceMembers)
-      .where(and(eq(workspaceMembers.workspaceId, app.workspaceId), eq(workspaceMembers.userId, app.botUserId)));
+  await removeMemberDeep(app.workspaceId, app.botUserId, async (tx) => {
     await tx.delete(apps).where(eq(apps.id, app.id));
-  });
-  const ts = new Date().toISOString();
-  // Deleted DMs: tell each human member (their sockets drop the channel).
-  for (const m of dmMembers) {
-    publishEvent(subjectMeta(app.workspaceId), {
-      type: 'member.left',
-      workspaceId: app.workspaceId,
-      channelId: m.channelId,
-      ts,
-      data: { userId: m.userId, channelId: m.channelId, workspaceId: app.workspaceId },
-    });
-  }
-  // Bot leaving its remaining channels, then the workspace (no channelId →
-  // clients refresh the workspace member list).
-  for (const c of botChannels.filter((ch) => ch.kind !== 'dm')) {
-    publishEvent(subjectMeta(app.workspaceId), {
-      type: 'member.left',
-      workspaceId: app.workspaceId,
-      channelId: c.id,
-      ts,
-      data: { userId: app.botUserId, channelId: c.id, workspaceId: app.workspaceId },
-    });
-  }
-  publishEvent(subjectMeta(app.workspaceId), {
-    type: 'member.left',
-    workspaceId: app.workspaceId,
-    ts,
-    data: { userId: app.botUserId, workspaceId: app.workspaceId },
   });
 }
 

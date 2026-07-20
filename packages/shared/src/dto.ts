@@ -8,6 +8,8 @@ export interface UserDTO {
   timezone: string; // IANA name, default UTC
   statusEmoji: string; // '' = no status
   statusText: string; // '' = no status
+  /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
+  isAgent: boolean;
   createdAt: string;
 }
 
@@ -30,6 +32,8 @@ export interface WorkspaceMemberDTO {
   avatarUrl: string | null;
   statusEmoji: string; // '' = no status
   statusText: string;
+  /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
+  isAgent: boolean;
   role: MemberRole;
   joinedAt: string;
 }
@@ -157,4 +161,24 @@ export interface AppDTO {
   disabledAt: string | null;
   /** true once the event_url answered the url_verification challenge */
   eventUrlVerified: boolean;
+}
+
+// ---- First-class AI agents (AGENTS_DESIGN.md) -------------------
+
+/** Agent invite (owner/admin). The raw key is returned exactly once. */
+export interface AgentInviteDTO {
+  id: string;
+  workspaceId: string;
+  nameHint: string | null;
+  /** `flow-agent-<token>` — shown once, only the hash is stored. */
+  key: string;
+  expiresAt: string;
+}
+
+/** Response of POST /v1/agents/register. The agent token is returned exactly once. */
+export interface AgentRegisterResponse {
+  /** Non-expiring bearer token (`flow-agent-token-<token>`) — shown once, only the hash is stored. */
+  agentToken: string;
+  user: UserDTO;
+  workspace: WorkspaceDTO;
 }
