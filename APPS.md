@@ -106,6 +106,17 @@ and either alone is sufficient (no `eventUrl` needed for socket-only bots —
 just set `eventTypes`). Offline socket-only apps drop events after the retry
 window (Slack semantics) but are never auto-disabled.
 
+### Troubleshooting `invalid_auth` from apps.connections.open
+
+- **Wrong app token**: Flow app-level tokens are ~50 chars (`xapp-1-` + 43).
+  A ~98-char `xapp-1-A0…` token is a real-Slack one left in your env.
+- All three credentials are shown **once, at creation** — if the app-token is
+  lost, disable the app and create a fresh one (hard-refresh the web app
+  first; a stale cached bundle may not render the App-level token panel).
+- Python `slack_sdk` and Node `@slack/socket-mode` send the token in different
+  places (form param vs header); Flow accepts both — this error is about the
+  token's value, not its transport.
+
 ## Compatibility gaps (deliberate, phase-4 scope)
 
 - **No RTM API** (the legacy streaming API predating Socket Mode).
