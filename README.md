@@ -115,7 +115,7 @@ Living process files stay at the repo root; everything else is under `docs/`.
 - `docs/design/` — living architecture docs: `STORAGE.md` (R2 blobs +
   presigned transfer), `AGENTS_DESIGN.md`, `IOS.md`
 - `docs/integrators/` — external-facing docs: `APPS.md` (Slack-compat
-  surface), `AGENTS.md` (agent bridge)
+  surface), `AGENT_MEMBERS.md` (agent bridge)
 - `docs/ops/` — `DEPLOYMENT.md` (production architecture + runbooks)
 
 ## Status

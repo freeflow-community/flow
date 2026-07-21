@@ -4,7 +4,7 @@
 // with `--session-id <uuid>` on the first turn and `--resume <uuid>` after.
 // Tool calls stream by as stream-json events → surfaced as thinking steps.
 // Codex runtime: STUB — baseline "prompt in, stdout out" contract, no session
-// resume, no thinking steps. Untested; see AGENTS.md.
+// resume, no thinking steps. Untested; see AGENT_MEMBERS.md.
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { RuntimeConfig } from './config.js';

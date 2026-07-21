@@ -141,7 +141,7 @@ whichever bridge consumer we build.)
 [bridge] packages/agent-bridge daemon: WS consume + session map + spawn/
 collect + reply post; claude runtime template first, codex template stubbed;
 stream-json parsing for thinking-step status messages; the `flow` MCP server
-(send_message, react, upload_file, search_history) shipped in v1. AGENTS.md
+(send_message, react, upload_file, search_history) shipped in v1. AGENT_MEMBERS.md
 integrator doc (APPS.md-style).
 [web] 🤖 emoji on agent names; "Invite an Agent" (admin menu, key shown
 once); member-list remove/regenerate. [macos] 🤖 emoji parity.
