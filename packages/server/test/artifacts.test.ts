@@ -146,29 +146,46 @@ describe('list / rename / delete', () => {
   });
 });
 
-describe('shareArtifact (MCP fan-out)', () => {
-  it('creates one personal artifact per human member, excluding agents', async () => {
+describe('shareArtifactWith (MCP create_artifact)', () => {
+  it('creates the artifact for exactly one recipient', async () => {
     const fileId = await uploadedFile(agentId, 'report.txt');
-    const created = await ar.shareArtifact(channelId, agentId, fileId, 'Weekly report');
-    const owners = created.map((a) => a.userId).sort();
-    expect(owners).toEqual([aliceId, bobId].sort());
-    expect(created.every((a) => a.name === 'Weekly report')).toBe(true);
+    const created = await ar.shareArtifactWith(aliceId, agentId, fileId, 'Weekly report');
+    expect(created.userId).toBe(aliceId);
+    expect(created.name).toBe('Weekly report');
+    // bob shares the channel but was not the recipient — his sidebar stays clean
+    const bobs = await ar.listArtifacts(workspaceId, bobId);
+    expect(bobs.some((a) => a.fileId === fileId)).toBe(false);
   });
 
-  it('skips members who already bookmarked the file', async () => {
+  it('is idempotent — re-sharing returns the recipient\'s existing artifact', async () => {
     const fileId = await uploadedFile(agentId);
-    await ar.shareArtifact(channelId, agentId, fileId, undefined);
-    const second = await ar.shareArtifact(channelId, agentId, fileId, undefined);
-    expect(second).toHaveLength(0);
+    const first = await ar.shareArtifactWith(aliceId, agentId, fileId, 'One');
+    const again = await ar.shareArtifactWith(aliceId, agentId, fileId, 'Two');
+    expect(again.id).toBe(first.id);
+    expect(again.name).toBe('One');
+  });
+
+  it('refuses a recipient the caller shares no channel with', async () => {
+    const loner = await registerHuman(`loner-${randomUUID().slice(0, 8)}@example.test`, 'Loner');
+    await db.insert(workspaceMembers).values({ workspaceId, userId: loner, role: 'member' });
+    const fileId = await uploadedFile(agentId);
+    await expect(ar.shareArtifactWith(loner, agentId, fileId, undefined)).rejects.toThrow(/share a channel/);
+  });
+
+  it('needs no conversation context — works from any shared channel', async () => {
+    // the caller never names a channel; membership alone authorizes delivery
+    const fileId = await uploadedFile(agentId, 'ambient.txt');
+    const created = await ar.shareArtifactWith(bobId, agentId, fileId, undefined);
+    expect(created.userId).toBe(bobId);
   });
 
   /** Regression: an agent's create_artifact upload is never attached to a
    * message, so the generic file-access rule (uploader, or attached to a
-   * readable message) locked recipients out of their own artifact — the panel
-   * fell back to the download card, and the download 404'd too. */
-  it('lets a recipient read the bytes of an artifact-only file', async () => {
+   * readable message) locked the recipient out of their own artifact — the
+   * panel fell back to the download card, and the download 404'd too. */
+  it('lets the recipient read the bytes of an artifact-only file', async () => {
     const fileId = await uploadedFile(agentId, 'plan.md');
-    await ar.shareArtifact(channelId, agentId, fileId, 'Plan');
+    await ar.shareArtifactWith(aliceId, agentId, fileId, 'Plan');
     const dl = await fl.getFileDownload(fileId, aliceId);
     const bytes = 'content' in dl ? dl.content.data.toString('utf8') : '';
     expect(bytes).toBe('artifact bytes');
@@ -176,18 +193,8 @@ describe('shareArtifact (MCP fan-out)', () => {
 
   it('does not leak an artifact-only file to someone without an artifact', async () => {
     const fileId = await uploadedFile(agentId);
-    await ar.shareArtifact(channelId, agentId, fileId, undefined); // alice + bob only
-    const stranger = await registerHuman(`stranger-${randomUUID().slice(0, 8)}@example.test`, 'Stranger');
-    await db.insert(workspaceMembers).values({ workspaceId, userId: stranger, role: 'member' });
-    await expect(fl.getFileDownload(fileId, stranger)).rejects.toThrow('file not found');
-  });
-
-  it('requires the caller to be a channel member', async () => {
-    const outsiderId = await registerHuman('mallory@example.test', 'Mallory');
-    await db.insert(workspaceMembers).values({ workspaceId, userId: outsiderId, role: 'member' });
-    const fileId = await uploadedFile(aliceId);
-    const priv = await ch.createChannel(workspaceId, aliceId, `priv-${randomUUID().slice(0, 8)}`, undefined, true);
-    await expect(ar.shareArtifact(priv.id, outsiderId, fileId, undefined)).rejects.toThrow();
+    await ar.shareArtifactWith(aliceId, agentId, fileId, undefined); // alice only
+    await expect(fl.getFileDownload(fileId, bobId)).rejects.toThrow('file not found');
   });
 });
 

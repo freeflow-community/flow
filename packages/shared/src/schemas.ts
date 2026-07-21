@@ -294,11 +294,13 @@ export const UpdateArtifactBody = z.object({
 });
 export type UpdateArtifactBody = z.infer<typeof UpdateArtifactBody>;
 
-/** POST /v1/channels/:id/artifacts — create a personal artifact for every
- * human member of the channel (the MCP create_artifact fan-out; agents/bots
- * excluded per decision log 2026-07-21). */
+/** POST /v1/artifacts/share — create an artifact in one other person's
+ * sidebar (the MCP create_artifact path). One recipient, not a channel
+ * fan-out: operator correction 2026-07-21. The caller must share a channel
+ * with the recipient. */
 export const ShareArtifactBody = z.object({
   fileId: z.string().uuid(),
+  userId: z.string().uuid(),
   name: z.string().min(1).max(255).optional(),
 });
 export type ShareArtifactBody = z.infer<typeof ShareArtifactBody>;

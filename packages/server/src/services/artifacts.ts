@@ -1,18 +1,17 @@
 // Artifact tabs (phase9.md): personal per-user bookmarks of shared files.
 // Rulings (decision log 2026-07-21): artifacts are personal; removing one
-// never deletes the file; the MCP fan-out creates one row per human member.
-// Events ride the per-user notify subject — the owner's other clients stay in
-// sync, nobody else hears about it.
-import { and, desc, eq } from 'drizzle-orm';
+// never deletes the file; an agent shares an artifact with ONE person, not a
+// whole channel. Events ride the per-user notify subject — the owner's other
+// clients stay in sync, nobody else hears about it.
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { ArtifactDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
-import { notFound } from '../lib/errors.js';
-import { requireChannelAccess } from './channels.js';
+import { forbidden, notFound } from '../lib/errors.js';
 import { requireFileAccess, toFileDTO } from './files.js';
 import { publishEvent, subjectUserNotify } from '../bus.js';
 
-const { artifacts, files, channelMembers, users } = schema;
+const { artifacts, files, channelMembers } = schema;
 
 type ArtifactRow = typeof artifacts.$inferSelect;
 type FileRow = typeof files.$inferSelect;
@@ -61,38 +60,53 @@ export async function createArtifact(userId: string, fileId: string, name?: stri
 }
 
 /**
- * MCP fan-out (POST /v1/channels/:id/artifacts): create a personal artifact
- * for every human member of the channel. The caller (typically an agent) must
- * be a channel member with access to the file; agents and app bots are
- * excluded as recipients — a robot has no sidebar to fill.
+ * MCP share (POST /v1/artifacts/share): create an artifact in ONE other
+ * person's sidebar — an agent works for a person, not a room (operator
+ * correction 2026-07-21, superseding the channel fan-out).
+ *
+ * Authorization is "the caller shares a channel with the recipient" rather
+ * than "the caller names a channel": it keeps the anti-spam property (an
+ * agent can only reach people it already shares a channel with) without
+ * requiring conversation context, so an agent running outside a channel can
+ * still deliver to a known user. Returns the existing row unchanged if the
+ * recipient already bookmarked this file.
  */
-export async function shareArtifact(
-  channelId: string,
+export async function shareArtifactWith(
+  targetUserId: string,
   callerId: string,
   fileId: string,
   name?: string,
-): Promise<ArtifactDTO[]> {
-  const { chan } = await requireChannelAccess(channelId, callerId);
+): Promise<ArtifactDTO> {
   const f = await requireFileAccess(fileId, callerId);
-  const members = await db
-    .select({ userId: channelMembers.userId })
-    .from(channelMembers)
-    .innerJoin(users, eq(users.id, channelMembers.userId))
-    .where(and(eq(channelMembers.channelId, channelId), eq(users.isAgent, false), eq(users.isBot, false)));
-
-  const out: ArtifactDTO[] = [];
-  for (const m of members) {
-    const inserted = await db
-      .insert(artifacts)
-      .values({ id: newId(), userId: m.userId, workspaceId: chan.workspaceId, fileId, name: name ?? f.name })
-      .onConflictDoNothing({ target: [artifacts.userId, artifacts.fileId] })
-      .returning();
-    if (inserted.length === 0) continue; // already bookmarked — leave theirs alone
-    const dto = toArtifactDTO(inserted[0]!, f);
-    publishArtifactEvent('artifact.created', dto);
-    out.push(dto);
+  if (targetUserId !== callerId) {
+    const callerChannels = db
+      .select({ id: channelMembers.channelId })
+      .from(channelMembers)
+      .where(eq(channelMembers.userId, callerId));
+    const shared = await db
+      .select({ channelId: channelMembers.channelId })
+      .from(channelMembers)
+      .where(and(eq(channelMembers.userId, targetUserId), inArray(channelMembers.channelId, callerChannels)))
+      .limit(1);
+    if (shared.length === 0) throw forbidden('you can only send artifacts to people you share a channel with');
   }
-  return out;
+
+  const inserted = await db
+    .insert(artifacts)
+    .values({ id: newId(), userId: targetUserId, workspaceId: f.workspaceId, fileId, name: name ?? f.name })
+    .onConflictDoNothing({ target: [artifacts.userId, artifacts.fileId] })
+    .returning();
+  if (inserted.length === 0) {
+    const existing = await db
+      .select()
+      .from(artifacts)
+      .where(and(eq(artifacts.userId, targetUserId), eq(artifacts.fileId, fileId)))
+      .limit(1);
+    return toArtifactDTO(existing[0]!, f);
+  }
+  const dto = toArtifactDTO(inserted[0]!, f);
+  publishArtifactEvent('artifact.created', dto);
+  return dto;
 }
 
 /** The caller's artifacts in one workspace, newest first. Artifacts whose file

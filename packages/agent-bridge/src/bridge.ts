@@ -374,6 +374,9 @@ export class AgentBridge {
             FLOW_WORKSPACE_ID: this.workspace.id,
             FLOW_CHANNEL_ID: msg.channelId,
             FLOW_THREAD_ROOT_ID: msg.threadRootId ?? '',
+            // Who the agent is working for this run — the author of the
+            // message it's responding to. Default recipient for create_artifact.
+            FLOW_USER_ID: msg.userId,
           },
         },
       },

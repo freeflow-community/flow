@@ -66,6 +66,23 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Artifacts: create_artifact targets one person, not a channel
+- Operator correction to the phase 9 fan-out: an agent works for a person, not
+  a room, so `create_artifact` now creates **one** artifact for **one**
+  recipient instead of a personal copy for every human member of the channel.
+- The recipient defaults to whoever the agent is responding to — the bridge
+  now passes `FLOW_USER_ID` (the triggering message's author) into the MCP
+  env, so the tool needs no argument in normal use; an explicit `userId`
+  overrides it.
+- Authorization changed from "caller names a channel" to "caller shares a
+  channel with the recipient". Same anti-spam property — an agent can only
+  reach people it already shares a channel with — but it drops the need for
+  conversation context, closing a gap where an agent running without
+  `FLOW_CHANNEL_ID` could not create an artifact at all.
+- `POST /v1/channels/:id/artifacts` (fan-out, returned a list) is replaced by
+  `POST /v1/artifacts/share` (`{fileId, userId, name?}`, returns one
+  ArtifactDTO). Server-only change; no client work. `[server]`
+
 ### 2026-07-21 — Fix: agent-created artifacts were unreadable by their recipients
 - Reported live: an agent created an artifact from a markdown file and the
   panel showed an empty pane with a "click to download" card, while the same

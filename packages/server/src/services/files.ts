@@ -234,7 +234,7 @@ export async function requireFileAccess(fileId: string, userId: string): Promise
 
   // An artifact row is itself the grant: it exists either because this user
   // bookmarked a file they could already read, or because a channel member
-  // shared it with them (shareArtifact checks the sharer's access first).
+  // sent it to them (shareArtifactWith checks the sender's access first).
   // Agent-created artifacts are never attached to a message, so without this
   // the owner of the artifact couldn't read it.
   const bookmarked = await db

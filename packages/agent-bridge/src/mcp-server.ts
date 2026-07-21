@@ -114,7 +114,7 @@ const TOOLS = [
   {
     name: 'create_artifact',
     description:
-      'Create an artifact — a named file bookmark that appears in the Artifacts sidebar of every human member of the channel (defaults to the current conversation). Provide the content inline, or a local file path, or the id of an already-uploaded file.',
+      "Create an artifact — a named file that appears in one person's Artifacts sidebar. Defaults to the person you're replying to. Provide the content inline, or a local file path, or the id of an already-uploaded file.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -122,8 +122,8 @@ const TOOLS = [
         content: { type: 'string', description: 'Inline file content to upload (use with name; mimeType recommended).' },
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML artifacts).' },
         path: { type: 'string', description: 'Path to a local file to upload instead of inline content.' },
-        fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to bookmark as-is.' },
-        channelId: { type: 'string', description: 'Channel whose human members receive the artifact (default: current conversation).' },
+        fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to use as-is.' },
+        userId: { type: 'string', description: 'Recipient user id (default: the person whose message you are responding to). You must share a channel with them.' },
       },
     },
   },
@@ -166,6 +166,9 @@ export async function runMcpServer(): Promise<void> {
   const workspaceId = process.env.FLOW_WORKSPACE_ID ?? '';
   const defaultChannelId = process.env.FLOW_CHANNEL_ID ?? '';
   const defaultThreadRootId = process.env.FLOW_THREAD_ROOT_ID || undefined;
+  // Author of the message this run is responding to — create_artifact's default
+  // recipient. Absent for channel-agnostic clients (mcp-init), which must pass userId.
+  const defaultUserId = process.env.FLOW_USER_ID ?? '';
   if (!serverUrl || !token) {
     process.stderr.write('flow mcp: FLOW_SERVER_URL and FLOW_AGENT_TOKEN are required\n');
     process.exit(1);
@@ -271,12 +274,12 @@ export async function runMcpServer(): Promise<void> {
           fileId = file.id;
           label = label ?? filename;
         }
-        const created = await api.shareArtifact(channelId, fileId, label);
-        return toolText(
-          created.length
-            ? `artifact "${created[0]!.name}" created for ${created.length} member(s)`
-            : 'artifact already existed for every member — nothing new created',
-        );
+        const recipient = (args.userId as string | undefined) || defaultUserId;
+        if (!recipient) {
+          return toolText('create_artifact needs a userId (no conversation context to infer the recipient)', true);
+        }
+        const created = await api.shareArtifactWith(recipient, fileId, label);
+        return toolText(`artifact "${created.name}" created for <@${recipient}>`);
       }
       case 'read_messages': {
         const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);
