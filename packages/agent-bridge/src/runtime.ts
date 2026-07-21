@@ -119,10 +119,12 @@ function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   if (cfg.permissionMode) args.push('--permission-mode', cfg.permissionMode);
   const allowed = [...cfg.allowedTools];
   if (opts.mcpConfigPath) {
-    args.push('--mcp-config', opts.mcpConfigPath);
+    // = form: --mcp-config and --allowedTools are variadic in the claude CLI
+    // and would otherwise swallow the trailing positional prompt
+    args.push(`--mcp-config=${opts.mcpConfigPath}`);
     allowed.push('mcp__flow'); // pre-grant the flow tools — headless runs can't prompt
   }
-  if (allowed.length) args.push('--allowedTools', allowed.join(','));
+  if (allowed.length) args.push(`--allowedTools=${allowed.join(',')}`);
   args.push(...cfg.extraArgs);
   args.push(opts.prompt);
   return args;
