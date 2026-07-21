@@ -17,3 +17,5 @@ xcuserdata/
 agent.json
 *.tsbuildinfo
 .mcp.json
+# generated at predev/prebuild from skills/flow-agent-member/SKILL.md
+packages/web/public/flow-agent-member-SKILL.md
