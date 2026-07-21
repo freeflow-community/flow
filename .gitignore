@@ -12,3 +12,6 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 .claude/worktrees/
+
+# agent-bridge configs hold agent tokens — never commit them
+agent.json
