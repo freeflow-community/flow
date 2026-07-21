@@ -62,6 +62,24 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Fix: agent's ephemeral "thinking…" status no longer leaves a tombstone
+- The agent-bridge posts a live `🤖 *thinking…*` status message while working,
+  then deletes it on completion and posts the real reply as a fresh message
+  (clean unread semantics). But delete was a *soft* delete — the row stayed with
+  `deletedAt` set and both clients render that as a "This message was deleted"
+  tombstone, which sat directly above the real reply (earlier id → sorts first).
+  Added a **hard delete / purge** path: `DELETE /v1/messages/:id?purge=true`
+  removes the row outright (child reactions/files/notifications cascade; a purged
+  thread reply decrements the root's rollup and recomputes `lastReplyAt`) and
+  publishes a new `message.purged` WS event so clients splice the message out
+  with no tombstone. The bridge now uses it for its status message; ordinary
+  user deletes stay soft (tombstone preserved). Web (`removeMessageFromCache` +
+  `message.purged` handler) and macOS (`purgeMessage` in SyncEngine) both drop
+  the row on purge; iOS inherits the same via the shared macOS core
+  (Models/SyncEngine), so no iOS-specific change. New server vitest coverage
+  (`test/purge.test.ts`: soft-vs-hard, idempotency, rollup recompute,
+  author-only). `[server]` `[web]` `[macos]` `[ios]`
+
 ### 2026-07-21 — UI nits: macOS message hover menu no longer stutters
 - Fixed the per-message hover toolbar (react / reply / edit / delete pill)
   blinking in and out while the cursor moved toward it. The pill is an overlay

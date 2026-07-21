@@ -821,6 +821,12 @@ actor SyncEngine {
     private func handleEvent(_ event: EventDTO) async {
         switch event.payload {
         case .message(let m):
+            if event.type == "message.purged" {
+                // Hard delete: remove the row entirely (no tombstone) and mirror
+                // the server's rollup decrement if it was a thread reply.
+                await purgeMessage(m)
+                return
+            }
             let isNew = await applyServerMessage(m)
             if event.type == "message.created" || event.type == "thread.reply" {
                 // The sender's message arrived — clear their typing indicator.
@@ -967,6 +973,25 @@ actor SyncEngine {
             return isNew
         }
         return isNew ?? false
+    }
+
+    /// Hard delete (`message.purged`): drop the row with no tombstone. Mirrors
+    /// the server's txn — a purged reply decrements the root's rollup and
+    /// recomputes lastReplyAt; a re-posted reply re-bumps it. Participants
+    /// recompute on the next thread fetch.
+    private func purgeMessage(_ m: Message) async {
+        try? await db.writer.write { db in
+            try Message.filter(key: m.id).deleteAll(db)
+            if let root = m.threadRootId, var r = try Message.filter(key: root).fetchOne(db) {
+                r.replyCount = max(0, r.replyCount - 1)
+                r.lastReplyAt = try String.fetchOne(
+                    db,
+                    sql: "SELECT max(createdAt) FROM message WHERE threadRootId = ?",
+                    arguments: [root]
+                )
+                try r.save(db)
+            }
+        }
     }
 
     /// Local mirror of the server's thread rollup: bump replyCount/lastReplyAt

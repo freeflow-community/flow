@@ -145,6 +145,43 @@ export function applyMessageEvent(qc: QueryClient, msg: MessageDTO, insert: bool
   }
 }
 
+/** Hard delete (`message.purged`): splice the message out of every query it
+ * lives in — no tombstone. A purged reply also decrements the root rollup it
+ * had bumped (mirrors the server's txn); a re-posted reply re-bumps it. */
+export function removeMessageFromCache(qc: QueryClient, msg: MessageDTO): void {
+  if (msg.threadRootId === null) {
+    qc.setQueryData<MessagesData>(['messages', msg.channelId], (old) =>
+      old
+        ? { ...old, pages: old.pages.map((p) => ({ ...p, messages: p.messages.filter((m) => m.id !== msg.id) })) }
+        : old,
+    );
+    return;
+  }
+  const rootId = msg.threadRootId;
+  qc.setQueryData<ThreadData>(['thread', rootId], (old) =>
+    old
+      ? {
+          ...old,
+          messages: old.messages.filter((m) => m.id !== msg.id),
+          root: { ...old.root, replyCount: Math.max(0, old.root.replyCount - 1) },
+        }
+      : old,
+  );
+  qc.setQueryData<MessagesData>(['messages', msg.channelId], (old) =>
+    old
+      ? {
+          ...old,
+          pages: old.pages.map((p) => ({
+            ...p,
+            messages: p.messages.map((m) =>
+              m.id === rootId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m,
+            ),
+          })),
+        }
+      : old,
+  );
+}
+
 /** Failed send: drop the optimistic row (the composer surfaces the error).
  * A failed reply also un-bumps the root rollup it optimistically incremented
  * and frees its dedupe key so a retry can bump again. */

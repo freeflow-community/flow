@@ -486,7 +486,7 @@ struct EventDTO: Decodable, Sendable {
         channelId = try c.decodeIfPresent(String.self, forKey: .channelId)
         ts = try c.decode(String.self, forKey: .ts)
         switch type {
-        case "message.created", "message.updated", "message.deleted", "thread.reply":
+        case "message.created", "message.updated", "message.deleted", "message.purged", "thread.reply":
             payload = .message(try c.decode(Message.self, forKey: .data))
         case "typing":
             payload = .typing(try c.decode(TypingData.self, forKey: .data))

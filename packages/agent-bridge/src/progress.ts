@@ -67,7 +67,9 @@ export class ProgressReporter {
     // wait out an in-flight post/edit so the delete can't race message creation
     while (this.inFlight) await new Promise((r) => setTimeout(r, 25));
     if (this.statusMessageId !== null) {
-      await this.api.deleteMessage(this.statusMessageId).catch((err: Error) => {
+      // Hard delete: the status message must vanish, not leave a tombstone
+      // above the real reply (the reply posts fresh — clean unread semantics).
+      await this.api.deleteMessage(this.statusMessageId, { hard: true }).catch((err: Error) => {
         this.log(`status delete failed: ${err.message}`);
       });
       this.statusMessageId = null;
