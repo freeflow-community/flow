@@ -1,5 +1,6 @@
-// First-class AI agents (AGENTS_DESIGN.md): invite / register / authenticate /
-// role-guard / remove. DB-backed — runs against a scratch database on the dev
+// First-class AI agents (AGENT_MEMBERS.md): on-demand registration with human
+// sponsors — register / approve / poll / login / role-guard / remove /
+// sponsor cascade. DB-backed — runs against a scratch database on the dev
 // postgres (docker compose in packages/infra, host port 5442). NATS is not
 // required (publishEvent is a no-op without a bus connection).
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
@@ -30,12 +31,13 @@ const ag = await import('../src/services/agents.js');
 const ap = await import('../src/services/apps.js');
 const { eq, and } = await import('drizzle-orm');
 
-const { users, workspaceMembers, channelMembers, channels, agentInvites, agentTokens } = schema;
+const { users, workspaceMembers, channelMembers, channels, agentPairingRequests, agentTokens } = schema;
 
 let ownerId = '';
 let ownerToken = '';
 let memberId = '';
 let workspaceId = '';
+let seq = 0;
 
 async function registerHuman(email: string, name: string): Promise<{ id: string; token: string }> {
   const res = await auth.register(email, { password: 'password123', displayName: name, autoVerify: true });
@@ -43,11 +45,37 @@ async function registerHuman(email: string, name: string): Promise<{ id: string;
   return { id: res.user.id, token: res.token };
 }
 
+/** Shorthand: open a pairing request sponsored by the owner. */
+async function start(name: string, opts: Partial<Parameters<typeof ag.startAgentRegistration>[0]> = {}) {
+  seq += 1;
+  const username = (opts.username ?? `${name.toLowerCase()}-${seq}`) as string;
+  const key = opts.key ?? `flow-agent-key-${randomBytes(24).toString('base64url')}`;
+  const res = await ag.startAgentRegistration({
+    username,
+    key,
+    name,
+    sponsorEmail: 'owner@example.test',
+    ...opts,
+    ...(opts.username ? {} : { username }),
+    ...(opts.key ? {} : { key }),
+  });
+  return { ...res, username, key };
+}
+
+/** Full happy path: register → owner approves → poll delivers the token. */
+async function registerAgent(name: string) {
+  const s = await start(name);
+  await ag.approveAgentRequest(s.requestId, ownerId, workspaceId);
+  const res = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+  if (res.status !== 'approved' || !res.agentToken || !res.user) throw new Error('expected approved poll');
+  return { ...s, agentToken: res.agentToken, user: res.user, workspace: res.workspace! };
+}
+
 beforeAll(async () => {
   await migrate(process.env.DATABASE_URL!);
   // rerunnable: wipe everything (cascades cover the rest)
   await db.execute(
-    `TRUNCATE users, workspaces, agent_invites, agent_tokens, sessions, invites, pending_signups RESTART IDENTITY CASCADE` as never,
+    `TRUNCATE users, workspaces, agent_pairing_requests, agent_tokens, sessions, invites, pending_signups RESTART IDENTITY CASCADE` as never,
   );
   const owner = await registerHuman('owner@example.test', 'Owner');
   ownerId = owner.id;
@@ -64,37 +92,78 @@ afterAll(async () => {
   await closeDb();
 });
 
-describe('agent invites', () => {
-  it('owner mints an invite with a flow-agent- key, 7d expiry', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId, 'RepoBot');
-    expect(inv.key.startsWith('flow-agent-')).toBe(true);
-    expect(inv.nameHint).toBe('RepoBot');
-    const msLeft = new Date(inv.expiresAt).getTime() - Date.now();
-    expect(msLeft).toBeGreaterThan(6.9 * 86400_000);
-    expect(msLeft).toBeLessThanOrEqual(7 * 86400_000);
-    // only the hash is stored
-    const row = (await db.select().from(agentInvites).where(eq(agentInvites.id, inv.id)))[0]!;
-    expect(row.usedAt).toBeNull();
-    expect(row.nameHint).toBe('RepoBot');
+describe('pairing request', () => {
+  it('register opens a pending request with a code, 10-minute expiry; poll says pending', async () => {
+    const s = await start('PendBot');
+    expect(s.code).toMatch(/^[A-Z2-9]{3}-[A-Z2-9]{3}$/);
+    expect(s.pollSecret.length).toBeGreaterThan(20);
+    const msLeft = new Date(s.expiresAt).getTime() - Date.now();
+    expect(msLeft).toBeGreaterThan(9 * 60_000);
+    expect(msLeft).toBeLessThanOrEqual(10 * 60_000);
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    expect(poll.status).toBe('pending');
+    // no user account exists yet
+    const row = (await db.select().from(agentPairingRequests).where(eq(agentPairingRequests.id, s.requestId)))[0]!;
+    expect(row.status).toBe('pending');
+    expect(row.agentUserId).toBeNull();
+    // key stored hashed, never raw
+    expect(row.keyHash.startsWith('$argon2')).toBe(true);
   });
 
-  it('plain members cannot mint invites', async () => {
-    await expect(ag.createAgentInvite(workspaceId, memberId)).rejects.toMatchObject({ statusCode: 403 });
+  it('a wrong pollSecret is unauthorized', async () => {
+    const s = await start('SecretBot');
+    await expect(ag.pollAgentRegistration(s.requestId, 'wrong-secret')).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('an unknown sponsor email still opens a request (no enumeration), invisible to everyone', async () => {
+    const s = await start('GhostBot', { sponsorEmail: 'nobody@example.test' });
+    expect(s.code).toBeTruthy();
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    expect(poll.status).toBe('pending');
+    const mine = await ag.listPairingRequests(ownerId);
+    expect(mine.find((r) => r.id === s.requestId)).toBeUndefined();
+  });
+
+  it('the sponsor sees their pending requests', async () => {
+    const s = await start('ListBot');
+    const mine = await ag.listPairingRequests(ownerId);
+    const found = mine.find((r) => r.id === s.requestId);
+    expect(found?.name).toBe('ListBot');
+    expect(found?.code).toBe(s.code);
+    // other users see nothing
+    const theirs = await ag.listPairingRequests(memberId);
+    expect(theirs.find((r) => r.id === s.requestId)).toBeUndefined();
+  });
+
+  it('a taken username is rejected up front', async () => {
+    const a = await registerAgent('DupBot');
+    await expect(
+      ag.startAgentRegistration({
+        username: a.username, // same username as the approved agent
+        key: `flow-agent-key-${randomBytes(24).toString('base64url')}`,
+        name: 'DupBot2',
+        sponsorEmail: 'owner@example.test',
+      }),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'username_taken' });
   });
 });
 
-describe('agent registration', () => {
-  it('register consumes the invite and creates a first-class member', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'TestBot', description: 'a test agent' });
-    expect(res.agentToken.startsWith('flow-agent-token-')).toBe(true);
-    expect(res.user.isAgent).toBe(true);
-    expect(res.user.displayName).toBe('TestBot');
-    expect(res.user.email).toBe(`agent-${res.user.id}@agents.flow.local`);
-    expect(res.workspace.id).toBe(workspaceId);
+describe('approval', () => {
+  it('approve creates a first-class member with sponsor + credentials; poll delivers the token once', async () => {
+    const s = await start('TestBot', { description: 'a test agent' });
+    await ag.approveAgentRequest(s.requestId, ownerId, workspaceId);
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    expect(poll.status).toBe('approved');
+    expect(poll.agentToken).toMatch(/^flow-agent-token-/);
+    expect(poll.user!.isAgent).toBe(true);
+    expect(poll.user!.displayName).toBe('TestBot');
+    expect(poll.workspace!.id).toBe(workspaceId);
 
-    const u = (await db.select().from(users).where(eq(users.id, res.user.id)))[0]!;
+    const u = (await db.select().from(users).where(eq(users.id, poll.user!.id)))[0]!;
     expect(u.isAgent).toBe(true);
+    expect(u.sponsorUserId).toBe(ownerId);
+    expect(u.agentUsername).toBe(s.username);
+    expect(u.agentKeyHash?.startsWith('$argon2')).toBe(true);
     expect(u.emailVerifiedAt).not.toBeNull();
     expect(u.statusText).toBe('a test agent');
 
@@ -103,7 +172,7 @@ describe('agent registration', () => {
       await db
         .select()
         .from(workspaceMembers)
-        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, res.user.id)))
+        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, poll.user!.id)))
     )[0]!;
     expect(m.role).toBe('member');
     const general = (
@@ -112,57 +181,63 @@ describe('agent registration', () => {
     const cm = await db
       .select()
       .from(channelMembers)
-      .where(and(eq(channelMembers.channelId, general.id), eq(channelMembers.userId, res.user.id)));
+      .where(and(eq(channelMembers.channelId, general.id), eq(channelMembers.userId, poll.user!.id)));
     expect(cm.length).toBe(1);
 
-    // invite marked used + linked to the agent user
-    const invRow = (await db.select().from(agentInvites).where(eq(agentInvites.id, inv.id)))[0]!;
-    expect(invRow.usedAt).not.toBeNull();
-    expect(invRow.agentUserId).toBe(res.user.id);
+    // the token is delivered exactly once
+    const again = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    expect(again.status).toBe('approved');
+    expect(again.agentToken).toBeUndefined();
   });
 
-  it('name falls back to the invite nameHint; 400 when neither present', async () => {
-    const hinted = await ag.createAgentInvite(workspaceId, ownerId, 'HintBot');
-    const res = await ag.registerAgent({ inviteKey: hinted.key });
-    expect(res.user.displayName).toBe('HintBot');
-    const bare = await ag.createAgentInvite(workspaceId, ownerId);
-    await expect(ag.registerAgent({ inviteKey: bare.key })).rejects.toMatchObject({ statusCode: 400 });
+  it('only the named sponsor can approve or deny (others get 404)', async () => {
+    const s = await start('OtherBot');
+    await expect(ag.approveAgentRequest(s.requestId, memberId, workspaceId)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    await expect(ag.denyAgentRequest(s.requestId, memberId)).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('rejects replay of a used invite', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    await ag.registerAgent({ inviteKey: inv.key, name: 'OnceBot' });
-    await expect(ag.registerAgent({ inviteKey: inv.key, name: 'TwiceBot' })).rejects.toMatchObject({
-      statusCode: 401,
+  it('deny ends the request; approval afterwards fails', async () => {
+    const s = await start('DeniedBot');
+    await ag.denyAgentRequest(s.requestId, ownerId);
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    expect(poll.status).toBe('denied');
+    await expect(ag.approveAgentRequest(s.requestId, ownerId, workspaceId)).rejects.toMatchObject({
+      statusCode: 400,
     });
   });
 
-  it('rejects an expired invite', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
+  it('an expired request polls as expired and cannot be approved', async () => {
+    const s = await start('LateBot');
     await db
-      .update(agentInvites)
+      .update(agentPairingRequests)
       .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(agentInvites.id, inv.id));
-    await expect(ag.registerAgent({ inviteKey: inv.key, name: 'LateBot' })).rejects.toMatchObject({
-      statusCode: 401,
+      .where(eq(agentPairingRequests.id, s.requestId));
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    expect(poll.status).toBe('expired');
+    await expect(ag.approveAgentRequest(s.requestId, ownerId, workspaceId)).rejects.toMatchObject({
+      statusCode: 400,
     });
   });
 
-  it('rejects a garbage key', async () => {
-    await expect(ag.registerAgent({ inviteKey: 'flow-agent-nonsense-key-value', name: 'NopeBot' })).rejects.toMatchObject(
-      { statusCode: 401 },
-    );
+  it('the sponsor must be a member of the chosen workspace', async () => {
+    const s = await start('WsBot');
+    const stranger = await ws.createWorkspace(memberId, 'Members Own WS', `member-ws-${Date.now()}`);
+    // owner is not a member of the member's workspace (membership privacy: 404)
+    await expect(ag.approveAgentRequest(s.requestId, ownerId, stranger.id)).rejects.toMatchObject({
+      statusCode: 404,
+    });
   });
 });
 
-describe('agent token auth', () => {
-  it('authenticate() accepts an agent token and touches last_used_at', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'AuthBot' });
-    const dto = await auth.authenticate(res.agentToken);
-    expect(dto.id).toBe(res.user.id);
+describe('agent token auth + login', () => {
+  it('authenticate() accepts a delivered agent token and touches last_used_at', async () => {
+    const a = await registerAgent('AuthBot');
+    const dto = await auth.authenticate(a.agentToken);
+    expect(dto.id).toBe(a.user.id);
     expect(dto.isAgent).toBe(true);
-    const tok = (await db.select().from(agentTokens).where(eq(agentTokens.userId, res.user.id)))[0]!;
+    const tok = (await db.select().from(agentTokens).where(eq(agentTokens.userId, a.user.id)))[0]!;
     expect(tok.lastUsedAt).not.toBeNull();
     expect(tok.revokedAt).toBeNull();
   });
@@ -173,64 +248,57 @@ describe('agent token auth', () => {
     expect(dto.isAgent).toBe(false);
   });
 
-  it('regenerate revokes the old token and mints a working new one (admin only)', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'RegenBot' });
-    await expect(ag.regenerateAgentToken(workspaceId, res.user.id, memberId)).rejects.toMatchObject({
-      statusCode: 403,
+  it('login with username+key revokes the old token and mints a working new one', async () => {
+    const a = await registerAgent('LoginBot');
+    const res = await ag.agentLogin(a.username, a.key);
+    expect(res.agentToken).toMatch(/^flow-agent-token-/);
+    expect(res.agentToken).not.toBe(a.agentToken);
+    await expect(auth.authenticate(a.agentToken)).rejects.toMatchObject({ statusCode: 401 });
+    const dto = await auth.authenticate(res.agentToken);
+    expect(dto.id).toBe(a.user.id);
+  });
+
+  it('login rejects a wrong key or unknown username', async () => {
+    const a = await registerAgent('WrongKeyBot');
+    await expect(ag.agentLogin(a.username, 'flow-agent-key-totally-wrong')).rejects.toMatchObject({
+      statusCode: 401,
     });
-    const regen = await ag.regenerateAgentToken(workspaceId, res.user.id, ownerId);
-    expect(regen.agentToken).toMatch(/^flow-agent-token-/);
-    expect(regen.agentToken).not.toBe(res.agentToken);
-    await expect(auth.authenticate(res.agentToken)).rejects.toMatchObject({ statusCode: 401 });
-    const dto = await auth.authenticate(regen.agentToken);
-    expect(dto.id).toBe(res.user.id);
-    await expect(ag.regenerateAgentToken(workspaceId, memberId, ownerId)).rejects.toMatchObject({
-      statusCode: 404, // humans aren't agents
+    await expect(ag.agentLogin('no-such-agent', 'flow-agent-key-whatever00')).rejects.toMatchObject({
+      statusCode: 401,
     });
   });
 
   it('rejects unknown and revoked tokens', async () => {
     await expect(auth.authenticate('flow-agent-token-bogus')).rejects.toMatchObject({ statusCode: 401 });
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'RevokedBot' });
-    await db.update(agentTokens).set({ revokedAt: new Date() }).where(eq(agentTokens.userId, res.user.id));
-    await expect(auth.authenticate(res.agentToken)).rejects.toMatchObject({ statusCode: 401 });
+    const a = await registerAgent('RevokedBot');
+    await db.update(agentTokens).set({ revokedAt: new Date() }).where(eq(agentTokens.userId, a.user.id));
+    await expect(auth.authenticate(a.agentToken)).rejects.toMatchObject({ statusCode: 401 });
   });
 });
 
 describe('role guard', () => {
-  it('agents cannot create workspaces, invite, or manage apps/agents', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'GuardBot' });
-    const agentId = res.user.id;
+  it('agents cannot create workspaces, invite, or manage apps; approved agents are always role member', async () => {
+    const a = await registerAgent('GuardBot');
+    const agentId = a.user.id;
     await expect(ws.createWorkspace(agentId, 'Agent WS', `agent-ws-${Date.now()}`)).rejects.toMatchObject({
       statusCode: 403,
     });
     await expect(ws.createInvite(workspaceId, agentId, 'x@example.test')).rejects.toMatchObject({ statusCode: 403 });
     await expect(ap.listApps(workspaceId, agentId)).rejects.toMatchObject({ statusCode: 403 });
-    await expect(ag.createAgentInvite(workspaceId, agentId)).rejects.toMatchObject({ statusCode: 403 });
-    await expect(ag.removeAgent(workspaceId, agentId, agentId)).rejects.toMatchObject({ statusCode: 403 });
-  });
-
-  it('registered agents are always role member', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'RoleBot' });
     const m = (
       await db
         .select()
         .from(workspaceMembers)
-        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, res.user.id)))
+        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, agentId)))
     )[0]!;
     expect(m.role).toBe('member');
   });
 });
 
 describe('remove agent', () => {
-  it('admin removal: leaves workspace + channels, deletes 1:1 DMs, revokes tokens, keeps the user row', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'DoomedBot' });
-    const agentId = res.user.id;
+  it('admin removal: leaves workspace + channels, deletes 1:1 DMs, revokes tokens AND credentials, keeps the user row', async () => {
+    const a = await registerAgent('DoomedBot');
+    const agentId = a.user.id;
     const dm = await ch.createDm(workspaceId, ownerId, [agentId]);
 
     await ag.removeAgent(workspaceId, agentId, ownerId);
@@ -246,16 +314,62 @@ describe('remove agent', () => {
     expect(dmRow.length).toBe(0); // 1:1 DM deleted outright
     const toks = await db.select().from(agentTokens).where(eq(agentTokens.userId, agentId));
     expect(toks.every((t) => t.revokedAt !== null)).toBe(true);
-    await expect(auth.authenticate(res.agentToken)).rejects.toMatchObject({ statusCode: 401 });
+    await expect(auth.authenticate(a.agentToken)).rejects.toMatchObject({ statusCode: 401 });
+    // credentials are dead: login can never resurrect a removed agent
+    await expect(ag.agentLogin(a.username, a.key)).rejects.toMatchObject({ statusCode: 401 });
     // user row survives for authorship
     const u = (await db.select().from(users).where(eq(users.id, agentId)))[0];
     expect(u?.displayName).toBe('DoomedBot');
+    expect(u?.agentUsername).toBeNull();
   });
 
-  it('plain members cannot remove agents; removing a human via removeAgent 404s', async () => {
-    const inv = await ag.createAgentInvite(workspaceId, ownerId);
-    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'SafeBot' });
-    await expect(ag.removeAgent(workspaceId, res.user.id, memberId)).rejects.toMatchObject({ statusCode: 403 });
+  it('the sponsor can remove their own agent without being admin', async () => {
+    // member sponsors an agent into the shared workspace
+    const s = await start('MemberBot', { sponsorEmail: 'member@example.test' });
+    await ag.approveAgentRequest(s.requestId, memberId, workspaceId);
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    const agentId = poll.user!.id;
+    // an unrelated non-admin cannot remove it… (owner-sponsored path checked above)
+    const bystander = await registerHuman(`bystander-${Date.now()}@example.test`, 'Bystander');
+    await db.insert(workspaceMembers).values({ workspaceId, userId: bystander.id, role: 'member' });
+    await expect(ag.removeAgent(workspaceId, agentId, bystander.id)).rejects.toMatchObject({ statusCode: 403 });
+    // …but the sponsor (plain member) can
+    await ag.removeAgent(workspaceId, agentId, memberId);
+    const wm = await db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, agentId)));
+    expect(wm.length).toBe(0);
+  });
+
+  it('removing a human via removeAgent 404s', async () => {
     await expect(ag.removeAgent(workspaceId, memberId, ownerId)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('sponsor departure cascade', () => {
+  it('removing the sponsor from a workspace removes the agents they sponsor there', async () => {
+    const sponsor = await registerHuman(`sponsor-${Date.now()}@example.test`, 'Sponsor');
+    await db.insert(workspaceMembers).values({ workspaceId, userId: sponsor.id, role: 'member' });
+    const s = await ag.startAgentRegistration({
+      username: `cascadebot-${Date.now()}`,
+      key: `flow-agent-key-${randomBytes(24).toString('base64url')}`,
+      name: 'CascadeBot',
+      sponsorEmail: (await db.select().from(users).where(eq(users.id, sponsor.id)))[0]!.email,
+    });
+    await ag.approveAgentRequest(s.requestId, sponsor.id, workspaceId);
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    const agentId = poll.user!.id;
+
+    await ws.removeMember(workspaceId, ownerId, sponsor.id);
+
+    const wm = await db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, agentId)));
+    expect(wm.length).toBe(0);
+    await expect(auth.authenticate(poll.agentToken!)).rejects.toMatchObject({ statusCode: 401 });
+    const u = (await db.select().from(users).where(eq(users.id, agentId)))[0]!;
+    expect(u.agentUsername).toBeNull(); // credentials dead too
   });
 });

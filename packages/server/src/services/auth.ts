@@ -22,6 +22,14 @@ const ARGON2_OPTS: argon2.Options = {
   parallelism: 1,
 };
 
+/** Password-grade hashing for long-lived secrets (also used for agent keys). */
+export function hashSecret(secret: string): Promise<string> {
+  return argon2.hash(secret, ARGON2_OPTS);
+}
+export function verifySecret(hash: string, secret: string): Promise<boolean> {
+  return argon2.verify(hash, secret).catch(() => false);
+}
+
 export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
   return {
     id: u.id,

@@ -14,6 +14,7 @@ import AdminView from './AdminView';
 import ThreadPanel from './ThreadPanel';
 import { OpenInAppBanner } from './OpenInApp';
 import NotificationsBell from './NotificationsBell';
+import AgentPairingPrompt from './AgentPairingPrompt';
 
 export default function Main() {
   const auth = useAuth();
@@ -153,6 +154,10 @@ export default function Main() {
       case 'workspace.updated':
         void qc.invalidateQueries({ queryKey: ['workspaces'] });
         break;
+      case 'agent.pairing':
+        // an agent named this user as its sponsor — surface the approval prompt
+        void qc.invalidateQueries({ queryKey: ['agentRequests'] });
+        break;
       case 'notification.created': {
         const n = event.data as NotificationDTO;
         void qc.invalidateQueries({ queryKey: ['notifications'] });
@@ -196,6 +201,7 @@ export default function Main() {
     <LiveContext.Provider value={live}>
       <div className="flex h-full flex-col bg-base text-ink">
         <OpenInAppBanner />
+        <AgentPairingPrompt />
         <div className="flex min-h-0 flex-1">
           <WorkspaceRail />
           <Sidebar />

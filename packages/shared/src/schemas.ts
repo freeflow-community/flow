@@ -245,21 +245,30 @@ export const CreateAppBody = z.object({
 });
 export type CreateAppBody = z.infer<typeof CreateAppBody>;
 
-// ---- First-class AI agents (AGENTS_DESIGN.md) -------------------
-export const CreateAgentInviteBody = z.object({
-  nameHint: z.string().min(1).max(80).optional(),
-});
-export type CreateAgentInviteBody = z.infer<typeof CreateAgentInviteBody>;
+// ---- First-class AI agents (AGENT_MEMBERS.md) -------------------
+/** Agent usernames: lowercase handle, 3-32 chars, letter/digit first. */
+export const AGENT_USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 
 export const RegisterAgentBody = z.object({
-  inviteKey: z.string().min(16).max(128),
-  // Optional: the agent self-identifies; the server falls back to the
-  // invite's nameHint when omitted (400 if neither is present).
-  name: z.string().min(1).max(80).optional(),
+  username: z.string().toLowerCase().regex(AGENT_USERNAME_RE, 'username: 3-32 lowercase letters, digits, . _ -'),
+  key: z.string().min(16).max(128),
+  name: z.string().min(1).max(80),
+  sponsorEmail: z.string().email().max(255),
   description: z.string().max(200).optional(),
   avatarUrl: z.string().url().max(500).optional(),
 });
 export type RegisterAgentBody = z.infer<typeof RegisterAgentBody>;
+
+export const AgentLoginBody = z.object({
+  username: z.string().toLowerCase().regex(AGENT_USERNAME_RE),
+  key: z.string().min(16).max(128),
+});
+export type AgentLoginBody = z.infer<typeof AgentLoginBody>;
+
+export const ApproveAgentRequestBody = z.object({
+  workspaceId: z.string().uuid(),
+});
+export type ApproveAgentRequestBody = z.infer<typeof ApproveAgentRequestBody>;
 
 export const UpdateAppBody = z
   .object({

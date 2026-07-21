@@ -2,18 +2,21 @@
 // flow-agent-bridge CLI:
 //   flow-agent-bridge [config.json]         the one command: if the config
 //                                           exists, run the daemon; if not,
-//                                           interactive setup (invite key →
-//                                           token exchange → save) then run.
+//                                           interactive setup (register →
+//                                           sponsor approval → save) then run.
 //                                           Default config path: ./agent.json
 //   flow-agent-bridge run <config.json>     start the daemon (no setup)
-//   flow-agent-bridge register --server <url> --invite <key> [--name <name>]
-//                              [--description <text>] [--avatar <url>]
-//   (--name optional: falls back to the invite's nameHint server-side)
+//   flow-agent-bridge register --server <url> --sponsor <email> --username <handle>
+//                              --name <name> [--key <secret>] [--description <text>] [--avatar <url>]
+//   (prints a pairing code and blocks until the sponsor approves inside Flow;
+//    --key omitted → a fresh key is generated and printed)
+//   flow-agent-bridge login --server <url> --username <handle> --key <secret>
+//   (mints a fresh agent token, revoking the old one — the lost-agent.json path)
 //   flow-agent-bridge mcp                   (internal) the flow MCP stdio server
 import fs from 'node:fs';
 import { loadConfig } from './config.js';
 import { AgentBridge } from './bridge.js';
-import { registerAgent } from './api.js';
+import { agentLogin, newAgentKey, startAgentRegistration, waitForApproval } from './api.js';
 import { runMcpServer } from './mcp-server.js';
 import { runSetup } from './setup.js';
 
@@ -22,7 +25,9 @@ function usage(): never {
     'usage:\n' +
       '  flow-agent-bridge [config.json]      setup (if missing) + run — default ./agent.json\n' +
       '  flow-agent-bridge run <config.json>\n' +
-      '  flow-agent-bridge register --server <url> --invite <key> [--name <name>] [--description <text>] [--avatar <url>]\n',
+      '  flow-agent-bridge register --server <url> --sponsor <email> --username <handle> --name <name>\n' +
+      '                             [--key <secret>] [--description <text>] [--avatar <url>]\n' +
+      '  flow-agent-bridge login --server <url> --username <handle> --key <secret>\n',
   );
   process.exit(2);
 }
@@ -37,18 +42,48 @@ async function main(): Promise<void> {
   if (cmd === 'mcp') return runMcpServer();
   if (cmd === 'register') {
     const server = flag(rest, 'server');
-    const invite = flag(rest, 'invite');
+    const sponsor = flag(rest, 'sponsor');
+    const username = flag(rest, 'username');
     const name = flag(rest, 'name');
-    if (!server || !invite) usage();
-    const res = await registerAgent(server, {
-      inviteKey: invite,
-      ...(name ? { name } : {}),
+    if (!server || !sponsor || !username || !name) usage();
+    const key = flag(rest, 'key') ?? newAgentKey();
+    const generatedKey = !flag(rest, 'key');
+    const start = await startAgentRegistration(server, {
+      username,
+      key,
+      name,
+      sponsorEmail: sponsor,
       ...(flag(rest, 'description') ? { description: flag(rest, 'description')! } : {}),
       ...(flag(rest, 'avatar') ? { avatarUrl: flag(rest, 'avatar')! } : {}),
     });
-    console.log(`registered ${res.user.displayName} <@${res.user.id}> in workspace "${res.workspace.name}"`);
+    console.log(`pairing code:  ${start.code}`);
+    console.log(`waiting for ${sponsor} to approve inside Flow (they must see the SAME code)…`);
+    const res = await waitForApproval(server, start);
+    if (res.status !== 'approved' || !res.agentToken) {
+      throw new Error(
+        res.status === 'denied' ? 'the sponsor denied the request' : 'the request expired — re-run register',
+      );
+    }
+    console.log(`registered ${res.user!.displayName} <@${res.user!.id}> in workspace "${res.workspace!.name}"`);
     console.log('');
-    console.log('agent token (shown ONCE — put it in your bridge config as "agentToken"):');
+    console.log('agent token (put it in your bridge config as "agentToken"):');
+    console.log(`  ${res.agentToken}`);
+    if (generatedKey) {
+      console.log('');
+      console.log('agent key (shown ONCE — with the username, this recovers a lost token via `login`):');
+      console.log(`  username: ${username}`);
+      console.log(`  key:      ${key}`);
+    }
+    return;
+  }
+  if (cmd === 'login') {
+    const server = flag(rest, 'server');
+    const username = flag(rest, 'username');
+    const key = flag(rest, 'key');
+    if (!server || !username || !key) usage();
+    const res = await agentLogin(server, username, key);
+    console.log(`logged in as ${res.user.displayName} <@${res.user.id}>`);
+    console.log('fresh agent token (the previous token is now revoked):');
     console.log(`  ${res.agentToken}`);
     return;
   }

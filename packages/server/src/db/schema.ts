@@ -14,6 +14,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -29,6 +30,12 @@ export const users = pgTable('users', {
   timezone: text('timezone').notNull().default('UTC'),
   isBot: boolean('is_bot').notNull().default(false), // phase 4: app bot users
   isAgent: boolean('is_agent').notNull().default(false), // first-class AI agents (AGENTS_DESIGN.md)
+  // Agents only (AGENT_MEMBERS.md): the human member responsible for the agent,
+  // and the agent's durable credentials (username + argon2 key hash) — nulled
+  // on removal so a removed agent can never log back in.
+  sponsorUserId: uuid('sponsor_user_id').references((): AnyPgColumn => users.id),
+  agentUsername: citext('agent_username').unique(),
+  agentKeyHash: text('agent_key_hash'),
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
@@ -229,21 +236,33 @@ export const notifications = pgTable(
 
 // ---- First-class AI agents (AGENTS_DESIGN.md) -------------------
 
-/** Single-use agent invites — key-based sibling of `invites` (raw key never stored). */
-export const agentInvites = pgTable(
-  'agent_invites',
+/**
+ * On-demand agent registration (AGENT_MEMBERS.md): a pairing request opened by
+ * an unauthenticated agent, resolved by its sponsor approving the matching
+ * code inside Flow. sponsor_user_id is NULL when sponsorEmail matched no
+ * account — the request is accepted anyway (anti-enumeration) and expires.
+ */
+export const agentPairingRequests = pgTable(
+  'agent_pairing_requests',
   {
     id: uuid('id').primaryKey(),
-    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
-    tokenHash: bytea('token_hash').notNull().unique(),
-    nameHint: text('name_hint'),
-    createdBy: uuid('created_by').notNull().references(() => users.id),
+    username: citext('username').notNull(),
+    keyHash: text('key_hash').notNull(), // argon2 of the agent's secret key
+    name: text('name').notNull(),
+    description: text('description'),
+    avatarUrl: text('avatar_url'),
+    sponsorUserId: uuid('sponsor_user_id').references(() => users.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    pollSecretHash: bytea('poll_secret_hash').notNull().unique(),
+    status: text('status', { enum: ['pending', 'approved', 'denied'] }).notNull().default('pending'),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    agentUserId: uuid('agent_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** The agent token is delivered on exactly one poll; afterwards username+key login is the recovery path. */
+    tokenDeliveredAt: timestamp('token_delivered_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    usedAt: timestamp('used_at', { withTimezone: true }),
-    agentUserId: uuid('agent_user_id').references(() => users.id),
   },
-  (t) => [index('agent_invites_workspace_idx').on(t.workspaceId)],
+  (t) => [index('agent_pairing_sponsor_idx').on(t.sponsorUserId).where(sql`status = 'pending'`)],
 );
 
 /** Agent bearer tokens: non-expiring sibling of `sessions`; revoked_at is the kill switch. */

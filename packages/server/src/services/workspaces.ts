@@ -7,7 +7,7 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
-import { removeMemberDeep } from './memberRemoval.js';
+import { removeMemberDeep, removeSponsoredAgents } from './memberRemoval.js';
 
 const { workspaces, workspaceMembers, invites, channels, channelMembers, users, sessions, emailTokens, appLinkCodes } =
   schema;
@@ -129,6 +129,7 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
     isAgent: r.u.isAgent,
+    sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   }));
@@ -151,6 +152,7 @@ async function toMemberDTO(workspaceId: string, userId: string): Promise<Workspa
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
     isAgent: r.u.isAgent,
+    sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   };
@@ -212,6 +214,8 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
     .where(eq(users.id, targetId))
     .limit(1);
   const tombstoneEligible = !!u && !u.isBot && !u.isAgent;
+  // Sponsor-departure cascade (AGENT_MEMBERS.md): their agents go with them.
+  if (tombstoneEligible) await removeSponsoredAgents(workspaceId, targetId);
   await removeMemberDeep(workspaceId, targetId, async (tx) => {
     // removeMemberDeep has already deleted the target's row for THIS workspace
     // before `also` runs, so any remaining row means they're still elsewhere.

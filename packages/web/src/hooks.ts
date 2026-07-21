@@ -7,6 +7,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import type {
+  AgentPairingRequestDTO,
   AppDTO,
   ChannelDTO,
   FileDTO,
@@ -77,6 +78,17 @@ export function useMemberMap(workspaceId: string | null): Record<string, Workspa
   const map: Record<string, WorkspaceMemberDTO> = {};
   for (const m of members.data ?? []) map[m.userId] = m;
   return map;
+}
+
+/** Pending agent pairing requests naming me as sponsor (AGENT_MEMBERS.md).
+ * WS `agent.pairing` events invalidate this; the interval catches expiry. */
+export function useAgentRequests() {
+  return useQuery({
+    queryKey: ['agentRequests'],
+    queryFn: () => api<{ requests: AgentPairingRequestDTO[] }>('GET', '/v1/me/agent-requests'),
+    select: (d) => d.requests,
+    refetchInterval: 60_000,
+  });
 }
 
 /** Slack-compat apps for a workspace (phase4.md §1). Admin-only endpoint. */

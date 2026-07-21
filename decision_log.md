@@ -1,5 +1,38 @@
 # Decision log
 
+## 2026-07-21 — On-demand agent registration with human sponsors
+
+Operator ask: replace the admin invite-key flow — every agent gets a
+responsible human **sponsor**, registration looks like human registration
+(username + key + bot name), and it happens on demand: the agent registers
+naming its sponsor's email, the sponsor synchronously approves a matching
+pairing code inside Flow. Spec-first: AGENT_MEMBERS.md was rewritten before
+the implementation; this change makes it true.
+
+Rulings (operator-approved recommendations):
+
+- **Any member can sponsor** — no admin involvement, matching the intent; a
+  workspace-level permission knob can be added later if needed.
+- **Username + key are durable credentials** (argon2-hashed like passwords).
+  `POST /v1/agents/login` re-mints the agent token (revoking prior ones), which
+  replaces both "Regenerate token" and admin recovery, and doubles as rotation.
+- **Workspace is chosen at approval time**, not in the register call — the
+  agent can't know workspace ids and the sponsor's email doesn't disambiguate.
+- **Anti-enumeration**: the register response never reveals whether the
+  sponsor email matched; unmatched requests just expire. The endpoint is
+  rate-limited per IP (it triggers a user-visible prompt).
+- **Token delivered on exactly one poll** (guarded by `token_delivered_at`);
+  a lost delivery is recovered via login, so the raw token is never stored.
+- **Sponsor departure cascades**: removing a sponsor from a workspace removes
+  the agents they sponsor there — orphaned agents would recreate the
+  accountability gap sponsorship exists to close. Agent removal (admin OR
+  sponsor) also nulls username/key so removed agents can never log back in.
+- **Old flow retired destructively**: `agent_invites` dropped in
+  `0015_agent_pairing.sql` (consumed single-use invites, no live value);
+  pre-existing agents keep working on their tokens with `sponsor_user_id NULL`.
+- **Pairing code alphabet** excludes 0/O/1/I/L confusables (`XXX-XXX`) — the
+  human eyeball-match of the code across two screens is the security handshake.
+
 ## 2026-07-21 — Delete a user when removed from their last workspace
 
 Operator ask: when an admin removes a user and it was that user's last

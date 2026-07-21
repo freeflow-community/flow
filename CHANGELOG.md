@@ -9,6 +9,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- macOS/iOS: no agent pairing prompt — sponsors must approve agent
+  registrations in the web app (the `agent.pairing` WS event is safely ignored
+  by the native clients; roster `sponsorId` likewise unused there yet).
 - macOS/iOS: video playback downloads the whole file before playing (streamed
   to disk, not RAM); web streams in place via the presigned URL. Matters at
   the new 500 MB scale — native fix is AVPlayer on the `/v1/files/:id/url`
@@ -45,8 +48,8 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   operator review). Markdown still renders fully; sugar expands at send time.
 - iOS message actions: long-press context menu (no hover on touch).
 - App management UI (Slack-compat apps): web only.
-- Agent management UI (invite an agent, remove agent): web only (operator
-  ruling 4, like Apps). All clients render the 🤖 badge.
+- Agent management UI (agents roster, remove agent, pairing approval): web
+  only (operator ruling 4, like Apps). All clients render the 🤖 badge.
 - User admin panel (Manage Users — role changes + remove from workspace):
   web only, consistent with Apps/Agents management UIs. macOS shows neither the
   menu item nor the sidebar row. The server endpoints are platform-neutral, so
@@ -58,6 +61,37 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-21 — On-demand agent registration with human sponsors (bridge 0.3.0)
+- Agent registration is rebuilt around sponsorship (AGENT_MEMBERS.md): the
+  agent registers like a person — durable **username + secret key** plus a
+  **sponsor email** — via unauthenticated `POST /v1/agents/register` (202 →
+  pairing request; rate-limited per IP). The sponsor gets a live `agent.pairing`
+  prompt showing a short pairing code; approving the matching code
+  (`POST /v1/agent-requests/:id/approve`, workspace chosen there) creates the
+  agent (`is_agent`, role `member`, `sponsor_user_id` recorded) and the agent's
+  poll (`GET /v1/agents/register/:id`, pollSecret bearer) delivers the token
+  exactly once. `POST /v1/agents/login` (username+key) re-mints a token and
+  revokes the old — the lost-agent.json path, no admin involved. Any member can
+  sponsor (ruled — permission knob later). Removing a sponsor from a workspace
+  removes the agents they sponsor there; agent removal (admins **or the
+  sponsor**) also kills the username/key credentials. The invite-key flow is
+  retired: `agent_invites` dropped, invite/regenerate endpoints removed
+  (migration `0015_agent_pairing.sql`; existing agents and their tokens keep
+  working — they simply have no sponsor/credentials). `WorkspaceMemberDTO`
+  gains `sponsorId`. `[server]`
+- Web: floating **agent pairing prompt** (code, sponsor-responsibility note,
+  workspace picker, Approve/Deny) driven by the `agent.pairing` WS event +
+  `GET /v1/me/agent-requests`; Agents modal is now a roster with "sponsored
+  by" and remove (visible to admins and the agent's own sponsor), menu item
+  "Agents…" available to every member (invite-key minting/regenerate UI
+  removed). `[web]`
+- Bridge 0.3.0: `register` now takes `--sponsor/--username/--name` (key
+  auto-generated if omitted), prints the pairing code and blocks until
+  approval; new `login` command; interactive setup walks the same flow and
+  saves username+key alongside the token for self-recovery. `[server]`
+- AGENT_MEMBERS.md rewritten for the new flow (this change implements the
+  updated spec).
 
 ### 2026-07-21 — Tombstone a user when removed from their last workspace
 - Removing a human member from their **only** workspace now tombstones the

@@ -1,8 +1,12 @@
 # AI Agents: first-class workspace members
 
-Flow agents are real workspace members — invited like people (but by key
-instead of email), speaking the normal `/v1` REST + WS protocol, with real
-presence and an 🤖 badge next to their name. The usual deployment is the
+Flow agents are real workspace members — they register like people (with a
+username + secret key instead of email + password), speak the normal `/v1`
+REST + WS protocol, and show real presence with an 🤖 badge next to their
+name. Every agent has a human **sponsor**: the workspace member who approved
+its registration and is responsible for what it does. Registration is
+on-demand — no admin invite, no pre-registration: the agent asks to join,
+and its sponsor approves a matching pairing code from inside Flow. The usual deployment is the
 **agent bridge** (npm: `flow-agent-bridge`; source in `packages/agent-bridge`):
 a daemon that consumes Flow events and execs a coding-agent CLI (Claude Code
 first) headlessly per conversation.
@@ -20,19 +24,20 @@ flow-agent-bridge             # or: flow-agent-bridge my-agent.json
 ```
 
 With no existing config, this runs an interactive setup: it prompts for the
-server URL and invite key (from **Invite an Agent…** in the web app),
-exchanges the key for the agent token, asks name/description/runtime/working
-directory, saves `agent.json` (chmod 600 — it holds the token), and starts
-the daemon. Next time, the same command just runs the saved config. Pick
-runtime `demo` for a wiring check — it always replies "Your message was
+server URL, the agent's name, a username + key (the agent's own
+credentials), your email as its **sponsor**, and runtime/working directory.
+It then prints a short pairing code and waits — you get an "Agent … is
+asking to join" prompt inside Flow showing the same code; approve it and
+setup completes: `agent.json` is saved (chmod 600 — it holds the token) and
+the daemon starts. Next time, the same command just runs the saved config.
+Pick runtime `demo` for a wiring check — it always replies "Your message was
 received".
 
-Lost your `agent.json`? Invite keys are single-use, so don't mint a new
-invite (that creates a whole new agent identity). Instead an admin clicks
-**Regenerate token** next to the agent in the Agents modal and hands you the
-new `flow-agent-token-…` — the setup prompt accepts tokens as well as invite
-keys and skips registration, reconnecting as the existing agent. The old
-token stops working immediately.
+Lost your `agent.json`? The username + key are the agent's durable
+credentials: `flow-agent-bridge login` (or the setup prompt) exchanges them
+for a fresh agent token and reconnects as the existing agent — no
+re-registration, no admin involvement. Minting a fresh token revokes the
+previous one.
 
 The sections below spell out what that command does, for API integrators and
 manual setups.
@@ -52,40 +57,53 @@ tarball npm publishes and install that.
 
 ## Setup walkthrough
 
-### 1. Invite (workspace owner/admin, web UI or API)
+### 1. Register (the agent, unauthenticated)
 
-Web: workspace menu → **Invite an Agent…** shows the server URL + a one-time
-invite key as a copy-paste pair. Or via the API:
-
-```
-POST /v1/workspaces/:id/agent-invites   { "nameHint": "RepoBot" }
-→ { id, workspaceId, nameHint, key: "flow-agent-…", expiresAt }
-```
-
-The key is shown **once** (only its hash is stored), is **single-use**, and
-expires in **7 days**.
-
-### 2. Register (the agent, unauthenticated)
+The agent registers like a person: it picks a username + secret key (its
+durable credentials, analogous to email + password) and names the human
+member who is sponsoring it:
 
 ```
 POST /v1/agents/register
-  { "inviteKey": "flow-agent-…", "name": "RepoBot",
+  { "username": "repobot", "key": "…secret…", "name": "RepoBot",
+    "sponsorEmail": "scott@example.com",
     "description": "answers questions about repo X", "avatarUrl": "…" }
-→ { agentToken: "flow-agent-token-…", user, workspace }
+→ 202 { requestId, pollSecret, code: "XK4-P9Q", expiresAt }
 ```
 
-`name` is optional — the agent self-identifies, falling back to the invite's
-`nameHint` (400 if neither is present). The invite hint is just a label for
-the pending key (and that default).
+Nothing is created yet — this opens a **pending registration** the sponsor
+must approve. The response never reveals whether `sponsorEmail` matched an
+account (anti-enumeration); a bad email just expires unapproved. The agent
+shows the pairing `code` in its terminal and polls until resolved:
 
-This consumes the invite, creates the agent's user account (`isAgent`, always
-role `member`), joins the workspace + `#general`, and mints the **agent
-token** — shown once, non-expiring until revoked. Or use the bridge's helper:
+```
+GET /v1/agents/register/:requestId        (Authorization: Bearer <pollSecret>)
+→ { status: "pending" }                   # …repeat…
+→ { status: "approved", agentToken: "flow-agent-token-…", user, workspace }
+```
+
+Or the CLI equivalent, which prints the code and blocks until approval:
 
 ```sh
 flow-agent-bridge register --server https://app.flowtoo.org \
-  --invite flow-agent-… --name RepoBot --description "answers repo questions"
+  --sponsor scott@example.com --username repobot --name RepoBot \
+  --description "answers repo questions"
 ```
+
+### 2. Approve (the sponsor, inside Flow)
+
+The sponsor gets an immediate prompt in Flow (web app today; a macOS prompt
+is a tracked parity gap): *"🤖 RepoBot is asking to join as your agent —
+pairing code XK4-P9Q"* with **Approve** / **Deny**. They check the code matches the one in the agent's terminal — that
+match is the whole security handshake; never approve a code you can't see —
+pick the workspace to admit it to (pre-selected when they belong to just
+one), and approve.
+
+Approval creates the agent's user account (`isAgent`, always role `member`,
+sponsored by the approver), joins the workspace + `#general`, and the
+agent's poll returns the **agent token** — non-expiring until revoked. Any
+member can sponsor an agent; no admin involvement. Requests expire after
+**10 minutes**; denial ends them immediately.
 
 ### 3. Configure
 
@@ -197,6 +215,12 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
 
 ## Safety
 
+- **Sponsorship**: every agent is tied to the human member who approved its
+  registration — shown on its profile — and that sponsor is responsible for
+  the agent's behavior. Registration completes only when the sponsor
+  approves the matching pairing code inside Flow. When a sponsor leaves or
+  is removed from a workspace, the agents they sponsor are removed with
+  them.
 - **Sender gating**: only messages from workspace members are forwarded; by
   default messages from other agents are ignored (`respondToAgents`).
 - **Loop guard**: the agent never reacts to its own messages, including ones
@@ -210,10 +234,11 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   environments, scope it down by setting `allowedTools` (e.g. a read-only
   `["Read", "Grep", "Glob"]` for Q&A) or `permissionMode` — configuring
   either disables the bypass default.
-- **Removal**: admins remove an agent from the member list (web). Removal
-  revokes all its tokens, removes it from the workspace and channels, and
-  deletes its 1:1 DMs; history keeps its authorship. Re-inviting mints a
-  fresh identity.
+- **Removal**: admins — or the agent's sponsor — remove an agent from the
+  member list (web). Removal revokes its token and username/key
+  credentials, removes it from the workspace and channels, and deletes its
+  1:1 DMs; history keeps its authorship. Registering again mints a fresh
+  identity (new approval, new sponsorship).
 
 ## Codex runtime (stub)
 
@@ -225,8 +250,10 @@ CLIs (any "prompt in, text out" CLI fits via `runtime.command` +
 
 ## Troubleshooting
 
-- **`401` on register**: the invite key is single-use and expires in 7 days —
-  mint a fresh one. A key can also die because someone else used it first.
+- **Register hangs at "waiting for approval"**: the sponsor hasn't acted yet
+  — the request expires after 10 minutes, so re-run `register` for a fresh
+  code if it lapses. Also check `--sponsor` is exactly the sponsor's Flow
+  login email: the server deliberately won't say whether it matched.
 - **Agent shows offline**: presence is the bridge's WS — check the daemon is
   running and `serverUrl`/`agentToken` are right (`GET /v1/me` with the token
   should return the agent).
@@ -240,5 +267,7 @@ CLIs (any "prompt in, text out" CLI fits via `runtime.command` +
 - **`mcp disabled: built entrypoint not found`**: only affects repo-checkout
   runs — run `pnpm build` in `packages/agent-bridge` (the MCP server is
   invoked from `dist/`, which npm installs ship prebuilt).
-- **Token leaked?** Remove the agent (web member list, admin) — that revokes
-  every token immediately — then re-invite.
+- **Token leaked?** `flow-agent-bridge login` with the username + key mints
+  a fresh token and revokes the old one immediately. If the key itself
+  leaked, remove the agent (web member list — admin or sponsor) and
+  register again.

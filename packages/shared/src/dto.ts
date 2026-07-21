@@ -34,6 +34,8 @@ export interface WorkspaceMemberDTO {
   statusText: string;
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
+  /** Agents only: the human member who sponsored (approved) the agent and is responsible for it. */
+  sponsorId: string | null;
   role: MemberRole;
   joinedAt: string;
 }
@@ -176,22 +178,43 @@ export interface AppDTO {
   eventUrlVerified: boolean;
 }
 
-// ---- First-class AI agents (AGENTS_DESIGN.md) -------------------
+// ---- First-class AI agents (AGENT_MEMBERS.md) -------------------
 
-/** Agent invite (owner/admin). The raw key is returned exactly once. */
-export interface AgentInviteDTO {
+/** A pending agent registration awaiting its sponsor's approval. */
+export interface AgentPairingRequestDTO {
   id: string;
-  workspaceId: string;
-  nameHint: string | null;
-  /** `flow-agent-<token>` — shown once, only the hash is stored. */
-  key: string;
+  username: string;
+  name: string;
+  description: string | null;
+  /** Short pairing code — must match what the agent's terminal shows. */
+  code: string;
+  createdAt: string;
   expiresAt: string;
 }
 
-/** Response of POST /v1/agents/register. The agent token is returned exactly once. */
-export interface AgentRegisterResponse {
+/** Response of POST /v1/agents/register (202): a pairing request was opened. */
+export interface AgentRegisterStartResponse {
+  requestId: string;
+  /** Bearer secret authenticating the agent's polls — never shown to the sponsor. */
+  pollSecret: string;
+  /** The pairing code to display in the agent's terminal. */
+  code: string;
+  expiresAt: string;
+}
+
+export type AgentPairingStatus = 'pending' | 'approved' | 'denied' | 'expired';
+
+/** Response of GET /v1/agents/register/:id. Token fields present on exactly one poll (the first after approval). */
+export interface AgentRegisterPollResponse {
+  status: AgentPairingStatus;
   /** Non-expiring bearer token (`flow-agent-token-<token>`) — shown once, only the hash is stored. */
+  agentToken?: string;
+  user?: UserDTO;
+  workspace?: WorkspaceDTO;
+}
+
+/** Response of POST /v1/agents/login (username + key → fresh token; prior tokens revoked). */
+export interface AgentLoginResponse {
   agentToken: string;
   user: UserDTO;
-  workspace: WorkspaceDTO;
 }

@@ -25,7 +25,8 @@ import {
   PresignUploadBody,
   RegisterBody,
   CreateAppBody,
-  CreateAgentInviteBody,
+  AgentLoginBody,
+  ApproveAgentRequestBody,
   RegisterAgentBody,
   SendMessageBody,
   SetMemberRoleBody,
@@ -36,6 +37,7 @@ import {
   type UserDTO,
 } from '@flow/shared';
 import { ApiError, badRequest, unauthorized } from '../lib/errors.js';
+import { rateAllow } from '../lib/rateLimit.js';
 import { parseByteRange } from '../lib/httpRange.js';
 import * as auth from '../services/auth.js';
 import * as ws from '../services/workspaces.js';
@@ -270,25 +272,52 @@ export function registerRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
-  // ---- First-class AI agents (AGENTS_DESIGN.md; owner/admin, web-only UI) ----
-  app.post('/v1/workspaces/:id/agent-invites', { preHandler: requireAuth }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const body = parse(CreateAgentInviteBody, req.body);
-    const dto = await ag.createAgentInvite(id, req.user.id, body.nameHint);
-    return reply.status(201).send(dto); // raw key — shown once
-  });
-
-  // Unauthenticated: the agent consumes its single-use invite key.
+  // ---- First-class AI agents (AGENT_MEMBERS.md): on-demand registration ----
+  // Unauthenticated: open a pairing request. Rate-limited — this triggers a
+  // user-visible approval prompt for the sponsor.
   app.post('/v1/agents/register', async (req, reply) => {
+    if (!rateAllow(`agent-reg:${req.ip}`, 10, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many registration attempts — try again later');
+    }
     const body = parse(RegisterAgentBody, req.body);
-    const res = await ag.registerAgent(body);
-    return reply.status(201).send(res); // raw agent token — shown once
+    const res = await ag.startAgentRegistration(body);
+    return reply.status(202).send(res); // pollSecret — shown once
   });
 
-  app.post('/v1/workspaces/:id/agents/:userId/token', { preHandler: requireAuth }, async (req, reply) => {
-    const { id, userId } = req.params as { id: string; userId: string };
-    const res = await ag.regenerateAgentToken(id, userId, req.user.id);
+  // The agent's poll, authenticated by the pollSecret as a bearer token.
+  app.get('/v1/agents/register/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const header = req.headers.authorization;
+    const pollSecret = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+    return ag.pollAgentRegistration(id, pollSecret);
+  });
+
+  // Unauthenticated: username + key → fresh token (revokes prior tokens).
+  app.post('/v1/agents/login', async (req, reply) => {
+    if (!rateAllow(`agent-login:${req.ip}`, 20, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many login attempts — try again later');
+    }
+    const body = parse(AgentLoginBody, req.body);
+    const res = await ag.agentLogin(body.username, body.key);
     return reply.status(201).send(res); // raw token — shown once
+  });
+
+  // Sponsor side: pending pairing requests + approve/deny.
+  app.get('/v1/me/agent-requests', { preHandler: requireAuth }, async (req) => {
+    return { requests: await ag.listPairingRequests(req.user.id) };
+  });
+
+  app.post('/v1/agent-requests/:id/approve', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(ApproveAgentRequestBody, req.body);
+    await ag.approveAgentRequest(id, req.user.id, body.workspaceId);
+    return { ok: true };
+  });
+
+  app.post('/v1/agent-requests/:id/deny', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ag.denyAgentRequest(id, req.user.id);
+    return { ok: true };
   });
 
   app.delete('/v1/workspaces/:id/agents/:userId', { preHandler: requireAuth }, async (req) => {

@@ -150,6 +150,11 @@ export default function Sidebar() {
             <MenuItem testid="menu-invite" onClick={() => { setWsMenuOpen(false); setShowInvite(true); }}>
               Invite People…
             </MenuItem>
+            {/* any member can sponsor agents (AGENT_MEMBERS.md) — the modal
+                explains registration and lets sponsors remove their own */}
+            <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
+              Agents…
+            </MenuItem>
             {isAdmin && (
               <>
                 <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
@@ -157,9 +162,6 @@ export default function Sidebar() {
                 </MenuItem>
                 <MenuItem testid="menu-apps" onClick={() => { setWsMenuOpen(false); setShowApps(true); }}>
                   Manage Apps…
-                </MenuItem>
-                <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
-                  Invite an Agent…
                 </MenuItem>
                 <MenuItem testid="menu-admin" onClick={() => { setWsMenuOpen(false); sel.openAdminPanel(); }}>
                   Manage Users…

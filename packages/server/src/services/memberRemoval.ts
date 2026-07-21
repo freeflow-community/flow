@@ -5,11 +5,11 @@
 // only other member is gone renders as a broken self-DM; group DMs just lose
 // the membership), keeps the user row so message authorship keeps its name,
 // and publishes the same member.left events deleteApp always has.
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
-const { channels, channelMembers, workspaceMembers } = schema;
+const { channels, channelMembers, workspaceMembers, users, agentTokens } = schema;
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -72,4 +72,33 @@ export async function removeMemberDeep(
     ts,
     data: { userId, workspaceId },
   });
+}
+
+/** Revoke an agent's tokens and null its username/key so it can never authenticate again. */
+export async function killAgentCredentials(agentUserId: string): Promise<void> {
+  await db
+    .update(agentTokens)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(agentTokens.userId, agentUserId), isNull(agentTokens.revokedAt)));
+  await db.update(users).set({ agentUsername: null, agentKeyHash: null }).where(eq(users.id, agentUserId));
+}
+
+/**
+ * Sponsor-departure cascade (AGENT_MEMBERS.md): when a human leaves a
+ * workspace, the agents they sponsor there go with them — orphaned agents
+ * falling to an admin would recreate the accountability gap sponsorship
+ * closes. Runs before the sponsor's own removal.
+ */
+export async function removeSponsoredAgents(workspaceId: string, sponsorId: string): Promise<void> {
+  const sponsored = await db
+    .select({ userId: users.id })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(
+      and(eq(workspaceMembers.workspaceId, workspaceId), eq(users.sponsorUserId, sponsorId), eq(users.isAgent, true)),
+    );
+  for (const a of sponsored) {
+    await killAgentCredentials(a.userId);
+    await removeMemberDeep(workspaceId, a.userId);
+  }
 }
