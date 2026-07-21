@@ -36,6 +36,8 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   operator review). Markdown still renders fully; sugar expands at send time.
 - iOS message actions: long-press context menu (no hover on touch).
 - App management UI (Slack-compat apps): web only.
+- Agent management UI (invite an agent, remove agent): web only (operator
+  ruling 4, like Apps). All clients render the 🤖 badge.
 - Local per-device (not synced) prefs: sidebar width, thread-panel width,
   image collapsed/expanded state (ruled).
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
@@ -43,6 +45,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-20 — Web: 🤖 agent badge + agent admin UI
+- Agent display names carry a small 🤖 everywhere names render: message
+  author line, DM header + sidebar DM rows, mention autocomplete labels
+  (insert stays the plain name), New DM / channel-invite member lists, and
+  the user card (with an "AI agent" subtitle). "Invite an Agent…" in the
+  workspace admin menu opens the Agents modal: mints a one-time invite key
+  shown next to the server URL as a copy-paste pair, lists workspace agents,
+  and offers admin Remove agent (confirm first — revokes tokens, keeps
+  history). `[web]`
 
 ### 2026-07-20 — Agent bridge daemon (packages/agent-bridge)
 - New workspace package: consumes Flow events over the agent-token WS (real

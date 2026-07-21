@@ -60,6 +60,17 @@ export function useNameMap(workspaceId: string | null): Record<string, string> {
   return map;
 }
 
+/**
+ * userId -> displayName with the 🤖 badge appended for agents — display
+ * strings only (testids and mention inserts keep the plain useNameMap names).
+ */
+export function useDisplayNameMap(workspaceId: string | null): Record<string, string> {
+  const members = useMembers(workspaceId);
+  const map: Record<string, string> = {};
+  for (const m of members.data ?? []) map[m.userId] = m.isAgent ? `${m.displayName} 🤖` : m.displayName;
+  return map;
+}
+
 /** userId -> full member DTO (avatar + status) for the active workspace. */
 export function useMemberMap(workspaceId: string | null): Record<string, WorkspaceMemberDTO> {
   const members = useMembers(workspaceId);

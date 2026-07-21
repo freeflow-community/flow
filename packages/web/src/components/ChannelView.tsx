@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth, useLive, useSelection } from '../state';
-import { useChannels, useMarkRead, useMemberMap, useMembers, useMessages, useNameMap, flattenMessages } from '../hooks';
+import { useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMembers, useMessages, useNameMap, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import MessageList from './MessageList';
@@ -16,6 +16,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const members = useMembers(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
+  const displayNames = useDisplayNameMap(sel.workspaceId); // agent names carry the 🤖 badge
   const messagesQ = useMessages(channelId);
   const markRead = useMarkRead();
   const lastReadRef = useRef<string | null>(null);
@@ -44,7 +45,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const title = channel
     ? channel.kind === 'standard'
       ? channel.name ?? ''
-      : dmTitle(channel, names, auth.user.id)
+      : dmTitle(channel, displayNames, auth.user.id)
     : '';
 
   // header avatar stack: channel members for DMs, workspace members otherwise

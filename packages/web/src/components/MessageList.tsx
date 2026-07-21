@@ -185,6 +185,11 @@ function MessageRow({
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-bold">
               {sender}
+              {member?.isAgent && (
+                <span className="ml-1 text-sm font-normal" title="AI agent" data-testid={`agent-badge-${sender}`}>
+                  🤖
+                </span>
+              )}
               {member?.statusEmoji && (
                 <span className="ml-1 text-sm font-normal" title={member.statusText} data-testid={`status-of-${sender}`}>
                   {member.statusEmoji}

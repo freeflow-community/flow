@@ -211,6 +211,7 @@ export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onCl
                 }}
               />
               {m.displayName}
+              {m.isAgent && <span title="AI agent"> 🤖</span>}
             </label>
           ))}
       </div>
@@ -286,7 +287,10 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
             {candidates.length === 0 && <p className="px-1 py-1 text-sm text-faint">Everyone is here.</p>}
             {candidates.map((m) => (
               <div key={m.userId} className="flex items-center justify-between px-1 py-1 text-sm">
-                <span>{m.displayName}</span>
+                <span>
+                  {m.displayName}
+                  {m.isAgent && <span title="AI agent"> 🤖</span>}
+                </span>
                 {added.has(m.userId) ? (
                   <span className="text-xs text-green-600">added ✓</span>
                 ) : (
@@ -514,7 +518,11 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
               {user.displayName.slice(0, 1).toUpperCase()}
             </span>
           )}
-          <p data-testid="user-card-name" className="text-lg font-bold">{user.displayName}</p>
+          <p data-testid="user-card-name" className="text-lg font-bold">
+            {user.displayName}
+            {user.isAgent && <span title="AI agent"> 🤖</span>}
+          </p>
+          {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
           <p className="text-sm text-muted select-all">{user.email}</p>
           <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>
           <div className="mt-2 flex gap-2">

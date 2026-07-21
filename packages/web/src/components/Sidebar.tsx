@@ -4,9 +4,10 @@ import { sidebarColor } from '@flow/shared';
 import type { ChannelDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useLive, useSelection } from '../state';
-import { useChannels, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
+import { useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
+import { AgentsModal } from './AgentsModal';
 import StatusFooter from './StatusPicker';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
@@ -34,12 +35,14 @@ export default function Sidebar() {
   const members = useMembers(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
+  const displayNames = useDisplayNameMap(sel.workspaceId); // agent names carry the 🤖 badge
   const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showColor, setShowColor] = useState(false);
   const [showApps, setShowApps] = useState(false);
+  const [showAgents, setShowAgents] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
@@ -151,6 +154,9 @@ export default function Sidebar() {
                 <MenuItem testid="menu-apps" onClick={() => { setWsMenuOpen(false); setShowApps(true); }}>
                   Manage Apps…
                 </MenuItem>
+                <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
+                  Invite an Agent…
+                </MenuItem>
               </>
             )}
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
@@ -179,7 +185,7 @@ export default function Sidebar() {
               key={c.id}
               channel={c}
               testid={`sidebar-dm-${title}`}
-              label={title}
+              label={dmTitle(c, displayNames, auth.user.id)}
               statusEmoji={c.kind === 'dm' ? status?.statusEmoji : ''}
               statusTitle={c.kind === 'dm' ? status?.statusText : ''}
               leading={
@@ -253,6 +259,7 @@ export default function Sidebar() {
       {showNewDm && sel.workspaceId && <NewDmModal workspaceId={sel.workspaceId} onClose={() => setShowNewDm(false)} />}
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
+      {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
     </aside>
   );

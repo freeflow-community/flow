@@ -457,7 +457,7 @@ function trailingToken(text: string): string | null {
 
 function buildSuggestions(
   token: string,
-  members: { userId: string; displayName: string }[],
+  members: { userId: string; displayName: string; isAgent?: boolean }[],
 ): { label: string; insert: string }[] {
   const query = token.slice(1).toLowerCase();
   if (token.startsWith('@')) {
@@ -467,7 +467,8 @@ function buildSuggestions(
     const users = members
       .filter((m) => m.displayName.toLowerCase().startsWith(query))
       .slice(0, 6)
-      .map((m) => ({ label: `@${m.displayName}`, insert: `@${m.displayName} ` }));
+      // agents get the 🤖 badge in the popup label; the insert stays the plain name
+      .map((m) => ({ label: `@${m.displayName}${m.isAgent ? ' 🤖' : ''}`, insert: `@${m.displayName} ` }));
     return [...groups, ...users].slice(0, 8);
   }
   return emojiMatches(query).map((e) => ({ label: `${e.emoji} :${e.code}:`, insert: `${e.emoji} ` }));
