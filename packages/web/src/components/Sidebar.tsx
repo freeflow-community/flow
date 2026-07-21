@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
-import type { ChannelDTO } from '@flow/shared';
+import type { ArtifactDTO, ChannelDTO } from '@flow/shared';
 import { api } from '../lib/api';
+import { fileGlyph } from '../lib/fileKind';
 import { ADMIN_VIEW_ID, useAuth, useLive, useSelection } from '../state';
-import { useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
+import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
@@ -32,6 +33,7 @@ export default function Sidebar() {
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
   const channels = useChannels(sel.workspaceId);
+  const artifacts = useArtifacts(sel.workspaceId);
   const members = useMembers(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
@@ -178,7 +180,7 @@ export default function Sidebar() {
       <div className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm">
         {isAdmin && sel.adminPanelOpen && (
           <AdminRow
-            active={sel.channelId === ADMIN_VIEW_ID}
+            active={sel.channelId === ADMIN_VIEW_ID && !sel.artifactId}
             onOpen={() => sel.selectChannel(ADMIN_VIEW_ID)}
             onClose={() => sel.closeAdminPanel()}
           />
@@ -231,6 +233,15 @@ export default function Sidebar() {
             </span>
           </button>
         ))}
+
+        {(artifacts.data ?? []).length > 0 && (
+          <>
+            <SectionHeader label="Artifacts" />
+            {(artifacts.data ?? []).map((a) => (
+              <ArtifactRow key={a.id} artifact={a} />
+            ))}
+          </>
+        )}
 
         {browsable.length > 0 && (
           <>
@@ -341,6 +352,46 @@ function AdminRow({
   );
 }
 
+/** An artifact tab row (phase 9): selectable like a channel; hover ✕ removes
+ * the bookmark (never the underlying file — operator ruling). */
+function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
+  const sel = useSelection();
+  const qc = useQueryClient();
+  const active = sel.artifactId === artifact.id;
+  return (
+    <div
+      className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
+        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+      }`}
+    >
+      <button
+        data-testid={`sidebar-artifact-${artifact.name}`}
+        className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
+        onClick={() => sel.selectArtifact(artifact.id)}
+      >
+        <span className={active ? 'opacity-70' : 'text-white/60'}>{fileGlyph(artifact.file)}</span>
+        <span className={`truncate ${active ? 'font-[650]' : 'text-white/82'}`}>{artifact.name}</span>
+      </button>
+      <button
+        data-testid={`sidebar-artifact-remove-${artifact.name}`}
+        title="Remove artifact"
+        className={`hidden rounded px-1 text-xs group-hover:block ${
+          active ? 'text-accent-deep/60 hover:text-accent-deep' : 'text-white/55 hover:text-white'
+        }`}
+        onClick={(e) => {
+          e.stopPropagation();
+          void api('DELETE', `/v1/artifacts/${artifact.id}`).then(() => {
+            if (active) sel.selectArtifact(null);
+            return qc.invalidateQueries({ queryKey: ['artifacts', artifact.workspaceId] });
+          });
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 function PresenceDot({ online }: { online: boolean }) {
   return (
     <span
@@ -391,7 +442,8 @@ function ChannelRow({
   onMenu: () => void;
 }) {
   const sel = useSelection();
-  const active = sel.channelId === channel.id;
+  // an open artifact panel takes the highlight (channelId stays put behind it)
+  const active = sel.channelId === channel.id && !sel.artifactId;
   const unread = channel.unreadCount > 0;
   return (
     <div

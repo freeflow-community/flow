@@ -25,6 +25,9 @@ import {
   PresignUploadBody,
   RegisterBody,
   CreateAppBody,
+  CreateArtifactBody,
+  UpdateArtifactBody,
+  ShareArtifactBody,
   AgentLoginBody,
   ApproveAgentRequestBody,
   RegisterAgentBody,
@@ -49,6 +52,7 @@ import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
+import * as ar from '../services/artifacts.js';
 import { listAgentAvatarPresets, readAgentAvatarPreset } from '../services/agentAvatars.js';
 
 declare module 'fastify' {
@@ -560,6 +564,39 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/files/:id/url', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return fl.getStreamUrl(id, req.user.id);
+  });
+
+  // ---- artifacts (phase 9: personal per-user file bookmarks) ----
+  app.post('/v1/artifacts', { preHandler: requireAuth }, async (req, reply) => {
+    const body = parse(CreateArtifactBody, req.body);
+    const dto = await ar.createArtifact(req.user.id, body.fileId, body.name);
+    return reply.status(201).send(dto);
+  });
+
+  app.get('/v1/workspaces/:id/artifacts', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { artifacts: await ar.listArtifacts(id, req.user.id) };
+  });
+
+  app.patch('/v1/artifacts/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(UpdateArtifactBody, req.body);
+    return ar.renameArtifact(id, req.user.id, body.name);
+  });
+
+  app.delete('/v1/artifacts/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ar.deleteArtifact(id, req.user.id);
+    return { ok: true };
+  });
+
+  // MCP fan-out: create a personal artifact for every human channel member
+  // (used by the flow MCP's create_artifact tool; decision log 2026-07-21)
+  app.post('/v1/channels/:id/artifacts', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(ShareArtifactBody, req.body);
+    const artifacts = await ar.shareArtifact(id, req.user.id, body.fileId, body.name);
+    return reply.status(201).send({ artifacts });
   });
 
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {

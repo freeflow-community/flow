@@ -112,6 +112,22 @@ const TOOLS = [
     },
   },
   {
+    name: 'create_artifact',
+    description:
+      'Create an artifact — a named file bookmark that appears in the Artifacts sidebar of every human member of the channel (defaults to the current conversation). Provide the content inline, or a local file path, or the id of an already-uploaded file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Display name for the artifact (defaults to the file name).' },
+        content: { type: 'string', description: 'Inline file content to upload (use with name; mimeType recommended).' },
+        mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML artifacts).' },
+        path: { type: 'string', description: 'Path to a local file to upload instead of inline content.' },
+        fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to bookmark as-is.' },
+        channelId: { type: 'string', description: 'Channel whose human members receive the artifact (default: current conversation).' },
+      },
+    },
+  },
+  {
     name: 'read_messages',
     description:
       'Read messages from a channel, newest first. Page backwards by passing `before` = the oldest message id from the previous page.',
@@ -136,6 +152,12 @@ const MIME_BY_EXT: Record<string, string> = {
   '.txt': 'text/plain',
   '.md': 'text/markdown',
   '.json': 'application/json',
+  '.html': 'text/html',
+  '.htm': 'text/html',
+  '.csv': 'text/csv',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
 };
 
 export async function runMcpServer(): Promise<void> {
@@ -224,6 +246,37 @@ export async function runMcpServer(): Promise<void> {
         if (!mime.startsWith('image/')) return toolText('set_avatar needs a png/jpeg/gif/webp image', true);
         await api.setAvatar(path.basename(p), mime, fs.readFileSync(p));
         return toolText('avatar updated');
+      }
+      case 'create_artifact': {
+        // resolve a file id: bookmark an existing file, or upload path/content
+        let fileId = (args.fileId as string | undefined) || '';
+        let label = (args.name as string | undefined) || undefined;
+        if (!fileId) {
+          let filename: string;
+          let mime: string;
+          let data: Buffer;
+          if (args.path) {
+            const p = path.resolve(String(args.path));
+            data = fs.readFileSync(p);
+            filename = path.basename(p);
+            mime = String(args.mimeType ?? '') || MIME_BY_EXT[path.extname(p).toLowerCase()] || 'application/octet-stream';
+          } else if (typeof args.content === 'string') {
+            filename = label ?? 'artifact.txt';
+            mime = String(args.mimeType ?? '') || 'text/plain';
+            data = Buffer.from(args.content, 'utf8');
+          } else {
+            return toolText('create_artifact needs one of: content, path, or fileId', true);
+          }
+          const file = await api.uploadFile(workspaceId, filename, mime, data);
+          fileId = file.id;
+          label = label ?? filename;
+        }
+        const created = await api.shareArtifact(channelId, fileId, label);
+        return toolText(
+          created.length
+            ? `artifact "${created[0]!.name}" created for ${created.length} member(s)`
+            : 'artifact already existed for every member — nothing new created',
+        );
       }
       case 'read_messages': {
         const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);

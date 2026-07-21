@@ -280,6 +280,29 @@ export const UpdateAppBody = z
   .refine((b) => b.eventUrl !== undefined || b.eventTypes !== undefined, 'nothing to update');
 export type UpdateAppBody = z.infer<typeof UpdateAppBody>;
 
+// ---- artifacts (phase 9) ---------------------------------------
+/** POST /v1/artifacts — bookmark a file for yourself. Name defaults to the file name. */
+export const CreateArtifactBody = z.object({
+  fileId: z.string().uuid(),
+  name: z.string().min(1).max(255).optional(),
+});
+export type CreateArtifactBody = z.infer<typeof CreateArtifactBody>;
+
+/** PATCH /v1/artifacts/:id — rename (owner only). */
+export const UpdateArtifactBody = z.object({
+  name: z.string().min(1).max(255),
+});
+export type UpdateArtifactBody = z.infer<typeof UpdateArtifactBody>;
+
+/** POST /v1/channels/:id/artifacts — create a personal artifact for every
+ * human member of the channel (the MCP create_artifact fan-out; agents/bots
+ * excluded per decision log 2026-07-21). */
+export const ShareArtifactBody = z.object({
+  fileId: z.string().uuid(),
+  name: z.string().min(1).max(255).optional(),
+});
+export type ShareArtifactBody = z.infer<typeof ShareArtifactBody>;
+
 // ---- files: presigned direct upload (R2) -----------------------
 export const PresignUploadBody = z.object({
   filename: z.string().min(1).max(512),

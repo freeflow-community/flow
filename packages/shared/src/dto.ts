@@ -103,6 +103,19 @@ export interface PresignedUploadDTO {
   };
 }
 
+/** Phase 9: a personal per-user bookmark of a shared file, shown in the
+ * sidebar's Artifacts section. Deleting an artifact never deletes the file. */
+export interface ArtifactDTO {
+  id: string;
+  workspaceId: string;
+  userId: string; // owner — artifacts are personal
+  fileId: string;
+  name: string; // display name, defaults to the file name
+  createdAt: string;
+  /** The underlying file, hydrated so clients can render without a second fetch. */
+  file: FileDTO;
+}
+
 export interface MessageDTO {
   id: string;
   channelId: string;

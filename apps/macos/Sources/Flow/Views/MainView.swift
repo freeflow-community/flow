@@ -137,7 +137,12 @@ struct MainView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let channelId = app.selectedChannelId {
+        if let artifactId = app.selectedArtifactId {
+            // Artifact panel (phase 9) covers the channel content; the channel
+            // selection stays put behind it, so Close returns to it.
+            ArtifactPanelView(artifactId: artifactId)
+                .id(artifactId)
+        } else if let channelId = app.selectedChannelId {
             HStack(spacing: 0) {
                 ChannelView(channelId: channelId)
                     .frame(maxWidth: .infinity)

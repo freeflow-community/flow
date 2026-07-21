@@ -1,4 +1,4 @@
-import type { AgentPairingRequestDTO, ChannelDTO, MessageDTO, NotificationDTO, UserDTO, WorkspaceMemberDTO } from './dto.js';
+import type { AgentPairingRequestDTO, ArtifactDTO, ChannelDTO, MessageDTO, NotificationDTO, UserDTO, WorkspaceMemberDTO } from './dto.js';
 
 // WS event envelope, per phase1.md §3
 export type EventType =
@@ -17,6 +17,9 @@ export type EventType =
   | 'reaction.added'
   | 'reaction.removed'
   | 'notification.created' // per-user notify subject (phase 2 §4)
+  | 'artifact.created' // per-user notify subject (phase 9 — artifacts are personal)
+  | 'artifact.updated' // per-user notify subject: rename
+  | 'artifact.deleted' // per-user notify subject
   | 'agent.pairing' // per-user notify subject: an agent asked this user to sponsor it (AGENT_MEMBERS.md)
   | 'user.updated' // meta subject of every workspace the user belongs to
   | 'workspace.updated' // meta subject; workspace-level changes (e.g. sidebar color)
@@ -60,6 +63,7 @@ export type ChannelArchivedData = ChannelDTO;
 export type MemberJoinedData = WorkspaceMemberDTO;
 export type MemberUpdatedData = WorkspaceMemberDTO;
 export type NotificationCreatedData = NotificationDTO;
+export type ArtifactEventData = ArtifactDTO;
 export type AgentPairingData = AgentPairingRequestDTO;
 export type UserUpdatedData = UserDTO;
 

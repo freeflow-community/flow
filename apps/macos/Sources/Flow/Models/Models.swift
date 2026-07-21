@@ -289,6 +289,19 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     }
 }
 
+/// A personal bookmark of a file shared in chat (server ArtifactDTO, phase 9).
+/// Not cached in GRDB: the list is small and per-workspace, so it's fetched
+/// on demand and held in AppState (same treatment as notifications).
+struct Artifact: Decodable, Sendable, Equatable, Identifiable {
+    let id: String
+    let workspaceId: String
+    let userId: String // owner — artifacts are personal
+    let fileId: String
+    var name: String
+    let createdAt: String
+    let file: FileAttachment
+}
+
 /// Workspace membership (local cache of GET /workspaces/:id/members).
 struct Member: Codable, Sendable, Equatable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "member"
@@ -336,6 +349,7 @@ struct InviteResponse: Decodable, Sendable {
 }
 struct OkResponse: Decodable, Sendable { let ok: Bool }
 struct ReactionsResponse: Decodable, Sendable { let reactions: [ReactionAgg] }
+struct ArtifactsResponse: Decodable, Sendable { let artifacts: [Artifact] } // newest first
 
 /// Server NotificationDTO: an in-app notification with its triggering message.
 struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
@@ -428,6 +442,12 @@ struct PatchMeBody: Encodable, Sendable {
 }
 struct MarkNotificationsReadBody: Encodable, Sendable { let upToId: String }
 struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String }
+/// POST /v1/artifacts — nil name = server derives it from the filename.
+struct CreateArtifactBody: Encodable, Sendable {
+    let fileId: String
+    let name: String?
+}
+struct RenameArtifactBody: Encodable, Sendable { let name: String }
 
 // MARK: - WS events
 
@@ -467,6 +487,7 @@ enum EventPayload: Sendable {
     case notification(NotificationItem)
     case userUpdated(User)
     case workspaceUpdated(Workspace)
+    case artifact(Artifact, deleted: Bool)
     case unknown
 }
 
@@ -512,6 +533,10 @@ struct EventDTO: Decodable, Sendable {
             payload = .userUpdated(try c.decode(User.self, forKey: .data))
         case "workspace.updated":
             payload = .workspaceUpdated(try c.decode(Workspace.self, forKey: .data))
+        case "artifact.created", "artifact.updated":
+            payload = .artifact(try c.decode(Artifact.self, forKey: .data), deleted: false)
+        case "artifact.deleted":
+            payload = .artifact(try c.decode(Artifact.self, forKey: .data), deleted: true)
         default:
             payload = .unknown
         }

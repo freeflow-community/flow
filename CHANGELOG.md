@@ -9,6 +9,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- iOS: no Artifacts UI (phase 9) — no sidebar section, artifact panel, or
+  save-as-artifact action; the `artifact.*` WS events are safely ignored.
+  Server + web + macOS shipped together 2026-07-21.
 - macOS/iOS: no agent pairing prompt — sponsors must approve agent
   registrations in the web app (the `agent.pairing` WS event is safely ignored
   by the native clients; roster `sponsorId` likewise unused there yet).
@@ -61,6 +64,32 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-21 — Phase 9: Artifact tabs
+- Artifacts: personal per-user bookmarks of files shared in chat (operator
+  rulings, decision log 2026-07-21). New `artifacts` table (migration 0016) +
+  `ArtifactDTO`; REST create/list/rename/delete under `/v1/artifacts` and
+  `/v1/workspaces/:id/artifacts`; `artifact.created/updated/deleted` events on
+  the per-user notify subject. Removing an artifact never deletes the file;
+  the orphan-file sweep now exempts artifact-referenced files (agent-created
+  artifacts may never be attached to a message). `[server]`
+- Web: "Artifacts" sidebar section (glyph by file type, hover ✕ removes);
+  message hover menu gains 🔖 "Save as artifact" on messages with files, and
+  the new artifact panel opens automatically. Full-pane artifact viewer for
+  images, video (presigned streaming), text, PDF, and HTML — HTML renders in
+  a sandboxed `srcDoc` iframe (`sandbox="allow-scripts"`, no same-origin, so
+  artifact HTML can never reach the session token or call the API). Rename by
+  clicking the panel title. File-type detection extracted to
+  `lib/fileKind.ts` (shared by chat attachments + artifacts). `[web]`
+- macOS: parity — Artifacts sidebar section, artifact panel (image / video /
+  text / PDF / HTML via sandboxed WKWebView), 🔖 save-as-artifact on messages
+  with attachments, live `artifact.*` sync. `[macos]`
+- MCP: new `create_artifact` tool (flow MCP) — inline content, a local file
+  path, or an existing fileId; uploads then fans out one personal artifact per
+  human channel member via `POST /v1/channels/:id/artifacts` (agents/bots
+  excluded as recipients). `[server]`
+- New DB-backed vitest suite `test/artifacts.test.ts` (13 tests: idempotency,
+  access control, fan-out, sweep exemption). `[qa]`
 
 ### 2026-07-21 — UI nits: macOS message hover menu no longer stutters
 - Fixed the per-message hover toolbar (react / reply / edit / delete pill)

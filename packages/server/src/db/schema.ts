@@ -220,6 +220,24 @@ export const messageFiles = pgTable(
   (t) => [primaryKey({ columns: [t.messageId, t.fileId] }), index('message_files_file_idx').on(t.fileId)],
 );
 
+/** Phase 9: personal artifact bookmarks — one row per (user, file); the file
+ * row itself is never touched by artifact removal (operator ruling). */
+export const artifacts = pgTable(
+  'artifacts',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('artifacts_user_file_unique').on(t.userId, t.fileId),
+    index('artifacts_user_ws_idx').on(t.userId, t.workspaceId, t.createdAt.desc()),
+  ],
+);
+
 export const notifications = pgTable(
   'notifications',
   {
