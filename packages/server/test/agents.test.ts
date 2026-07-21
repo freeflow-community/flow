@@ -9,6 +9,17 @@ process.env.DATABASE_URL = process.env.FLOW_TEST_DATABASE_URL
   ?? 'postgres://flow:flow_dev@localhost:5442/flow_agents_test';
 process.env.FLOW_DATA_KEY = randomBytes(32).toString('base64');
 
+// self-sufficient: create the scratch database if it doesn't exist yet
+{
+  const { default: postgres } = await import('postgres');
+  const url = new URL(process.env.DATABASE_URL);
+  const dbName = url.pathname.slice(1);
+  url.pathname = '/postgres';
+  const admin = postgres(url.toString(), { max: 1, onnotice: () => {} });
+  await admin.unsafe(`CREATE DATABASE "${dbName}"`).catch(() => {}); // 42P04 duplicate_database
+  await admin.end();
+}
+
 // dynamic imports so the env above is set before config/db read it
 const { migrate } = await import('../src/db/migrate.js');
 const { db, schema, closeDb } = await import('../src/db/index.js');

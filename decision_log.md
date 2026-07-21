@@ -1,5 +1,53 @@
 # Decision log
 
+## 2026-07-20 — First-class AI agents: build decisions (PM rulings, pending operator review)
+
+Implementation decisions made while building AGENTS_DESIGN.md; the design's
+own operator rulings are recorded in that file.
+
+- **Agent token format `flow-agent-token-<token>`**, distinct from the invite
+  key's spec-mandated `flow-agent-<token>` — the two credentials look
+  different, so a pasted-wrong one fails obviously. Auth is still a pure hash
+  lookup (prefix is cosmetic).
+- **`description` at register is stored as the agent's `statusText`**
+  (truncated to 80): users have no bio field, and the status line renders
+  everywhere already — an agent's purpose shows up exactly where a human's
+  status would. `avatarUrl` stores as given (external URLs may not render in
+  every client, which only fetch `/v1/avatars/*`).
+- **Role guard implementation**: agents are created role `member` and the only
+  path to owner/admin in the codebase is workspace creation (there is no
+  role-change endpoint), so `createWorkspace` is closed to agents; everything
+  admin-gated (invites, apps, agents) already excludes plain members.
+- **`deleteApp` refactored onto a shared `removeMemberDeep`**
+  (services/memberRemoval.ts) rather than copying its body into remove-agent —
+  same transaction shape and identical member.left event sequence, one place.
+- **Bridge config is JSON only** (`agent.json`) — the spec allowed
+  "agent.toml or JSON"; Node has no stdlib TOML parser and the config is
+  small. Documented in AGENTS.md.
+- **The `flow` MCP stdio server is hand-rolled** (newline-delimited JSON-RPC,
+  ~150 lines) instead of depending on the MCP SDK — four tools, no dynamic
+  capabilities, one less dependency. Verified against the real claude CLI
+  (tools/list + tools/call round-trip).
+- **`search_history` filters client-side** (fetch last 200 channel messages,
+  case-insensitive substring): /v1 has no search endpoint; good enough for the
+  v1 tool contract without growing the server surface.
+- **`respondToAgents: false` by default** (bridge): sender gating per spec
+  plus an agent-to-agent ignore, closing the two-bridges-DM-each-other
+  infinite loop. Opt-in flag for deliberate agent pipelines. (App-bot senders
+  can't be detected — member DTOs don't expose isBot — noted gap.)
+- **macOS/iOS badge via display-name maps** (`displayNameWithBadge`): the
+  clients thread flat id→name maps everywhere, so agent names carry " 🤖" in
+  those maps. Side effect: mention pills and typing labels also show the
+  badge (display-only; outgoing mention resolution and accessibility ids use
+  plain names from the DB). Web keeps plain `useNameMap` + a separate
+  `useDisplayNameMap`, badge-free testids.
+- **Web "member list" surface**: web has no standing member panel, so the
+  admin **Remove agent** action lives in the Agents modal (with the invite
+  flow), mirroring how app removal lives in the Apps modal.
+- **Claude CLI variadic flags** (`--mcp-config`, `--allowedTools`) are passed
+  as `--flag=value` — the space form swallows the positional prompt (found in
+  the real-CLI round-trip check).
+
 ## 2026-07-19 — Socket Mode compatibility (operator-requested, for local bots)
 
 Built to run the operator's existing Socket-Mode Slack bots against production
