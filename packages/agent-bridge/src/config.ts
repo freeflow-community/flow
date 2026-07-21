@@ -25,6 +25,8 @@ export interface RuntimeConfig {
   kind: RuntimeKind;
   /** Executable override (default: the kind's CLI name). A fake runtime script works here for tests. */
   command: string;
+  /** --model passthrough (claude), e.g. "sonnet", "opus", "haiku", or a full model id. Unset = the CLI's default. */
+  model?: string | undefined;
   /** Extra args appended verbatim before the prompt. */
   extraArgs: string[];
   /** Working directory the CLI runs in — the agent's identity (a repo checkout). */
@@ -93,6 +95,7 @@ export function loadConfig(configPath: string): BridgeConfig {
   const runtime: RuntimeConfig = {
     kind,
     command: r.command ?? (kind === 'codex' ? 'codex' : 'claude'),
+    model: r.model,
     extraArgs: r.extraArgs ?? [],
     cwd: path.resolve(path.dirname(abs), expandHome(r.cwd ?? '.')),
     permissionMode: r.permissionMode,

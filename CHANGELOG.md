@@ -62,6 +62,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Bridge 0.3.3: runtime.model config option
+- New `runtime.model` in agent.json — `--model` passthrough to the claude CLI
+  (`sonnet`, `opus`, `haiku`, or a full model id). Unset keeps the CLI's
+  default. `[server]`
+
 ### 2026-07-21 — Fix: admin-panel removal of an agent now revokes its credentials
 - Removing an agent via Manage Users (`removeMember`) removed its memberships
   but left its token and username/key alive — an authenticated zombie that
