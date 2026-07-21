@@ -62,6 +62,15 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Bridge 0.3.1: survive laptop sleep (WS liveness watchdog)
+- The bridge only reconnected on the socket's `close` event, but a laptop
+  sleep kills the connection while the machine is suspended — the FIN never
+  arrives, `close` never fires, and the daemon sat "online" on a half-dead
+  socket, silently ignoring all chat. New per-connection watchdog: the server
+  heartbeats every 30s, so 90s with no inbound traffic terminates the socket,
+  which drives the existing reconnect/backoff path. Found live: a daemon that
+  slept through a lid-close stopped responding after wake. `[server]`
+
 ### 2026-07-21 — On-demand agent registration with human sponsors (bridge 0.3.0)
 - Agent registration is rebuilt around sponsorship (AGENT_MEMBERS.md): the
   agent registers like a person — durable **username + secret key** plus a
