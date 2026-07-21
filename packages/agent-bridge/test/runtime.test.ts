@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEMO_REPLY, StreamJsonParser, formatToolStep, runRuntime } from '../src/runtime.js';
-import { loadConfig } from '../src/config.js';
+import { expandHome, loadConfig } from '../src/config.js';
 
 describe('StreamJsonParser', () => {
   it('collects tool steps and the final result across chunk boundaries', () => {
@@ -54,6 +54,7 @@ describe('loadConfig', () => {
   it('applies defaults and resolves cwd relative to the config file', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
     const p = path.join(dir, 'agent.json');
+    fs.mkdirSync(path.join(dir, 'work'));
     fs.writeFileSync(
       p,
       JSON.stringify({ serverUrl: 'http://127.0.0.1:8787/', agentToken: 'flow-agent-token-x', runtime: { cwd: 'work' } }),
@@ -90,6 +91,20 @@ describe('loadConfig', () => {
       log: () => {},
     });
     expect(res).toEqual({ ok: true, text: DEMO_REPLY });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('expands ~ in cwd and rejects a nonexistent cwd for spawning runtimes', () => {
+    expect(expandHome('~')).toBe(os.homedir());
+    expect(expandHome('~/projects')).toBe(path.join(os.homedir(), 'projects'));
+    expect(expandHome('/abs/path')).toBe('/abs/path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
+    const p = path.join(dir, 'agent.json');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ serverUrl: 'http://x', agentToken: 't', runtime: { cwd: '/does/not/exist-xyz' } }),
+    );
+    expect(() => loadConfig(p)).toThrow(/cwd does not exist/);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { FlowApi, registerAgent } from './api.js';
+import { expandHome } from './config.js';
 
 async function ask(rl: readline.Interface, q: string, def?: string): Promise<string> {
   const suffix = def ? ` [${def}]` : '';
@@ -63,7 +64,13 @@ export async function runSetup(configPath: string): Promise<string> {
       runtime: { kind } as Record<string, unknown>,
     };
     if (kind !== 'demo') {
-      const cwd = await ask(rl, 'Working directory the agent runs in (its identity — e.g. a repo checkout)', '.');
+      let cwd = '';
+      while (!cwd) {
+        const answer = await ask(rl, 'Working directory the agent runs in (its identity — e.g. a repo checkout)', '.');
+        const resolved = path.resolve(expandHome(answer));
+        if (fs.existsSync(resolved)) cwd = resolved;
+        else console.log(`  ${resolved} does not exist — try again`);
+      }
       (config.runtime as Record<string, unknown>).cwd = cwd;
       if (kind === 'claude') {
         // Sane read-only default so a fresh agent can answer questions without

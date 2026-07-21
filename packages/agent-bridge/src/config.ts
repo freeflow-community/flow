@@ -2,7 +2,14 @@
 // (The spec allows "agent.toml or JSON"; the bridge ships JSON — no TOML
 // parser in Node's stdlib, and one less dependency.)
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+
+/** "~" / "~/x" → the user's home (shells don't expand ~ inside JSON configs or wizard answers). */
+export function expandHome(p: string): string {
+  if (p === '~') return os.homedir();
+  return p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p;
+}
 
 export type ProgressMode = 'thinking' | 'typing' | 'silent';
 export type EventScope = 'mentions' | 'all';
@@ -80,7 +87,7 @@ export function loadConfig(configPath: string): BridgeConfig {
     kind,
     command: r.command ?? (kind === 'codex' ? 'codex' : 'claude'),
     extraArgs: r.extraArgs ?? [],
-    cwd: path.resolve(path.dirname(abs), r.cwd ?? '.'),
+    cwd: path.resolve(path.dirname(abs), expandHome(r.cwd ?? '.')),
     permissionMode: r.permissionMode,
     allowedTools: r.allowedTools ?? [],
     maxTurns: r.maxTurns ?? 25,
@@ -88,6 +95,12 @@ export function loadConfig(configPath: string): BridgeConfig {
     mcp: r.mcp ?? (kind === 'claude'),
     systemPromptExtra: r.systemPromptExtra,
   };
+
+  // A missing cwd would otherwise surface as a misleading "spawn <cli> ENOENT"
+  // (node reports ENOENT for a bad working directory too). Demo never spawns.
+  if (kind !== 'demo' && !fs.existsSync(runtime.cwd)) {
+    throw new Error(`config: runtime.cwd does not exist: ${runtime.cwd}`);
+  }
 
   const eventScope = (raw.eventScope ?? 'mentions') as EventScope;
   if (eventScope !== 'mentions' && eventScope !== 'all') throw new Error(`config: bad eventScope "${eventScope}"`);
