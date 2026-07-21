@@ -73,7 +73,20 @@ export const config = {
   },
   presignPutTtlSeconds: 15 * 60, // client has this long to finish a direct upload
   presignGetTtlSeconds: 5 * 60, // downloads: minted per-request after the access check
-  maxFileBytes: 20 * 1024 * 1024, // 20 MB/file (phase2.md §3)
+  /** Cap for the presigned direct-upload path (R2 streams, server never buffers).
+   * Raised from 20 MB once blobs moved off the box (2026-07-21 ruling: video sharing). */
+  get maxFileBytes(): number {
+    return Number(process.env.FLOW_MAX_FILE_MB ?? 500) * 1024 * 1024;
+  },
+  /** Cap for server-buffered uploads (legacy multipart, Slack-compat files.upload,
+   * avatars): these paths hold the whole file in memory, so they keep the old limit. */
+  maxServerUploadBytes: 20 * 1024 * 1024,
+  /** Images larger than this get no thumbnail/dimensions — complete-time sidecar
+   * generation would pull the whole object into server memory. */
+  thumbSourceMaxBytes: 32 * 1024 * 1024,
+  /** TTL for GET /v1/files/:id/url (in-place streaming, e.g. <video src>): longer
+   * than the 302 TTL so playback/seeking keeps working through a long video. */
+  streamUrlTtlSeconds: 60 * 60,
   maxFilesPerMessage: 10,
   thumbMaxPx: 512,
   avatarPx: 512,

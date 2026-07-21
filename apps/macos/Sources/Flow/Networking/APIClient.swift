@@ -106,9 +106,11 @@ actor APIClient {
         )
     }
 
-    /// PUT raw bytes to a presigned upload target. Absolute URLs (R2) must not
-    /// carry our bearer token; the server-relative local-dev fallback needs it.
-    func putRaw(_ target: String, headers: [String: String], data: Data) async throws {
+    /// PUT a file to a presigned upload target, streaming from disk — uploads
+    /// can be hundreds of MB, never load them into memory. Absolute URLs (R2)
+    /// must not carry our bearer token; the server-relative local-dev fallback
+    /// needs it.
+    func putRaw(_ target: String, headers: [String: String], fromFile fileURL: URL) async throws {
         guard let url = URL(string: target, relativeTo: baseURL) else {
             throw APIError(status: 0, code: "bad_url", message: "invalid upload URL")
         }
@@ -118,10 +120,9 @@ actor APIClient {
         if target.hasPrefix("/"), let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        req.httpBody = data
         let response: URLResponse
         do {
-            (_, response) = try await session.data(for: req)
+            (_, response) = try await session.upload(for: req, fromFile: fileURL)
         } catch {
             throw APIError(status: 0, code: "network", message: error.localizedDescription)
         }
@@ -129,6 +130,28 @@ actor APIClient {
         guard (200..<300).contains(status) else {
             throw APIError(status: status, code: "upload_failed", message: "upload failed (HTTP \(status))")
         }
+    }
+
+    /// Authenticated download streamed to a temporary file on disk (videos can
+    /// be hundreds of MB). Follows the 302 to R2; caller must move the returned
+    /// temp file before it's cleaned up.
+    func downloadToFile(_ path: String) async throws -> URL {
+        var req = URLRequest(url: baseURL.appending(path: path))
+        if let token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let tmp: URL
+        let response: URLResponse
+        do {
+            (tmp, response) = try await session.download(for: req)
+        } catch {
+            throw APIError(status: 0, code: "network", message: error.localizedDescription)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw APIError(status: status, code: "http_\(status)", message: "HTTP \(status)")
+        }
+        return tmp
     }
 
     /// Authenticated raw-byte GET (file downloads, thumbnails, avatars).

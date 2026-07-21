@@ -51,8 +51,9 @@ export async function uploadFile(
 ): Promise<FileDTO> {
   await requireMembership(workspaceId, userId);
   if (data.length === 0) throw badRequest('empty_file', 'file is empty');
-  if (data.length > config.maxFileBytes) {
-    throw badRequest('file_too_large', `files are limited to ${config.maxFileBytes} bytes`);
+  if (data.length > config.maxServerUploadBytes) {
+    // this path buffers server-side; bigger files must use the presign flow
+    throw badRequest('file_too_large', `multipart uploads are limited to ${config.maxServerUploadBytes} bytes`);
   }
 
   const id = newId();
@@ -189,7 +190,8 @@ export async function completeUpload(fileId: string, userId: string): Promise<Fi
     height: null,
     thumbKey: null,
   };
-  if (IMAGE_MIMES.has(f.mimeType)) {
+  // sidecar generation pulls the object into memory — skip absurdly large "images"
+  if (IMAGE_MIMES.has(f.mimeType) && f.sizeBytes <= config.thumbSourceMaxBytes) {
     sidecar = await makeThumbnail(f.id, f.mimeType, await store.get(f.storageKey));
   }
 
@@ -267,6 +269,24 @@ export async function getFileDownload(fileId: string, userId: string): Promise<F
     if (url) return { redirect: url };
   }
   return { content: { data: await readBlob(f.storageKey, f.encKeyId), mimeType: f.mimeType, name: f.name } };
+}
+
+/** In-place streaming URL (e.g. <video src>): a longer-TTL presigned GET so
+ * playback and seeking survive a feature-length video, or null when the driver
+ * can't presign (local dev) / the row is legacy-encrypted — the client then
+ * falls back to fetching the bytes through the proxy route. */
+export async function getStreamUrl(
+  fileId: string,
+  userId: string,
+): Promise<{ url: string | null; expiresInSeconds: number }> {
+  const f = await requireFileAccess(fileId, userId);
+  if (f.encKeyId) return { url: null, expiresInSeconds: 0 };
+  const url = await blobStore().presignGet(f.storageKey, {
+    contentType: f.mimeType,
+    inline: true,
+    ttlSeconds: config.streamUrlTtlSeconds,
+  });
+  return { url, expiresInSeconds: url ? config.streamUrlTtlSeconds : 0 };
 }
 
 export async function getThumbDownload(fileId: string, userId: string): Promise<FileDownload> {

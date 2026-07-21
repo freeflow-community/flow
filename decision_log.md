@@ -33,6 +33,28 @@ Design rulings made during the build:
   admin's own menu gating updates. Removals reuse `removeMemberDeep`'s existing
   `member.left` cascade.
 
+## 2026-07-21 — 500 MB file cap (operator-directed; sizing decisions pending review)
+
+Operator: "shared videos will often be up to 200 MB or more." Decisions made
+in implementation:
+
+- **Direct-upload cap 500 MB** (`FLOW_MAX_FILE_MB` env to tune): comfortable
+  headroom over the stated 200 MB without inviting abuse; only the presigned
+  path gets it — bytes stream to R2, the server never holds them.
+- **Server-buffered paths keep 20 MB** (`maxServerUploadBytes`): legacy
+  multipart, Slack-compat `files.upload`, avatars all buffer whole files in
+  app-server memory, so raising them would be an OOM footgun. Big files must
+  use the presign flow (all first-party clients do).
+- **Thumbnail sidecar capped at 32 MB source size**: complete-time
+  thumbnailing GETs the whole object; a 200 MB "image" would OOM the server.
+  Larger images upload fine, just render as chips.
+- **Streaming endpoint TTL 1 h** (`GET /v1/files/:id/url`): long enough to
+  watch a feature-length video with seeking; web re-mints once on error. The
+  5-minute TTL stays for download 302s.
+- **Web streams; native still downloads-then-plays** — recorded as a Parity
+  gap (native fix is AVPlayer on the presigned URL), but native up/downloads
+  now stream disk↔network instead of staging in RAM.
+
 ## 2026-07-20 — R2 blob storage + presigned direct upload/download (operator rulings)
 
 Pre-flight answers (AskUserQuestion) for the Cloudflare R2 phase:

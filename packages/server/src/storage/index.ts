@@ -26,8 +26,12 @@ export interface BlobStore {
    * a server-proxied upload URL so clients keep a single code path.
    */
   presignPut(key: string, opts: { contentType: string; contentLength: number }): Promise<PresignedUpload | null>;
-  /** Short-lived direct-download URL, or null when the driver must proxy. */
-  presignGet(key: string, opts: { filename?: string; contentType?: string; inline?: boolean }): Promise<string | null>;
+  /** Short-lived direct-download URL, or null when the driver must proxy.
+   * ttlSeconds overrides the default download TTL (used for streaming URLs). */
+  presignGet(
+    key: string,
+    opts: { filename?: string; contentType?: string; inline?: boolean; ttlSeconds?: number },
+  ): Promise<string | null>;
 }
 
 export class LocalDirStore implements BlobStore {

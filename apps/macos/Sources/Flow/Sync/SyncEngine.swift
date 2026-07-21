@@ -559,10 +559,12 @@ actor SyncEngine {
     // MARK: - Files
 
     func uploadFile(workspaceId: String, fileURL: URL) async throws -> FileAttachment {
-        let data = try Data(contentsOf: fileURL)
+        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let sizeBytes = (attrs[.size] as? Int) ?? 0
         let mime = Self.mimeType(for: fileURL)
         // presign → PUT the bytes (direct to R2 in prod, server fallback in
-        // local dev) → complete (server verifies size + generates thumbnails)
+        // local dev) → complete (server verifies size + generates thumbnails).
+        // The PUT streams from disk — files can be hundreds of MB.
         struct PresignBody: Encodable {
             let filename: String
             let mimeType: String
@@ -570,21 +572,23 @@ actor SyncEngine {
         }
         let pres: PresignedUpload = try await api.post(
             "/v1/workspaces/\(workspaceId)/files/presign",
-            body: PresignBody(filename: fileURL.lastPathComponent, mimeType: mime, sizeBytes: data.count)
+            body: PresignBody(filename: fileURL.lastPathComponent, mimeType: mime, sizeBytes: sizeBytes)
         )
-        try await api.putRaw(pres.upload.url, headers: pres.upload.headers, data: data)
+        try await api.putRaw(pres.upload.url, headers: pres.upload.headers, fromFile: fileURL)
         return try await api.post("/v1/files/\(pres.file.id)/complete")
     }
 
     /// Downloads a file to a temp path (original filename preserved) and
     /// returns the local URL — used for "open" on attachments.
     func downloadFile(_ file: FileAttachment) async throws -> URL {
-        let data = try await api.getData("/v1/files/\(file.id)")
+        // streamed to disk — videos can be hundreds of MB
+        let tmp = try await api.downloadToFile("/v1/files/\(file.id)")
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FlowDownloads-\(file.id)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(file.name)
-        try data.write(to: dest)
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.moveItem(at: tmp, to: dest)
         return dest
     }
 

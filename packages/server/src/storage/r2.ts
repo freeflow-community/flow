@@ -70,7 +70,10 @@ export class R2Store implements BlobStore {
     return { url, method: 'PUT', headers: { 'content-type': opts.contentType } };
   }
 
-  async presignGet(key: string, opts: { filename?: string; contentType?: string; inline?: boolean }): Promise<string> {
+  async presignGet(
+    key: string,
+    opts: { filename?: string; contentType?: string; inline?: boolean; ttlSeconds?: number },
+  ): Promise<string> {
     const disposition = opts.inline
       ? 'inline'
       : `attachment; filename*=UTF-8''${encodeURIComponent(opts.filename ?? 'file')}`;
@@ -80,6 +83,6 @@ export class R2Store implements BlobStore {
       ResponseContentDisposition: disposition,
       ...(opts.contentType ? { ResponseContentType: opts.contentType } : {}),
     });
-    return getSignedUrl(this.client, cmd, { expiresIn: config.presignGetTtlSeconds });
+    return getSignedUrl(this.client, cmd, { expiresIn: opts.ttlSeconds ?? config.presignGetTtlSeconds });
   }
 }

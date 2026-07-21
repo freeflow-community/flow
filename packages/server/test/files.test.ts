@@ -29,6 +29,7 @@ delete process.env.FLOW_BLOB_DRIVER; // force the local driver regardless of she
 }
 
 // dynamic imports so the env above is set before config/db read it
+const { config } = await import('../src/config.js');
 const { migrate } = await import('../src/db/migrate.js');
 const { db, schema, closeDb } = await import('../src/db/index.js');
 const auth = await import('../src/services/auth.js');
@@ -118,11 +119,39 @@ describe('presigned upload lifecycle (local fallback)', () => {
       code: 'empty_file',
     });
     await expect(
-      fl.createPresignedUpload(workspaceId, uploaderId, 'x', 'text/plain', 21 * 1024 * 1024),
+      fl.createPresignedUpload(workspaceId, uploaderId, 'x', 'text/plain', config.maxFileBytes + 1),
     ).rejects.toMatchObject({ code: 'file_too_large' });
+    // direct path accepts what multipart can't: video-scale sizes are declarable
+    const big = await fl.createPresignedUpload(workspaceId, uploaderId, 'movie.mp4', 'video/mp4', 200 * 1024 * 1024);
+    expect(big.file.sizeBytes).toBe(200 * 1024 * 1024);
     await expect(
       fl.createPresignedUpload(workspaceId, outsiderId, 'x', 'text/plain', 10),
     ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('multipart (server-buffered) path keeps the small cap', async () => {
+    const oversize = Buffer.alloc(config.maxServerUploadBytes + 1);
+    await expect(fl.uploadFile(workspaceId, uploaderId, 'big.bin', 'application/octet-stream', oversize)).rejects.toMatchObject(
+      { code: 'file_too_large' },
+    );
+  });
+
+  it('skips thumbnail generation for images above the sidecar cap', async () => {
+    const size = config.thumbSourceMaxBytes + 1;
+    const pres = await fl.createPresignedUpload(workspaceId, uploaderId, 'huge.png', 'image/png', size);
+    await fl.putPendingContent(pres.file.id, uploaderId, Buffer.alloc(size));
+    const done = await fl.completeUpload(pres.file.id, uploaderId);
+    expect(done.hasThumb).toBe(false);
+    expect(done.width).toBeNull();
+  });
+
+  it('stream URL is null on the local driver (client falls back to proxy fetch)', async () => {
+    const data = Buffer.from('vid');
+    const pres = await fl.createPresignedUpload(workspaceId, uploaderId, 'clip.mp4', 'video/mp4', data.length);
+    await fl.putPendingContent(pres.file.id, uploaderId, data);
+    await fl.completeUpload(pres.file.id, uploaderId);
+    const stream = await fl.getStreamUrl(pres.file.id, uploaderId);
+    expect(stream.url).toBeNull();
   });
 
   it('only the uploader can PUT/complete a pending file', async () => {
