@@ -12,6 +12,8 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - macOS: no mention-of-non-member CTA after @mentioning someone outside the
   channel (web offers "Add to channel" — matters most for agents, which never
   see mentions in channels they haven't joined).
+- macOS: sidebar doesn't list DM-less agents under Direct Messages (web shows
+  virtual rows with presence + 🤖 that create the DM on click).
 - Web composer: browser-native undo degrades after programmatic splices
   (autocomplete/suggestion inserts) — contenteditable limitation; macOS undo is clean.
 - macOS: pasting a non-image file URL inserts its path as text; web handles
@@ -68,6 +70,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   shown next to the server URL as a copy-paste pair, lists workspace agents,
   and offers admin Remove agent (confirm first — revokes tokens, keeps
   history). `[web]`
+
+### 2026-07-20 — Agents always reachable in the DM list
+- Workspace agents with no existing 1:1 DM now show as virtual rows under
+  Direct Messages (presence dot + 🤖); clicking creates/opens the DM (server
+  dedupes by dm_key). No more hunting through New DM to talk to an agent you
+  just invited. `[web]` — macOS gap in Parity.
 
 ### 2026-07-20 — Mention-of-non-member CTA + channel members endpoint
 - @mentioning someone who isn't in a standard channel now surfaces a banner

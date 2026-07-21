@@ -112,6 +112,10 @@ export default function Sidebar() {
   const joined = all.filter((c) => c.isMember && c.kind === 'standard');
   const dms = all.filter((c) => c.isMember && c.kind !== 'standard');
   const browsable = all.filter((c) => !c.isMember && !c.isPrivate && c.kind === 'standard');
+  // Agents are always reachable under Direct Messages: workspace agents with
+  // no existing 1:1 DM get a virtual row; clicking creates/opens the DM.
+  const dmPartnerIds = new Set(dms.flatMap((c) => (c.kind === 'dm' ? c.memberIds ?? [] : [])));
+  const agentRows = Object.values(memberMap).filter((m) => m.isAgent && !dmPartnerIds.has(m.userId));
 
   return (
     <aside
@@ -200,6 +204,20 @@ export default function Sidebar() {
             />
           );
         })}
+        {agentRows.map((a) => (
+          <button
+            key={a.userId}
+            data-testid={`sidebar-agent-${a.displayName}`}
+            title="Start a direct message"
+            className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
+            onClick={() => void openDm(a.userId)}
+          >
+            <PresenceDot online={!!live.presence[a.userId]} />
+            <span className="truncate">
+              {a.displayName} <span title="AI agent">🤖</span>
+            </span>
+          </button>
+        ))}
 
         {browsable.length > 0 && (
           <>
