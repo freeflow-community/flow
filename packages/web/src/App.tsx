@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
 import { api, getToken, setToken } from './lib/api';
-import { AuthContext, SelectionContext } from './state';
+import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
 import WorkspaceChooser from './components/WorkspaceChooser';
 import Main from './components/Main';
 
 const ACTIVE_WS_KEY = 'flow.activeWorkspace';
+const ADMIN_PANEL_KEY = 'flow.adminPanelOpen';
 export const PENDING_INVITE_KEY = 'flow.pendingInvite';
 
 /** Pull ?signup= / ?reset= / ?signin= (emailed links) off the URL before rendering. */
@@ -46,6 +47,10 @@ export default function App() {
   const [channelId, setChannelId] = useState<string | null>(null);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  // Admin panel pinned into the sidebar (per-device, admins only at render).
+  const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(
+    () => localStorage.getItem(ADMIN_PANEL_KEY) === '1',
+  );
 
   useEffect(() => {
     (async () => {
@@ -97,6 +102,8 @@ export default function App() {
     setWorkspaceId(null);
     setChannelId(null);
     setThreadRootId(null);
+    setAdminPanelOpen(false);
+    localStorage.removeItem(ADMIN_PANEL_KEY);
     qc.clear();
   }, [qc]);
 
@@ -123,6 +130,7 @@ export default function App() {
           channelId,
           threadRootId,
           editingMessageId,
+          adminPanelOpen,
           selectWorkspace: (id) => {
             setWorkspaceId(id);
             if (id) localStorage.setItem(ACTIVE_WS_KEY, id);
@@ -138,6 +146,19 @@ export default function App() {
           },
           openThread: setThreadRootId,
           setEditingMessage: setEditingMessageId,
+          openAdminPanel: () => {
+            setAdminPanelOpen(true);
+            localStorage.setItem(ADMIN_PANEL_KEY, '1');
+            setChannelId(ADMIN_VIEW_ID);
+            setThreadRootId(null);
+            setEditingMessageId(null);
+          },
+          closeAdminPanel: () => {
+            setAdminPanelOpen(false);
+            localStorage.removeItem(ADMIN_PANEL_KEY);
+            // If it's the active view, fall back to a channel (effect picks #general).
+            setChannelId((cur) => (cur === ADMIN_VIEW_ID ? null : cur));
+          },
         }}
       >
         {workspaceId ? <Main /> : <WorkspaceChooser />}

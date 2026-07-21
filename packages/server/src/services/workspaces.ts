@@ -7,6 +7,7 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
+import { removeMemberDeep } from './memberRemoval.js';
 
 const { workspaces, workspaceMembers, invites, channels, channelMembers, users } = schema;
 
@@ -130,6 +131,74 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   }));
+}
+
+async function toMemberDTO(workspaceId: string, userId: string): Promise<WorkspaceMemberDTO> {
+  const rows = await db
+    .select({ m: workspaceMembers, u: users })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+    .limit(1);
+  const r = rows[0];
+  if (!r) throw notFound('member not found');
+  return {
+    userId: r.u.id,
+    displayName: r.u.displayName,
+    email: r.u.email,
+    avatarUrl: r.u.avatarUrl,
+    statusEmoji: r.u.statusEmoji,
+    statusText: r.u.statusText,
+    isAgent: r.u.isAgent,
+    role: r.m.role,
+    joinedAt: r.m.joinedAt.toISOString(),
+  };
+}
+
+/**
+ * Admin panel: change a member's workspace role. Owner/admin only; the owner
+ * role is immutable and can't be assigned here, and you can't change your own
+ * role (no accidental self-lockout). Broadcasts member.updated on meta so every
+ * client refreshes the roster — and the target's own client re-derives its role
+ * (menu gating) from the refreshed workspace list.
+ */
+export async function setMemberRole(
+  workspaceId: string,
+  actorId: string,
+  targetId: string,
+  role: Exclude<MemberRole, 'owner'>,
+): Promise<WorkspaceMemberDTO> {
+  const actor = await requireMembership(workspaceId, actorId);
+  if (actor.role !== 'owner' && actor.role !== 'admin') throw forbidden('only owners and admins can manage members');
+  if (targetId === actorId) throw badRequest('self_role', 'you cannot change your own role');
+  const target = await requireMembership(workspaceId, targetId);
+  if (target.role === 'owner') throw forbidden('the workspace owner role cannot be changed');
+  await db
+    .update(workspaceMembers)
+    .set({ role })
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, targetId)));
+  const dto = await toMemberDTO(workspaceId, targetId);
+  publishEvent(subjectMeta(workspaceId), {
+    type: 'member.updated',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: dto,
+  });
+  return dto;
+}
+
+/**
+ * Admin panel: remove a member from the workspace (and every channel there).
+ * Owner/admin only; the owner can't be removed and you can't remove yourself.
+ * Reuses removeMemberDeep, which publishes the member.left cascade.
+ */
+export async function removeMember(workspaceId: string, actorId: string, targetId: string): Promise<void> {
+  const actor = await requireMembership(workspaceId, actorId);
+  if (actor.role !== 'owner' && actor.role !== 'admin') throw forbidden('only owners and admins can remove members');
+  if (targetId === actorId) throw badRequest('self_remove', 'you cannot remove yourself');
+  const target = await requireMembership(workspaceId, targetId);
+  if (target.role === 'owner') throw forbidden('the workspace owner cannot be removed');
+  await removeMemberDeep(workspaceId, targetId);
 }
 
 /** Owner/admin only (spec permission rules). Returns invite URL with raw token (shown once). */

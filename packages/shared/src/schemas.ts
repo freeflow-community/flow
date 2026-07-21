@@ -83,6 +83,15 @@ export const AcceptInviteBody = z.object({
 });
 export type AcceptInviteBody = z.infer<typeof AcceptInviteBody>;
 
+/**
+ * PATCH /v1/workspaces/:id/members/:userId/role — owner/admin manage users
+ * (admin panel). Only 'admin' and 'member' are assignable; 'owner' is fixed.
+ */
+export const SetMemberRoleBody = z.object({
+  role: z.enum(['admin', 'member']),
+});
+export type SetMemberRoleBody = z.infer<typeof SetMemberRoleBody>;
+
 // ---- channels --------------------------------------------------
 export const CHANNEL_NAME_RE = /^[a-z0-9][a-z0-9-_]{0,79}$/;
 

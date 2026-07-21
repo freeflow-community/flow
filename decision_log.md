@@ -1,5 +1,38 @@
 # Decision log
 
+## 2026-07-21 — Admin panel to manage users (build decisions)
+
+Operator answers (AskUserQuestion) that scoped the feature:
+
+- **Web only.** Consistent with the existing App and Agent management UIs
+  (operator ruling 4). The server endpoints are platform-neutral, so a macOS
+  UI can follow later; tracked as a deliberate divergence in CHANGELOG Parity.
+- **Actions: change roles + remove from workspace.** (Invite already exists.)
+
+Design rulings made during the build:
+
+- **The admin page is a virtual, client-only sidebar entry, not a real
+  channel.** It reuses the channel-selection machinery via a sentinel id
+  (`ADMIN_VIEW_ID = '__admin__'`); the content pane branches on it to render
+  `<AdminView>`. This gives channel-like selection/active-highlight for free
+  without inventing a new view-routing concept.
+- **"Closable like any other channel" = a per-device UI hide.** Flow has no
+  "close but stay joined" for real channels — only Leave (drops membership) and
+  Archive (workspace-wide). Since the admin entry has no membership, its close
+  (hover ✕) just unpins the row (persisted in `localStorage`); reopen from the
+  workspace menu. If we ever want hide-but-stay-joined for real channels/DMs it
+  needs a new `channel_members.hidden_at` column + filter — deliberately not
+  built here.
+- **Permission model:** owner/admin may change roles and remove members. The
+  `owner` role is immutable and unassignable through this surface, the owner
+  can't be removed, and an actor can't change/remove themselves (no accidental
+  self-lockout). Any admin may act on any non-owner (Slack restricts admins
+  from touching other admins; kept simpler here — revisit if operators object).
+- **Live sync:** role changes broadcast a new `member.updated` event on the
+  workspace meta subject; clients refetch members + workspaces so a demoted
+  admin's own menu gating updates. Removals reuse `removeMemberDeep`'s existing
+  `member.left` cascade.
+
 ## 2026-07-20 — R2 blob storage + presigned direct upload/download (operator rulings)
 
 Pre-flight answers (AskUserQuestion) for the Cloudflare R2 phase:

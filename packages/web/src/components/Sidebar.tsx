@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type { ChannelDTO } from '@flow/shared';
 import { api } from '../lib/api';
-import { useAuth, useLive, useSelection } from '../state';
+import { ADMIN_VIEW_ID, useAuth, useLive, useSelection } from '../state';
 import { useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
@@ -161,6 +161,9 @@ export default function Sidebar() {
                 <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
                   Invite an Agent…
                 </MenuItem>
+                <MenuItem testid="menu-admin" onClick={() => { setWsMenuOpen(false); sel.openAdminPanel(); }}>
+                  Manage Users…
+                </MenuItem>
               </>
             )}
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
@@ -171,6 +174,14 @@ export default function Sidebar() {
       </div>
 
       <div className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm">
+        {isAdmin && sel.adminPanelOpen && (
+          <AdminRow
+            active={sel.channelId === ADMIN_VIEW_ID}
+            onOpen={() => sel.selectChannel(ADMIN_VIEW_ID)}
+            onClose={() => sel.closeAdminPanel()}
+          />
+        )}
+
         <SectionHeader
           label="Channels"
           action={{ label: '+', testid: 'sidebar-create-channel', onClick: () => setShowCreateChannel(true) }}
@@ -280,6 +291,51 @@ export default function Sidebar() {
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
     </aside>
+  );
+}
+
+/**
+ * The admin panel's pinned sidebar row — a virtual, client-only entry (no real
+ * channel). Selectable like a channel; the hover × closes it (pure UI hide,
+ * reopen from the workspace menu). Only rendered for admins.
+ */
+function AdminRow({
+  active,
+  onOpen,
+  onClose,
+}: {
+  active: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className={`group mt-1 flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
+        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+      }`}
+    >
+      <button
+        data-testid="sidebar-admin"
+        className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
+        onClick={onOpen}
+      >
+        <span className={active ? 'opacity-70' : 'text-white/60'}>🛡️</span>
+        <span className={`truncate ${active ? 'font-[650]' : 'text-white/82'}`}>Manage users</span>
+      </button>
+      <button
+        data-testid="sidebar-admin-close"
+        title="Close"
+        className={`hidden rounded px-1 text-xs group-hover:block ${
+          active ? 'text-accent-deep/60 hover:text-accent-deep' : 'text-white/55 hover:text-white'
+        }`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+      >
+        ✕
+      </button>
+    </div>
   );
 }
 

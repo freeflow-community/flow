@@ -6,10 +6,11 @@ import { applyMessageEvent } from '../lib/messageCache';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
-import { LiveContext, useAuth, useSelection } from '../state';
+import { ADMIN_VIEW_ID, LiveContext, useAuth, useSelection } from '../state';
 import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
+import AdminView from './AdminView';
 import ThreadPanel from './ThreadPanel';
 import { OpenInAppBanner } from './OpenInApp';
 import NotificationsBell from './NotificationsBell';
@@ -139,6 +140,12 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['members', event.workspaceId] });
         void qc.invalidateQueries({ queryKey: ['channelMembers'] });
         break;
+      case 'member.updated':
+        // Role change (admin panel): refresh the roster, and the workspace list
+        // so the affected member's own menu gating (owner/admin) re-derives.
+        void qc.invalidateQueries({ queryKey: ['members', event.workspaceId] });
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
+        break;
       case 'user.updated':
         void qc.invalidateQueries({ queryKey: ['members'] });
         void qc.invalidateQueries({ queryKey: ['me'] });
@@ -193,7 +200,9 @@ export default function Main() {
           <WorkspaceRail />
           <Sidebar />
           <div className="flex min-h-0 min-w-0 flex-1">
-            {sel.channelId ? (
+            {sel.channelId === ADMIN_VIEW_ID ? (
+              <AdminView />
+            ) : sel.channelId ? (
               <>
                 <ChannelView key={sel.channelId} channelId={sel.channelId} />
                 {sel.threadRootId && (

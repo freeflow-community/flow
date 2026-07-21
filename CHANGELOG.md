@@ -43,6 +43,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - App management UI (Slack-compat apps): web only.
 - Agent management UI (invite an agent, remove agent): web only (operator
   ruling 4, like Apps). All clients render the 🤖 badge.
+- User admin panel (Manage Users — role changes + remove from workspace):
+  web only, consistent with Apps/Agents management UIs. macOS shows neither the
+  menu item nor the sidebar row. The server endpoints are platform-neutral, so
+  a macOS UI can be added later. See History 2026-07-21.
 - Local per-device (not synced) prefs: sidebar width, thread-panel width,
   image collapsed/expanded state (ruled).
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
@@ -50,6 +54,25 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-21 — Admin panel to manage users
+- New owner/admin panel to manage workspace members. Two server endpoints:
+  `PATCH /v1/workspaces/:id/members/:userId/role` (assign `admin`/`member` —
+  `owner` is immutable and unassignable) and
+  `DELETE /v1/workspaces/:id/members/:userId` (remove from workspace + every
+  channel, reusing `removeMemberDeep`). Both are owner/admin-only and refuse to
+  touch the owner or the acting user (no self-lockout). A new `member.updated`
+  event broadcasts role changes on the workspace meta subject so every client
+  refreshes the roster, and the affected member's own client re-derives its
+  menu gating. `[server]`
+- Web: the workspace menu gains an admin-only **Manage Users…** item that pins
+  a virtual **Manage users** row into the channel list and opens it. The row is
+  a client-only sentinel selection (`ADMIN_VIEW_ID`) — no real channel or
+  membership — so its hover-✕ "close" is a pure per-device UI hide (persisted
+  in `localStorage`, reopen from the menu), sidestepping the fact that Flow has
+  no "close-but-stay-joined" for real channels (only Leave/Archive). The panel
+  lists members with avatar/role, a role dropdown, and a two-click Remove
+  confirm; owner and self rows are locked. `[web]`
 
 ### 2026-07-20 — Cloudflare R2 storage + presigned direct uploads
 - File blobs move from local disk / Railway volume to Cloudflare R2 behind the

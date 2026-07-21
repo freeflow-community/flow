@@ -13,6 +13,7 @@ export type EventType =
   | 'channel.archived'
   | 'member.joined'
   | 'member.left'
+  | 'member.updated' // workspace role change (admin panel)
   | 'reaction.added'
   | 'reaction.removed'
   | 'notification.created' // per-user notify subject (phase 2 §4)
@@ -56,6 +57,7 @@ export type ChannelCreatedData = ChannelDTO;
 export type ChannelUpdatedData = ChannelDTO;
 export type ChannelArchivedData = ChannelDTO;
 export type MemberJoinedData = WorkspaceMemberDTO;
+export type MemberUpdatedData = WorkspaceMemberDTO;
 export type NotificationCreatedData = NotificationDTO;
 export type UserUpdatedData = UserDTO;
 

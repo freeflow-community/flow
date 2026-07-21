@@ -10,16 +10,29 @@ export interface AuthState {
   signOut(): void;
 }
 
+/**
+ * Sentinel channel id for the admin panel — a virtual, client-only sidebar
+ * entry (no real channel/membership). When it's the active selection, the
+ * content pane renders <AdminView> instead of a message stream.
+ */
+export const ADMIN_VIEW_ID = '__admin__';
+
 export interface Selection {
   workspaceId: string | null;
   channelId: string | null;
   threadRootId: string | null;
   /** Message being edited inline (hover menu or composer ↑) — ui_nits item 4. */
   editingMessageId: string | null;
+  /** Admin panel pinned into the channel list (admins only; per-device). */
+  adminPanelOpen: boolean;
   selectWorkspace(id: string | null): void;
   selectChannel(id: string | null): void;
   openThread(id: string | null): void;
   setEditingMessage(id: string | null): void;
+  /** Pin the admin row into the sidebar and open it (from the workspace menu). */
+  openAdminPanel(): void;
+  /** Unpin/close the admin row (its "close like any other channel" affordance). */
+  closeAdminPanel(): void;
 }
 
 export interface LiveState {

@@ -28,6 +28,7 @@ import {
   CreateAgentInviteBody,
   RegisterAgentBody,
   SendMessageBody,
+  SetMemberRoleBody,
   SetNotifyLevelBody,
   UpdateAppBody,
   UpdateChannelBody,
@@ -311,6 +312,19 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/workspaces/:id/members', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return { members: await ws.listMembers(id, req.user.id) };
+  });
+
+  // ---- admin panel: manage users (owner/admin, web-only UI) ----
+  app.patch('/v1/workspaces/:id/members/:userId/role', { preHandler: requireAuth }, async (req) => {
+    const { id, userId } = req.params as { id: string; userId: string };
+    const body = parse(SetMemberRoleBody, req.body);
+    return ws.setMemberRole(id, req.user.id, userId, body.role);
+  });
+
+  app.delete('/v1/workspaces/:id/members/:userId', { preHandler: requireAuth }, async (req) => {
+    const { id, userId } = req.params as { id: string; userId: string };
+    await ws.removeMember(id, req.user.id, userId);
+    return { ok: true };
   });
 
   // ---- channels ------------------------------------------------
