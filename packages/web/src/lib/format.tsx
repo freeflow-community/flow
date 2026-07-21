@@ -11,7 +11,54 @@ import { expandShortcodes } from '@flow/shared';
 
 const TOKEN_RE = /<@([0-9a-fA-F-]{36})>|<!(channel|here|everyone)>/g;
 
-/** Stored tokens → React nodes with pills. Plain text otherwise (no inline markdown on web v1 beyond line breaks). */
+// Inline markdown (agent replies lean on it heavily): `code`, **bold**,
+// *italic* / _italic_, ~~strike~~, [label](url), bare URLs. Code spans win
+// over everything inside them; emphasis requires non-space at both edges so
+// "2 * 3 * 4" and snake_case stay literal. Applied to plain/quote segments
+// only — fenced code blocks never get here.
+const INLINE_RE =
+  /(`[^`\n]+`)|(\*\*(?=\S)(?:[^*\n]|\*(?!\*))+?(?<=\S)\*\*)|(\*(?!\*)(?=\S)[^*\n]+?(?<=\S)\*)|((?<![\w`])_(?=\S)[^_\n]+?(?<=\S)_(?![\w`]))|(~~(?=\S)[^~\n]+?(?<=\S)~~)|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
+
+function renderInline(text: string, keyBase: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  for (const m of text.matchAll(INLINE_RE)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const k = `${keyBase}i${key++}`;
+    if (m[1] !== undefined) {
+      out.push(
+        <code key={k} className="rounded bg-[#f4f2ee] px-1 py-px font-mono text-[0.92em] text-[#c2544a]">
+          {m[1].slice(1, -1)}
+        </code>,
+      );
+    } else if (m[2] !== undefined) {
+      out.push(<strong key={k}>{renderInline(m[2].slice(2, -2), k)}</strong>);
+    } else if (m[3] !== undefined || m[4] !== undefined) {
+      const inner = (m[3] ?? m[4])!.slice(1, -1);
+      out.push(<em key={k}>{renderInline(inner, k)}</em>);
+    } else if (m[5] !== undefined) {
+      out.push(<s key={k}>{renderInline(m[5].slice(2, -2), k)}</s>);
+    } else if (m[6] !== undefined && m[7] !== undefined) {
+      out.push(
+        <a key={k} href={m[7]} target="_blank" rel="noreferrer noopener" className="text-accent-deep underline">
+          {m[6]}
+        </a>,
+      );
+    } else if (m[8] !== undefined) {
+      out.push(
+        <a key={k} href={m[8]} target="_blank" rel="noreferrer noopener" className="text-accent-deep underline">
+          {m[8]}
+        </a>,
+      );
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/** Stored tokens → React nodes with pills; inline markdown on the text runs between them. */
 export function renderBody(
   body: string,
   names: Record<string, string>,
@@ -21,7 +68,7 @@ export function renderBody(
   let last = 0;
   let key = 0;
   for (const m of body.matchAll(TOKEN_RE)) {
-    if (m.index > last) out.push(body.slice(last, m.index));
+    if (m.index > last) out.push(...renderInline(body.slice(last, m.index), `t${key}`));
     const strong = m[2] !== undefined || m[1] === currentUserId;
     const label = m[2] !== undefined ? `@${m[2]}` : `@${names[m[1]!] ?? 'someone'}`;
     out.push(
@@ -39,7 +86,7 @@ export function renderBody(
     );
     last = m.index + m[0].length;
   }
-  if (last < body.length) out.push(body.slice(last));
+  if (last < body.length) out.push(...renderInline(body.slice(last), `t${key}`));
   return out;
 }
 

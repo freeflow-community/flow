@@ -71,6 +71,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   and offers admin Remove agent (confirm first — revokes tokens, keeps
   history). `[web]`
 
+### 2026-07-20 — Inline markdown rendering (web)
+- Message bodies now render inline markdown at display time: `code`,
+  **bold**, *italic* (star and underscore), ~~strike~~, [label](url) links,
+  and bare URLs — nested emphasis supported; code spans win over everything
+  inside them; emphasis needs non-space edges so "2 * 3" and snake_case stay
+  literal; fenced code blocks remain verbatim. Wire format unchanged (bodies
+  stay literal markdown). Prompted by agent replies, which lean on inline
+  markdown heavily. 15 render tests (react-dom/server). `[web]` — closes a
+  previously-unlisted parity gap: macOS has had an inline attributed pass
+  (mention pills + inline markdown) since phase 3.5; web only did blocks.
+
 ### 2026-07-20 — Regenerate agent token (lost agent.json recovery)
 - Admin Agents modal: **Regenerate token** per agent —
   `POST /v1/workspaces/:id/agents/:userId/token` revokes all live tokens and
