@@ -51,6 +51,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — R2 bucket CORS (prod fix)
+- Web uploads/downloads against R2 failed on first prod smoke: browsers
+  preflight the presigned PUT and CORS-check the 302'd GET, and the new bucket
+  had no CORS policy (curl/URLSession testing never preflights, so it passed).
+  Fixed with a bucket CORS policy (app.flowtoo.org + local-dev origins; GET/
+  PUT/HEAD; content-type+range). Recipe recorded in DEPLOYMENT.md. `[server]`
+
 ### 2026-07-20 — Cloudflare R2 storage + presigned direct uploads
 - File blobs move from local disk / Railway volume to Cloudflare R2 behind the
   existing `BlobStore` seam (`FLOW_BLOB_DRIVER=r2`); the app service becomes
