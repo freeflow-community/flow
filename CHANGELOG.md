@@ -51,6 +51,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — App icon (macOS + iOS)
+- First real app icon for both native clients: violet gradient ground + white
+  chat bubble carrying a two-line "flow" wave, matching the web "Quiet, in
+  violet" brand (accent ≈ `oklch(0.46 0.19 300)`). Stays legible to 16px. `[macos] [ios]`
+- Single CoreGraphics source (`apps/macos/tools/make-icon.swift`, run via
+  `make-icon.sh`) emits the macOS `AppIcon.icns` (10-tile iconset → iconutil,
+  rounded squircle + Dock shadow) and the iOS `AppIcon.appiconset` 1024 master
+  (full-bleed; system-masked). Re-run only when the design changes. `[macos] [ios]`
+- Wired in: macOS `make-app.sh` copies the icns + sets `CFBundleIconFile`; iOS
+  `project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME`. `[macos] [ios]`
+
 ### 2026-07-20 — macOS + iOS: 🤖 agent badge
 - `User.isAgent` rides the shared data layer (Models + GRDB migration v6 +
   member sync); `displayNameWithBadge` badges display-only name maps, so the

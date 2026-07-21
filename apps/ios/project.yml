@@ -56,6 +56,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Device builds need a signing team (set it in Xcode → Signing &
         # Capabilities, or via DEVELOPMENT_TEAM). Simulator CLI builds pass
         # CODE_SIGNING_ALLOWED=NO on the xcodebuild invocation instead, so the
