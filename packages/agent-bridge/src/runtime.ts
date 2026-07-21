@@ -135,7 +135,15 @@ function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   return ['exec', '--skip-git-repo-check', ...cfg.extraArgs, opts.prompt];
 }
 
+/** Demo mode: static canned reply, no CLI spawn. */
+export const DEMO_REPLY = 'Your message was received';
+
 export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<RunResult> {
+  if (cfg.kind === 'demo') {
+    // Brief pause so the typing indicator is visible in clients.
+    await new Promise((r) => setTimeout(r, 500));
+    return { ok: true, text: DEMO_REPLY };
+  }
   const args = cfg.kind === 'claude' ? buildClaudeArgs(cfg, opts) : buildCodexArgs(cfg, opts);
   return new Promise((resolve) => {
     const child = spawn(cfg.command, args, {

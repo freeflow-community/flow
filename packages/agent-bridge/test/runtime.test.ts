@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { StreamJsonParser, formatToolStep } from '../src/runtime.js';
+import { DEMO_REPLY, StreamJsonParser, formatToolStep, runRuntime } from '../src/runtime.js';
 import { loadConfig } from '../src/config.js';
 
 describe('StreamJsonParser', () => {
@@ -68,6 +68,28 @@ describe('loadConfig', () => {
     expect(cfg.respondToAgents).toBe(false);
     expect(cfg.concurrency).toBe(4);
     expect(cfg.runtime.mcp).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('accepts the demo runtime (no CLI, MCP off)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
+    const p = path.join(dir, 'agent.json');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ serverUrl: 'http://x', agentToken: 't', runtime: { kind: 'demo' } }),
+    );
+    const cfg = loadConfig(p);
+    expect(cfg.runtime.kind).toBe('demo');
+    expect(cfg.runtime.mcp).toBe(false);
+    const res = await runRuntime(cfg.runtime, {
+      sessionId: 's',
+      resume: false,
+      prompt: 'hello',
+      systemPrompt: '',
+      onToolStep: () => {},
+      log: () => {},
+    });
+    expect(res).toEqual({ ok: true, text: DEMO_REPLY });
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

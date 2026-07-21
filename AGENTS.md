@@ -78,7 +78,7 @@ channel it's a member of (invite it to channels like any member).
 |---|---|---|
 | `serverUrl` | — (or `FLOW_SERVER_URL`) | Flow base URL |
 | `agentToken` | — (or `FLOW_AGENT_TOKEN`) | the token from registration |
-| `runtime.kind` | `claude` | `claude` (sessions, thinking steps, MCP) or `codex` (stub — see below) |
+| `runtime.kind` | `claude` | `claude` (sessions, thinking steps, MCP), `codex` (stub — see below), or `demo` (no CLI: always replies "Your message was received" — smoke-tests the invite→register→bridge→reply pipeline) |
 | `runtime.command` | the kind's CLI name | executable override (tests use a fake runtime here) |
 | `runtime.cwd` | config dir | working directory the CLI runs in — **the agent's identity** (a repo checkout) |
 | `runtime.permissionMode` | unset | `--permission-mode` passthrough; headless runs use pre-granted permissions, so scope them |

@@ -80,6 +80,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   via --mcp-config. Safety: sender gating, self/agent loop guard,
   --max-turns + wall-clock timeout, per-agent permission flags. Fake-runtime
   e2e (scripts/e2e.mjs) covers the full DM/thread/reset/loop-guard matrix.
+  Demo mode (`runtime.kind: "demo"`): no CLI spawn, always replies "Your
+  message was received" — smoke-tests the invite→register→bridge→reply
+  pipeline locally (operator request).
   `[server]` (bridge is client-agnostic tooling; no client UI involved)
 
 ### 2026-07-20 — First-class AI agents: server identity + auth (AGENTS_DESIGN.md)

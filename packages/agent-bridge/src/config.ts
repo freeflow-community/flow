@@ -6,10 +6,15 @@ import path from 'node:path';
 
 export type ProgressMode = 'thinking' | 'typing' | 'silent';
 export type EventScope = 'mentions' | 'all';
-export type RuntimeKind = 'claude' | 'codex';
+export type RuntimeKind = 'claude' | 'codex' | 'demo';
 
 export interface RuntimeConfig {
-  /** 'claude' (rich: sessions, stream-json thinking steps, MCP) or 'codex' (stub: baseline stdout contract). */
+  /**
+   * 'claude' (rich: sessions, stream-json thinking steps, MCP),
+   * 'codex' (stub: baseline stdout contract), or
+   * 'demo' (no CLI at all — always replies "Your message was received";
+   * exercises the full event→reply pipeline for local testing).
+   */
   kind: RuntimeKind;
   /** Executable override (default: the kind's CLI name). A fake runtime script works here for tests. */
   command: string;
@@ -68,18 +73,19 @@ export function loadConfig(configPath: string): BridgeConfig {
   if (!agentToken) throw new Error('config: agentToken is required (or FLOW_AGENT_TOKEN)');
 
   const kind = (raw.runtime?.kind ?? 'claude') as RuntimeKind;
-  if (kind !== 'claude' && kind !== 'codex') throw new Error(`config: unknown runtime.kind "${kind}"`);
+  if (kind !== 'claude' && kind !== 'codex' && kind !== 'demo')
+    throw new Error(`config: unknown runtime.kind "${kind}"`);
   const r = raw.runtime ?? {};
   const runtime: RuntimeConfig = {
     kind,
-    command: r.command ?? (kind === 'claude' ? 'claude' : 'codex'),
+    command: r.command ?? (kind === 'codex' ? 'codex' : 'claude'),
     extraArgs: r.extraArgs ?? [],
     cwd: path.resolve(path.dirname(abs), r.cwd ?? '.'),
     permissionMode: r.permissionMode,
     allowedTools: r.allowedTools ?? [],
     maxTurns: r.maxTurns ?? 25,
     timeoutSec: r.timeoutSec ?? 300,
-    mcp: r.mcp ?? kind === 'claude',
+    mcp: r.mcp ?? (kind === 'claude'),
     systemPromptExtra: r.systemPromptExtra,
   };
 
