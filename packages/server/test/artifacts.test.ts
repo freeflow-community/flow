@@ -162,6 +162,26 @@ describe('shareArtifact (MCP fan-out)', () => {
     expect(second).toHaveLength(0);
   });
 
+  /** Regression: an agent's create_artifact upload is never attached to a
+   * message, so the generic file-access rule (uploader, or attached to a
+   * readable message) locked recipients out of their own artifact — the panel
+   * fell back to the download card, and the download 404'd too. */
+  it('lets a recipient read the bytes of an artifact-only file', async () => {
+    const fileId = await uploadedFile(agentId, 'plan.md');
+    await ar.shareArtifact(channelId, agentId, fileId, 'Plan');
+    const dl = await fl.getFileDownload(fileId, aliceId);
+    const bytes = 'content' in dl ? dl.content.data.toString('utf8') : '';
+    expect(bytes).toBe('artifact bytes');
+  });
+
+  it('does not leak an artifact-only file to someone without an artifact', async () => {
+    const fileId = await uploadedFile(agentId);
+    await ar.shareArtifact(channelId, agentId, fileId, undefined); // alice + bob only
+    const stranger = await registerHuman(`stranger-${randomUUID().slice(0, 8)}@example.test`, 'Stranger');
+    await db.insert(workspaceMembers).values({ workspaceId, userId: stranger, role: 'member' });
+    await expect(fl.getFileDownload(fileId, stranger)).rejects.toThrow('file not found');
+  });
+
   it('requires the caller to be a channel member', async () => {
     const outsiderId = await registerHuman('mallory@example.test', 'Mallory');
     await db.insert(workspaceMembers).values({ workspaceId, userId: outsiderId, role: 'member' });

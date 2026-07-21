@@ -66,6 +66,22 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Fix: agent-created artifacts were unreadable by their recipients
+- Reported live: an agent created an artifact from a markdown file and the
+  panel showed an empty pane with a "click to download" card, while the same
+  file previewed fine when shared in chat. The cause was file access, not
+  markdown. `requireFileAccess` grants a non-uploader only when the file is
+  attached to a message in a channel they can read — but the MCP
+  `create_artifact` deliberately uploads without posting, so `GET /v1/files/:id`
+  404'd for every recipient, the web `TextPane` fetch failed, and it fell back
+  to the download card (whose download 404'd too). Any agent-created artifact
+  of any type was affected. Holding an artifact bookmark of a file is now
+  itself a read grant — safe because the row only exists if the user
+  bookmarked a file they could already read, or a channel member with access
+  shared it via `shareArtifact`. Regression coverage both ways: a recipient
+  can read an artifact-only file, and a workspace member without a bookmark
+  still 404s. No client change — fixes web and macOS alike. `[server]`
+
 ### 2026-07-21 — Phase 9: Artifact tabs
 - Artifacts: personal per-user bookmarks of files shared in chat (operator
   rulings, decision log 2026-07-21). New `artifacts` table (migration 0016) +

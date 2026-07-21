@@ -20,7 +20,9 @@ import { config } from '../config.js';
 import { requireMembership } from './workspaces.js';
 import { requireChannelAccess } from './channels.js';
 
-const { files, messageFiles, messages } = schema;
+// `artifacts` is used for the phase-9 access grant below — the table only, not
+// the artifacts service, so there's no import cycle (that service imports us).
+const { files, messageFiles, messages, artifacts } = schema;
 
 type FileRow = typeof files.$inferSelect;
 
@@ -214,9 +216,10 @@ async function requirePendingOwned(fileId: string, userId: string): Promise<File
 
 /**
  * Access rule: the uploader can always fetch; anyone else must be a workspace
- * member AND the file must be attached to at least one message in a channel
- * they can access (public → workspace member; private → channel member).
- * Unattached files are visible to the uploader only.
+ * member AND either hold an artifact bookmark of the file (phase 9) or the
+ * file must be attached to at least one message in a channel they can access
+ * (public → workspace member; private → channel member). Otherwise unattached
+ * files are visible to the uploader only.
  */
 export async function requireFileAccess(fileId: string, userId: string): Promise<FileRow> {
   const rows = await db
@@ -228,6 +231,19 @@ export async function requireFileAccess(fileId: string, userId: string): Promise
   if (!f) throw notFound('file not found');
   if (f.userId === userId) return f;
   await requireMembership(f.workspaceId, userId); // 404s non-members without leaking
+
+  // An artifact row is itself the grant: it exists either because this user
+  // bookmarked a file they could already read, or because a channel member
+  // shared it with them (shareArtifact checks the sharer's access first).
+  // Agent-created artifacts are never attached to a message, so without this
+  // the owner of the artifact couldn't read it.
+  const bookmarked = await db
+    .select({ id: artifacts.id })
+    .from(artifacts)
+    .where(and(eq(artifacts.userId, userId), eq(artifacts.fileId, fileId)))
+    .limit(1);
+  if (bookmarked.length > 0) return f;
+
   const attached = await db
     .select({ channelId: messages.channelId })
     .from(messageFiles)
