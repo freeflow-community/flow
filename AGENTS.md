@@ -32,6 +32,26 @@ token stops working immediately.
 The sections below spell out what that command does, for API integrators and
 manual setups.
 
+## Installing on a remote host (tarball)
+
+The bridge packs into a standalone npm tarball — its only runtime dependency
+is `ws` (`@flow/shared` is compile-time types), so remote hosts don't need
+the monorepo or pnpm:
+
+```sh
+# in the repo (builds via prepack, emits flow-agent-bridge-<version>.tgz):
+cd packages/agent-bridge && pnpm pack
+
+# on the host (any box with node 20+):
+npm install -g ./flow-agent-bridge-0.2.0.tgz
+flow-agent-bridge ~/mybot.json        # wizard on first run, daemon after
+```
+
+Re-installing after changes is the same two commands — `npm install -g`
+over an existing install upgrades in place (configs are untouched; restart
+the daemon). Ship the tarball however you like: `scp`,
+`gh codespace cp -e`, or a GitHub release asset.
+
 ## Setup walkthrough
 
 ### 1. Invite (workspace owner/admin, web UI or API)

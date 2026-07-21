@@ -10,13 +10,13 @@ importers:
 
   packages/agent-bridge:
     dependencies:
-      '@flow/shared':
-        specifier: workspace:*
-        version: link:../shared
       ws:
         specifier: ^8.18.0
         version: 8.21.1
     devDependencies:
+      '@flow/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1

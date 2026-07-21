@@ -1,22 +1,28 @@
 {
   "name": "@flow/agent-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Flow agent bridge: consumes Flow events over WS and execs a coding-agent CLI headlessly per conversation (AGENTS_DESIGN.md)",
+  "description": "Flow agent bridge: consumes Flow events over WS and execs a coding-agent CLI headlessly per conversation (AGENTS.md)",
   "bin": {
     "flow-agent-bridge": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "pnpm build",
+    "pack:tarball": "pnpm pack"
   },
   "dependencies": {
-    "@flow/shared": "workspace:*",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@flow/shared": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",

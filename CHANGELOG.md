@@ -109,6 +109,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   uses real membership too (it previously offered every workspace member on
   standard channels). `[server] [web]` — macOS gap in Parity.
 
+### 2026-07-20 — Agent bridge packaged as an installable tarball
+- `pnpm pack` in packages/agent-bridge emits a standalone
+  `flow-agent-bridge-<version>.tgz` (prepack builds; only runtime dep is
+  `ws` — @flow/shared moved to devDependencies since all its imports are
+  type-only). `npm install -g <tgz>` on any node 20+ host gives the
+  `flow-agent-bridge` command; re-install over itself to upgrade. v0.2.0.
+  `[server]` (bridge tooling)
+
 ### 2026-07-20 — Agent bridge: incoming attachments reach the runtime
 - Message attachments are downloaded (agent token, original bytes) to
   `$TMPDIR/flow-attachments/<agentUserId>/` and their local paths appended to
