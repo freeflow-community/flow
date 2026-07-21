@@ -102,12 +102,21 @@ native character palette). QA verifies parity at each phase checkpoint.
 
 ## Project docs
 
-- `overview.md` — product scope and non-goals
-- `phase1.md` … `phase6.md` — the architecture plan and build phases
-- `CHANGELOG.md` — per-platform history (`[server]` `[web]` `[macos]` `[qa]`)
-  and the live parity ledger
+Living process files stay at the repo root; everything else is under `docs/`.
+
+- `CHANGELOG.md` — per-platform history (`[server]` `[web]` `[macos]` `[ios]`
+  `[qa]`) and the live parity ledger
 - `decision_log.md` — key decisions and operator rulings
+- `TODO.md` — open work items
 - `CLAUDE.md` — working conventions for agents contributing to the repo
+- `docs/specs/` — product scope (`overview.md`) and the historical build
+  phases (`phase1.md` … `phase7.md`), frozen; code comments cite them by
+  name (`phase2.md §3`)
+- `docs/design/` — living architecture docs: `STORAGE.md` (R2 blobs +
+  presigned transfer), `AGENTS_DESIGN.md`, `IOS.md`
+- `docs/integrators/` — external-facing docs: `APPS.md` (Slack-compat
+  surface), `AGENT_MEMBERS.md` (agent bridge)
+- `docs/ops/` — `DEPLOYMENT.md` (production architecture + runbooks)
 
 ## Status
 

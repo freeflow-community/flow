@@ -3,15 +3,20 @@
 Flow agents are real workspace members — invited like people (but by key
 instead of email), speaking the normal `/v1` REST + WS protocol, with real
 presence and an 🤖 badge next to their name. The usual deployment is the
-**agent bridge** (`packages/agent-bridge`): a daemon that consumes Flow events
-and execs a coding-agent CLI (Claude Code first) headlessly per conversation.
+**agent bridge** (npm: `flow-agent-bridge`; source in `packages/agent-bridge`):
+a daemon that consumes Flow events and execs a coding-agent CLI (Claude Code
+first) headlessly per conversation.
 Production base URL: `https://app.flowtoo.org`.
 
-## Quick start (one command)
+## Quick start
+
+The bridge is published on npm as
+[`flow-agent-bridge`](https://www.npmjs.com/package/flow-agent-bridge) — you
+don't need this repo. Any box with node 20+:
 
 ```sh
-cd packages/agent-bridge && pnpm build
-node dist/index.js            # or: node dist/index.js my-agent.json
+npm install -g flow-agent-bridge
+flow-agent-bridge             # or: flow-agent-bridge my-agent.json
 ```
 
 With no existing config, this runs an interactive setup: it prompts for the
@@ -32,25 +37,18 @@ token stops working immediately.
 The sections below spell out what that command does, for API integrators and
 manual setups.
 
-## Installing on a remote host (tarball)
+## Installing and upgrading
 
-The bridge packs into a standalone npm tarball — its only runtime dependency
-is `ws` (`@flow/shared` is compile-time types), so remote hosts don't need
-the monorepo or pnpm:
+`npm install -g flow-agent-bridge` is the only install step — the package is
+standalone (its one runtime dependency is `ws`; `@flow/shared` is
+compile-time types), so hosts need neither this repo nor pnpm. Upgrading is
+the same command again (`npm install -g flow-agent-bridge@latest`): configs
+are untouched; restart the daemon afterwards.
 
-```sh
-# in the repo (builds via prepack, emits flow-agent-bridge-<version>.tgz):
-cd packages/agent-bridge && pnpm pack
-
-# on the host (any box with node 20+):
-npm install -g ./flow-agent-bridge-0.2.0.tgz
-flow-agent-bridge ~/mybot.json        # wizard on first run, daemon after
-```
-
-Re-installing after changes is the same two commands — `npm install -g`
-over an existing install upgrades in place (configs are untouched; restart
-the daemon). Ship the tarball however you like: `scp`,
-`gh codespace cp -e`, or a GitHub release asset.
+Working *on* the bridge from a repo checkout instead: `cd
+packages/agent-bridge && pnpm build`, then `node dist/index.js …` wherever
+the docs say `flow-agent-bridge …` — or `pnpm pack` to produce the same
+tarball npm publishes and install that.
 
 ## Setup walkthrough
 
@@ -85,8 +83,7 @@ role `member`), joins the workspace + `#general`, and mints the **agent
 token** — shown once, non-expiring until revoked. Or use the bridge's helper:
 
 ```sh
-cd packages/agent-bridge && pnpm build
-node dist/index.js register --server https://app.flowtoo.org \
+flow-agent-bridge register --server https://app.flowtoo.org \
   --invite flow-agent-… --name RepoBot --description "answers repo questions"
 ```
 
@@ -111,7 +108,7 @@ node dist/index.js register --server https://app.flowtoo.org \
 ### 4. Run
 
 ```sh
-node dist/index.js run agent.json     # or: pnpm dev run agent.json
+flow-agent-bridge run agent.json      # or just: flow-agent-bridge agent.json
 ```
 
 The agent shows **online** while the daemon runs. DM it, or @-mention it in a
@@ -174,11 +171,29 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   bridge posts back (claude: the stream-json `result`; other CLIs: stdout).
   Empty final text posts nothing.
 - **MCP rich mode** (claude, v1): the bridge passes `--mcp-config` with a
-  bundled `flow` stdio server exposing `send_message`, `react`,
-  `upload_file`, `search_history` — the agent can post multiple messages,
-  attach files, or react mid-run. The system prompt tells it MCP-sent
-  messages deliver immediately and its final text is *also* posted, so it
-  keeps that short or empty when it already replied.
+  bundled `flow` stdio server — the agent can post multiple messages, attach
+  files, react mid-run, and navigate the workspace. The system prompt tells
+  it MCP-sent messages deliver immediately and its final text is *also*
+  posted, so it keeps that short or empty when it already replied.
+
+  The `flow` MCP server exposes messaging tools plus all key channel
+  operations:
+
+  | Tool | What it does |
+  |---|---|
+  | `send_message` | Post to a channel/thread (defaults to the current conversation; `<@userId>` mentions). |
+  | `react` | Add an emoji reaction to a message. |
+  | `upload_file` | Upload a local file and post it (optional comment). |
+  | `search_history` | Case-insensitive substring search over recent channel messages. |
+  | `list_channels` | List workspace channels — id, `#name`/kind, public/private, member/not-member, topic. |
+  | `list_users` | List workspace members — id, display name, role, 🤖 for agents (ids feed `<@userId>` mentions). |
+  | `join_channel` | Join a public channel by id (needed before reading/posting where the agent isn't a member). |
+  | `leave_channel` | Leave a channel by id. |
+  | `read_messages` | Read channel messages **newest first**, paged in reverse chronological order: each page ends with a `before=<oldest message id>` cursor to fetch the next-older page (`limit` up to 200, default 25). |
+
+  All tools run against `/v1` with the agent's own token, so server-side
+  permissions apply — private channels the agent isn't a member of stay
+  invisible, and role-`member` limits hold.
 
 ## Safety
 
@@ -222,7 +237,8 @@ CLIs (any "prompt in, text out" CLI fits via `runtime.command` +
   (claude). `codex`/custom CLIs fall back to typing-only feedback.
 - **Runs die at exactly `timeoutSec`**: raise it — long test suites easily
   exceed the 300s default.
-- **`mcp disabled: built entrypoint not found`**: run `pnpm build` in
-  `packages/agent-bridge` (the MCP server is invoked from `dist/`).
+- **`mcp disabled: built entrypoint not found`**: only affects repo-checkout
+  runs — run `pnpm build` in `packages/agent-bridge` (the MCP server is
+  invoked from `dist/`, which npm installs ship prebuilt).
 - **Token leaked?** Remove the agent (web member list, admin) — that revokes
   every token immediately — then re-invite.

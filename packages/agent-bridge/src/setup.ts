@@ -2,7 +2,7 @@
 // agent token, ask the handful of questions that matter, save agent.json, and
 // hand back the path so the caller can start the daemon immediately.
 // Advanced knobs (permissionMode, allowedTools, eventScope, …) are edited in
-// the saved file — see AGENTS.md.
+// the saved file — see AGENT_MEMBERS.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -80,7 +80,7 @@ export async function runSetup(configPath: string): Promise<string> {
     const abs = path.resolve(configPath);
     fs.writeFileSync(abs, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
     console.log(`\nSaved ${abs} (contains the agent token — keep it private).`);
-    console.log('Edit it any time for permissions, event scope, progress mode, etc. (see AGENTS.md).\n');
+    console.log('Edit it any time for permissions, event scope, progress mode, etc. (see AGENT_MEMBERS.md).\n');
     return abs;
   } finally {
     rl.close();

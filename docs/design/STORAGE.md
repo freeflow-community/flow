@@ -2,7 +2,7 @@
 
 How Flow stores and serves file attachments, thumbnails, and avatars.
 Shipped 2026-07-20/21 (operator rulings in `decision_log.md`; ops runbook and
-env vars in `DEPLOYMENT.md`). Audience: anyone touching file handling on the
+env vars in `docs/ops/DEPLOYMENT.md`). Audience: anyone touching file handling on the
 server or a client, and integrators wondering what a file URL actually is.
 
 ## The seam
@@ -122,7 +122,7 @@ Browsers preflight the presigned PUT and CORS-check the redirected GET, so
 native clients work perfectly** — curl and URLSession never preflight, which
 is exactly how this shipped broken on first prod smoke. The policy (allowed
 origins = web origins; `GET, PUT, HEAD`; headers `content-type, range`) is
-part of one-time bucket setup — exact recipe in `DEPLOYMENT.md`. R2 CORS
+part of one-time bucket setup — exact recipe in `docs/ops/DEPLOYMENT.md`. R2 CORS
 changes take ~1 min to propagate; the S3 endpoint's TLS itself only
 provisions ~1 min after the account's first bucket exists.
 

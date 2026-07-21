@@ -63,7 +63,7 @@ Drive the simulator without a UI text-input tool via environment variables
 | `FLOW_DEBUG_SEND=<text>` | post one message via the composer's engine path |
 
 Additional hooks (react / edit / delete / thread-reply / open-thread /
-upload) are listed in the repo-root `IOS.md`.
+upload) are listed in `docs/design/IOS.md`.
 
 Example (against the local dev server + QA fixtures):
 
