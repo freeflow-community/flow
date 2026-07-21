@@ -121,6 +121,14 @@ describe('agent registration', () => {
     expect(invRow.agentUserId).toBe(res.user.id);
   });
 
+  it('name falls back to the invite nameHint; 400 when neither present', async () => {
+    const hinted = await ag.createAgentInvite(workspaceId, ownerId, 'HintBot');
+    const res = await ag.registerAgent({ inviteKey: hinted.key });
+    expect(res.user.displayName).toBe('HintBot');
+    const bare = await ag.createAgentInvite(workspaceId, ownerId);
+    await expect(ag.registerAgent({ inviteKey: bare.key })).rejects.toMatchObject({ statusCode: 400 });
+  });
+
   it('rejects replay of a used invite', async () => {
     const inv = await ag.createAgentInvite(workspaceId, ownerId);
     await ag.registerAgent({ inviteKey: inv.key, name: 'OnceBot' });

@@ -10,7 +10,7 @@ import type { AgentInviteDTO, AgentRegisterResponse } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
-import { forbidden, notFound, unauthorized } from '../lib/errors.js';
+import { badRequest, forbidden, notFound, unauthorized } from '../lib/errors.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 import { requireMembership } from './workspaces.js';
 import { removeMemberDeep } from './memberRemoval.js';
@@ -62,7 +62,8 @@ export async function createAgentInvite(
  */
 export async function registerAgent(input: {
   inviteKey: string;
-  name: string;
+  /** Optional — the agent self-identifies; falls back to the invite's nameHint. */
+  name?: string | undefined;
   description?: string | undefined;
   avatarUrl?: string | undefined;
 }): Promise<AgentRegisterResponse> {
@@ -86,13 +87,15 @@ export async function registerAgent(input: {
     const inv = consumed[0];
     if (!inv) throw unauthorized('invalid, expired, or already-used agent invite key');
     workspaceId = inv.workspaceId;
+    const name = input.name?.trim() || inv.nameHint?.trim();
+    if (!name) throw badRequest('validation', 'name is required (no nameHint on the invite to fall back to)');
     // Same recipe as app bot users: synthetic unique email, unusable password
     // hash, emailVerifiedAt stamped (agents never do the email flow).
     await tx.insert(users).values({
       id: userId,
       email: `agent-${userId}@agents.flow.local`,
       passwordHash: `!agent:${randomBytes(24).toString('hex')}`,
-      displayName: input.name,
+      displayName: name,
       avatarUrl: input.avatarUrl ?? null,
       statusText: input.description?.slice(0, 80) ?? '',
       isAgent: true,

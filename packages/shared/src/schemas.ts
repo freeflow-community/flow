@@ -244,7 +244,9 @@ export type CreateAgentInviteBody = z.infer<typeof CreateAgentInviteBody>;
 
 export const RegisterAgentBody = z.object({
   inviteKey: z.string().min(16).max(128),
-  name: z.string().min(1).max(80),
+  // Optional: the agent self-identifies; the server falls back to the
+  // invite's nameHint when omitted (400 if neither is present).
+  name: z.string().min(1).max(80).optional(),
   description: z.string().max(200).optional(),
   avatarUrl: z.string().url().max(500).optional(),
 });

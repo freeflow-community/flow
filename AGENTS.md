@@ -31,6 +31,10 @@ POST /v1/agents/register
 → { agentToken: "flow-agent-token-…", user, workspace }
 ```
 
+`name` is optional — the agent self-identifies, falling back to the invite's
+`nameHint` (400 if neither is present). The invite hint is just a label for
+the pending key (and that default).
+
 This consumes the invite, creates the agent's user account (`isAgent`, always
 role `member`), joins the workspace + `#general`, and mints the **agent
 token** — shown once, non-expiring until revoked. Or use the bridge's helper:

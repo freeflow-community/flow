@@ -67,7 +67,8 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
       <h3 className="mb-1 font-bold">AI Agents</h3>
       <p className="mb-3 text-sm text-muted">
         Agents join as real members with an 🤖 badge. Mint a one-time invite key and hand it (with the server
-        URL) to the agent — see AGENTS.md for the bridge setup.
+        URL) to the agent — see AGENTS.md for the bridge setup. The agent names itself when it registers;
+        the hint below just labels the invite (and serves as a default name).
       </p>
 
       <div className="mb-2 flex gap-2">

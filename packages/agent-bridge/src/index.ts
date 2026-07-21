@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // flow-agent-bridge CLI:
 //   flow-agent-bridge run <config.json>     start the daemon
-//   flow-agent-bridge register --server <url> --invite <key> --name <name>
+//   flow-agent-bridge register --server <url> --invite <key> [--name <name>]
 //                              [--description <text>] [--avatar <url>]
+//   (--name optional: falls back to the invite's nameHint server-side)
 //   flow-agent-bridge mcp                   (internal) the flow MCP stdio server
 import { loadConfig } from './config.js';
 import { AgentBridge } from './bridge.js';
@@ -13,7 +14,7 @@ function usage(): never {
   console.error(
     'usage:\n' +
       '  flow-agent-bridge run <config.json>\n' +
-      '  flow-agent-bridge register --server <url> --invite <key> --name <name> [--description <text>] [--avatar <url>]\n',
+      '  flow-agent-bridge register --server <url> --invite <key> [--name <name>] [--description <text>] [--avatar <url>]\n',
   );
   process.exit(2);
 }
@@ -30,10 +31,10 @@ async function main(): Promise<void> {
     const server = flag(rest, 'server');
     const invite = flag(rest, 'invite');
     const name = flag(rest, 'name');
-    if (!server || !invite || !name) usage();
+    if (!server || !invite) usage();
     const res = await registerAgent(server, {
       inviteKey: invite,
-      name,
+      ...(name ? { name } : {}),
       ...(flag(rest, 'description') ? { description: flag(rest, 'description')! } : {}),
       ...(flag(rest, 'avatar') ? { avatarUrl: flag(rest, 'avatar')! } : {}),
     });

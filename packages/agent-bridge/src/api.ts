@@ -126,7 +126,7 @@ export class FlowApi {
 /** Unauthenticated: consume an invite key → agent identity + token (shown once). */
 export async function registerAgent(
   serverUrl: string,
-  input: { inviteKey: string; name: string; description?: string; avatarUrl?: string },
+  input: { inviteKey: string; name?: string; description?: string; avatarUrl?: string },
 ): Promise<AgentRegisterResponse> {
   const res = await fetch(`${serverUrl.replace(/\/+$/, '')}/v1/agents/register`, {
     method: 'POST',
