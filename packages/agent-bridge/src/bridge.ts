@@ -215,6 +215,13 @@ export class AgentBridge {
         }
       } else {
         this.log(`runtime error: ${result.error ?? 'unknown'}`);
+        // Self-heal the session state after a failed first turn: the CLI may
+        // have created the session before dying, and retrying --session-id
+        // then fails "Session ID … is already in use" on every later turn.
+        if (!conv.started) {
+          if (result.error?.includes('already in use')) conv.started = true; // it exists — resume from now on
+          else conv.sessionId = randomUUID(); // retry on a fresh session
+        }
         await this.api
           .sendMessage(
             msg.channelId,

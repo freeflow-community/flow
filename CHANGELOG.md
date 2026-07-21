@@ -126,6 +126,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   uses real membership too (it previously offered every workspace member on
   standard channels). `[server] [web]` — macOS gap in Parity.
 
+### 2026-07-20 — Agent bridge 0.2.1: session self-heal after a failed first turn
+- A first turn that died after the CLI created its session left the bridge
+  retrying `--session-id <same uuid>` forever ("Session ID … is already in
+  use" on every subsequent message). Failed first turns now rotate to a
+  fresh session id — or flip straight to `--resume` when the error says the
+  session already exists. `/reset` remains the manual escape hatch.
+  `[server]` (bridge tooling; npm 0.2.1)
+
 ### 2026-07-20 — Agent bridge packaged as an installable tarball
 - `pnpm pack` in packages/agent-bridge emits a standalone
   `flow-agent-bridge-<version>.tgz` (prepack builds; only runtime dep is
