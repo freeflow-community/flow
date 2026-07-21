@@ -1,0 +1,62 @@
+# Publish flow-agent-bridge to npm via trusted publishing (OIDC) — no tokens,
+# no OTP. Runs on any push to main that touches the package; publishes only
+# when package.json's version isn't on the registry yet, so releasing is just
+# "bump the version and push".
+#
+# One-time npmjs.com setup (package settings → Trusted Publisher):
+#   GitHub Actions / owner: scottpersinger / repo: flow /
+#   workflow: publish-bridge.yml / environment: (blank)
+name: publish-bridge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/agent-bridge/**'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC for npm trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs a recent npm on the runner.
+      - run: npm install -g npm@latest
+
+      - run: corepack enable
+
+      - name: Skip if this version is already published
+        id: check
+        working-directory: packages/agent-bridge
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "flow-agent-bridge@$VERSION" version >/dev/null 2>&1; then
+            echo "flow-agent-bridge@$VERSION already on npm — nothing to do"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publishing flow-agent-bridge@$VERSION"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install workspace
+        if: steps.check.outputs.publish == 'true'
+        run: pnpm install --frozen-lockfile
+
+      # The bridge's tsc build resolves @flow/shared types from its dist.
+      - name: Build shared types
+        if: steps.check.outputs.publish == 'true'
+        run: pnpm --filter @flow/shared build
+
+      - name: Publish
+        if: steps.check.outputs.publish == 'true'
+        working-directory: packages/agent-bridge
+        run: npm publish # prepack runs the build; OIDC handles auth

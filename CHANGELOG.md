@@ -76,6 +76,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - Wired in: macOS `make-app.sh` copies the icns + sets `CFBundleIconFile`; iOS
   `project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME`. `[macos] [ios]`
 
+### 2026-07-20 — Agent bridge: OTP-free npm publishing via GitHub Actions
+- `.github/workflows/publish-bridge.yml`: on pushes to main touching
+  packages/agent-bridge, publishes to npm via **trusted publishing (OIDC)** —
+  no tokens stored, no OTP; skips when package.json's version is already on
+  the registry, so a release is just "bump version + push". Requires the
+  one-time Trusted Publisher registration on npmjs.com (repo
+  scottpersinger/flow, workflow publish-bridge.yml). `[qa]` (release infra)
+
 ### 2026-07-20 — Agent bridge 0.2.4: full permissions by default
 - Operator ruling: with neither `allowedTools` nor `permissionMode`
   configured, the claude runtime now runs with `--permission-mode
