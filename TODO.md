@@ -15,8 +15,3 @@
   docs/design/STORAGE.md §Streaming URLs. Handle URL expiry (re-mint on
   AVPlayer failure) and keep the webm-shows-a-chip divergence (AVFoundation
   can't play webm).
-
-- **Emoji: add common missing Slack aliases** (e.g. `:thread:`) to the shared
-  catalog. (From the retired ui_nits.md list.)
-- **macOS: message context menu "stutters"** — blinks in/out while hovering,
-  making it hard to select. (From the retired ui_nits.md list.)

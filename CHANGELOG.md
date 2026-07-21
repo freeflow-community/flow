@@ -62,6 +62,30 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — UI nits: macOS message hover menu no longer stutters
+- Fixed the per-message hover toolbar (react / reply / edit / delete pill)
+  blinking in and out while the cursor moved toward it. The pill is an overlay
+  pinned to the row's top-trailing edge, outside the row's hover region, and
+  `hovering` was flipped off synchronously — so travelling from the message
+  text up onto the pill briefly unmounted it, which re-hovered the row and
+  flickered it back. Now the hide is debounced (~120 ms) and cancelled when the
+  cursor lands on the pill (the pill carries its own `.onHover`), so the menu
+  holds still long enough to click. macOS-only; web's hover menu was unaffected.
+  `[macos]`
+
+### 2026-07-21 — UI nits: common missing Slack emoji aliases
+- Added ~60 frequently typed Slack shortcodes that were missing from the
+  shared catalog — the retired ui_nits `:thread:` (🧵) example plus a batch of
+  common faces (`:smiley:` `:laughing:`/`:satisfied:` `:disappointed:`
+  `:partying_face:` `:pleading_face:` …), hand gestures (`:point_down:`
+  `:raised_hand:` `:fist:`/`:fist_raised:` `:call_me_hand:` …), and symbols
+  (`:heavy_check_mark:` `:heavy_plus_sign:` `:bangbang:` `:sos:` `:ok:`
+  `:arrow_forward:` `:repeat:` …). Landed in both the shared TS catalog
+  (`packages/shared/src/emoji.ts`, drives web composer autocomplete + expansion)
+  and the aligned Swift copy (`EmojiCatalog.swift`). New vitest coverage for the
+  aliases and for `expandShortcodes` (case-insensitivity, bare-colon safety);
+  Swift `EmojiCatalogTests` still green. `[web]` `[macos]` `[shared]`
+
 ### 2026-07-21 — Bridge 0.3.3: runtime.model config option
 - New `runtime.model` in agent.json — `--model` passthrough to the claude CLI
   (`sonnet`, `opus`, `haiku`, or a full model id). Unset keeps the CLI's
