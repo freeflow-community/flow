@@ -109,6 +109,15 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   uses real membership too (it previously offered every workspace member on
   standard channels). `[server] [web]` — macOS gap in Parity.
 
+### 2026-07-20 — Agent bridge: incoming attachments reach the runtime
+- Message attachments are downloaded (agent token, original bytes) to
+  `$TMPDIR/flow-attachments/<agentUserId>/` and their local paths appended to
+  the prompt — the CLI Reads them on demand and Claude renders images
+  natively ("what's in this screenshot?" works). Failed downloads log and
+  skip; copies persist so `--resume` references stay valid; demo runtime
+  skips downloads. Pattern ported from the bizzybot agent-wrapper. `[server]`
+  (bridge tooling)
+
 ### 2026-07-20 — Agent bridge daemon (packages/agent-bridge)
 - New workspace package: consumes Flow events over the agent-token WS (real
   presence) and execs a coding-agent CLI headlessly per conversation.

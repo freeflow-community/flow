@@ -271,7 +271,36 @@ export class AgentBridge {
         context = `[recent conversation history]\n${lines.join('\n')}\n[end of history]\n\n`;
       }
     }
-    return `${context}${meta}\n${msg.body}`;
+    const attachments = await this.downloadAttachments(msg);
+    const fileNote =
+      attachments.length > 0
+        ? `\n\n[the user attached ${attachments.length} file(s); local copies saved at these paths — Read them as needed (images render when Read):]\n${attachments.map((a) => `- ${a}`).join('\n')}`
+        : '';
+    return `${context}${meta}\n${msg.body}${fileNote}`;
+  }
+
+  /**
+   * Message attachments (images, docs) → local temp copies the runtime can
+   * Read (Claude's Read tool renders images natively). One bad file never
+   * fails the turn; files persist for the session so --resume references
+   * stay valid. Demo runtime never spawns a CLI, so skip the downloads.
+   */
+  private async downloadAttachments(msg: MessageDTO): Promise<string[]> {
+    if (this.cfg.runtime.kind === 'demo' || msg.files.length === 0) return [];
+    const dir = path.join(os.tmpdir(), 'flow-attachments', this.me.id);
+    fs.mkdirSync(dir, { recursive: true });
+    const out: string[] = [];
+    for (const f of msg.files) {
+      const safe = f.name.replace(/[^\w.\-]+/g, '_').slice(-80) || 'file';
+      const dest = path.join(dir, `${f.id}-${safe}`);
+      try {
+        if (!fs.existsSync(dest)) fs.writeFileSync(dest, await this.api.downloadFile(f.id), { mode: 0o600 });
+        out.push(`${dest} (${f.mimeType}, ${f.sizeBytes} bytes)`);
+      } catch (err) {
+        this.log(`attachment download failed for ${f.name}: ${(err as Error).message}`);
+      }
+    }
+    return out;
   }
 
   /** History for a session's first turn: the thread so far, or recent channel/DM messages. */

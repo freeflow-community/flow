@@ -110,6 +110,15 @@ export class FlowApi {
     return this.req('PUT', `/v1/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
   }
 
+  /** Download a file attachment's original bytes (the agent is a channel member, so /v1/files authorizes it). */
+  async downloadFile(fileId: string): Promise<Buffer> {
+    const res = await fetch(`${this.serverUrl}/v1/files/${fileId}`, {
+      headers: { authorization: `Bearer ${this.token}` },
+    });
+    if (!res.ok) await parseError(res);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   async uploadFile(workspaceId: string, filename: string, mimeType: string, data: Buffer): Promise<FileDTO> {
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(data)], { type: mimeType }), filename);

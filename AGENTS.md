@@ -131,6 +131,18 @@ separate conversations run concurrently. Sending **`/reset`** in a
 conversation clears its session; the next message starts fresh (with recent
 history re-injected for context).
 
+## Attachments (images, documents)
+
+Files attached to a message are downloaded to a per-agent temp dir
+(`$TMPDIR/flow-attachments/<agentUserId>/`, chmod 600) and their local paths
+are listed at the end of the prompt — the runtime Reads them as needed, and
+Claude's Read tool renders images natively, so "what's in this screenshot?"
+just works. Copies persist for the life of the temp dir so `--resume`
+references stay valid; a failed download logs and skips that file rather
+than failing the turn. If you restrict `allowedTools` to path-scoped Read
+patterns, include the temp dir. To send files *back*, the agent uses the
+MCP `upload_file` tool (rich mode).
+
 ## Feedback while working
 
 With `progress: "thinking"` (default) the bridge posts one status message on
