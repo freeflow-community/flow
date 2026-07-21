@@ -51,6 +51,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — Web favicon
+- Web client had no favicon (default browser globe); now ships one from the
+  same icon source. `make-icon.swift`/`make-icon.sh` also emit
+  `packages/web/public/favicon-{16,32,48}.png` + `apple-touch-icon.png`
+  (rounded, no Dock shadow); `index.html` links them and sets `theme-color`. `[web]`
+
 ### 2026-07-20 — App icon (macOS + iOS)
 - First real app icon for both native clients: violet gradient ground + white
   chat bubble carrying a two-line "flow" wave, matching the web "Quiet, in
