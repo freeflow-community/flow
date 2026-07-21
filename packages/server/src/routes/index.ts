@@ -22,6 +22,7 @@ import {
   MarkNotificationsReadBody,
   MarkReadBody,
   PatchMeBody,
+  PresignUploadBody,
   RegisterBody,
   CreateAppBody,
   CreateAgentInviteBody,
@@ -442,7 +443,7 @@ export function registerRoutes(app: FastifyInstance): void {
     return { reactions: await rx.removeReaction(id, req.user.id, parsed) };
   });
 
-  // ---- files (phase2.md §3) ------------------------------------
+  // ---- files (phase2.md §3; presigned direct uploads 2026-07-20) ----
   app.post('/v1/workspaces/:id/files', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const { filename, mimeType, data } = await readUpload(req);
@@ -450,9 +451,35 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.status(201).send(dto);
   });
 
+  // presign → client PUTs the bytes (direct to R2, or the /content fallback) → complete
+  app.post('/v1/workspaces/:id/files/presign', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(PresignUploadBody, req.body);
+    const dto = await fl.createPresignedUpload(id, req.user.id, body.filename, body.mimeType, body.sizeBytes);
+    return reply.status(201).send(dto);
+  });
+
+  app.put('/v1/files/:id/content', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    if (!Buffer.isBuffer(req.body)) throw badRequest('no_body', 'raw request body required');
+    await fl.putPendingContent(id, req.user.id, req.body);
+    return { ok: true };
+  });
+
+  app.post('/v1/files/:id/complete', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return fl.completeUpload(id, req.user.id);
+  });
+
   app.get('/v1/files/:id', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const f = await fl.getFileContent(id, req.user.id);
+    const dl = await fl.getFileDownload(id, req.user.id);
+    if ('redirect' in dl) {
+      // R2 serves the bytes (and handles Range itself). The URL is short-lived
+      // and access was just checked, so a plain 302 is safe to hand out.
+      return reply.redirect(dl.redirect, 302);
+    }
+    const f = dl.content;
     reply
       .header('accept-ranges', 'bytes') // video players probe this before seeking
       .header('content-type', f.mimeType)
@@ -473,7 +500,9 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const f = await fl.getThumbContent(id, req.user.id);
+    const dl = await fl.getThumbDownload(id, req.user.id);
+    if ('redirect' in dl) return reply.redirect(dl.redirect, 302);
+    const f = dl.content;
     return reply
       .header('content-type', f.mimeType)
       .header('content-disposition', 'inline')

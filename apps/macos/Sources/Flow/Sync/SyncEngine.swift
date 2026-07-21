@@ -561,12 +561,19 @@ actor SyncEngine {
     func uploadFile(workspaceId: String, fileURL: URL) async throws -> FileAttachment {
         let data = try Data(contentsOf: fileURL)
         let mime = Self.mimeType(for: fileURL)
-        return try await api.upload(
-            "/v1/workspaces/\(workspaceId)/files",
-            filename: fileURL.lastPathComponent,
-            mimeType: mime,
-            data: data
+        // presign → PUT the bytes (direct to R2 in prod, server fallback in
+        // local dev) → complete (server verifies size + generates thumbnails)
+        struct PresignBody: Encodable {
+            let filename: String
+            let mimeType: String
+            let sizeBytes: Int
+        }
+        let pres: PresignedUpload = try await api.post(
+            "/v1/workspaces/\(workspaceId)/files/presign",
+            body: PresignBody(filename: fileURL.lastPathComponent, mimeType: mime, sizeBytes: data.count)
         )
+        try await api.putRaw(pres.upload.url, headers: pres.upload.headers, data: data)
+        return try await api.post("/v1/files/\(pres.file.id)/complete")
     }
 
     /// Downloads a file to a temp path (original filename preserved) and

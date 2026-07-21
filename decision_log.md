@@ -1,5 +1,31 @@
 # Decision log
 
+## 2026-07-20 — R2 blob storage + presigned direct upload/download (operator rulings)
+
+Pre-flight answers (AskUserQuestion) for the Cloudflare R2 phase:
+
+- **App-layer encryption is dropped for R2-era file blobs.** Direct-to-R2
+  presigned upload/download means the server never touches the bytes, so
+  AES-256-GCM envelopes can't survive. Posture: R2 encrypts at rest, every
+  URL is short-lived (PUT 15 min / GET 5 min) and minted only after the
+  existing access checks. `files.enc_key_id` NULL marks plaintext blobs;
+  legacy rows keep decrypting through the keyring until migrated. Message
+  bodies remain encrypted — this ruling covers file/thumb/avatar blobs only.
+- **Downloads also go direct**: `GET /v1/files/:id` (and `/thumb`) 302-redirect
+  to a presigned R2 URL after the access check. R2 serves Range requests
+  (video seeking) natively. On the local driver the server proxies as before.
+- **All three clients (web, macOS, iOS) switch to presign→PUT→complete in this
+  phase** — parity stays clean. The multipart endpoint keeps working (now
+  writing plaintext) for un-upgraded clients and the Slack-compat surface.
+- **Everything on the Railway volume migrates to R2** (decrypt-and-copy at
+  boot behind `FLOW_MIGRATE_BLOBS=1`; volume kept as rollback safety net until
+  prod verification, then droppable). Uploads size-bind via the signature:
+  content-length/type are signed headers, so the 20 MB cap holds even though
+  the server never sees the upload.
+- Local dev keeps the disk driver with a server-proxied fallback
+  (`PUT /v1/files/:id/content`) behind the same client code path, so dev needs
+  no R2 credentials and clients have no driver awareness.
+
 ## 2026-07-20 — First-class AI agents: build decisions (PM rulings, pending operator review)
 
 Implementation decisions made while building AGENTS_DESIGN.md; the design's

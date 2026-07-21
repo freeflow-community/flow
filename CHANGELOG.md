@@ -51,6 +51,32 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — Cloudflare R2 storage + presigned direct uploads
+- File blobs move from local disk / Railway volume to Cloudflare R2 behind the
+  existing `BlobStore` seam (`FLOW_BLOB_DRIVER=r2`); the app service becomes
+  stateless. Local dev keeps the disk driver, no credentials needed. `[server]`
+- New upload flow on all clients: `POST …/files/presign` reserves a `pending`
+  files row and mints a presigned PUT URL (content-length/type are signed, so
+  the 20 MB cap holds server-side-unseen); client PUTs the bytes straight to
+  R2, then `POST /v1/files/:id/complete` verifies the object, generates image
+  thumbnails/dimensions, and flips the row to `ready`. Pending files are
+  neither attachable nor downloadable; stale ones are orphan-swept. On the
+  local driver the presign response points at a server-proxied
+  `PUT /v1/files/:id/content` fallback — same client code path. `[server] [web] [macos] [ios]`
+- Downloads/thumbnails 302-redirect to short-lived presigned R2 URLs after the
+  usual access checks (Range/video seeking served by R2); proxied as before on
+  the local driver and for legacy encrypted rows. Native clients strip the
+  bearer token when a redirect leaves the API host (S3 rejects dual auth);
+  browsers do this per the fetch spec. `[server] [web] [macos] [ios]`
+- Encryption posture change (operator ruling, see decision_log): R2-era file
+  blobs are stored plaintext (R2 at-rest encryption + short-lived URLs);
+  `enc_key_id` is now nullable and NULL means plaintext. Legacy encrypted
+  blobs still decrypt; `FLOW_MIGRATE_BLOBS=1` runs the one-time
+  decrypt-and-copy volume→R2 migration at boot (migration 0013). Message-body
+  encryption is unchanged. `[server]`
+- The legacy multipart upload endpoint still works (Slack-compat `files.upload`
+  and old clients) and now writes plaintext too. `[server]`
+
 ### 2026-07-20 — Web: invite link defaults to Register
 - A pending workspace invite now opens the auth screen on **Register** (email-first)
   instead of Sign In — invitees usually have no account yet. Explicit email-link

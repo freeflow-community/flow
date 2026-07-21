@@ -1,5 +1,5 @@
 // REST client: same-origin (Vite proxy in dev, Fastify static in prod).
-import type { FileDTO } from '@flow/shared';
+import type { FileDTO, PresignedUploadDTO } from '@flow/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -43,20 +43,25 @@ export async function api<T>(
   return json as T;
 }
 
+/** Presigned upload: reserve → PUT the bytes (direct to R2, or the server-proxied
+ * fallback in local dev) → complete (server verifies + thumbnails). */
 export async function uploadFile(workspaceId: string, file: File): Promise<FileDTO> {
-  const form = new FormData();
-  form.append('file', file, file.name);
-  const res = await fetch(`/v1/workspaces/${workspaceId}/files`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${getToken() ?? ''}` },
-    body: form,
+  const pres = await api<PresignedUploadDTO>('POST', `/v1/workspaces/${workspaceId}/files/presign`, {
+    filename: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    sizeBytes: file.size,
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = (json as { error?: { code: string; message: string } }).error;
-    throw new ApiError(res.status, err?.code ?? 'upload_failed', err?.message ?? 'upload failed');
-  }
-  return json as FileDTO;
+  const relative = pres.upload.url.startsWith('/'); // fallback URL needs our auth; R2 must NOT see it
+  const put = await fetch(pres.upload.url, {
+    method: pres.upload.method,
+    headers: {
+      ...pres.upload.headers,
+      ...(relative ? { authorization: `Bearer ${getToken() ?? ''}` } : {}),
+    },
+    body: file,
+  });
+  if (!put.ok) throw new ApiError(put.status, 'upload_failed', `upload failed (HTTP ${put.status})`);
+  return api<FileDTO>('POST', `/v1/files/${pres.file.id}/complete`);
 }
 
 export async function uploadAvatar(file: File): Promise<unknown> {

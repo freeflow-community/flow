@@ -192,7 +192,8 @@ export const files = pgTable('files', {
   mimeType: text('mime_type').notNull(),
   sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
   storageKey: text('storage_key').notNull(),
-  encKeyId: text('enc_key_id').notNull(),
+  encKeyId: text('enc_key_id'), // NULL = plaintext blob (R2 era; legacy rows decrypt via keyring)
+  status: text('status').notNull().default('ready'), // 'pending' until a presigned upload is confirmed
   width: integer('width'),
   height: integer('height'),
   thumbKey: text('thumb_key'),

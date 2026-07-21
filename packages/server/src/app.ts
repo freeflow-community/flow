@@ -17,6 +17,14 @@ export function buildApp(): FastifyInstance {
   void app.register(multipart, {
     limits: { fileSize: config.maxFileBytes, files: 1, fields: 4 },
   });
+  // Raw-bytes catch-all for the local-driver presigned-upload fallback
+  // (PUT /v1/files/:id/content arrives as image/png, application/pdf, …).
+  // Only kicks in when no specific parser (json/form/multipart) matches —
+  // except text/plain, whose built-in string parser we override to bytes too
+  // (nothing else consumes text bodies; Slack-compat is form/multipart).
+  const rawBody = { parseAs: 'buffer', bodyLimit: config.maxFileBytes } as const;
+  app.addContentTypeParser('*', rawBody, (_req, body, done) => done(null, body));
+  app.addContentTypeParser('text/plain', rawBody, (_req, body, done) => done(null, body));
   registerRoutes(app);
   registerSlackCompat(app); // Slack Web API compat surface at /api/* (phase4.md §1)
 

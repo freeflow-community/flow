@@ -54,6 +54,25 @@ export const config = {
   get fileDir(): string {
     return process.env.FLOW_FILE_DIR ?? path.join(pkgRoot, '.files');
   },
+  // ---- blob storage driver -------------------------------------
+  /** 'local' stores under fileDir; 'r2' stores in Cloudflare R2 (S3 API) and enables presigned direct upload/download. */
+  get blobDriver(): 'local' | 'r2' {
+    return process.env.FLOW_BLOB_DRIVER === 'r2' ? 'r2' : 'local';
+  },
+  get r2Bucket(): string {
+    return process.env.FLOW_R2_BUCKET ?? 'flow-files';
+  },
+  get r2Endpoint(): string | undefined {
+    return process.env.CLOUDFLARE_S3_ENDPOINT;
+  },
+  get r2AccessKeyId(): string | undefined {
+    return process.env.CLOUDFLARE_ACCESS_KEY_ID;
+  },
+  get r2SecretAccessKey(): string | undefined {
+    return process.env.CLOUDFLARE_SECRET_ACCESS_KEY;
+  },
+  presignPutTtlSeconds: 15 * 60, // client has this long to finish a direct upload
+  presignGetTtlSeconds: 5 * 60, // downloads: minted per-request after the access check
   maxFileBytes: 20 * 1024 * 1024, // 20 MB/file (phase2.md §3)
   maxFilesPerMessage: 10,
   thumbMaxPx: 512,

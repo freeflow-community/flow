@@ -6,14 +6,31 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
+import { R2Store } from './r2.js';
+
+export interface PresignedUpload {
+  url: string;
+  method: 'PUT';
+  headers: Record<string, string>;
+}
 
 export interface BlobStore {
   put(key: string, data: Buffer): Promise<void>;
   get(key: string): Promise<Buffer>;
   delete(key: string): Promise<void>;
+  /** Object size, or null if the key doesn't exist. */
+  head(key: string): Promise<{ size: number } | null>;
+  /**
+   * Direct-upload URL for exactly contentLength bytes of contentType, or null
+   * when the driver can't mint one (local dev) — the caller then falls back to
+   * a server-proxied upload URL so clients keep a single code path.
+   */
+  presignPut(key: string, opts: { contentType: string; contentLength: number }): Promise<PresignedUpload | null>;
+  /** Short-lived direct-download URL, or null when the driver must proxy. */
+  presignGet(key: string, opts: { filename?: string; contentType?: string; inline?: boolean }): Promise<string | null>;
 }
 
-class LocalDirStore implements BlobStore {
+export class LocalDirStore implements BlobStore {
   constructor(private readonly root: string) {}
 
   private resolve(key: string): string {
@@ -42,12 +59,36 @@ class LocalDirStore implements BlobStore {
       if (err.code !== 'ENOENT') throw err; // idempotent delete
     });
   }
+
+  async head(key: string): Promise<{ size: number } | null> {
+    try {
+      const st = await fs.stat(this.resolve(key));
+      return { size: st.size };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  }
+
+  async presignPut(): Promise<null> {
+    return null;
+  }
+
+  async presignGet(): Promise<null> {
+    return null;
+  }
 }
 
 let store: BlobStore | null = null;
 
 export function blobStore(): BlobStore {
-  if (!store) store = new LocalDirStore(config.fileDir);
+  if (!store) {
+    if (config.blobDriver === 'r2') {
+      store = new R2Store(config.r2Bucket);
+    } else {
+      store = new LocalDirStore(config.fileDir);
+    }
+  }
   return store;
 }
 

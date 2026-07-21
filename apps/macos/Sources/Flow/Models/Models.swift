@@ -75,6 +75,19 @@ struct ReactionAgg: Codable, Sendable, Equatable {
     var userIds: [String]
 }
 
+/// Server response for POST …/files/presign (R2-era direct upload): PUT the
+/// bytes to `upload.url` with the given headers, then POST /files/:id/complete.
+struct PresignedUpload: Codable, Sendable {
+    struct Target: Codable, Sendable {
+        var url: String // absolute (R2) or server-relative (local-dev fallback)
+        var method: String
+        var headers: [String: String]
+    }
+
+    var file: FileAttachment
+    var upload: Target
+}
+
 /// A file attached to a message (server FileDTO shape).
 struct FileAttachment: Codable, Sendable, Equatable, Identifiable {
     var id: String

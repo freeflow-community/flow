@@ -1,22 +1,20 @@
-// Files: encrypted blobs + thumbnails (phase2.md §3).
+// Files: blobs + thumbnails (phase2.md §3), R2-era direct uploads (2026-07-20).
 //
-// Upload-then-attach: POST /files returns a fileId; the client references it in
-// a later message send. Blobs and thumbnails are AES-256-GCM envelope-encrypted
-// (nonce prepended) — the storage layer only ever sees ciphertext. Orphaned
-// uploads (never attached within 24h) are swept at boot + daily in-process
-// (decision log ruling 5 — no scheduler infrastructure).
-//
-// NOTE on "streamed" downloads: with a 20 MB cap we buffer whole blobs — GCM
-// must verify the auth tag before any plaintext can be trusted anyway, and
-// buffering keeps unauthenticated bytes from ever leaving the process.
+// Upload-then-attach: clients either POST multipart to /files (legacy path,
+// server writes the blob) or presign→PUT→complete (direct-to-R2; the server
+// never sees the bytes). New blobs are stored as PLAINTEXT — R2 encrypts at
+// rest and every URL is minted after an access check (decision log, R2
+// ruling). Legacy rows (enc_key_id set) still decrypt through the keyring.
+// Orphaned uploads — never attached, or presigned but never completed — are
+// swept at boot + daily in-process (decision log ruling 5).
 import path from 'node:path';
 import sharp from 'sharp';
 import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
-import type { FileDTO } from '@flow/shared';
+import type { FileDTO, PresignedUploadDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, notFound } from '../lib/errors.js';
-import { encryptBlob, decryptBlob } from '../crypto/index.js';
+import { decryptBlob } from '../crypto/index.js';
 import { blobStore } from '../storage/index.js';
 import { config } from '../config.js';
 import { requireMembership } from './workspaces.js';
@@ -62,34 +60,9 @@ export async function uploadFile(
   // sanitize the original name for display: strip any path components
   const name = path.basename(filename || 'file').slice(0, 255) || 'file';
 
-  let width: number | null = null;
-  let height: number | null = null;
-  let thumbKey: string | null = null;
-
   const store = blobStore();
-  const enc = encryptBlob(data);
-  await store.put(storageKey, enc.blob);
-
-  if (IMAGE_MIMES.has(mimeType)) {
-    try {
-      const img = sharp(data, { animated: false });
-      const meta = await img.metadata();
-      width = meta.width ?? null;
-      height = meta.height ?? null;
-      // max-512px thumbnail (fit inside, never enlarge), webp keeps alpha
-      const thumb = await img
-        .resize({ width: config.thumbMaxPx, height: config.thumbMaxPx, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 80 })
-        .toBuffer();
-      thumbKey = `thumbs/${id}`;
-      const encThumb = encryptBlob(thumb);
-      await store.put(thumbKey, encThumb.blob);
-    } catch {
-      // not actually a decodable image — keep the file, skip the preview
-      width = height = null;
-      thumbKey = null;
-    }
-  }
+  await store.put(storageKey, data);
+  const { width, height, thumbKey } = await makeThumbnail(id, mimeType, data);
 
   const inserted = await db
     .insert(files)
@@ -101,13 +74,140 @@ export async function uploadFile(
       mimeType,
       sizeBytes: data.length,
       storageKey,
-      encKeyId: enc.encKeyId,
+      encKeyId: null,
       width,
       height,
       thumbKey,
     })
     .returning();
   return toFileDTO(inserted[0]!);
+}
+
+/** Image sidecar: dimensions + max-512px webp thumbnail stored at thumbs/<id>. */
+async function makeThumbnail(
+  id: string,
+  mimeType: string,
+  data: Buffer,
+): Promise<{ width: number | null; height: number | null; thumbKey: string | null }> {
+  if (!IMAGE_MIMES.has(mimeType)) return { width: null, height: null, thumbKey: null };
+  try {
+    const img = sharp(data, { animated: false });
+    const meta = await img.metadata();
+    // max-512px thumbnail (fit inside, never enlarge), webp keeps alpha
+    const thumb = await img
+      .resize({ width: config.thumbMaxPx, height: config.thumbMaxPx, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+    const thumbKey = `thumbs/${id}`;
+    await blobStore().put(thumbKey, thumb);
+    return { width: meta.width ?? null, height: meta.height ?? null, thumbKey };
+  } catch {
+    // not actually a decodable image — keep the file, skip the preview
+    return { width: null, height: null, thumbKey: null };
+  }
+}
+
+/**
+ * Presigned direct upload, step 1: reserve a files row ('pending') and mint an
+ * upload URL. On R2 the URL goes straight to the bucket with the declared
+ * content-length/type baked into the signature (the size cap holds without the
+ * server seeing bytes). On the local driver we fall back to a server-proxied
+ * PUT (/v1/files/:id/content) so clients keep a single code path.
+ */
+export async function createPresignedUpload(
+  workspaceId: string,
+  userId: string,
+  filename: string,
+  mimeType: string,
+  sizeBytes: number,
+): Promise<PresignedUploadDTO> {
+  await requireMembership(workspaceId, userId);
+  if (sizeBytes <= 0) throw badRequest('empty_file', 'file is empty');
+  if (sizeBytes > config.maxFileBytes) {
+    throw badRequest('file_too_large', `files are limited to ${config.maxFileBytes} bytes`);
+  }
+
+  const id = newId();
+  const storageKey = `files/${id}`;
+  const name = path.basename(filename || 'file').slice(0, 255) || 'file';
+
+  const inserted = await db
+    .insert(files)
+    .values({
+      id,
+      workspaceId,
+      userId,
+      name,
+      mimeType,
+      sizeBytes,
+      storageKey,
+      encKeyId: null,
+      status: 'pending',
+    })
+    .returning();
+
+  const presigned = await blobStore().presignPut(storageKey, { contentType: mimeType, contentLength: sizeBytes });
+  const upload = presigned ?? {
+    url: `/v1/files/${id}/content`,
+    method: 'PUT' as const,
+    headers: { 'content-type': mimeType },
+  };
+  return { file: toFileDTO(inserted[0]!), upload };
+}
+
+/** Local-driver fallback for the presigned flow: accept the bytes ourselves. */
+export async function putPendingContent(fileId: string, userId: string, data: Buffer): Promise<void> {
+  const f = await requirePendingOwned(fileId, userId);
+  // mirror R2's signed-content-length contract: the declared size is binding
+  if (data.length !== f.sizeBytes) {
+    throw badRequest('size_mismatch', `expected ${f.sizeBytes} bytes, got ${data.length}`);
+  }
+  await blobStore().put(f.storageKey, data);
+}
+
+/**
+ * Presigned direct upload, step 2: client says the PUT finished. Verify the
+ * object really exists with the declared size, generate the image sidecar
+ * (dimensions + thumbnail), and flip the row to 'ready'. Idempotent.
+ */
+export async function completeUpload(fileId: string, userId: string): Promise<FileDTO> {
+  const rows = await db.select().from(files).where(and(eq(files.id, fileId), isNull(files.deletedAt))).limit(1);
+  const f = rows[0];
+  if (!f || f.userId !== userId) throw notFound('file not found');
+  if (f.status === 'ready') return toFileDTO(f);
+
+  const store = blobStore();
+  const head = await store.head(f.storageKey);
+  if (!head) throw badRequest('upload_incomplete', 'no object was uploaded for this file');
+  if (head.size !== f.sizeBytes) {
+    // R2 signs content-length so this can't happen there; guards the local fallback
+    throw badRequest('size_mismatch', `expected ${f.sizeBytes} bytes, found ${head.size}`);
+  }
+
+  let sidecar: { width: number | null; height: number | null; thumbKey: string | null } = {
+    width: null,
+    height: null,
+    thumbKey: null,
+  };
+  if (IMAGE_MIMES.has(f.mimeType)) {
+    sidecar = await makeThumbnail(f.id, f.mimeType, await store.get(f.storageKey));
+  }
+
+  const updated = await db
+    .update(files)
+    .set({ status: 'ready', width: sidecar.width, height: sidecar.height, thumbKey: sidecar.thumbKey })
+    .where(and(eq(files.id, fileId), eq(files.status, 'pending')))
+    .returning();
+  // lost a race with a concurrent complete — both saw the same object, re-read is safe
+  return toFileDTO(updated[0] ?? { ...f, status: 'ready', ...sidecar });
+}
+
+async function requirePendingOwned(fileId: string, userId: string): Promise<FileRow> {
+  const rows = await db.select().from(files).where(and(eq(files.id, fileId), isNull(files.deletedAt))).limit(1);
+  const f = rows[0];
+  if (!f || f.userId !== userId) throw notFound('file not found');
+  if (f.status !== 'pending') throw badRequest('already_uploaded', 'file upload was already completed');
+  return f;
 }
 
 /**
@@ -117,7 +217,11 @@ export async function uploadFile(
  * Unattached files are visible to the uploader only.
  */
 async function requireFileAccess(fileId: string, userId: string): Promise<FileRow> {
-  const rows = await db.select().from(files).where(and(eq(files.id, fileId), isNull(files.deletedAt))).limit(1);
+  const rows = await db
+    .select()
+    .from(files)
+    .where(and(eq(files.id, fileId), isNull(files.deletedAt), eq(files.status, 'ready')))
+    .limit(1);
   const f = rows[0];
   if (!f) throw notFound('file not found');
   if (f.userId === userId) return f;
@@ -145,17 +249,36 @@ export interface FileContent {
   name: string;
 }
 
-export async function getFileContent(fileId: string, userId: string): Promise<FileContent> {
-  const f = await requireFileAccess(fileId, userId);
-  const blob = await blobStore().get(f.storageKey);
-  return { data: decryptBlob(blob, f.encKeyId), mimeType: f.mimeType, name: f.name };
+/** Access-checked download: a short-lived signed URL when the driver can mint
+ * one (client is 302'd straight to R2), else the proxied bytes. */
+export type FileDownload = { redirect: string } | { content: FileContent };
+
+function readBlob(key: string, encKeyId: string | null): Promise<Buffer> {
+  return blobStore()
+    .get(key)
+    .then((blob) => (encKeyId ? decryptBlob(blob, encKeyId) : blob));
 }
 
-export async function getThumbContent(fileId: string, userId: string): Promise<FileContent> {
+export async function getFileDownload(fileId: string, userId: string): Promise<FileDownload> {
+  const f = await requireFileAccess(fileId, userId);
+  if (!f.encKeyId) {
+    // legacy encrypted rows can't be served by R2 directly — proxy those
+    const url = await blobStore().presignGet(f.storageKey, { filename: f.name, contentType: f.mimeType });
+    if (url) return { redirect: url };
+  }
+  return { content: { data: await readBlob(f.storageKey, f.encKeyId), mimeType: f.mimeType, name: f.name } };
+}
+
+export async function getThumbDownload(fileId: string, userId: string): Promise<FileDownload> {
   const f = await requireFileAccess(fileId, userId);
   if (!f.thumbKey) throw notFound('no thumbnail for this file');
-  const blob = await blobStore().get(f.thumbKey);
-  return { data: decryptBlob(blob, f.encKeyId), mimeType: 'image/webp', name: `${f.name}.thumb.webp` };
+  if (!f.encKeyId) {
+    const url = await blobStore().presignGet(f.thumbKey, { contentType: 'image/webp', inline: true });
+    if (url) return { redirect: url };
+  }
+  return {
+    content: { data: await readBlob(f.thumbKey, f.encKeyId), mimeType: 'image/webp', name: `${f.name}.thumb.webp` },
+  };
 }
 
 /**
@@ -175,7 +298,7 @@ export async function validateAttachments(
   const rows = await db
     .select()
     .from(files)
-    .where(and(inArray(files.id, fileIds), isNull(files.deletedAt)));
+    .where(and(inArray(files.id, fileIds), isNull(files.deletedAt), eq(files.status, 'ready')));
   const byId = new Map(rows.map((r) => [r.id, r]));
   for (const fid of fileIds) {
     const f = byId.get(fid);

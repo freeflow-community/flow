@@ -16,6 +16,26 @@ struct APIError: Error, LocalizedError, Sendable {
     var errorDescription: String? { message }
 }
 
+/// Strips the Authorization header when a redirect leaves the API host — the
+/// server 302s file downloads to presigned R2 URLs, and S3-style endpoints
+/// reject requests carrying both a signed query string and an Authorization
+/// header. (CFNetwork's own header handling on redirects is inconsistent
+/// across OS versions; this makes the behavior explicit.)
+private final class RedirectSanitizer: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        var req = request
+        if req.url?.host != task.originalRequest?.url?.host {
+            req.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(req)
+    }
+}
+
 /// REST client for the Flow backend. Holds the bearer token; all requests
 /// are async/await over URLSession.
 actor APIClient {
@@ -30,7 +50,7 @@ actor APIClient {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
         config.waitsForConnectivity = false
-        self.session = URLSession(configuration: config)
+        self.session = URLSession(configuration: config, delegate: RedirectSanitizer(), delegateQueue: nil)
     }
 
     func setToken(_ token: String?) {
@@ -84,6 +104,31 @@ actor APIClient {
             "POST", path, query: [], bodyData: body,
             contentType: "multipart/form-data; boundary=\(boundary)"
         )
+    }
+
+    /// PUT raw bytes to a presigned upload target. Absolute URLs (R2) must not
+    /// carry our bearer token; the server-relative local-dev fallback needs it.
+    func putRaw(_ target: String, headers: [String: String], data: Data) async throws {
+        guard let url = URL(string: target, relativeTo: baseURL) else {
+            throw APIError(status: 0, code: "bad_url", message: "invalid upload URL")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "PUT"
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        if target.hasPrefix("/"), let token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = data
+        let response: URLResponse
+        do {
+            (_, response) = try await session.data(for: req)
+        } catch {
+            throw APIError(status: 0, code: "network", message: error.localizedDescription)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw APIError(status: status, code: "upload_failed", message: "upload failed (HTTP \(status))")
+        }
     }
 
     /// Authenticated raw-byte GET (file downloads, thumbnails, avatars).

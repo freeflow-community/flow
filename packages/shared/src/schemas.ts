@@ -259,3 +259,11 @@ export const UpdateAppBody = z
   })
   .refine((b) => b.eventUrl !== undefined || b.eventTypes !== undefined, 'nothing to update');
 export type UpdateAppBody = z.infer<typeof UpdateAppBody>;
+
+// ---- files: presigned direct upload (R2) -----------------------
+export const PresignUploadBody = z.object({
+  filename: z.string().min(1).max(512),
+  mimeType: z.string().min(1).max(255),
+  sizeBytes: z.number().int().positive(),
+});
+export type PresignUploadBody = z.infer<typeof PresignUploadBody>;

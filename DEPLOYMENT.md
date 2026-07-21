@@ -50,7 +50,12 @@ Secrets live only in Railway service variables — never in the repo.
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_KEY` | Email Service REST API credentials |
 | `FLOW_EMAIL_FROM` | `noreply@mail.flowtoo.org` |
 | `FLOW_WEB_URL` | `https://app.flowtoo.org` — base URL baked into emailed signup/reset links |
-| `FLOW_FILE_DIR` | `/data/files` (on the persistent volume) |
+| `FLOW_FILE_DIR` | `/data/files` (on the persistent volume) — only read by the local blob driver and the one-time R2 migration |
+| `FLOW_BLOB_DRIVER` | `r2` — file/thumb/avatar blobs in Cloudflare R2, presigned direct upload/download. Unset/`local` = disk under `FLOW_FILE_DIR`. |
+| `CLOUDFLARE_S3_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `CLOUDFLARE_ACCESS_KEY_ID` / `CLOUDFLARE_SECRET_ACCESS_KEY` | R2 S3-API token pair |
+| `FLOW_R2_BUCKET` | Bucket name (default `flow-files`) |
+| `FLOW_MIGRATE_BLOBS` | Set to `1` for ONE deploy to run the volume→R2 decrypt-and-copy at boot (idempotent; watch logs for `blob migration to R2 finished`), then remove. |
 
 ## Operations
 
@@ -107,7 +112,7 @@ Email Service onboarding, separately from this record.
 | DB | docker Postgres :5442 | Neon (TLS) |
 | Email | dev driver → `.emails/` outbox + console link | Cloudflare, real sends |
 | `autoVerify` register bypass (QA scripts, macOS dev) | works | ignored by design |
-| Blobs | `packages/server/.files/` | Railway volume `/data/files` |
+| Blobs | `packages/server/.files/` (disk driver, server-proxied uploads) | Cloudflare R2 `flow-files` (presigned direct up/download; volume `/data/files` legacy) |
 | Data key | `.keys/data.key.json` (auto-created) | `FLOW_DATA_KEY` env |
 | Web URL in emails | `http://127.0.0.1:8787` | `https://app.flowtoo.org` |
 
@@ -122,10 +127,10 @@ bootstraps their own workspace.
   `https://app.flowtoo.org` (`FlowServerURL` in Info.plist via make-app.sh;
   `FLOW_SERVER_URL` env overrides; bare `swift run` still defaults local).
   Per-server storage isolation keeps prod/dev sessions and caches separate.
-- **Blobs on volume, not R2** — the `BlobStore` seam in
-  `packages/server/src/storage/` is ready for a Cloudflare R2 driver
-  (S3-compatible; credentials already provisioned). That would make the app
-  service stateless.
+- ~~Blobs on volume, not R2~~ — done: `FLOW_BLOB_DRIVER=r2` stores blobs in
+  Cloudflare R2 with presigned direct upload/download (see decision_log
+  2026-07-20). After a verified `FLOW_MIGRATE_BLOBS=1` run, the `/data`
+  volume is only a rollback safety net and can be dropped.
 - **No monitoring/alerting**; Neon free tier keeps ~6 h of point-in-time
   history. Revisit backups before real data accumulates.
 - Single app instance. Multi-node was scoped in phase 4 (NATS is already the

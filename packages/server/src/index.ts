@@ -23,6 +23,11 @@ async function main(): Promise<void> {
   app.log.info(`ws gateway attached at ws://${config.host}:${config.port}/v1/ws`);
   app.log.info(`socket-mode compat attached at ws://${config.host}:${config.port}/api/socket-mode`);
 
+  if (process.env.FLOW_MIGRATE_BLOBS === '1') {
+    // one-time volume → R2 copy; blocks boot-completion work but not serving
+    const { runBlobMigration } = await import('./tools/migrateBlobsToR2.js');
+    void runBlobMigration(app.log).catch((err) => app.log.error(err, 'blob migration failed'));
+  }
   void purgeExpiredSessions().catch(() => {});
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
   startAppEventsWorker(app.log); // Events API outbox drain (phase 4)

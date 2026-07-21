@@ -90,6 +90,17 @@ export interface FileDTO {
   createdAt: string;
 }
 
+/** Response of POST /v1/workspaces/:id/files/presign: upload the bytes to
+ * `upload.url` with the given method/headers, then POST /v1/files/:id/complete. */
+export interface PresignedUploadDTO {
+  file: FileDTO;
+  upload: {
+    url: string; // absolute (R2) or server-relative (local-dev fallback, needs auth header)
+    method: 'PUT';
+    headers: Record<string, string>;
+  };
+}
+
 export interface MessageDTO {
   id: string;
   channelId: string;
