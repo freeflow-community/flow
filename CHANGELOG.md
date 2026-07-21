@@ -44,6 +44,22 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — Agent bridge daemon (packages/agent-bridge)
+- New workspace package: consumes Flow events over the agent-token WS (real
+  presence) and execs a coding-agent CLI headlessly per conversation.
+  Session map (channelId, threadRootId) → `--session-id` / `--resume`;
+  concurrent across conversations (cap N), serial within one; `/reset`
+  clears the mapping. Claude runtime first (stream-json), codex stubbed.
+  Thinking steps per operator ruling: one 🤖 *thinking…* status message
+  posted on first tool_use, edited in place per tool call, deleted on
+  completion (final reply posts fresh); typing indicator alongside;
+  progress = thinking|typing|silent. MCP rich mode v1: bundled `flow`
+  stdio server (send_message, react, upload_file, search_history) passed
+  via --mcp-config. Safety: sender gating, self/agent loop guard,
+  --max-turns + wall-clock timeout, per-agent permission flags. Fake-runtime
+  e2e (scripts/e2e.mjs) covers the full DM/thread/reset/loop-guard matrix.
+  `[server]` (bridge is client-agnostic tooling; no client UI involved)
+
 ### 2026-07-20 — First-class AI agents: server identity + auth (AGENTS_DESIGN.md)
 - Agents are real users (`users.is_agent`), invited by single-use key
   (`agent_invites`, 7d expiry, replay-rejected) via

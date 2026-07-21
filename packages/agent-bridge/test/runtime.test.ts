@@ -1,0 +1,84 @@
+import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { StreamJsonParser, formatToolStep } from '../src/runtime.js';
+import { loadConfig } from '../src/config.js';
+
+describe('StreamJsonParser', () => {
+  it('collects tool steps and the final result across chunk boundaries', () => {
+    const steps: string[] = [];
+    const p = new StreamJsonParser((s) => steps.push(s));
+    const line1 = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'pnpm test' } }] },
+    });
+    const line2 = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'thinking' }, { type: 'tool_use', name: 'Read', input: { file_path: '/a/b/c.ts' } }] },
+    });
+    const line3 = JSON.stringify({ type: 'result', subtype: 'success', result: 'all done', is_error: false });
+    const raw = `${line1}\n${line2}\n${line3}\n`;
+    // feed in awkward chunks
+    p.feed(raw.slice(0, 20));
+    p.feed(raw.slice(20, 21));
+    p.feed(raw.slice(21));
+    expect(steps).toEqual(['Bash: pnpm test', 'Read: c.ts']);
+    expect(p.sawResult).toBe(true);
+    expect(p.isError).toBe(false);
+    expect(p.finalText).toBe('all done');
+  });
+
+  it('ignores non-JSON noise and flags error results', () => {
+    const p = new StreamJsonParser(() => {});
+    p.feed('not json at all\n');
+    p.feed(`${JSON.stringify({ type: 'result', subtype: 'error_max_turns', result: 'ran out' })}\n`);
+    expect(p.sawResult).toBe(true);
+    expect(p.isError).toBe(true);
+    expect(p.finalText).toBe('ran out');
+  });
+});
+
+describe('formatToolStep', () => {
+  it('formats common tools one-line', () => {
+    expect(formatToolStep('Bash', { command: 'ls   -la' })).toBe('Bash: ls -la');
+    expect(formatToolStep('Grep', { pattern: 'foo.*bar' })).toBe('Grep: foo.*bar');
+    expect(formatToolStep('mcp__flow__send_message', {})).toBe('Flow: send_message');
+    expect(formatToolStep('SomethingNew', {})).toBe('SomethingNew');
+    const long = 'x'.repeat(200);
+    expect(formatToolStep('Bash', { command: long }).length).toBeLessThanOrEqual('Bash: '.length + 80);
+  });
+});
+
+describe('loadConfig', () => {
+  it('applies defaults and resolves cwd relative to the config file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
+    const p = path.join(dir, 'agent.json');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ serverUrl: 'http://127.0.0.1:8787/', agentToken: 'flow-agent-token-x', runtime: { cwd: 'work' } }),
+    );
+    const cfg = loadConfig(p);
+    expect(cfg.serverUrl).toBe('http://127.0.0.1:8787'); // trailing slash stripped
+    expect(cfg.runtime.kind).toBe('claude');
+    expect(cfg.runtime.command).toBe('claude');
+    expect(cfg.runtime.cwd).toBe(path.join(dir, 'work'));
+    expect(cfg.eventScope).toBe('mentions');
+    expect(cfg.progress).toBe('thinking');
+    expect(cfg.respondToAgents).toBe(false);
+    expect(cfg.concurrency).toBe(4);
+    expect(cfg.runtime.mcp).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rejects bad values', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
+    const p = path.join(dir, 'agent.json');
+    fs.writeFileSync(p, JSON.stringify({ serverUrl: 'http://x', agentToken: 't', eventScope: 'sometimes' }));
+    expect(() => loadConfig(p)).toThrow(/eventScope/);
+    fs.writeFileSync(p, JSON.stringify({ agentToken: 't' }));
+    delete process.env.FLOW_SERVER_URL;
+    expect(() => loadConfig(p)).toThrow(/serverUrl/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
