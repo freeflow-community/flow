@@ -98,6 +98,15 @@ struct SidebarView: View {
                         dmRow(channel)
                     }
 
+                    // Artifact tabs (phase 9): personal file bookmarks; the
+                    // section only appears once something is saved.
+                    if !app.artifacts.isEmpty {
+                        sectionHeader("Artifacts") {}
+                        ForEach(app.artifacts) { artifact in
+                            artifactRow(artifact)
+                        }
+                    }
+
                     if !browsableChannels.isEmpty {
                         sectionHeader("Browse") {}
                         ForEach(browsableChannels) { channel in
@@ -229,7 +238,9 @@ struct SidebarView: View {
     }
 
     private func channelRow(_ channel: Channel) -> some View {
-        let active = app.selectedChannelId == channel.id
+        // An open artifact panel takes the highlight (the channel selection
+        // stays put behind it).
+        let active = app.selectedChannelId == channel.id && app.selectedArtifactId == nil
         return Button {
             app.selectChannel(channel.id)
         } label: {
@@ -274,7 +285,7 @@ struct SidebarView: View {
         let title = channel.displayTitle(
             userNames: userNames.value, currentUserId: app.currentUser?.id
         )
-        let active = app.selectedChannelId == channel.id
+        let active = app.selectedChannelId == channel.id && app.selectedArtifactId == nil
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }
         return Button {
@@ -331,6 +342,45 @@ struct SidebarView: View {
             if channel.kind == "group_dm" {
                 Button("Leave Conversation", role: .destructive) { leave(channel) }
             }
+        }
+    }
+
+    /// An artifact tab row (phase 9): selectable like a channel, type glyph +
+    /// name; remove via the context menu (never deletes the underlying file).
+    private func artifactRow(_ artifact: Artifact) -> some View {
+        let active = app.selectedArtifactId == artifact.id
+        return Button {
+            app.selectArtifact(artifact.id)
+        } label: {
+            HStack(spacing: 9) {
+                Text(artifact.file.artifactGlyph)
+                    .font(.system(size: 12))
+                    .opacity(active ? 0.7 : 0.85)
+                    .frame(width: 14)
+                Text(artifact.name)
+                    .font(.system(size: 14, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.82))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.artifact.\(artifact.name)")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+        .contextMenu {
+            Button("Remove Artifact", role: .destructive) { removeArtifact(artifact) }
+        }
+    }
+
+    private func removeArtifact(_ artifact: Artifact) {
+        Task {
+            do { try await app.engine.deleteArtifact(artifact) }
+            catch { app.showError(error.localizedDescription) }
         }
     }
 

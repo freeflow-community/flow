@@ -9,6 +9,7 @@ import {
 import type {
   AgentPairingRequestDTO,
   AppDTO,
+  ArtifactDTO,
   ChannelDTO,
   FileDTO,
   MessageDTO,
@@ -88,6 +89,16 @@ export function useAgentRequests() {
     queryFn: () => api<{ requests: AgentPairingRequestDTO[] }>('GET', '/v1/me/agent-requests'),
     select: (d) => d.requests,
     refetchInterval: 60_000,
+  });
+}
+
+/** My artifact bookmarks in a workspace (phase 9) — WS artifact.* events invalidate. */
+export function useArtifacts(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ['artifacts', workspaceId],
+    queryFn: () => api<{ artifacts: ArtifactDTO[] }>('GET', `/v1/workspaces/${workspaceId}/artifacts`),
+    select: (d) => d.artifacts,
+    enabled: workspaceId !== null,
   });
 }
 

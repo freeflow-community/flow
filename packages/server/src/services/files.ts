@@ -218,7 +218,7 @@ async function requirePendingOwned(fileId: string, userId: string): Promise<File
  * they can access (public → workspace member; private → channel member).
  * Unattached files are visible to the uploader only.
  */
-async function requireFileAccess(fileId: string, userId: string): Promise<FileRow> {
+export async function requireFileAccess(fileId: string, userId: string): Promise<FileRow> {
   const rows = await db
     .select()
     .from(files)
@@ -362,6 +362,9 @@ export async function sweepOrphanFiles(): Promise<number> {
       and(
         lt(files.createdAt, cutoff),
         sql`NOT EXISTS (SELECT 1 FROM message_files mf WHERE mf.file_id = ${files.id})`,
+        // phase 9: artifact-only files (e.g. MCP create_artifact uploads) are
+        // never attached to a message but must not be reaped
+        sql`NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.file_id = ${files.id})`,
       ),
     );
   const store = blobStore();

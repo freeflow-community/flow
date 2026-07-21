@@ -45,6 +45,7 @@ export default function App() {
     () => localStorage.getItem(ACTIVE_WS_KEY),
   );
   const [channelId, setChannelId] = useState<string | null>(null);
+  const [artifactId, setArtifactId] = useState<string | null>(null);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   // Admin panel pinned into the sidebar (per-device, admins only at render).
@@ -101,6 +102,7 @@ export default function App() {
     setUser(null);
     setWorkspaceId(null);
     setChannelId(null);
+    setArtifactId(null);
     setThreadRootId(null);
     setAdminPanelOpen(false);
     localStorage.removeItem(ADMIN_PANEL_KEY);
@@ -128,6 +130,7 @@ export default function App() {
         value={{
           workspaceId,
           channelId,
+          artifactId,
           threadRootId,
           editingMessageId,
           adminPanelOpen,
@@ -136,11 +139,18 @@ export default function App() {
             if (id) localStorage.setItem(ACTIVE_WS_KEY, id);
             else localStorage.removeItem(ACTIVE_WS_KEY);
             setChannelId(null);
+            setArtifactId(null);
             setThreadRootId(null);
             setEditingMessageId(null);
           },
           selectChannel: (id) => {
             setChannelId(id);
+            setArtifactId(null);
+            setThreadRootId(null);
+            setEditingMessageId(null);
+          },
+          selectArtifact: (id) => {
+            setArtifactId(id);
             setThreadRootId(null);
             setEditingMessageId(null);
           },

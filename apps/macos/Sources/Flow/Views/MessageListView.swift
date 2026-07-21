@@ -286,6 +286,9 @@ struct MessageRow: View {
                     onOpenThread(message.threadRootId ?? message.id)
                 }
             }
+            if !message.files.isEmpty, !message.isDeleted, !message.pending {
+                Button("Save as Artifact") { saveAsArtifact() }
+            }
             if isMine, !message.isDeleted, !message.pending {
                 Button("Edit…") { onEdit(message) }
                 Button("Delete", role: .destructive) { showDeleteConfirm = true }
@@ -319,6 +322,13 @@ struct MessageRow: View {
                 .help("Reply in thread")
                 .accessibilityIdentifier("msg.replyInThread")
             }
+            if !message.files.isEmpty {
+                Button(action: saveAsArtifact) {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .help("Save as artifact")
+                .accessibilityIdentifier("msg.saveArtifact")
+            }
             if isMine {
                 Button {
                     onEdit(message)
@@ -351,6 +361,25 @@ struct MessageRow: View {
         // hover: landing on it cancels the pending hide and keeps the menu up.
         .contentShape(Rectangle())
         .onHover { setHovering($0) }
+    }
+
+    /// Bookmarks the message's attached file(s) as personal artifacts
+    /// (phase 9, idempotent server-side); the newly created artifact's panel
+    /// opens automatically per spec.
+    private func saveAsArtifact() {
+        let files = message.files
+        guard !files.isEmpty else { return }
+        Task {
+            do {
+                var last: Artifact?
+                for file in files {
+                    last = try await app.engine.createArtifact(fileId: file.id)
+                }
+                if let last { app.selectArtifact(last.id) }
+            } catch {
+                app.showError("Couldn't save artifact: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Body blocks (phase-3.5 ruling 2)

@@ -30,6 +30,12 @@ final class AppState: ObservableObject {
     @Published var selectedWorkspaceId: String?
     @Published var selectedChannelId: String?
     @Published var openThreadRootId: String?
+    /// Open artifact tab (phase 9) — when set, the content pane shows the
+    /// artifact panel; the selected channel stays put behind it so closing
+    /// the artifact returns to it.
+    @Published var selectedArtifactId: String?
+    /// My artifact bookmarks for the active workspace (phase 9), newest first.
+    @Published private(set) var artifacts: [Artifact] = []
     @Published private(set) var connection: Connection = .connecting
     /// userId -> online?
     @Published private(set) var presence: [String: Bool] = [:]
@@ -74,6 +80,8 @@ final class AppState: ObservableObject {
             selectedWorkspaceId = nil
             selectedChannelId = nil
             openThreadRootId = nil
+            selectedArtifactId = nil
+            artifacts = []
         }
     }
 
@@ -82,6 +90,8 @@ final class AppState: ObservableObject {
         selectedWorkspaceId = nil
         selectedChannelId = nil
         openThreadRootId = nil
+        selectedArtifactId = nil
+        artifacts = []
         presence = [:]
         typing = [:]
         hasMore = [:]
@@ -127,6 +137,18 @@ final class AppState: ObservableObject {
         avatarPaths = paths
     }
 
+    func setArtifacts(_ list: [Artifact]) {
+        artifacts = list
+    }
+
+    /// Open artifact was removed (here or on another device): close the panel
+    /// back to the channel behind it.
+    func artifactBecameUnavailable(_ artifactId: String) {
+        if selectedArtifactId == artifactId {
+            selectedArtifactId = nil
+        }
+    }
+
     func setNotificationUnread(_ n: Int) {
         notificationUnread = n
         Banners.setBadge(n)
@@ -170,6 +192,8 @@ final class AppState: ObservableObject {
         selectedWorkspaceId = id
         selectedChannelId = nil
         openThreadRootId = nil
+        selectedArtifactId = nil
+        artifacts = []
         // Active workspace survives relaunch (phase 3.5 fixes).
         if let id {
             UserDefaults.standard.set(id, forKey: Self.activeWorkspaceKey)
@@ -190,10 +214,20 @@ final class AppState: ObservableObject {
     }
 
     func selectChannel(_ id: String?) {
+        // Selecting a channel always closes an open artifact panel — even
+        // when it's the same channel that's already behind the panel.
+        selectedArtifactId = nil
         guard id != selectedChannelId else { return }
         selectedChannelId = id
         openThreadRootId = nil
         Task { await engine.selectChannel(id) }
+    }
+
+    /// Opens (or closes, with nil) an artifact tab. The channel selection is
+    /// untouched: the panel covers the channel content and closing returns
+    /// to it.
+    func selectArtifact(_ id: String?) {
+        selectedArtifactId = id
     }
 
     func openThread(_ rootId: String?) {

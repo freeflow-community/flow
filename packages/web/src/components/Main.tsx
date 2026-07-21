@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
-import type { Event, MessageDTO, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
+import type { ArtifactDTO, Event, MessageDTO, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
@@ -11,6 +11,7 @@ import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
+import ArtifactView from './ArtifactView';
 import ThreadPanel from './ThreadPanel';
 import { OpenInAppBanner } from './OpenInApp';
 import NotificationsBell from './NotificationsBell';
@@ -165,6 +166,16 @@ export default function Main() {
         // an agent named this user as its sponsor — surface the approval prompt
         void qc.invalidateQueries({ queryKey: ['agentRequests'] });
         break;
+      case 'artifact.created':
+      case 'artifact.updated':
+      case 'artifact.deleted': {
+        // personal artifact bookmarks (phase 9): keep the sidebar list fresh;
+        // a deletion of the open artifact falls back to the channel behind it
+        void qc.invalidateQueries({ queryKey: ['artifacts', event.workspaceId] });
+        const a = event.data as ArtifactDTO;
+        if (event.type === 'artifact.deleted' && cur.artifactId === a.id) cur.selectArtifact(null);
+        break;
+      }
       case 'notification.created': {
         const n = event.data as NotificationDTO;
         void qc.invalidateQueries({ queryKey: ['notifications'] });
@@ -213,7 +224,9 @@ export default function Main() {
           <WorkspaceRail />
           <Sidebar />
           <div className="flex min-h-0 min-w-0 flex-1">
-            {sel.channelId === ADMIN_VIEW_ID ? (
+            {sel.artifactId ? (
+              <ArtifactView key={sel.artifactId} artifactId={sel.artifactId} />
+            ) : sel.channelId === ADMIN_VIEW_ID ? (
               <AdminView />
             ) : sel.channelId ? (
               <>

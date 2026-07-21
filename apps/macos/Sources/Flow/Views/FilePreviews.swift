@@ -44,6 +44,23 @@ extension FileAttachment {
     var isPDF: Bool {
         mimeType == "application/pdf" || name.lowercased().hasSuffix(".pdf")
     }
+
+    /// HTML renders sandboxed in the artifact panel (phase 9); in chat it
+    /// still previews as text.
+    var isHTML: Bool {
+        mimeType == "text/html"
+            || ["html", "htm"].contains((name as NSString).pathExtension.lowercased())
+    }
+
+    /// Sidebar glyph for an artifact row (phase 9) — mirrors web fileKind.ts.
+    var artifactGlyph: String {
+        if mimeType.hasPrefix("image/") { return "🖼️" }
+        if isVideo { return "🎬" }
+        if isPDF { return "📕" }
+        if isHTML { return "🌐" }
+        if isTextPreviewable { return "📝" }
+        return "📄"
+    }
 }
 
 /// Memory caches so scroll-recycled rows don't refetch/re-render previews.

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
+import { useQueryClient } from '@tanstack/react-query';
+import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
+import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { useAuth, useSelection } from '../state';
 import { useToggleReaction } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
@@ -117,6 +119,28 @@ function DayDivider({ iso }: { iso: string }) {
   );
 }
 
+/** Open-external glyph (box with an arrow leaving it) for the save-as-artifact
+ * action. The rest of the UI uses unicode/emoji glyphs, but no codepoint draws
+ * this mark — hence the one inline SVG. Strokes follow the button's text color. */
+function ExternalLinkIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-[15px] w-[15px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
+  );
+}
+
 /** "12m ago" style label for thread indicators. */
 function relTime(iso: string | null): string {
   if (!iso) return '';
@@ -144,6 +168,7 @@ function MessageRow({
 }) {
   const auth = useAuth();
   const sel = useSelection();
+  const qc = useQueryClient();
   const toggle = useToggleReaction();
   const [showPicker, setShowPicker] = useState(false);
   // Editing state lives in the selection context so the composer's ↑-to-edit
@@ -166,6 +191,17 @@ function MessageRow({
     const body = editText.trim();
     if (body) await api('PATCH', `/v1/messages/${message.id}`, { body });
     sel.setEditingMessage(null);
+  };
+
+  // Bookmark the message's file(s) as personal artifacts (phase 9); the new
+  // artifact panel is selected automatically per spec.
+  const bookmarkFiles = async () => {
+    let last: ArtifactDTO | null = null;
+    for (const f of message.files) {
+      last = await api<ArtifactDTO>('POST', '/v1/artifacts', { fileId: f.id });
+    }
+    await qc.invalidateQueries({ queryKey: ['artifacts', sel.workspaceId] });
+    if (last) sel.selectArtifact(last.id);
   };
 
   return (
@@ -302,6 +338,16 @@ function MessageRow({
               💬
             </button>
           )}
+          {message.files.length > 0 && (
+            <button
+              data-testid={`bookmark-artifact-${message.id}`}
+              className="flex items-center px-1 text-sm hover:bg-daypill"
+              title="Save as artifact"
+              onClick={() => void bookmarkFiles()}
+            >
+              <ExternalLinkIcon />
+            </button>
+          )}
           {mine && (
             <>
               <button
@@ -378,22 +424,6 @@ function persistCollapsed(fileId: string, collapsed: boolean): void {
   localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids.slice(-COLLAPSE_CAP)));
 }
 
-/** ASCII-ish formats that get an inline monospace preview (phase 6). */
-const TEXT_EXTS = new Set([
-  'txt', 'md', 'markdown', 'log', 'json', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
-  'py', 'rb', 'go', 'rs', 'java', 'c', 'cc', 'cpp', 'h', 'hpp', 'm', 'swift', 'kt',
-  'sh', 'bash', 'zsh', 'fish', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'xml',
-  'html', 'htm', 'css', 'scss', 'less', 'sql', 'csv', 'tsv', 'env', 'gitignore',
-]);
-const TEXT_MIMES = new Set([
-  'application/json', 'application/javascript', 'application/xml',
-  'application/x-sh', 'application/x-yaml',
-]);
-function isTextFile(file: FileDTO): boolean {
-  if (file.mimeType.startsWith('text/') || TEXT_MIMES.has(file.mimeType)) return true;
-  return TEXT_EXTS.has(file.name.split('.').pop()?.toLowerCase() ?? '');
-}
-
 const TEXT_PREVIEW_LINES = 10;
 const TEXT_EXPAND_MAX = 100_000; // chars shown when expanded (phase 6 ruling)
 
@@ -452,14 +482,6 @@ function DownloadHoverButton({ file, onDownload }: { file: FileDTO; onDownload: 
       ⤓
     </button>
   );
-}
-
-/** Video formats we render inline (ui_nits); anything the browser can't
- * decode falls back to the file chip at runtime via the <video> error event. */
-const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);
-function isVideoFile(file: FileDTO): boolean {
-  if (file.mimeType.startsWith('video/')) return true;
-  return VIDEO_EXTS.has(file.name.split('.').pop()?.toLowerCase() ?? '');
 }
 
 function Attachment({ file }: { file: FileDTO }) {

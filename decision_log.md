@@ -611,3 +611,18 @@ Implementation judgment calls (also pending review):
   (Operator upgraded from the recommended typing-indicator-only default.)
 - **MCP rich mode ships in v1** (`flow` MCP server: send_message, react,
   upload_file, search_history) alongside the baseline final-text contract.
+
+## 2026-07-21 — Phase 9 (Artifact tabs) pre-flight (operator rulings)
+
+- **Artifacts are personal, per-user bookmarks** — each artifact row is owned
+  by one user and visible only in that user's sidebar (not channel- or
+  workspace-shared). Sidesteps cross-channel visibility leaks entirely.
+- **Removing an artifact never deletes the underlying file**; the file stays
+  in its channel/message untouched.
+- **macOS parity ships in this phase** (not logged as a gap): Artifacts
+  sidebar section + artifact panel land on both clients together.
+- **MCP `create_artifact` fans out to humans** (implementation consequence of
+  per-user ownership): when an agent creates an artifact in a channel, the
+  bridge/server creates one personal artifact row per human member of that
+  channel (agents excluded), each independently removable. In a DM with the
+  agent that's just the human peer.

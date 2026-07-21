@@ -21,12 +21,17 @@ export interface Selection {
   workspaceId: string | null;
   channelId: string | null;
   threadRootId: string | null;
+  /** Selected artifact tab (phase 9) — when set, the content pane shows the
+   * artifact panel; takes precedence over channelId (which stays put so
+   * closing the artifact returns to the last channel). */
+  artifactId: string | null;
   /** Message being edited inline (hover menu or composer ↑) — ui_nits item 4. */
   editingMessageId: string | null;
   /** Admin panel pinned into the channel list (admins only; per-device). */
   adminPanelOpen: boolean;
   selectWorkspace(id: string | null): void;
   selectChannel(id: string | null): void;
+  selectArtifact(id: string | null): void;
   openThread(id: string | null): void;
   setEditingMessage(id: string | null): void;
   /** Pin the admin row into the sidebar and open it (from the workspace menu). */
