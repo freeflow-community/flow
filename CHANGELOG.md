@@ -62,7 +62,18 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
-### 2026-07-21 — Agent avatars: preset picker at approval + set_avatar MCP tool (bridge 0.3.2)
+### 2026-07-21 — UI nits: common missing Slack emoji aliases
+- Added ~60 frequently typed Slack shortcodes that were missing from the
+  shared catalog — the retired ui_nits `:thread:` (🧵) example plus a batch of
+  common faces (`:smiley:` `:laughing:`/`:satisfied:` `:disappointed:`
+  `:partying_face:` `:pleading_face:` …), hand gestures (`:point_down:`
+  `:raised_hand:` `:fist:`/`:fist_raised:` `:call_me_hand:` …), and symbols
+  (`:heavy_check_mark:` `:heavy_plus_sign:` `:bangbang:` `:sos:` `:ok:`
+  `:arrow_forward:` `:repeat:` …). Landed in both the shared TS catalog
+  (`packages/shared/src/emoji.ts`, drives web composer autocomplete + expansion)
+  and the aligned Swift copy (`EmojiCatalog.swift`). New vitest coverage for the
+  aliases and for `expandShortcodes` (case-insensitivity, bare-colon safety);
+  Swift `EmojiCatalogTests` still green. `[web]` `[macos]` `[shared]`
 - Approving an agent pairing request can now include a preset avatar: 12 robot
   faces bundled with the server (Flaticon free license, Freepik — see
   `assets/agent-avatars/ATTRIBUTION.md`), listed via `GET /v1/agent-avatars`

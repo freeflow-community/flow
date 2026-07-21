@@ -65,6 +65,28 @@ enum EmojiCatalog {
         "bomb": "💣", "gun": "🔫", "knife": "🔪", "shield": "🛡️", "crossed_swords": "⚔️",
         "zzz": "💤", "speech_balloon": "💬", "thought_balloon": "💭", "anger": "💢",
         "sweat_drops": "💦", "dash": "💨", "footprints": "👣",
+        // Common Slack aliases (retired ui_nits list): frequently typed shortcodes
+        // and reaction names that were missing from the curated set above.
+        "thread": "🧵", "spool": "🧵",
+        "smiley": "😃", "laughing": "😆", "satisfied": "😆", "upside_down_face": "🙃",
+        "yum": "😋", "stuck_out_tongue": "😛", "stuck_out_tongue_winking_eye": "😜",
+        "kissing_heart": "😘", "money_mouth_face": "🤑", "innocent": "😇",
+        "smiling_imp": "😈", "imp": "👿", "confused": "😕", "worried": "😟",
+        "slightly_frowning_face": "🙁", "open_mouth": "😮", "astonished": "😲",
+        "flushed": "😳", "pleading_face": "🥺", "disappointed": "😞", "pensive": "😔",
+        "confounded": "😖", "tired_face": "😫", "weary": "😩", "triumph": "😤",
+        "fearful": "😨", "cold_sweat": "😰", "sleepy": "😪", "no_mouth": "😶",
+        "mask": "😷", "unamused": "😒", "expressionless": "😑", "partying_face": "🥳",
+        "point_down": "👇", "point_left": "👈", "point_up_2": "👆", "raised_hand": "✋",
+        "open_hands": "👐", "fist": "✊", "fist_raised": "✊", "punch": "👊", "facepunch": "👊",
+        "call_me_hand": "🤙", "writing_hand": "✍️", "vulcan_salute": "🖖", "raising_hand": "🙋",
+        "heavy_check_mark": "✔️", "ballot_box_with_check": "☑️", "heavy_plus_sign": "➕",
+        "heavy_minus_sign": "➖", "heavy_multiplication_x": "✖️", "heavy_division_sign": "➗",
+        "heavy_dollar_sign": "💲", "bangbang": "‼️", "interrobang": "⁉️",
+        "grey_question": "❔", "grey_exclamation": "❕", "sos": "🆘", "ok": "🆗", "new": "🆕",
+        "cool": "🆒", "up": "🆙", "top": "🔝", "back": "🔙", "repeat": "🔁",
+        "arrows_counterclockwise": "🔄", "arrow_forward": "▶️", "arrow_backward": "◀️",
+        "watch": "⌚", "stopwatch": "⏱️",
     ]
 
     /// The quick-reaction picker set, in display order.
