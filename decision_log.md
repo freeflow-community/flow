@@ -1,5 +1,21 @@
 # Decision log
 
+## 2026-07-21 — @-mentioning a non-member of a channel
+
+Surfaced live: @-mentioning an agent that wasn't a member of the channel did
+nothing (the agent-bridge only responds to mentions in channels it has joined),
+with no on-screen hint — on macOS there was no feedback at all.
+
+Ruling (operator): the @-typeahead **keeps listing every workspace member** —
+it is not narrowed to channel members. Instead, when a sent message @-mentions
+someone who isn't in the (standard) channel, the composer **prompts to invite
+them** ("… isn't in this channel and won't see your mention" + "Add to
+channel"). This is the web's existing behavior; the ruling extends it to macOS.
+Re-mention after adding — the original mention isn't delivered retroactively
+(and an agent never processed it). iOS still lacks the CTA (separate composer;
+tracked in CHANGELOG Parity).
+
+
 ## 2026-07-21 — On-demand agent registration with human sponsors
 
 Operator ask: replace the admin invite-key flow — every agent gets a

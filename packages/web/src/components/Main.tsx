@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, Event, MessageDTO, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
-import { applyMessageEvent } from '../lib/messageCache';
+import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
@@ -85,6 +85,13 @@ export default function Main() {
   function handleEvent(event: Event): void {
     const cur = selRef.current;
     switch (event.type) {
+      case 'message.purged': {
+        // Hard delete: remove the message entirely (no tombstone). Used for
+        // the agent's ephemeral "thinking…" status.
+        removeMessageFromCache(qc, event.data as MessageDTO);
+        void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
+        break;
+      }
       case 'message.created':
       case 'message.updated':
       case 'message.deleted':

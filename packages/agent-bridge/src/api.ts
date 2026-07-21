@@ -96,8 +96,9 @@ export class FlowApi {
     return this.req('PATCH', `/v1/messages/${messageId}`, { body: body.slice(0, 12000) });
   }
 
-  deleteMessage(messageId: string): Promise<void> {
-    return this.req('DELETE', `/v1/messages/${messageId}`);
+  /** `hard` purges the row (no tombstone) — used for the ephemeral "thinking…" status. */
+  deleteMessage(messageId: string, opts?: { hard?: boolean }): Promise<void> {
+    return this.req('DELETE', `/v1/messages/${messageId}${opts?.hard ? '?purge=true' : ''}`);
   }
 
   listMessages(channelId: string, limit = 50, before?: string): Promise<MessagePage> {

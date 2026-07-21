@@ -277,13 +277,57 @@ export async function editMessage(messageId: string, userId: string, body: strin
   return dto;
 }
 
-/** Soft delete: body overwritten with empty ciphertext (spec §2). */
-export async function deleteMessage(messageId: string, userId: string): Promise<void> {
+/**
+ * Delete a message. Default is a soft delete: body overwritten with empty
+ * ciphertext, row kept, `deletedAt` set (spec §2) — clients render a tombstone.
+ *
+ * `hard` fully removes the row (child reactions/files/notifications cascade)
+ * and publishes `message.purged` so clients drop it with no tombstone. Used by
+ * the agent-bridge for its ephemeral "thinking…" status message, whose whole
+ * point is to vanish on completion — a soft delete would leave a stray
+ * "This message was deleted" line above the real reply.
+ */
+export async function deleteMessage(
+  messageId: string,
+  userId: string,
+  opts?: { hard?: boolean },
+): Promise<void> {
   const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
   const row = rows[0];
-  if (!row) throw notFound('message not found');
+  if (!row) {
+    if (opts?.hard) return; // idempotent: already gone is the goal state
+    throw notFound('message not found');
+  }
   const { chan } = await requireChannelAccess(row.channelId, userId);
   if (row.userId !== userId) throw forbidden('only the author can delete a message');
+
+  if (opts?.hard) {
+    await db.transaction(async (tx) => {
+      await tx.delete(messages).where(eq(messages.id, messageId));
+      // Fix the root's denormalized rollup if this was a thread reply
+      // (participants are computed at query time, so they self-correct). The
+      // delete above already ran in this txn, so the subquery sees survivors
+      // only — lastReplyAt drops to the newest remaining reply, or NULL.
+      if (row.threadRootId) {
+        await tx
+          .update(messages)
+          .set({
+            replyCount: sql`greatest(${messages.replyCount} - 1, 0)`,
+            lastReplyAt: sql`(select max(m.created_at) from ${messages} m where m.thread_root_id = ${row.threadRootId}::uuid)`,
+          })
+          .where(eq(messages.id, row.threadRootId));
+      }
+    });
+    publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
+      type: 'message.purged',
+      workspaceId: chan.workspaceId,
+      channelId: row.channelId,
+      ts: new Date().toISOString(),
+      data: toMessageDTO(row),
+    });
+    return;
+  }
+
   if (row.deletedAt) return; // idempotent
 
   const enc = encryptBody('');

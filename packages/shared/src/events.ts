@@ -4,7 +4,8 @@ import type { AgentPairingRequestDTO, ArtifactDTO, ChannelDTO, MessageDTO, Notif
 export type EventType =
   | 'message.created'
   | 'message.updated'
-  | 'message.deleted'
+  | 'message.deleted' // soft delete: row kept, renders as a "This message was deleted" tombstone
+  | 'message.purged' // hard delete: row gone, clients remove it entirely (no tombstone) — used for the agent's ephemeral "thinking…" status
   | 'thread.reply'
   | 'typing'
   | 'presence'

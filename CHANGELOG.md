@@ -19,9 +19,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   to disk, not RAM); web streams in place via the presigned URL. Matters at
   the new 500 MB scale — native fix is AVPlayer on the `/v1/files/:id/url`
   presigned URL.
-- macOS: no mention-of-non-member CTA after @mentioning someone outside the
-  channel (web offers "Add to channel" — matters most for agents, which never
-  see mentions in channels they haven't joined).
+- iOS: no mention-of-non-member CTA after @mentioning someone outside the
+  channel (web + macOS offer "Add to channel" — matters most for agents, which
+  never see mentions in channels they haven't joined). iOS has its own composer
+  (not the shared macOS one), so the CTA needs porting there.
 - macOS: sidebar doesn't list DM-less agents under Direct Messages (web shows
   virtual rows with presence + 🤖 that create the DM on click).
 - Web composer: browser-native undo degrades after programmatic splices
@@ -74,8 +75,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   the orphan-file sweep now exempts artifact-referenced files (agent-created
   artifacts may never be attached to a message). `[server]`
 - Web: "Artifacts" sidebar section (glyph by file type, hover ✕ removes);
-  message hover menu gains 🔖 "Save as artifact" on messages with files, and
-  the new artifact panel opens automatically. Full-pane artifact viewer for
+  message hover menu gains an open-external "Save as artifact" action on
+  messages with files (operator-picked icon — the app's only inline SVG, since
+  no unicode codepoint draws the box-with-arrow mark), and the new artifact
+  panel opens automatically. Full-pane artifact viewer for
   images, video (presigned streaming), text, PDF, and HTML — HTML renders in
   a sandboxed `srcDoc` iframe (`sandbox="allow-scripts"`, no same-origin, so
   artifact HTML can never reach the session token or call the API). Rename by
@@ -90,6 +93,38 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   excluded as recipients). `[server]`
 - New DB-backed vitest suite `test/artifacts.test.ts` (13 tests: idempotency,
   access control, fan-out, sweep exemption). `[qa]`
+
+### 2026-07-21 — macOS: "Add to channel" CTA when you @-mention a non-member
+- Closes a parity gap surfaced live: @-mentioning an agent (or person) not in a
+  standard channel silently did nothing on macOS — the agent-bridge drops
+  mentions in channels it hasn't joined (`bridge.ts` inScope), so nothing
+  responded and there was no hint why. The @-typeahead deliberately still lists
+  all workspace members (operator ruling: keep it broad, prompt to invite when
+  the target isn't present). After a successful send, `SyncEngine.sendMessage`
+  now returns the mentioned userIds that aren't channel members (standard
+  channels only; fetched via `GET /v1/channels/:id/members`), and the composer
+  shows an "…isn't in this channel and won't see your mention" banner with an
+  **Add to channel** button (`POST /v1/channels/:id/members`). Mirrors the web
+  `doSend` flow (`Composer.tsx`); re-mention after adding to actually reach
+  them. `[macos]`
+
+### 2026-07-21 — Fix: agent's ephemeral "thinking…" status no longer leaves a tombstone
+- The agent-bridge posts a live `🤖 *thinking…*` status message while working,
+  then deletes it on completion and posts the real reply as a fresh message
+  (clean unread semantics). But delete was a *soft* delete — the row stayed with
+  `deletedAt` set and both clients render that as a "This message was deleted"
+  tombstone, which sat directly above the real reply (earlier id → sorts first).
+  Added a **hard delete / purge** path: `DELETE /v1/messages/:id?purge=true`
+  removes the row outright (child reactions/files/notifications cascade; a purged
+  thread reply decrements the root's rollup and recomputes `lastReplyAt`) and
+  publishes a new `message.purged` WS event so clients splice the message out
+  with no tombstone. The bridge now uses it for its status message; ordinary
+  user deletes stay soft (tombstone preserved). Web (`removeMessageFromCache` +
+  `message.purged` handler) and macOS (`purgeMessage` in SyncEngine) both drop
+  the row on purge; iOS inherits the same via the shared macOS core
+  (Models/SyncEngine), so no iOS-specific change. New server vitest coverage
+  (`test/purge.test.ts`: soft-vs-hard, idempotency, rollup recompute,
+  author-only). `[server]` `[web]` `[macos]` `[ios]`
 
 ### 2026-07-21 — UI nits: macOS message hover menu no longer stutters
 - Fixed the per-message hover toolbar (react / reply / edit / delete pill)

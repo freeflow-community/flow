@@ -20,10 +20,15 @@ struct ComposerView: View {
     @State private var suggestionIndex = 0
     @State private var suppressedToken: String?
     @State private var dropTargeted = false
+    @State private var missingMentions: [MentionMiss] = []
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if !missingMentions.isEmpty {
+                mentionInviteBanner
+            }
+
             if let suggestions = autocomplete, !suggestions.items.isEmpty {
                 suggestionBar(suggestions)
             }
@@ -432,12 +437,64 @@ struct ComposerView: View {
         text = ""
         attachments = []
         Task {
-            await app.engine.sendMessage(
+            // A clean send clears any stale invite banner; a send that mentions
+            // non-members replaces it with the new list.
+            missingMentions = await app.engine.sendMessage(
                 channelId: channelId,
                 body: body,
                 threadRootId: threadRootId,
                 attachments: files
             )
+        }
+    }
+
+    // MARK: - Non-member mention CTA (web parity)
+
+    /// Shown after sending a message that @-mentions someone not in this
+    /// channel: they won't see the mention (an agent never processes it) until
+    /// added. "Add to channel" invites them; re-mention to actually reach them.
+    private var mentionInviteBanner: some View {
+        let names = ListFormatter.localizedString(byJoining: missingMentions.map(\.name))
+        let plural = missingMentions.count > 1
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.circle")
+                .foregroundStyle(MC.muted)
+            Text("\(names) \(plural ? "aren’t" : "isn’t") in this channel and won’t see your mention.")
+                .font(.system(size: 12))
+                .foregroundStyle(MC.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("Add to channel") { addMissingToChannel() }
+                .buttonStyle(.borderless)
+                .font(.system(size: 12, weight: .semibold))
+                .accessibilityIdentifier("composer.mention-invite.add")
+            Button {
+                missingMentions = []
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(MC.muted)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 8).fill(MC.accent.opacity(0.10)))
+        .accessibilityIdentifier("composer.mention-nonmember-cta")
+    }
+
+    private func addMissingToChannel() {
+        let toAdd = missingMentions
+        missingMentions = []
+        Task {
+            for user in toAdd {
+                do {
+                    try await app.engine.addMember(channelId: channelId, userId: user.id)
+                } catch {
+                    app.showError("Couldn't add \(user.name): \(error.localizedDescription)")
+                }
+            }
         }
     }
 }
