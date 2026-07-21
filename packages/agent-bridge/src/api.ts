@@ -97,8 +97,16 @@ export class FlowApi {
     return this.req('DELETE', `/v1/messages/${messageId}`);
   }
 
-  listMessages(channelId: string, limit = 50): Promise<MessagePage> {
-    return this.req('GET', `/v1/channels/${channelId}/messages?limit=${limit}`);
+  listMessages(channelId: string, limit = 50, before?: string): Promise<MessagePage> {
+    return this.req('GET', `/v1/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ''}`);
+  }
+
+  joinChannel(channelId: string): Promise<unknown> {
+    return this.req('POST', `/v1/channels/${channelId}/join`);
+  }
+
+  leaveChannel(channelId: string): Promise<unknown> {
+    return this.req('POST', `/v1/channels/${channelId}/leave`);
   }
 
   async listThread(rootId: string, limit = 200): Promise<MessageDTO[]> {

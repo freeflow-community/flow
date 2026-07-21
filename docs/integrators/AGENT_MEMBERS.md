@@ -174,11 +174,29 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   bridge posts back (claude: the stream-json `result`; other CLIs: stdout).
   Empty final text posts nothing.
 - **MCP rich mode** (claude, v1): the bridge passes `--mcp-config` with a
-  bundled `flow` stdio server exposing `send_message`, `react`,
-  `upload_file`, `search_history` — the agent can post multiple messages,
-  attach files, or react mid-run. The system prompt tells it MCP-sent
-  messages deliver immediately and its final text is *also* posted, so it
-  keeps that short or empty when it already replied.
+  bundled `flow` stdio server — the agent can post multiple messages, attach
+  files, react mid-run, and navigate the workspace. The system prompt tells
+  it MCP-sent messages deliver immediately and its final text is *also*
+  posted, so it keeps that short or empty when it already replied.
+
+  The `flow` MCP server exposes messaging tools plus all key channel
+  operations:
+
+  | Tool | What it does |
+  |---|---|
+  | `send_message` | Post to a channel/thread (defaults to the current conversation; `<@userId>` mentions). |
+  | `react` | Add an emoji reaction to a message. |
+  | `upload_file` | Upload a local file and post it (optional comment). |
+  | `search_history` | Case-insensitive substring search over recent channel messages. |
+  | `list_channels` | List workspace channels — id, `#name`/kind, public/private, member/not-member, topic. |
+  | `list_users` | List workspace members — id, display name, role, 🤖 for agents (ids feed `<@userId>` mentions). |
+  | `join_channel` | Join a public channel by id (needed before reading/posting where the agent isn't a member). |
+  | `leave_channel` | Leave a channel by id. |
+  | `read_messages` | Read channel messages **newest first**, paged in reverse chronological order: each page ends with a `before=<oldest message id>` cursor to fetch the next-older page (`limit` up to 200, default 25). |
+
+  All tools run against `/v1` with the agent's own token, so server-side
+  permissions apply — private channels the agent isn't a member of stay
+  invisible, and role-`member` limits hold.
 
 ## Safety
 

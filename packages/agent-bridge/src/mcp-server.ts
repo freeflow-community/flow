@@ -1,8 +1,10 @@
-// The `flow` MCP stdio server (rich mode, operator ruling 6): send_message,
-// react, upload_file, search_history against /v1 with the agent token.
+// The `flow` MCP stdio server (rich mode, operator ruling 6): messaging
+// (send_message, react, upload_file, search_history) plus the key channel
+// operations (list_channels, list_users, join_channel, leave_channel,
+// read_messages) against /v1 with the agent token.
 //
-// Hand-rolled newline-delimited JSON-RPC (the MCP stdio transport) — the
-// surface is four tools; no SDK dependency needed. Conversation context
+// Hand-rolled newline-delimited JSON-RPC (the MCP stdio transport) — a small
+// fixed tool surface; no SDK dependency needed. Conversation context
 // (channel/thread) arrives via env from the bridge's per-run --mcp-config.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -68,6 +70,47 @@ const TOOLS = [
         limit: { type: 'number', description: 'Max matches to return (default 10).' },
       },
       required: ['query'],
+    },
+  },
+  {
+    name: 'list_channels',
+    description: 'List channels in the workspace (id, name, kind, private/member flags, topic).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_users',
+    description: 'List workspace members (id, display name, role; 🤖 marks agents). Use the ids in <@userId> mentions.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'join_channel',
+    description: 'Join a public channel by id (required before reading or posting in channels you are not a member of).',
+    inputSchema: {
+      type: 'object',
+      properties: { channelId: { type: 'string', description: 'Channel id to join.' } },
+      required: ['channelId'],
+    },
+  },
+  {
+    name: 'leave_channel',
+    description: 'Leave a channel by id.',
+    inputSchema: {
+      type: 'object',
+      properties: { channelId: { type: 'string', description: 'Channel id to leave.' } },
+      required: ['channelId'],
+    },
+  },
+  {
+    name: 'read_messages',
+    description:
+      'Read messages from a channel, newest first. Page backwards by passing `before` = the oldest message id from the previous page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channelId: { type: 'string', description: 'Channel to read (default: current conversation).' },
+        limit: { type: 'number', description: 'Messages per page (default 25, max 200).' },
+        before: { type: 'string', description: 'Only messages older than this message id (paging cursor).' },
+      },
     },
   },
 ];
@@ -137,6 +180,46 @@ export async function runMcpServer(): Promise<void> {
           .slice(-limit)
           .map((m) => `[${m.createdAt} <@${m.userId}> msg ${m.id}] ${m.body.slice(0, 300)}`);
         return toolText(hits.length ? hits.join('\n') : 'no matches');
+      }
+      case 'list_channels': {
+        const channels = await api.listChannels(workspaceId);
+        const lines = channels
+          .filter((c) => !c.archivedAt)
+          .map((c) => {
+            const flags = [c.isPrivate ? 'private' : 'public', c.isMember ? 'member' : 'not-member'].join(', ');
+            const label = c.name ? `#${c.name}` : `(${c.kind})`;
+            return `${c.id}  ${label}  [${flags}]${c.topic ? ` — ${c.topic}` : ''}`;
+          });
+        return toolText(lines.length ? lines.join('\n') : 'no channels');
+      }
+      case 'list_users': {
+        const members = await api.listMembers(workspaceId);
+        const lines = members.map(
+          (m) => `${m.userId}  ${m.displayName}${m.isAgent ? ' 🤖' : ''}  [${m.role}]${m.statusText ? ` — ${m.statusText}` : ''}`,
+        );
+        return toolText(lines.join('\n'));
+      }
+      case 'join_channel': {
+        await api.joinChannel(String(args.channelId ?? ''));
+        return toolText('joined');
+      }
+      case 'leave_channel': {
+        await api.leaveChannel(String(args.channelId ?? ''));
+        return toolText('left');
+      }
+      case 'read_messages': {
+        const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);
+        const before = (args.before as string | undefined) || undefined;
+        const page = await api.listMessages(channelId, limit, before);
+        // newest first, regardless of server response order (uuidv7 ids sort by time)
+        const msgs = [...page.messages].sort((a, b) => (a.id < b.id ? 1 : -1));
+        if (msgs.length === 0) return toolText('no messages');
+        const oldest = msgs[msgs.length - 1]!;
+        const lines = msgs.map(
+          (m) => `[${m.createdAt} <@${m.userId}> msg ${m.id}]${m.threadRootId ? ` (in thread ${m.threadRootId})` : ''} ${m.deletedAt ? '(deleted)' : m.body.slice(0, 500)}`,
+        );
+        const footer = page.hasMore ? `\n(more — pass before=${oldest.id} for the next page)` : '';
+        return toolText(lines.join('\n') + footer);
       }
       default:
         return toolText(`unknown tool: ${name}`, true);

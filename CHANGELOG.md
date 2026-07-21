@@ -59,6 +59,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Agent bridge 0.2.5: channel-operation MCP tools
+- The `flow` MCP server grows from 4 to 9 tools: `list_channels`,
+  `list_users`, `join_channel`, `leave_channel`, and `read_messages` (newest
+  first, paged in reverse chron via a `before` cursor) join the messaging
+  tools. All run against `/v1` with the agent's token, so server-side
+  permissions apply. System prompt + AGENT_MEMBERS.md updated. `[server]`
+
 ### 2026-07-21 — Admin panel to manage users
 - New owner/admin panel to manage workspace members. Two server endpoints:
   `PATCH /v1/workspaces/:id/members/:userId/role` (assign `admin`/`member` —
