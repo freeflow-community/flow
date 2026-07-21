@@ -405,14 +405,17 @@ actor SyncEngine {
 
     // MARK: - Messages
 
+    /// Returns any users mentioned who aren't in this (standard) channel, so the
+    /// composer can offer to add them (web-parity CTA). Empty on failure/none.
+    @discardableResult
     func sendMessage(
         channelId: String,
         body: String,
         threadRootId: String? = nil,
         attachments: [FileAttachment] = []
-    ) async {
+    ) async -> [MentionMiss] {
         var outgoing = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !outgoing.isEmpty || !attachments.isEmpty, let uid = currentUser?.id else { return }
+        guard !outgoing.isEmpty || !attachments.isEmpty, let uid = currentUser?.id else { return [] }
         if outgoing.isEmpty { outgoing = " " } // server requires a non-empty body
         // Composer sugar → wire format: :shortcode: → unicode; @Name → <@id>;
         // @channel/@here/@everyone → <!token>. Returns resolved mention ids.
@@ -455,7 +458,41 @@ actor SyncEngine {
             _ = await applyServerMessage(server)
         } catch {
             await appState?.showError("Couldn't send message: \(error.localizedDescription)")
+            return []
         }
+        // Web-parity: after a successful send, flag mentioned users who aren't
+        // in this channel — they won't see the mention (an agent never even
+        // processes it) until added.
+        return await channelMentionMisses(channelId: channelId, mentionIds: mentions)
+    }
+
+    /// Mentioned userIds that aren't members of `channelId` (standard channels
+    /// only — DMs/group DMs have no add-member flow). Resolves display names
+    /// from the local user table for the CTA copy.
+    private func channelMentionMisses(channelId: String, mentionIds: [String]) async -> [MentionMiss] {
+        guard !mentionIds.isEmpty else { return [] }
+        let kind: String? = try? await db.reader.read { db in
+            try String.fetchOne(db, sql: "SELECT kind FROM channel WHERE id = ?", arguments: [channelId])
+        }
+        guard kind == "standard" else { return [] }
+        guard let resp: ChannelMembersResponse = try? await api.get("/v1/channels/\(channelId)/members")
+        else { return [] }
+        let members = Set(resp.userIds)
+        let missing = mentionIds.filter { !members.contains($0) }
+        guard !missing.isEmpty else { return [] }
+        let names: [String: String] = (try? await db.reader.read { db -> [String: String] in
+            let placeholders = missing.map { _ in "?" }.joined(separator: ",")
+            var out: [String: String] = [:]
+            for row in try Row.fetchAll(
+                db,
+                sql: "SELECT id, displayName FROM user WHERE id IN (\(placeholders))",
+                arguments: StatementArguments(missing)
+            ) {
+                out[row["id"] as String] = (row["displayName"] as String?)
+            }
+            return out
+        }) ?? [:]
+        return missing.map { MentionMiss(id: $0, name: names[$0] ?? "someone") }
     }
 
     /// Expands shortcodes and resolves mention sugar against the channel's

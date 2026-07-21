@@ -16,9 +16,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   to disk, not RAM); web streams in place via the presigned URL. Matters at
   the new 500 MB scale — native fix is AVPlayer on the `/v1/files/:id/url`
   presigned URL.
-- macOS: no mention-of-non-member CTA after @mentioning someone outside the
-  channel (web offers "Add to channel" — matters most for agents, which never
-  see mentions in channels they haven't joined).
+- iOS: no mention-of-non-member CTA after @mentioning someone outside the
+  channel (web + macOS offer "Add to channel" — matters most for agents, which
+  never see mentions in channels they haven't joined). iOS has its own composer
+  (not the shared macOS one), so the CTA needs porting there.
 - macOS: sidebar doesn't list DM-less agents under Direct Messages (web shows
   virtual rows with presence + 🤖 that create the DM on click).
 - Web composer: browser-native undo degrades after programmatic splices
@@ -61,6 +62,20 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-21 — macOS: "Add to channel" CTA when you @-mention a non-member
+- Closes a parity gap surfaced live: @-mentioning an agent (or person) not in a
+  standard channel silently did nothing on macOS — the agent-bridge drops
+  mentions in channels it hasn't joined (`bridge.ts` inScope), so nothing
+  responded and there was no hint why. The @-typeahead deliberately still lists
+  all workspace members (operator ruling: keep it broad, prompt to invite when
+  the target isn't present). After a successful send, `SyncEngine.sendMessage`
+  now returns the mentioned userIds that aren't channel members (standard
+  channels only; fetched via `GET /v1/channels/:id/members`), and the composer
+  shows an "…isn't in this channel and won't see your mention" banner with an
+  **Add to channel** button (`POST /v1/channels/:id/members`). Mirrors the web
+  `doSend` flow (`Composer.tsx`); re-mention after adding to actually reach
+  them. `[macos]`
 
 ### 2026-07-21 — Fix: agent's ephemeral "thinking…" status no longer leaves a tombstone
 - The agent-bridge posts a live `🤖 *thinking…*` status message while working,

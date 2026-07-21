@@ -320,6 +320,14 @@ struct MemberDTO: Decodable, Sendable {
 struct WorkspacesResponse: Decodable, Sendable { let workspaces: [Workspace] }
 struct ChannelsResponse: Decodable, Sendable { let channels: [Channel] }
 struct MembersResponse: Decodable, Sendable { let members: [MemberDTO] }
+struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
+
+/// A user just @-mentioned in a standard channel they don't belong to (web
+/// parity: the "Add to channel" CTA). They won't see the mention until added.
+struct MentionMiss: Identifiable, Hashable, Sendable {
+    let id: String // userId
+    let name: String
+}
 struct MessagesResponse: Decodable, Sendable {
     let messages: [Message] // newest first
     let hasMore: Bool
