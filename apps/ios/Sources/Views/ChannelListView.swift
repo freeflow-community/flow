@@ -27,7 +27,7 @@ struct ChannelListView: View {
                 Section("Direct Messages") {
                     ForEach(dms) { ch in
                         row(ch, title: ch.displayTitle(
-                            userNames: usersById.mapValues { $0.displayName },
+                            userNames: usersById.mapValues { $0.displayNameWithBadge },
                             currentUserId: app.currentUser?.id))
                     }
                 }

@@ -280,6 +280,7 @@ actor SyncEngine {
                     timezone: existing?.timezone,
                     statusEmoji: m.statusEmoji,
                     statusText: m.statusText,
+                    isAgent: m.isAgent ?? existing?.isAgent ?? false,
                     createdAt: existing?.createdAt
                 ).save(db)
                 try Member(workspaceId: workspaceId, userId: m.userId, role: m.role).save(db)

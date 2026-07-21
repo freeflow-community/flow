@@ -105,7 +105,7 @@ struct ThreadPanelView: View {
             }
             userNames.start(db: app.db, reset: [:]) { db in
                 try Dictionary(
-                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayName) }
+                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
                 )
             }
             workspaceId.start(db: app.db, reset: nil) { db in

@@ -21,7 +21,7 @@ struct ThreadScreen: View {
     @State private var editingMessage: Message?
 
     private var userNames: [String: String] {
-        Dictionary(users.value.map { ($0.id, $0.displayName) }, uniquingKeysWith: { a, _ in a })
+        Dictionary(users.value.map { ($0.id, $0.displayNameWithBadge) }, uniquingKeysWith: { a, _ in a })
     }
 
     private var statusesById: [String: String] {

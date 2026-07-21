@@ -25,7 +25,7 @@ struct ChannelScreen: View {
     private var title: String {
         guard let ch = channel.value else { return "" }
         if ch.isDM {
-            return ch.displayTitle(userNames: usersById.mapValues { $0.displayName },
+            return ch.displayTitle(userNames: usersById.mapValues { $0.displayNameWithBadge },
                                    currentUserId: app.currentUser?.id)
         }
         return "# \(ch.name ?? "channel")"
@@ -35,7 +35,7 @@ struct ChannelScreen: View {
         VStack(spacing: 0) {
             MessageListView(
                 messages: messages.value,
-                userNames: usersById.mapValues { $0.displayName },
+                userNames: usersById.mapValues { $0.displayNameWithBadge },
                 userStatuses: statusesById,
                 currentUserId: app.currentUser?.id,
                 hasMore: app.hasMore[channelId] ?? false,
@@ -51,7 +51,7 @@ struct ChannelScreen: View {
                     Task { await app.engine.deleteMessage(id: msg.id) }
                 }
             )
-            TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayName })
+            TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
             Divider()
             ComposerView(channelId: channelId)
         }

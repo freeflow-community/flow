@@ -33,7 +33,7 @@ struct NewDMSheet: View {
                         Circle()
                             .fill(app.presence[member.userId] == true ? .green : Color.gray.opacity(0.5))
                             .frame(width: 8, height: 8)
-                        Text(member.displayName)
+                        Text(member.displayName + (member.isAgent == true ? " 🤖" : ""))
                     }
                 }
                 .accessibilityIdentifier("newdm.member.\(member.displayName)")
@@ -91,7 +91,7 @@ struct AddMemberSheet: View {
             Text("Invite to #\(channel.name ?? "")").font(.headline)
             List(candidates) { member in
                 HStack(spacing: 6) {
-                    Text(member.displayName)
+                    Text(member.displayName + (member.isAgent == true ? " 🤖" : ""))
                     Spacer()
                     if added.contains(member.userId) {
                         Image(systemName: "checkmark")
@@ -143,9 +143,12 @@ struct MemberProfileSheet: View {
     var body: some View {
         VStack(spacing: 12) {
             avatar
-            Text(user?.displayName ?? "…")
+            Text(user.map(\.displayNameWithBadge) ?? "…")
                 .font(.title3.bold())
                 .accessibilityIdentifier("profile.name")
+            if user?.isAgent == true {
+                Text("AI agent").font(.caption).foregroundStyle(.secondary)
+            }
             if let email = user?.email {
                 Text(email)
                     .font(.callout)

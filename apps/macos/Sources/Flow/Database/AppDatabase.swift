@@ -151,6 +151,12 @@ struct AppDatabase: Sendable {
                 t.add(column: "replyParticipantUserIds", .text).notNull().defaults(to: "[]") // JSON
             }
         }
+        // First-class AI agents (AGENTS_DESIGN.md): 🤖 badge flag.
+        migrator.registerMigration("v6") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "isAgent", .boolean)
+            }
+        }
         try migrator.migrate(writer)
     }
 

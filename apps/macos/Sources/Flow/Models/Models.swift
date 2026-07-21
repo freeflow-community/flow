@@ -18,7 +18,14 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var timezone: String?
     var statusEmoji: String? // "" / nil = no status
     var statusText: String?
+    var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
     var createdAt: String?
+
+    /// Display-only name: agents carry the 🤖 badge (mention resolution uses
+    /// the plain displayName from the DB, so this never reaches the wire).
+    var displayNameWithBadge: String {
+        isAgent == true ? "\(displayName) 🤖" : displayName
+    }
 }
 
 struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
@@ -292,6 +299,7 @@ struct MemberDTO: Decodable, Sendable {
     let avatarUrl: String?
     let statusEmoji: String?
     let statusText: String?
+    let isAgent: Bool?
     let role: String
     let joinedAt: String?
 }

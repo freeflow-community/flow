@@ -116,7 +116,7 @@ struct ComposerView: View {
                 try MemberRow.fetchAll(
                     db,
                     sql: """
-                        SELECT u.id AS userId, u.displayName AS displayName
+                        SELECT u.id AS userId, u.displayName AS displayName, u.isAgent AS isAgent
                         FROM member m JOIN user u ON u.id = m.userId
                         WHERE m.workspaceId = (SELECT workspaceId FROM channel WHERE id = ?)
                         ORDER BY u.displayName COLLATE NOCASE
@@ -355,7 +355,8 @@ struct ComposerView: View {
         items += members.value
             .filter { $0.userId != app.currentUser?.id && $0.displayName.lowercased().hasPrefix(lower) }
             .prefix(6)
-            .map { ("@\($0.displayName) ", "@\($0.displayName)") }
+            // agents get the 🤖 badge in the chip label; the insert stays the plain name
+            .map { ("@\($0.displayName) ", "@\($0.displayName)\($0.isAgent == true ? " 🤖" : "")") }
         return Suggestions(token: token, items: Array(items.prefix(8)))
     }
 
@@ -390,6 +391,7 @@ struct ComposerView: View {
 private struct MemberRow: Decodable, FetchableRecord, Equatable, Sendable {
     var userId: String
     var displayName: String
+    var isAgent: Bool? // first-class AI agent → 🤖 badge
 }
 
 /// Camera capture via UIImagePickerController (only offered when a camera

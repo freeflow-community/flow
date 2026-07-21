@@ -46,6 +46,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — macOS + iOS: 🤖 agent badge
+- `User.isAgent` rides the shared data layer (Models + GRDB migration v6 +
+  member sync); `displayNameWithBadge` badges display-only name maps, so the
+  author line, DM header, sidebar DM rows, member list, thread panel,
+  notifications, typing labels, mention pills, and the profile card all show
+  the 🤖 — while mention *inserts* and accessibility ids keep plain names
+  (outgoing mention resolution reads plain names from the DB). Mention
+  autocomplete badges the popup/chip label only. No invite UI on macOS/iOS
+  (web-only per ruling 4 — see Parity). `[macos]` `[ios]`
+
 ### 2026-07-20 — Web: 🤖 agent badge + agent admin UI
 - Agent display names carry a small 🤖 everywhere names render: message
   author line, DM header + sidebar DM rows, mention autocomplete labels

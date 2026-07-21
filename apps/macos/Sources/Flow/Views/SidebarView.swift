@@ -8,6 +8,7 @@ struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable
     var role: String
     var statusEmoji: String?
     var statusText: String?
+    var isAgent: Bool? // first-class AI agent → 🤖 badge
     var id: String { userId }
 }
 
@@ -138,7 +139,7 @@ struct SidebarView: View {
             }
             userNames.start(db: app.db, reset: [:]) { db in
                 try Dictionary(
-                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayName) }
+                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
                 )
             }
         }
@@ -155,7 +156,8 @@ struct SidebarView: View {
                     db,
                     sql: """
                         SELECT m.userId AS userId, u.displayName AS displayName, m.role AS role,
-                               u.statusEmoji AS statusEmoji, u.statusText AS statusText
+                               u.statusEmoji AS statusEmoji, u.statusText AS statusText,
+                               u.isAgent AS isAgent
                         FROM member m JOIN user u ON u.id = m.userId
                         WHERE m.workspaceId = ?
                         ORDER BY u.displayName COLLATE NOCASE
@@ -315,7 +317,8 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("sidebar.dm.\(title)")
+        // badge-free id: QA targets DMs by plain member names
+        .accessibilityIdentifier("sidebar.dm.\(title.replacingOccurrences(of: " 🤖", with: ""))")
         .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
         .accessibilityAddTraits(active ? [.isSelected] : [])
         .contextMenu {
@@ -369,6 +372,11 @@ struct SidebarView: View {
                     .font(.system(size: 14))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
+                if member.isAgent == true {
+                    Text("🤖")
+                        .font(.system(size: 14))
+                        .help("AI agent")
+                }
                 if let emoji = member.statusEmoji, !emoji.isEmpty {
                     Text(emoji)
                         .font(.system(size: 14))

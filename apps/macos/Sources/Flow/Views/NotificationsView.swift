@@ -59,7 +59,7 @@ struct NotificationsPopover: View {
             }
             userNames = (try? await app.db.reader.read { db in
                 try Dictionary(
-                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayName) }
+                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
                 )
             }) ?? [:]
         }

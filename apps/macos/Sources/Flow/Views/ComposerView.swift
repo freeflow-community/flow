@@ -129,7 +129,8 @@ struct ComposerView: View {
                 try MemberInfo.fetchAll(
                     db,
                     sql: """
-                        SELECT m.userId AS userId, u.displayName AS displayName, m.role AS role
+                        SELECT m.userId AS userId, u.displayName AS displayName, m.role AS role,
+                               u.isAgent AS isAgent
                         FROM member m JOIN user u ON u.id = m.userId
                         WHERE m.workspaceId = ?
                         ORDER BY u.displayName COLLATE NOCASE
@@ -175,7 +176,8 @@ struct ComposerView: View {
             items += members.value
                 .filter { $0.userId != app.currentUser?.id && $0.displayName.lowercased().hasPrefix(lower) }
                 .prefix(6)
-                .map { ("@\($0.displayName) ", "@\($0.displayName)") }
+                // agents get the 🤖 badge in the popup label; the insert stays the plain name
+                .map { ("@\($0.displayName) ", "@\($0.displayName)\($0.isAgent == true ? " 🤖" : "")") }
             return Suggestions(kind: .mention, token: token, items: Array(items.prefix(8)))
         } else {
             guard query.count >= 2 else { return nil }
