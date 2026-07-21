@@ -4,7 +4,7 @@ import { SIDEBAR_COLORS } from '@flow/shared';
 import type { ChannelDTO, InviteDTO, UserDTO } from '@flow/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useMembers, useWorkspaces } from '../hooks';
+import { useChannelMembers, useMembers, useWorkspaces } from '../hooks';
 import { AuthImg } from './Avatar';
 
 export function Modal({
@@ -232,6 +232,9 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
   const qc = useQueryClient();
   const auth = useAuth();
   const members = useMembers(sel.workspaceId);
+  // Real membership (standard channels have no memberIds in the DTO): keeps
+  // the invite list from offering people who are already here.
+  const chanMembers = useChannelMembers(channel.id);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState<Set<string>>(new Set());
 
@@ -255,7 +258,7 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
 
   const isDm = channel.kind !== 'standard';
   const candidates = (members.data ?? []).filter(
-    (m) => m.userId !== auth.user.id && !(channel.memberIds ?? []).includes(m.userId),
+    (m) => m.userId !== auth.user.id && !(chanMembers.data ?? channel.memberIds ?? []).includes(m.userId),
   );
 
   return (

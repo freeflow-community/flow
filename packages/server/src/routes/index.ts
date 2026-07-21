@@ -340,6 +340,11 @@ export function registerRoutes(app: FastifyInstance): void {
   });
 
   // ---- channel membership management (phase2.md §5) ------------
+  app.get('/v1/channels/:id/members', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { userIds: await ch.listMemberIds(id, req.user.id) };
+  });
+
   app.post('/v1/channels/:id/members', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(AddChannelMemberBody, req.body);

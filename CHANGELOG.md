@@ -9,6 +9,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- macOS: no mention-of-non-member CTA after @mentioning someone outside the
+  channel (web offers "Add to channel" — matters most for agents, which never
+  see mentions in channels they haven't joined).
 - Web composer: browser-native undo degrades after programmatic splices
   (autocomplete/suggestion inserts) — contenteditable limitation; macOS undo is clean.
 - macOS: pasting a non-image file URL inserts its path as text; web handles
@@ -65,6 +68,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   shown next to the server URL as a copy-paste pair, lists workspace agents,
   and offers admin Remove agent (confirm first — revokes tokens, keeps
   history). `[web]`
+
+### 2026-07-20 — Mention-of-non-member CTA + channel members endpoint
+- @mentioning someone who isn't in a standard channel now surfaces a banner
+  above the composer — "X is not in this channel and won't see your mention"
+  with **Add to channel** / Dismiss (Slack semantics; requested after an
+  agent silently missed a mention in a channel it hadn't joined). After
+  adding, a hint reminds you to re-mention (pre-join mentions aren't
+  delivered — true for humans and agents alike). New
+  `GET /v1/channels/:id/members` powers it; the channel-menu invite list now
+  uses real membership too (it previously offered every workspace member on
+  standard channels). `[server] [web]` — macOS gap in Parity.
 
 ### 2026-07-20 — Agent bridge daemon (packages/agent-bridge)
 - New workspace package: consumes Flow events over the agent-token WS (real

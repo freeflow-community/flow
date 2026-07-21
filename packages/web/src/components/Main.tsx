@@ -137,6 +137,7 @@ export default function Main() {
       case 'member.left':
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         void qc.invalidateQueries({ queryKey: ['members', event.workspaceId] });
+        void qc.invalidateQueries({ queryKey: ['channelMembers'] });
         break;
       case 'user.updated':
         void qc.invalidateQueries({ queryKey: ['members'] });

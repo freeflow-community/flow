@@ -248,6 +248,16 @@ export async function requireChannelAccess(channelId: string, userId: string) {
   return { chan, isMember };
 }
 
+/** Member user ids of a channel the caller can access (mention CTA, invite lists). */
+export async function listMemberIds(channelId: string, callerId: string): Promise<string[]> {
+  await requireChannelAccess(channelId, callerId);
+  const rows = await db
+    .select({ userId: channelMembers.userId })
+    .from(channelMembers)
+    .where(eq(channelMembers.channelId, channelId));
+  return rows.map((r) => r.userId);
+}
+
 export async function joinChannel(channelId: string, userId: string): Promise<ChannelDTO> {
   const { chan, isMember } = await requireChannelAccess(channelId, userId);
   if (chan.kind !== 'standard') throw badRequest('dm_channel', 'cannot join a DM via channel endpoints');

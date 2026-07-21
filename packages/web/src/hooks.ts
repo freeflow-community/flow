@@ -89,6 +89,16 @@ export function useApps(workspaceId: string | null) {
   });
 }
 
+/** Channel member ids — standard channels included (mention CTA, invite lists). */
+export function useChannelMembers(channelId: string | null) {
+  return useQuery({
+    queryKey: ['channelMembers', channelId],
+    queryFn: () => api<{ userIds: string[] }>('GET', `/v1/channels/${channelId}/members`),
+    select: (d) => d.userIds,
+    enabled: channelId !== null,
+  });
+}
+
 export function useMessages(channelId: string | null) {
   return useInfiniteQuery({
     queryKey: ['messages', channelId],

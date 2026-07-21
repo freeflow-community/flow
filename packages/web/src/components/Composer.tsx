@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
 import type { FileDTO, MessageDTO } from '@flow/shared';
 import { emojiMatches } from '@flow/shared';
-import { uploadFile } from '../lib/api';
+import { api, uploadFile } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
 import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';
 import { useLive, useSelection } from '../state';
-import { useMembers, useSendMessage } from '../hooks';
+import { useChannelMembers, useChannels, useMembers, useSendMessage } from '../hooks';
+import { useQueryClient } from '@tanstack/react-query';
 import { AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
 
@@ -24,8 +25,15 @@ export default function Composer({
 }) {
   const sel = useSelection();
   const live = useLive();
+  const qc = useQueryClient();
   const members = useMembers(sel.workspaceId);
+  const channels = useChannels(sel.workspaceId);
+  const channelMembers = useChannelMembers(channelId);
   const send = useSendMessage(channelId);
+  // Mention-of-non-member CTA (Slack semantics): after sending an @mention of
+  // someone outside a standard channel, offer to add them.
+  const [missingMentions, setMissingMentions] = useState<string[]>([]);
+  const [addedNotice, setAddedNotice] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<FileDTO[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -177,6 +185,14 @@ export default function Composer({
     const raw = (override ?? text).trim();
     if ((!raw && attachments.length === 0) || uploading > 0) return;
     const { body, mentions } = transformOutgoing(raw || ' ', members.data ?? []);
+    // Detect @mentions of users who aren't in this standard channel; the CTA
+    // banner renders above the composer after the send.
+    const chanKind = channels.data?.find((c) => c.id === channelId)?.kind;
+    if (chanKind === 'standard' && channelMembers.data) {
+      const missing = mentions.filter((id) => !channelMembers.data.includes(id));
+      setMissingMentions(missing);
+    }
+    setAddedNotice(null);
     send.mutate(
       {
         body,
@@ -314,6 +330,56 @@ export default function Composer({
             </button>
           ))}
         </div>
+      )}
+
+      {missingMentions.length > 0 && (
+        <div
+          data-testid="mention-nonmember-cta"
+          className="mb-1.5 flex items-center justify-between gap-3 rounded-lg border border-hairline bg-daypill/50 px-3 py-2 text-sm"
+        >
+          <span>
+            {missingMentions
+              .map((id) => {
+                const m = (members.data ?? []).find((x) => x.userId === id);
+                return `${m?.displayName ?? 'They'}${m?.isAgent ? ' 🤖' : ''}`;
+              })
+              .join(', ')}{' '}
+            {missingMentions.length === 1 ? 'is' : 'are'} not in this channel and won&rsquo;t see your mention.
+          </span>
+          <span className="flex shrink-0 gap-2">
+            <button
+              data-testid="mention-cta-add"
+              className="rounded bg-accent px-2.5 py-1 text-xs font-semibold text-white"
+              onClick={() => {
+                void (async () => {
+                  const ids = missingMentions;
+                  setMissingMentions([]);
+                  try {
+                    for (const userId of ids) await api('POST', `/v1/channels/${channelId}/members`, { userId });
+                    await qc.invalidateQueries({ queryKey: ['channelMembers', channelId] });
+                    setAddedNotice('Added to the channel — mention them again to get their attention.');
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'could not add to channel');
+                  }
+                })();
+              }}
+            >
+              Add to channel
+            </button>
+            <button
+              data-testid="mention-cta-dismiss"
+              className="rounded px-2 py-1 text-xs text-faint hover:bg-daypill"
+              onClick={() => setMissingMentions([])}
+            >
+              Dismiss
+            </button>
+          </span>
+        </div>
+      )}
+      {addedNotice && (
+        <p data-testid="mention-cta-added" className="mb-1.5 px-1 text-xs text-muted">
+          {addedNotice}
+        </p>
       )}
 
       {(attachments.length > 0 || uploading > 0) && (
