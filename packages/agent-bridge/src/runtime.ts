@@ -25,6 +25,11 @@ export interface RunResult {
   ok: boolean;
   text: string;
   error?: string;
+  /**
+   * The runtime emitted a result event (even an error one, e.g. max-turns) —
+   * the CLI session definitely exists and can be resumed with its context.
+   */
+  sawResult?: boolean;
 }
 
 /** One line per tool call, latest step shown: "Bash: pnpm test". */
@@ -181,11 +186,11 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       clearTimeout(timer);
       parser.feed('\n'); // flush a trailing unterminated line
       if (cfg.kind === 'claude') {
-        if (parser.sawResult && !parser.isError) return resolve({ ok: true, text: parser.finalText });
+        if (parser.sawResult && !parser.isError) return resolve({ ok: true, text: parser.finalText, sawResult: true });
         const error = parser.sawResult
           ? `runtime reported an error${parser.finalText ? `: ${parser.finalText.slice(0, 300)}` : ''}`
           : `runtime exited ${code} without a result${stderr ? `: ${stderr.slice(-300)}` : ''}`;
-        return resolve({ ok: false, text: parser.finalText, error });
+        return resolve({ ok: false, text: parser.finalText, error, sawResult: parser.sawResult });
       }
       // baseline contract: stdout is the reply
       if (code === 0) return resolve({ ok: true, text: stdout.trim() });

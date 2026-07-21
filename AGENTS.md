@@ -103,7 +103,7 @@ node dist/index.js register --server https://app.flowtoo.org \
     "cwd": "/home/me/checkouts/repo-x",
     "permissionMode": "acceptEdits",
     "allowedTools": ["Read", "Grep", "Glob", "Bash(pnpm test:*)"],
-    "maxTurns": 25,
+    "maxTurns": 100,
     "timeoutSec": 300
   },
   "eventScope": "mentions",
@@ -132,7 +132,7 @@ channel it's a member of (invite it to channels like any member).
 | `runtime.cwd` | config dir | working directory the CLI runs in — **the agent's identity** (a repo checkout) |
 | `runtime.permissionMode` | unset | `--permission-mode` passthrough; headless runs use pre-granted permissions, so scope them |
 | `runtime.allowedTools` | `[]` | `--allowedTools` entries, e.g. `"Bash(pnpm test)"` |
-| `runtime.maxTurns` | 25 | `--max-turns` runaway cap |
+| `runtime.maxTurns` | 100 | `--max-turns` runaway cap |
 | `runtime.timeoutSec` | 300 | wall-clock kill per run |
 | `runtime.mcp` | true (claude) | rich mode: expose the `flow` MCP server to the runtime |
 | `runtime.extraArgs` | `[]` | appended verbatim before the prompt |

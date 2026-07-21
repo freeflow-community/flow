@@ -197,15 +197,25 @@ export class AgentBridge {
     const mcpConfigPath = this.cfg.runtime.mcp ? this.writeMcpConfig(msg) : undefined;
     try {
       const prompt = await this.buildPrompt(conv, msg);
-      const result = await runRuntime(this.cfg.runtime, {
-        sessionId: conv.sessionId,
-        resume: conv.started,
-        prompt,
-        systemPrompt: this.buildSystemPrompt(msg, mcpConfigPath !== undefined),
-        mcpConfigPath,
-        onToolStep: (step) => progress.onStep(step),
-        log: (m) => this.log(m),
-      });
+      const run = (resume: boolean) =>
+        runRuntime(this.cfg.runtime, {
+          sessionId: conv.sessionId,
+          resume,
+          prompt,
+          systemPrompt: this.buildSystemPrompt(msg, mcpConfigPath !== undefined),
+          mcpConfigPath,
+          onToolStep: (step) => progress.onStep(step),
+          log: (m) => this.log(m),
+        });
+      let result = await run(conv.started);
+      // Session-id collision (a prior turn died after the CLI created the
+      // session, e.g. hitting --max-turns): the session exists — flip to
+      // --resume and transparently retry this same message, no error posted.
+      if (!result.ok && !conv.started && result.error?.includes('already in use')) {
+        this.log('session collision — retrying this message with --resume');
+        conv.started = true;
+        result = await run(true);
+      }
       await progress.finish();
       if (result.ok) {
         conv.started = true;
@@ -215,12 +225,12 @@ export class AgentBridge {
         }
       } else {
         this.log(`runtime error: ${result.error ?? 'unknown'}`);
-        // Self-heal the session state after a failed first turn: the CLI may
-        // have created the session before dying, and retrying --session-id
-        // then fails "Session ID … is already in use" on every later turn.
+        // Self-heal for the NEXT turn: a run that emitted a result event
+        // (even an error like max-turns) has a live, resumable session;
+        // anything else retries on a fresh session id.
         if (!conv.started) {
-          if (result.error?.includes('already in use')) conv.started = true; // it exists — resume from now on
-          else conv.sessionId = randomUUID(); // retry on a fresh session
+          if (result.sawResult) conv.started = true;
+          else conv.sessionId = randomUUID();
         }
         await this.api
           .sendMessage(

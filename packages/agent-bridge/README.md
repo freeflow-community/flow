@@ -67,7 +67,7 @@ start the daemon. Already have an agent? Paste a regenerated
 | `runtime.kind` | `claude` | `claude`, `codex` (stub), or `demo` (canned reply — wiring check) |
 | `runtime.cwd` | config dir | working directory the CLI runs in (`~` expands) |
 | `runtime.allowedTools` | `[]` | pre-granted permissions — headless runs can't prompt |
-| `runtime.maxTurns` / `timeoutSec` | 25 / 300 | runaway caps |
+| `runtime.maxTurns` / `timeoutSec` | 100 / 300 | runaway caps |
 | `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
 

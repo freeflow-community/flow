@@ -90,7 +90,7 @@ export function loadConfig(configPath: string): BridgeConfig {
     cwd: path.resolve(path.dirname(abs), expandHome(r.cwd ?? '.')),
     permissionMode: r.permissionMode,
     allowedTools: r.allowedTools ?? [],
-    maxTurns: r.maxTurns ?? 25,
+    maxTurns: r.maxTurns ?? 100, // real coding tasks blow past small caps — 25 wedged first turns via max-turns errors
     timeoutSec: r.timeoutSec ?? 300,
     mcp: r.mcp ?? (kind === 'claude'),
     systemPromptExtra: r.systemPromptExtra,

@@ -68,6 +68,15 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - Wired in: macOS `make-app.sh` copies the icns + sets `CFBundleIconFile`; iOS
   `project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME`. `[macos] [ios]`
 
+### 2026-07-20 — Agent bridge 0.2.2: transparent session recovery + saner max-turns
+- Session-id collisions are now retried transparently in the same turn
+  (flip to `--resume`, rerun the message — no error posted); an errored run
+  that still emitted a result event (e.g. max-turns) marks the session
+  resumable instead of colliding next turn. Default `maxTurns` raised
+  25 → 100 — real coding tasks blew past 25, which was the root wedge:
+  max-turns error → session exists → every later turn "already in use".
+  `[server]` (bridge tooling; npm 0.2.2)
+
 ### 2026-07-20 — Invite emails + web invite links
 - Inviting someone now actually emails them: "«Inviter» invited you to
   «Workspace» on Flow" with a web accept link, via the existing email seam
