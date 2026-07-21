@@ -46,6 +46,12 @@ export interface RuntimeConfig {
 export interface BridgeConfig {
   serverUrl: string;
   agentToken: string;
+  /**
+   * Log file (every line the daemon prints, same timestamped format).
+   * Default: <config name>.log next to the config (agent.json → agent.log).
+   * Explicit JSON null disables file logging; `~` expands.
+   */
+  logFile: string | null;
   runtime: RuntimeConfig;
   /** Default 'mentions': @-mentions + DMs only. 'all' adds full traffic of channels the agent is in. */
   eventScope: EventScope;
@@ -59,6 +65,7 @@ export interface BridgeConfig {
 interface RawConfig {
   serverUrl?: string;
   agentToken?: string;
+  logFile?: string | null;
   runtime?: Partial<RuntimeConfig> & { kind?: string };
   eventScope?: string;
   respondToAgents?: boolean;
@@ -107,9 +114,17 @@ export function loadConfig(configPath: string): BridgeConfig {
   const progress = (raw.progress ?? 'thinking') as ProgressMode;
   if (!['thinking', 'typing', 'silent'].includes(progress)) throw new Error(`config: bad progress "${progress}"`);
 
+  const logFile =
+    raw.logFile === null
+      ? null
+      : raw.logFile !== undefined
+        ? path.resolve(path.dirname(abs), expandHome(raw.logFile))
+        : abs.replace(/\.json$/i, '') + '.log';
+
   return {
     serverUrl,
     agentToken,
+    logFile,
     runtime,
     eventScope,
     respondToAgents: raw.respondToAgents ?? false,

@@ -51,6 +51,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-20 — Web: invite link defaults to Register
+- A pending workspace invite now opens the auth screen on **Register** (email-first)
+  instead of Sign In — invitees usually have no account yet. Explicit email-link
+  tokens (signup/reset/signin) still take precedence. `[web]`
+- Fixed a stale error lingering across the Sign In/Register toggle (a failed
+  login's "invalid email or password" no longer shows on the Register view):
+  form navigation now clears prior error/info. `[web]`
+
 ### 2026-07-20 — Web favicon
 - Web client had no favicon (default browser globe); now ships one from the
   same icon source. `make-icon.swift`/`make-icon.sh` also emit
@@ -67,6 +75,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   (full-bleed; system-masked). Re-run only when the design changes. `[macos] [ios]`
 - Wired in: macOS `make-app.sh` copies the icns + sets `CFBundleIconFile`; iOS
   `project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME`. `[macos] [ios]`
+
+### 2026-07-20 — Agent bridge 0.2.3: log to a local file
+- Every daemon log line (same timestamped format as stdout) also appends to
+  a log file — default `<config>.log` next to the config (agent.json →
+  agent.log, chmod 600, parent dirs created), `logFile` config overrides
+  (`~` expands), JSON `null` disables. One-shot rotation at 5 MB → `.log.1`;
+  a broken log file degrades to stdout-only instead of crashing.
+  `[server]` (bridge tooling; npm 0.2.3)
 
 ### 2026-07-20 — Agent bridge 0.2.2: transparent session recovery + saner max-turns
 - Session-id collisions are now retried transparently in the same turn

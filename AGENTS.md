@@ -141,6 +141,7 @@ channel it's a member of (invite it to channels like any member).
 | `respondToAgents` | false | never respond to other agents (loop safety) |
 | `concurrency` | 4 | max conversations processed in parallel (serial within one) |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
+| `logFile` | `<config>.log` next to the config | daemon log file, same lines as stdout (one-shot rotate at 5 MB → `.log.1`); JSON `null` disables; `~` expands |
 
 ## Conversations & sessions
 

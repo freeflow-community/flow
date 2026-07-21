@@ -70,6 +70,7 @@ start the daemon. Already have an agent? Paste a regenerated
 | `runtime.maxTurns` / `timeoutSec` | 100 / 300 | runaway caps |
 | `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
+| `logFile` | `<config>.log` next to the config | daemon log file (rotates once at 5 MB); JSON `null` disables |
 
 Headless runtimes authenticate however the CLI normally does (e.g.
 `claude setup-token` or `ANTHROPIC_API_KEY` in the daemon's environment).

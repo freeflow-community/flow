@@ -28,8 +28,16 @@ export default function AuthScreen({
   resetToken?: string | null;
   signinToken?: string | null;
 }) {
+  // A pending workspace invite means the visitor most likely has no account
+  // yet — default them to Register (email-first) rather than Sign In. Explicit
+  // email-link tokens still win (they target a specific existing flow).
+  const invited = typeof localStorage !== 'undefined' && !!localStorage.getItem('flow.pendingInvite');
   const [mode, setMode] = useState<Mode>(
-    signinToken ? 'signin-link' : signupToken ? 'complete' : resetToken ? 'reset' : 'signin',
+    signinToken ? 'signin-link'
+      : signupToken ? 'complete'
+      : resetToken ? 'reset'
+      : invited ? 'register'
+      : 'signin',
   );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,6 +45,14 @@ export default function AuthScreen({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Navigate between forms, clearing any stale error/info so (e.g.) a failed
+  // login message doesn't linger on the Register view.
+  const nav = (m: Mode) => {
+    setError(null);
+    setInfo(null);
+    setMode(m);
+  };
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -112,7 +128,7 @@ export default function AuthScreen({
   }, [signinToken]);
 
   const backToSignIn = (
-    <button type="button" className="mt-3 w-full text-center text-sm text-muted hover:text-ink" onClick={() => setMode('signin')}>
+    <button type="button" className="mt-3 w-full text-center text-sm text-muted hover:text-ink" onClick={() => nav('signin')}>
       Back to sign in
     </button>
   );
@@ -157,7 +173,7 @@ export default function AuthScreen({
         {error && (
           <p className="mb-2 text-sm text-red-600">
             {error}{' '}
-            <button type="button" className="underline" onClick={() => setMode('register')}>
+            <button type="button" className="underline" onClick={() => nav('register')}>
               Register again
             </button>
           </p>
@@ -211,7 +227,7 @@ export default function AuthScreen({
         {error && (
           <p className="mb-2 text-sm text-red-600">
             {error}{' '}
-            <button type="button" className="underline" onClick={() => setMode('forgot')}>
+            <button type="button" className="underline" onClick={() => nav('forgot')}>
               Request a new link
             </button>
           </p>
@@ -256,7 +272,7 @@ export default function AuthScreen({
           <button
             type="button"
             className={!isRegister ? 'font-semibold text-accent-soft' : 'text-muted'}
-            onClick={() => setMode('signin')}
+            onClick={() => nav('signin')}
           >
             Sign In
           </button>
@@ -264,7 +280,7 @@ export default function AuthScreen({
           <button
             type="button"
             className={isRegister ? 'font-semibold text-accent-soft' : 'text-muted'}
-            onClick={() => setMode('register')}
+            onClick={() => nav('register')}
           >
             Register
           </button>
@@ -296,7 +312,7 @@ export default function AuthScreen({
               type="button"
               data-testid="auth-forgot-link"
               className="mb-2 text-xs text-muted hover:text-ink"
-              onClick={() => setMode('forgot')}
+              onClick={() => nav('forgot')}
             >
               Forgot password?
             </button>
@@ -336,9 +352,9 @@ export default function AuthScreen({
     <div className="flex h-full items-center justify-center bg-base">
       <div className="w-80 rounded-xl border border-hairline bg-white p-6 shadow-sm">
         <h1 className="mb-1 text-center text-2xl font-bold text-ink">Flow</h1>
-        {localStorage.getItem('flow.pendingInvite') && (
+        {invited && (
           <p data-testid="invite-banner" className="mb-3 rounded-lg bg-accent/10 px-3 py-2 text-center text-sm text-accent-deep">
-            You&rsquo;ve been invited to a workspace — sign in or create an account to join.
+            You&rsquo;ve been invited to a workspace — create an account or sign in to join.
           </p>
         )}
         {body}

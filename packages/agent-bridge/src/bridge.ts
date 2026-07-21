@@ -54,13 +54,32 @@ export class AgentBridge {
   private readonly sem: Semaphore;
   private refreshTimer: NodeJS.Timeout | null = null;
 
+  private logStream: fs.WriteStream | null = null;
+
   constructor(private readonly cfg: BridgeConfig) {
     this.api = new FlowApi(cfg.serverUrl, cfg.agentToken);
     this.sem = new Semaphore(cfg.concurrency);
+    if (cfg.logFile) {
+      try {
+        // One-shot rotation at 5 MB so the file can't grow unbounded.
+        fs.mkdirSync(path.dirname(cfg.logFile), { recursive: true });
+        const size = fs.existsSync(cfg.logFile) ? fs.statSync(cfg.logFile).size : 0;
+        if (size > 5 * 1024 * 1024) fs.renameSync(cfg.logFile, `${cfg.logFile}.1`);
+        this.logStream = fs.createWriteStream(cfg.logFile, { flags: 'a', mode: 0o600 });
+        this.logStream.on('error', (err: Error) => {
+          console.error(`[bridge] log file error (${err.message}) — continuing on stdout only`);
+          this.logStream = null;
+        });
+      } catch (err) {
+        console.error(`[bridge] could not open log file ${cfg.logFile}: ${(err as Error).message}`);
+      }
+    }
   }
 
   log(msg: string): void {
-    console.log(`[bridge ${new Date().toISOString()}] ${msg}`);
+    const line = `[bridge ${new Date().toISOString()}] ${msg}`;
+    console.log(line);
+    this.logStream?.write(line + '\n');
   }
 
   async start(): Promise<void> {
@@ -85,6 +104,9 @@ export class AgentBridge {
 
   stop(): void {
     this.socket?.close();
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.logStream?.end();
+    this.logStream = null;
   }
 
   private async refreshDirectory(): Promise<void> {

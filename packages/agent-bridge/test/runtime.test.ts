@@ -94,6 +94,19 @@ describe('loadConfig', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('defaults logFile to <config>.log; null disables; paths resolve + expand', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
+    const p = path.join(dir, 'agent.json');
+    const base = { serverUrl: 'http://x', agentToken: 't', runtime: { kind: 'demo' } };
+    fs.writeFileSync(p, JSON.stringify(base));
+    expect(loadConfig(p).logFile).toBe(path.join(dir, 'agent.log'));
+    fs.writeFileSync(p, JSON.stringify({ ...base, logFile: null }));
+    expect(loadConfig(p).logFile).toBeNull();
+    fs.writeFileSync(p, JSON.stringify({ ...base, logFile: 'logs/x.log' }));
+    expect(loadConfig(p).logFile).toBe(path.join(dir, 'logs/x.log'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('expands ~ in cwd and rejects a nonexistent cwd for spawning runtimes', () => {
     expect(expandHome('~')).toBe(os.homedir());
     expect(expandHome('~/projects')).toBe(path.join(os.homedir(), 'projects'));
