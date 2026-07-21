@@ -42,8 +42,10 @@ export interface InviteDTO {
   id: string;
   workspaceId: string;
   email: string;
-  inviteUrl: string; // flow://invite/<token> — raw token returned once
+  inviteUrl: string; // <INVITE_URL_BASE><token> — raw token returned once
   expiresAt: string;
+  /** true when the invite email was sent to `email` (send failures leave the invite valid). */
+  emailSent?: boolean;
 }
 
 export type ChannelKind = 'standard' | 'dm' | 'group_dm';

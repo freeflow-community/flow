@@ -336,6 +336,11 @@ export default function AuthScreen({
     <div className="flex h-full items-center justify-center bg-base">
       <div className="w-80 rounded-xl border border-hairline bg-white p-6 shadow-sm">
         <h1 className="mb-1 text-center text-2xl font-bold text-ink">Flow</h1>
+        {localStorage.getItem('flow.pendingInvite') && (
+          <p data-testid="invite-banner" className="mb-3 rounded-lg bg-accent/10 px-3 py-2 text-center text-sm text-accent-deep">
+            You&rsquo;ve been invited to a workspace — sign in or create an account to join.
+          </p>
+        )}
         {body}
       </div>
     </div>

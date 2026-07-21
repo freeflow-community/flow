@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { UserDTO, AuthResponse } from '@flow/shared';
+import type { UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
 import { api, getToken, setToken } from './lib/api';
 import { AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
@@ -8,6 +8,7 @@ import WorkspaceChooser from './components/WorkspaceChooser';
 import Main from './components/Main';
 
 const ACTIVE_WS_KEY = 'flow.activeWorkspace';
+export const PENDING_INVITE_KEY = 'flow.pendingInvite';
 
 /** Pull ?signup= / ?reset= / ?signin= (emailed links) off the URL before rendering. */
 function consumeEmailLinkParams(): {
@@ -15,6 +16,14 @@ function consumeEmailLinkParams(): {
   resetToken: string | null;
   signinToken: string | null;
 } {
+  // /invite/<token> (emailed invite link): stash in localStorage so it
+  // survives the full register→confirm-email→sign-in round trip, then accept
+  // automatically once a user is signed in (effect in App).
+  const invite = location.pathname.match(/^\/invite\/([A-Za-z0-9_-]+)$/);
+  if (invite) {
+    localStorage.setItem(PENDING_INVITE_KEY, invite[1]!);
+    history.replaceState(null, '', '/');
+  }
   const params = new URLSearchParams(location.search);
   const signupToken = params.get('signup');
   const resetToken = params.get('reset');
@@ -53,6 +62,28 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Accept a stashed emailed invite as soon as we have a signed-in user
+  // (fresh registration or existing account alike), then land in that
+  // workspace. Any failure (expired/used/bad token) burns the stash — the
+  // invite modal's link remains the manual fallback.
+  useEffect(() => {
+    if (!user) return;
+    const token = localStorage.getItem(PENDING_INVITE_KEY);
+    if (!token) return;
+    void (async () => {
+      try {
+        const ws = await api<WorkspaceDTO>('POST', '/v1/invites/accept', { token });
+        localStorage.setItem(ACTIVE_WS_KEY, ws.id);
+        setWorkspaceId(ws.id);
+        await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      } catch (err) {
+        console.warn(`invite accept failed: ${(err as Error).message}`);
+      } finally {
+        localStorage.removeItem(PENDING_INVITE_KEY);
+      }
+    })();
+  }, [user, qc]);
 
   const signIn = useCallback((resp: AuthResponse) => {
     setToken(resp.token);

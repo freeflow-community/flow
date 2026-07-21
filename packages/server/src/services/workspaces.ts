@@ -6,6 +6,7 @@ import { hashToken, newToken } from '../lib/tokens.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
+import { emailSender } from '../email/index.js';
 
 const { workspaces, workspaceMembers, invites, channels, channelMembers, users } = schema;
 
@@ -162,12 +163,38 @@ export async function createInvite(workspaceId: string, inviterId: string, email
     if (isUniqueViolation(err)) throw conflict('invite_exists', 'an invite for this email already exists');
     throw err;
   }
+
+  // Invite email (operator request 2026-07-20). The emailed link is always the
+  // web accept URL — the web app walks through register-then-accept — while
+  // inviteUrl keeps the configured base (deep link on default local config).
+  // A failed send never fails the invite: the admin still gets the link.
+  let emailSent = false;
+  try {
+    const inviter = (await db.select().from(users).where(eq(users.id, inviterId)).limit(1))[0];
+    const wsRow = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0];
+    await emailSender().send({
+      to: email,
+      subject: `${inviter?.displayName ?? 'Someone'} invited you to ${wsRow?.name ?? 'a workspace'} on Flow`,
+      text:
+        `${inviter?.displayName ?? 'Someone'} invited you to join the "${wsRow?.name ?? ''}" workspace on Flow.\n\n` +
+        `Accept the invite here:\n\n` +
+        `${config.webUrlBase}/invite/${token}\n\n` +
+        `If you don't have a Flow account yet, you'll create one first and the ` +
+        `invite is applied automatically. This link expires in ${config.inviteTtlDays} days ` +
+        `and can only be used once.\n`,
+    });
+    emailSent = true;
+  } catch (err) {
+    console.error(`invite email failed for ${email}: ${(err as Error).message}`);
+  }
+
   return {
     id,
     workspaceId,
     email,
     inviteUrl: `${config.inviteUrlBase}${token}`,
     expiresAt: expiresAt.toISOString(),
+    emailSent,
   };
 }
 

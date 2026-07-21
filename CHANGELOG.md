@@ -68,6 +68,20 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - Wired in: macOS `make-app.sh` copies the icns + sets `CFBundleIconFile`; iOS
   `project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME`. `[macos] [ios]`
 
+### 2026-07-20 — Invite emails + web invite links
+- Inviting someone now actually emails them: "«Inviter» invited you to
+  «Workspace» on Flow" with a web accept link, via the existing email seam
+  (dev outbox locally, Cloudflare in prod). A failed send never fails the
+  invite — the modal falls back to share-the-link-yourself and says which
+  happened (`InviteDTO.emailSent`). Emailed links are always
+  `FLOW_WEB_URL/invite/<token>`; prod also sets
+  `INVITE_URL_BASE=https://app.flowtoo.org/invite/` so the admin-copied link
+  matches (previously a browser-useless flow:// deep link).
+- Web handles `/invite/<token>`: the token is stashed in localStorage
+  (survives the register → confirm-email round trip), the auth screen shows
+  a "you've been invited" banner, and the invite is accepted automatically
+  on first sign-in, landing the user in the workspace. `[server] [web]`
+
 ### 2026-07-20 — macOS + iOS: 🤖 agent badge
 - `User.isAgent` rides the shared data layer (Models + GRDB migration v6 +
   member sync); `displayNameWithBadge` badges display-only name maps, so the

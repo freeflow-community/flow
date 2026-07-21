@@ -128,14 +128,14 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
 
 export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const [email, setEmail] = useState('');
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [invite, setInvite] = useState<InviteDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const inviteUrl = invite?.inviteUrl ?? null;
 
-  const invite = async () => {
+  const create = async () => {
     setError(null);
     try {
-      const inv = await api<InviteDTO>('POST', `/v1/workspaces/${workspaceId}/invites`, { email });
-      setInviteUrl(inv.inviteUrl);
+      setInvite(await api<InviteDTO>('POST', `/v1/workspaces/${workspaceId}/invites`, { email }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed');
     }
@@ -146,7 +146,11 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
       <h3 className="mb-3 font-bold">Invite People</h3>
       {inviteUrl ? (
         <>
-          <p className="mb-2 text-sm text-ink-soft">Share this invite link (shown once):</p>
+          <p className="mb-2 text-sm text-ink-soft" data-testid="invite-result">
+            {invite?.emailSent
+              ? `Invite emailed to ${invite.email}. You can also share this link (shown once):`
+              : 'The invite email could not be sent — share this link yourself (shown once):'}
+          </p>
           <code data-testid="invite-url" className="mb-3 block rounded bg-daypill p-2 text-xs break-all select-all">{inviteUrl}</code>
           <div className="flex justify-end">
             <button className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white" onClick={onClose}>Done</button>
@@ -161,7 +165,7 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
             <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
             <button data-testid="invite-submit"
               className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-              disabled={!email.includes('@')} onClick={() => void invite()}>Create Invite</button>
+              disabled={!email.includes('@')} onClick={() => void create()}>Send Invite</button>
           </div>
         </>
       )}
