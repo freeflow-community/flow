@@ -58,18 +58,25 @@ func wavePath(_ s: CGFloat, x0: CGFloat, x1: CGFloat, y: CGFloat, amp: CGFloat, 
     return mid.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 10)
 }
 
-func draw(_ px: Int, rounded: Bool) -> CGImage {
+// Ground treatment per surface:
+//  .macos   — rounded squircle, ~6% inset, soft Dock shadow
+//  .ios     — full-bleed square (the system applies the mask)
+//  .favicon — rounded squircle, full-bleed, no shadow (reads best in a tab)
+enum Style { case macos, ios, favicon }
+
+func draw(_ px: Int, _ style: Style) -> CGImage {
     let s = CGFloat(px)
     let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
                         space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.interpolationQuality = .high
     ctx.setAllowsAntialiasing(true)
 
-    let inset: CGFloat = rounded ? s*0.06 : 0
+    let rounded = style != .ios
+    let inset: CGFloat = style == .macos ? s*0.06 : 0
     let ground = rounded ? roundedSquare(s, inset: inset, radiusRatio: 0.2237)
                          : CGPath(rect: CGRect(x: 0, y: 0, width: s, height: s), transform: nil)
 
-    if rounded {
+    if style == .macos {
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: -s*0.012), blur: s*0.03, color: rgb(0, 0, 0, 0.28))
         ctx.addPath(ground); ctx.setFillColor(rgb(0,0,0,1)); ctx.fillPath()
@@ -102,8 +109,9 @@ func write(_ img: CGImage, to path: String) {
 }
 
 let args = CommandLine.arguments
-guard args.count >= 3 else { FileHandle.standardError.write(Data("usage: make-icon.swift <macos-iconset-dir> <ios-1024-png>\n".utf8)); exit(2) }
+guard args.count >= 3 else { FileHandle.standardError.write(Data("usage: make-icon.swift <macos-iconset-dir> <ios-1024-png> [web-dir]\n".utf8)); exit(2) }
 let iconset = args[1], iosPng = args[2]
+let webDir = args.count >= 4 ? args[3] : nil
 let fm = FileManager.default
 try? fm.createDirectory(atPath: iconset, withIntermediateDirectories: true)
 try? fm.createDirectory(atPath: (iosPng as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -116,10 +124,18 @@ let macSizes: [(String, Int)] = [
     ("icon_256x256",  256), ("icon_256x256@2x", 512),
     ("icon_512x512",  512), ("icon_512x512@2x", 1024),
 ]
-for (name, px) in macSizes { write(draw(px, rounded: true), to: "\(iconset)/\(name).png") }
+for (name, px) in macSizes { write(draw(px, .macos), to: "\(iconset)/\(name).png") }
 
 // iOS single-size master (full-bleed; the system applies the mask).
-write(draw(1024, rounded: false), to: iosPng)
+write(draw(1024, .ios), to: iosPng)
 
 print("wrote \(macSizes.count) macOS tiles → \(iconset)")
 print("wrote iOS 1024 master → \(iosPng)")
+
+// Web favicons (rounded, no shadow) + a full-bleed apple-touch-icon.
+if let web = webDir {
+    try? fm.createDirectory(atPath: web, withIntermediateDirectories: true)
+    for px in [16, 32, 48] { write(draw(px, .favicon), to: "\(web)/favicon-\(px).png") }
+    write(draw(180, .ios), to: "\(web)/apple-touch-icon.png")
+    print("wrote web favicons (16/32/48 + apple-touch-180) → \(web)")
+}
