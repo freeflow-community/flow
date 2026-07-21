@@ -62,10 +62,19 @@ Secrets live only in Railway service variables — never in the repo.
 Everything below assumes the Railway CLI is logged in and the repo directory
 is linked (`railway link --project flow`).
 
+Deploys are automatic: the `app` service is connected to
+`scottpersinger/flow`, so **pushing to `main` builds and ships** (Railpack →
+`/healthz` gate). Watch it with `railway deployment list`. Use `railway up`
+only to deploy an unpushed working tree (hotfix/experiment) — it snapshots the
+local directory and bypasses git.
+
 ```sh
-# deploy the current working tree (manual; no GitHub auto-deploy yet)
-railway up --service app --detach -m "what changed"
+# normal path: just push — Railway builds the new HEAD on push to main
+git push origin main
 railway deployment list --service app --json   # poll until SUCCESS
+
+# manual override: deploy the current working tree without pushing
+railway up --service app --detach -m "what changed"
 
 # logs / status
 railway logs --service app --lines 200
@@ -121,8 +130,9 @@ bootstraps their own workspace.
 
 ## Known gaps / next steps
 
-- **No GitHub auto-deploy** — deploys are `railway up` snapshots. Connect the
-  `app` service to `scottpersinger/flow` to ship on push to `main`.
+- ~~No GitHub auto-deploy~~ — done: the `app` service is connected to
+  `scottpersinger/flow` and ships on push to `main`. `railway up` remains the
+  manual working-tree override (see Operations).
 - ~~macOS app targets localhost~~ — done: packaged apps default to
   `https://app.flowtoo.org` (`FlowServerURL` in Info.plist via make-app.sh;
   `FLOW_SERVER_URL` env overrides; bare `swift run` still defaults local).
