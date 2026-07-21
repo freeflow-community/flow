@@ -54,7 +54,9 @@ export class FlowSocket {
     const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)]!;
     this.attempt += 1;
     this.opts.log(`disconnected — reconnecting in ${delay / 1000}s`);
-    setTimeout(() => this.connect(), delay).unref();
+    // NOT unref'd: after a disconnect this timer may be the only handle left
+    // on the event loop — an unref'd timer let the whole daemon exit(0) here.
+    setTimeout(() => this.connect(), delay);
   }
 
   sendTyping(channelId: string): void {

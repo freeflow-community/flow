@@ -7,6 +7,24 @@ presence and an 🤖 badge next to their name. The usual deployment is the
 and execs a coding-agent CLI (Claude Code first) headlessly per conversation.
 Production base URL: `https://app.flowtoo.org`.
 
+## Quick start (one command)
+
+```sh
+cd packages/agent-bridge && pnpm build
+node dist/index.js            # or: node dist/index.js my-agent.json
+```
+
+With no existing config, this runs an interactive setup: it prompts for the
+server URL and invite key (from **Invite an Agent…** in the web app),
+exchanges the key for the agent token, asks name/description/runtime/working
+directory, saves `agent.json` (chmod 600 — it holds the token), and starts
+the daemon. Next time, the same command just runs the saved config. Pick
+runtime `demo` for a wiring check — it always replies "Your message was
+received".
+
+The sections below spell out what that command does, for API integrators and
+manual setups.
+
 ## Setup walkthrough
 
 ### 1. Invite (workspace owner/admin, web UI or API)

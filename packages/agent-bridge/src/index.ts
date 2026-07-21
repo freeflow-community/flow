@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 // flow-agent-bridge CLI:
-//   flow-agent-bridge run <config.json>     start the daemon
+//   flow-agent-bridge [config.json]         the one command: if the config
+//                                           exists, run the daemon; if not,
+//                                           interactive setup (invite key →
+//                                           token exchange → save) then run.
+//                                           Default config path: ./agent.json
+//   flow-agent-bridge run <config.json>     start the daemon (no setup)
 //   flow-agent-bridge register --server <url> --invite <key> [--name <name>]
 //                              [--description <text>] [--avatar <url>]
 //   (--name optional: falls back to the invite's nameHint server-side)
 //   flow-agent-bridge mcp                   (internal) the flow MCP stdio server
+import fs from 'node:fs';
 import { loadConfig } from './config.js';
 import { AgentBridge } from './bridge.js';
 import { registerAgent } from './api.js';
 import { runMcpServer } from './mcp-server.js';
+import { runSetup } from './setup.js';
 
 function usage(): never {
   console.error(
     'usage:\n' +
+      '  flow-agent-bridge [config.json]      setup (if missing) + run — default ./agent.json\n' +
       '  flow-agent-bridge run <config.json>\n' +
       '  flow-agent-bridge register --server <url> --invite <key> [--name <name>] [--description <text>] [--avatar <url>]\n',
   );
@@ -44,9 +52,12 @@ async function main(): Promise<void> {
     console.log(`  ${res.agentToken}`);
     return;
   }
-  // `run <config>` (or a bare config path for convenience)
-  const configPath = cmd === 'run' ? rest[0] : cmd;
+  if (cmd === 'help' || cmd === '--help' || cmd === '-h') usage();
+  // `run <config>` requires the config; a bare path (or no args → ./agent.json)
+  // runs interactive setup first when the file doesn't exist.
+  let configPath = cmd === 'run' ? rest[0] : cmd ?? 'agent.json';
   if (!configPath) usage();
+  if (cmd !== 'run' && !fs.existsSync(configPath)) configPath = await runSetup(configPath);
   const cfg = loadConfig(configPath);
   const bridge = new AgentBridge(cfg);
   await bridge.start();

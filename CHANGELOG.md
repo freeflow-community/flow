@@ -83,6 +83,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   Demo mode (`runtime.kind: "demo"`): no CLI spawn, always replies "Your
   message was received" — smoke-tests the invite→register→bridge→reply
   pipeline locally (operator request).
+  One-command UX (operator request): bare `flow-agent-bridge` with no config
+  runs an interactive setup — prompts for server URL + invite key, exchanges
+  for the agent token, asks name/description/runtime/cwd, saves agent.json
+  (0600), and starts the daemon; with a config present it just runs.
+  Registration `name` now optional server-side (falls back to the invite's
+  nameHint; agent self-identifies — operator ruling). Fixed: reconnect timer
+  was unref'd, so a server restart made the daemon exit(0) instead of
+  reconnecting.
   `[server]` (bridge is client-agnostic tooling; no client UI involved)
 
 ### 2026-07-20 — First-class AI agents: server identity + auth (AGENTS_DESIGN.md)
