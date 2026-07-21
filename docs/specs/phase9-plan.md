@@ -1,21 +1,33 @@
 # Phase 9 implementation plan — Artifact tabs
 
-Spec: `docs/specs/phase9.md`. Branch: `worktree-phase9-artifacts`.
+Spec: `docs/specs/phase9.md`. Built on branch `worktree-phase9-artifacts`, shipped in
+PRs #4–#6.
 
-## Data model decision (operator-ratified 2026-07-21, see decision_log.md)
+> **Status: as-built.** This was the pre-build plan; the data-model section and rulings
+> below have been updated to match what shipped. The step-by-step (Steps 1–5) is kept as
+> the original intent — a few specifics changed during implementation (see the "Diverged
+> from plan" notes). Authoritative record of decisions is `decision_log.md`.
+
+## Data model decision (as built — see decision_log.md 2026-07-21)
 
 An **artifact is a named reference to an existing `files` row** (a bookmark), **personal
 and per-user**: each row is owned by one user and appears only in that user's sidebar.
-File bytes remain guarded by `requireFileAccess` at render time. Removing an artifact
-never deletes the file. Agent-created artifacts reuse the existing upload pipeline
-(upload file → create artifact), fanning out one personal row per human member of the
-current channel. macOS parity ships in this phase.
+File bytes remain guarded by `requireFileAccess` at render time — holding an artifact is
+itself a read grant (PR #5). Removing an artifact never deletes the file.
+
+**Agent-created artifacts go to one recipient, not a channel.** The MCP `create_artifact`
+tool uploads (or reuses) a file and creates a single artifact in one person's sidebar —
+by default the user the agent is responding to. The original plan fanned out one row per
+human channel member; that was corrected to single-recipient during the build (decision
+log 2026-07-21, PR #6). macOS parity ships in this phase.
 
 ## Step 1 — Server: table + service + routes + events
 
 - `packages/server/src/db/migrations/0016_artifacts.sql` + `pgTable` in `db/schema.ts`
-  (mirror `reactions`, schema.ts:186): `id, workspaceId, channelId, fileId → files.id
-  (cascade), name, createdBy, createdAt`.
+  (mirror `reactions`, schema.ts:186). _Diverged from plan:_ shipped as `id, userId,
+  workspaceId, fileId → files.id (cascade), name, createdAt` with a unique `(userId,
+  fileId)` index — no `channelId` (artifacts are personal, not channel-scoped) and the
+  owner is `userId`, not `createdBy`.
 - `packages/shared/src/dto.ts`: `ArtifactDTO` (embed the `FileDTO` so clients can render
   without a second fetch). `packages/shared/src/schemas.ts`: `CreateArtifactBody
   { fileId, name? }` (name defaults to file name).
@@ -25,9 +37,10 @@ current channel. macOS parity ships in this phase.
   Publish events after writes (mirror `services/reactions.ts:36`).
 - Routes in `packages/server/src/routes/index.ts`: `POST /v1/artifacts`,
   `GET /v1/workspaces/:id/artifacts`, `PATCH /v1/artifacts/:id`, `DELETE /v1/artifacts/:id`.
-- `packages/shared/src/events.ts`: add `artifact.created` / `artifact.deleted` to
-  `EventType` + data type; publish on the channel subject (`subjectMsg`) so gateway
-  visibility filtering applies.
+- `packages/shared/src/events.ts`: add `artifact.created` / `artifact.updated` /
+  `artifact.deleted` to `EventType` + data type. _Diverged from plan:_ published on the
+  **per-user notify subject** (`subjectUserNotify`), not the channel subject — artifacts
+  are personal, so only the owner's own clients should hear about them.
 
 ## Step 2 — Web: sidebar section + artifact panel + bookmark action
 
@@ -52,11 +65,15 @@ current channel. macOS parity ships in this phase.
 
 ## Step 3 — MCP: agents create artifacts
 
-- `packages/agent-bridge/src/api.ts`: `FlowApi.createArtifact(fileId, name?)`.
+- `packages/agent-bridge/src/api.ts`: `FlowApi.shareArtifactWith(userId, fileId, name?)`
+  → `POST /v1/artifacts/share`.
 - `packages/agent-bridge/src/mcp-server.ts`: new tool `create_artifact` in `TOOLS` +
-  `callTool` case. Input: `{ name, content?, mime_type?, file_id? }` — either bookmark an
-  already-uploaded file, or inline `content` which we route through the existing
-  `FlowApi.uploadFile` then create the artifact. Operator tests manually after wiring.
+  `callTool` case. Input: `{ name, content?, mimeType?, path?, fileId?, userId? }` —
+  supply a file as inline `content`, a local `path`, or an existing `fileId`; recipient
+  defaults to the current conversation's user (`FLOW_USER_ID`, injected by the bridge).
+- _Diverged from plan:_ single recipient, not a channel fan-out (PR #6). Authorization is
+  "caller shares a channel with the recipient", enforced server-side in
+  `shareArtifactWith`; no conversation context required.
 
 ## Step 4 — macOS parity (ships this phase)
 
@@ -77,3 +94,12 @@ current channel. macOS parity ships in this phase.
 1. Artifacts are personal per-user bookmarks.
 2. Removing an artifact never deletes the underlying file.
 3. macOS parity ships in this phase.
+4. `create_artifact` targets **one recipient**, not every human member of the channel
+   (correction during build — superseded the original fan-out design; PR #6).
+
+## Follow-on fixes (post-merge, same day)
+
+- **PR #5** — an artifact bookmark is itself a read grant in `requireFileAccess`.
+  Agent-created files are never attached to a message, so recipients were locked out of
+  their own artifacts (panel fell back to a download card that 404'd).
+- **PR #6** — the single-recipient correction above (ruling 4).
