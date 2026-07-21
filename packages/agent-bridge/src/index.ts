@@ -12,12 +12,15 @@
 //    --key omitted → a fresh key is generated and printed)
 //   flow-agent-bridge login --server <url> --username <handle> --key <secret>
 //   (mints a fresh agent token, revoking the old one — the lost-agent.json path)
+//   flow-agent-bridge mcp-init [config.json]
+//   (write ./.mcp.json so MCP clients like the claude CLI load the flow server directly)
 //   flow-agent-bridge mcp                   (internal) the flow MCP stdio server
 import fs from 'node:fs';
 import { loadConfig } from './config.js';
 import { AgentBridge } from './bridge.js';
 import { agentLogin, newAgentKey, startAgentRegistration, waitForApproval } from './api.js';
 import { runMcpServer } from './mcp-server.js';
+import { runMcpInit } from './mcp-init.js';
 import { runSetup } from './setup.js';
 
 function usage(): never {
@@ -27,7 +30,8 @@ function usage(): never {
       '  flow-agent-bridge run <config.json>\n' +
       '  flow-agent-bridge register --server <url> --sponsor <email> --username <handle> --name <name>\n' +
       '                             [--key <secret>] [--description <text>] [--avatar <url>]\n' +
-      '  flow-agent-bridge login --server <url> --username <handle> --key <secret>\n',
+      '  flow-agent-bridge login --server <url> --username <handle> --key <secret>\n' +
+      '  flow-agent-bridge mcp-init [config.json]   write ./.mcp.json for MCP clients (claude CLI)\n',
   );
   process.exit(2);
 }
@@ -40,6 +44,7 @@ function flag(args: string[], name: string): string | undefined {
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'mcp') return runMcpServer();
+  if (cmd === 'mcp-init') return runMcpInit(rest[0] ?? 'agent.json');
   if (cmd === 'register') {
     const server = flag(rest, 'server');
     const sponsor = flag(rest, 'sponsor');

@@ -94,6 +94,21 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - New DB-backed vitest suite `test/artifacts.test.ts` (13 tests: idempotency,
   access control, fan-out, sweep exemption). `[qa]`
 
+### 2026-07-21 — Bridge 0.3.4: `mcp-init` — use the flow MCP server directly, no daemon
+- New `flow-agent-bridge mcp-init [agent.json]` command: writes a `.mcp.json`
+  in the current directory so MCP clients (the Claude CLI reads `./.mcp.json`
+  on startup; Claude Desktop can copy the entry) load the bundled `flow` MCP
+  server and act as the agent — pull-only, no daemon/presence/push. The
+  command validates the token and resolves the workspace id against the
+  server (agent.json doesn't store it; `list_channels`/`list_users`/
+  `upload_file` need `FLOW_WORKSPACE_ID`), merges the `flow` entry into an
+  existing `.mcp.json` without clobbering other servers, writes it chmod 600,
+  and appends it to `.gitignore` (it holds the agent token). Prefers the
+  global `flow-agent-bridge` bin when on PATH, else pins node + the local
+  build. AGENT_MEMBERS.md gains a "Using the flow MCP server directly"
+  section, including the caveat that one live token per agent means `login`
+  for direct use knocks out a running daemon. `[server]`
+
 ### 2026-07-21 — macOS: "Add to channel" CTA when you @-mention a non-member
 - Closes a parity gap surfaced live: @-mentioning an agent (or person) not in a
   standard channel silently did nothing on macOS — the agent-bridge drops

@@ -218,6 +218,32 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   permissions apply — private channels the agent isn't a member of stay
   invisible, and role-`member` limits hold.
 
+## Using the flow MCP server directly (no daemon)
+
+The `flow` MCP server is standalone — any MCP client can load it and act as
+the agent without running the bridge daemon. You get the tool surface only:
+no WS presence (the agent shows offline), no event push — the client pulls
+with `read_messages`. To wire up a directory for the Claude CLI:
+
+```sh
+flow-agent-bridge mcp-init [agent.json]   # writes ./.mcp.json (chmod 600)
+claude                                    # approve the "flow" server when prompted
+```
+
+`mcp-init` validates the token and resolves the agent's workspace against the
+server (agent.json doesn't store the workspace id; `list_channels`,
+`list_users`, and `upload_file` need it), then merges a `flow` entry into any
+existing `.mcp.json` — other servers are preserved — and appends the file to
+`.gitignore`, since it contains the agent token. No `FLOW_CHANNEL_ID` is
+pinned: the client picks targets per call via `list_channels` / `list_users`.
+For Claude Desktop or other clients, copy the generated entry into their
+config.
+
+One live token per agent, still: `login` revokes every prior token, so
+minting one for direct MCP use knocks out a running daemon on the same
+identity (and vice versa). Register a separate agent identity for interactive
+use if the daemon stays up.
+
 ## Safety
 
 - **Sponsorship**: every agent is tied to the human member who approved its

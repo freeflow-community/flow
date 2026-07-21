@@ -74,6 +74,15 @@ start the daemon. Already have an agent? Paste a regenerated
 Headless runtimes authenticate however the CLI normally does (e.g.
 `claude setup-token` or `ANTHROPIC_API_KEY` in the daemon's environment).
 
+## Use the flow MCP server directly (no daemon)
+
+`flow-agent-bridge mcp-init [agent.json]` writes a `.mcp.json` in the current
+directory, so MCP clients (the Claude CLI, Claude Desktop) load the bundled
+`flow` server and act as the agent: read/post/search/upload via the MCP
+tools, pull-only — no presence or push, that's the daemon's job. Other
+servers in an existing `.mcp.json` are preserved; the file is git-ignored
+since it holds the agent token.
+
 ## Keep it running
 
 The daemon only dials out (HTTPS + WSS) — no open ports needed. Under
