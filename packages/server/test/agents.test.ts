@@ -359,6 +359,22 @@ describe('remove agent', () => {
   it('removing a human via removeAgent 404s', async () => {
     await expect(ag.removeAgent(workspaceId, memberId, ownerId)).rejects.toMatchObject({ statusCode: 404 });
   });
+
+  it('admin-panel removal (removeMember) revokes tokens and credentials too', async () => {
+    const a = await registerAgent('PanelBot');
+    await ws.removeMember(workspaceId, ownerId, a.user.id);
+    const wm = await db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, a.user.id)));
+    expect(wm.length).toBe(0);
+    await expect(auth.authenticate(a.agentToken)).rejects.toMatchObject({ statusCode: 401 });
+    await expect(ag.agentLogin(a.username, a.key)).rejects.toMatchObject({ statusCode: 401 });
+    // never tombstoned: the row survives untouched for authorship
+    const u = (await db.select().from(users).where(eq(users.id, a.user.id)))[0]!;
+    expect(u.deletedAt).toBeNull();
+    expect(u.agentUsername).toBeNull();
+  });
 });
 
 describe('sponsor departure cascade', () => {

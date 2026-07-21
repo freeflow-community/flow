@@ -121,6 +121,7 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   args.push(opts.resume ? '--resume' : '--session-id', opts.sessionId);
   args.push('--append-system-prompt', opts.systemPrompt);
   args.push('--max-turns', String(cfg.maxTurns));
+  if (cfg.model) args.push('--model', cfg.model);
   if (cfg.permissionMode) args.push('--permission-mode', cfg.permissionMode);
   // Default is full permissions (operator ruling): with neither permissionMode
   // nor allowedTools configured, the agent runs unrestricted in its cwd.

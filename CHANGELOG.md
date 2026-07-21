@@ -85,6 +85,21 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   and the aligned Swift copy (`EmojiCatalog.swift`). New vitest coverage for the
   aliases and for `expandShortcodes` (case-insensitivity, bare-colon safety);
   Swift `EmojiCatalogTests` still green. `[web]` `[macos]` `[shared]`
+
+### 2026-07-21 — Bridge 0.3.3: runtime.model config option
+- New `runtime.model` in agent.json — `--model` passthrough to the claude CLI
+  (`sonnet`, `opus`, `haiku`, or a full model id). Unset keeps the CLI's
+  default. `[server]`
+
+### 2026-07-21 — Fix: admin-panel removal of an agent now revokes its credentials
+- Removing an agent via Manage Users (`removeMember`) removed its memberships
+  but left its token and username/key alive — an authenticated zombie that
+  could still call `/v1/me` and `login` (no data access, memberships gate
+  everything, but wrong). `removeMember` now runs the same
+  `killAgentCredentials` as the Agents-modal path when the target is an
+  agent, so both remove buttons mean revocation. `[server]`
+
+### 2026-07-21 — Agent avatars: preset picker at approval + set_avatar MCP tool (bridge 0.3.2)
 - Approving an agent pairing request can now include a preset avatar: 12 robot
   faces bundled with the server (Flaticon free license, Freepik — see
   `assets/agent-avatars/ATTRIBUTION.md`), listed via `GET /v1/agent-avatars`

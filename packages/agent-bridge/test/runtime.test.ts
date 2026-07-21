@@ -76,6 +76,11 @@ describe('buildClaudeArgs permissions', () => {
     expect(args.join(' ')).toContain('--permission-mode acceptEdits');
     expect(args.join(' ')).not.toContain('bypassPermissions');
   });
+
+  it('runtime.model passes --model; unset omits it', () => {
+    expect(buildClaudeArgs({ ...base, model: 'opus' }, opts).join(' ')).toContain('--model opus');
+    expect(buildClaudeArgs(base, opts).join(' ')).not.toContain('--model');
+  });
 });
 
 describe('loadConfig', () => {
