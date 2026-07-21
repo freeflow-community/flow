@@ -126,9 +126,29 @@ struct MessageRow: View {
     @State private var hovering = false
     @State private var showReactionPicker = false
     @State private var showDeleteConfirm = false
+    @State private var hoverHideWork: DispatchWorkItem?
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
+
+    /// Hover-menu hysteresis (ui_nits: menu "stutters"/blinks while hovering).
+    /// The toolbar is an overlay pinned to the row's top-trailing edge, so the
+    /// cursor travelling from the message text up onto the pill briefly leaves
+    /// the row's hover region. Flipping `hovering` off synchronously unmounts
+    /// the pill mid-travel — the cursor is then over empty space, the row
+    /// re-hovers, and it flickers back. Debounce the hide (and cancel it the
+    /// moment the cursor lands on the pill, which carries its own `.onHover`)
+    /// so the menu holds still long enough to aim at.
+    private func setHovering(_ inside: Bool) {
+        hoverHideWork?.cancel()
+        if inside {
+            hovering = true
+        } else {
+            let work = DispatchWorkItem { hovering = false }
+            hoverHideWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -228,7 +248,7 @@ struct MessageRow: View {
         .padding(.bottom, 1)
         .opacity(message.pending ? 0.55 : 1)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { setHovering($0) }
         // Hover menu (web parity, ui_nits items 2+3): react / reply-in-thread,
         // plus edit + delete on the author's own messages. The menu must stay
         // mounted while the picker is open: the react button is the popover's
@@ -327,6 +347,10 @@ struct MessageRow: View {
                 .shadow(color: MC.ink.opacity(0.08), radius: 2, y: 1)
         )
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+        // The pill sits outside the row's tracked area, so it carries its own
+        // hover: landing on it cancels the pending hide and keeps the menu up.
+        .contentShape(Rectangle())
+        .onHover { setHovering($0) }
     }
 
     // MARK: - Body blocks (phase-3.5 ruling 2)

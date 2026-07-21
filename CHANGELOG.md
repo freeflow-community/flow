@@ -62,6 +62,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — UI nits: macOS message hover menu no longer stutters
+- Fixed the per-message hover toolbar (react / reply / edit / delete pill)
+  blinking in and out while the cursor moved toward it. The pill is an overlay
+  pinned to the row's top-trailing edge, outside the row's hover region, and
+  `hovering` was flipped off synchronously — so travelling from the message
+  text up onto the pill briefly unmounted it, which re-hovered the row and
+  flickered it back. Now the hide is debounced (~120 ms) and cancelled when the
+  cursor lands on the pill (the pill carries its own `.onHover`), so the menu
+  holds still long enough to click. macOS-only; web's hover menu was unaffected.
+  `[macos]`
+
 ### 2026-07-21 — UI nits: common missing Slack emoji aliases
 - Added ~60 frequently typed Slack shortcodes that were missing from the
   shared catalog — the retired ui_nits `:thread:` (🧵) example plus a batch of

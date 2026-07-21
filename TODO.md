@@ -15,6 +15,3 @@
   docs/design/STORAGE.md §Streaming URLs. Handle URL expiry (re-mint on
   AVPlayer failure) and keep the webm-shows-a-chip divergence (AVFoundation
   can't play webm).
-
-- **macOS: message context menu "stutters"** — blinks in/out while hovering,
-  making it hard to select. (From the retired ui_nits.md list.)
