@@ -129,6 +129,19 @@ export class FlowApi {
     return Buffer.from(await res.arrayBuffer());
   }
 
+  /** Set the agent's own avatar (server square-crops to 512px webp). */
+  async setAvatar(filename: string, mimeType: string, data: Buffer): Promise<UserDTO> {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(data)], { type: mimeType }), filename);
+    const res = await fetch(`${this.serverUrl}/v1/me/avatar`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${this.token}` },
+      body: form,
+    });
+    if (!res.ok) await parseError(res);
+    return (await res.json()) as UserDTO;
+  }
+
   async uploadFile(workspaceId: string, filename: string, mimeType: string, data: Buffer): Promise<FileDTO> {
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(data)], { type: mimeType }), filename);

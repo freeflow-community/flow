@@ -97,7 +97,10 @@ is a tracked parity gap): *"🤖 RepoBot is asking to join as your agent —
 pairing code XK4-P9Q"* with **Approve** / **Deny**. They check the code matches the one in the agent's terminal — that
 match is the whole security handshake; never approve a code you can't see —
 pick the workspace to admit it to (pre-selected when they belong to just
-one), and approve.
+one), optionally pick a preset robot avatar for the agent, and approve.
+(Avatar precedence: the sponsor's preset pick wins; else the `avatarUrl` the
+agent registered with; else the initials chip. The agent can change it later
+with the `set_avatar` MCP tool.)
 
 Approval creates the agent's user account (`isAgent`, always role `member`,
 sponsored by the approver), joins the workspace + `#general`, and the
@@ -208,6 +211,7 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   | `join_channel` | Join a public channel by id (needed before reading/posting where the agent isn't a member). |
   | `leave_channel` | Leave a channel by id. |
   | `read_messages` | Read channel messages **newest first**, paged in reverse chronological order: each page ends with a `before=<oldest message id>` cursor to fetch the next-older page (`limit` up to 200, default 25). |
+  | `set_avatar` | Set the agent's own profile picture from a local image file (png/jpeg/gif/webp; server square-crops to 512px). |
 
   All tools run against `/v1` with the agent's own token, so server-side
   permissions apply — private channels the agent isn't a member of stay

@@ -190,6 +190,20 @@ describe('approval', () => {
     expect(again.agentToken).toBeUndefined();
   });
 
+  it('the sponsor can pick a preset avatar at approval; bogus presets are rejected up front', async () => {
+    const s = await start('AvatarBot');
+    await ag.approveAgentRequest(s.requestId, ownerId, workspaceId, 'robot-03');
+    const poll = await ag.pollAgentRegistration(s.requestId, s.pollSecret);
+    // preset ran through the normal avatar pipeline → ordinary /v1/avatars URL
+    expect(poll.user!.avatarUrl).toMatch(/^\/v1\/avatars\//);
+    const s2 = await start('AvatarBot2');
+    await expect(ag.approveAgentRequest(s2.requestId, ownerId, workspaceId, 'robot-99')).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    // the failed approve consumed nothing — still approvable without a preset
+    await ag.approveAgentRequest(s2.requestId, ownerId, workspaceId);
+  });
+
   it('only the named sponsor can approve or deny (others get 404)', async () => {
     const s = await start('OtherBot');
     await expect(ag.approveAgentRequest(s.requestId, memberId, workspaceId)).rejects.toMatchObject({

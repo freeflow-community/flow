@@ -2,15 +2,28 @@
 // user as sponsor. Floats above everything until approved/denied/expired —
 // the code shown here matching the agent's terminal IS the security handshake.
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAgentRequests, useWorkspaces } from '../hooks';
+import { AuthImg } from './Avatar';
+
+/** The fixed preset set for the picker (robot faces bundled with the server). */
+function useAgentAvatarPresets() {
+  return useQuery({
+    queryKey: ['agentAvatarPresets'],
+    queryFn: () => api<{ avatars: { id: string; url: string }[] }>('GET', '/v1/agent-avatars'),
+    select: (d) => d.avatars,
+    staleTime: Infinity,
+  });
+}
 
 export default function AgentPairingPrompt() {
   const qc = useQueryClient();
   const requests = useAgentRequests();
   const workspaces = useWorkspaces();
+  const presets = useAgentAvatarPresets();
   const [workspaceId, setWorkspaceId] = useState<string>('');
+  const [avatar, setAvatar] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,7 +37,12 @@ export default function AgentPairingPrompt() {
     setError(null);
     setBusy(true);
     try {
-      await api('POST', `/v1/agent-requests/${req.id}/${action}`, action === 'approve' ? { workspaceId: selectedWs } : undefined);
+      await api(
+        'POST',
+        `/v1/agent-requests/${req.id}/${action}`,
+        action === 'approve' ? { workspaceId: selectedWs, ...(avatar ? { avatar } : {}) } : undefined,
+      );
+      setAvatar(null);
       await qc.invalidateQueries({ queryKey: ['agentRequests'] });
       await qc.invalidateQueries({ queryKey: ['members'] });
     } catch (err) {
@@ -53,6 +71,26 @@ export default function AgentPairingPrompt() {
             {req.code}
           </code>
         </div>
+        {(presets.data?.length ?? 0) > 0 && (
+          <div className="mb-3">
+            <p className="mb-1 text-xs text-muted">Pick an avatar (optional)</p>
+            <div className="flex flex-wrap gap-1.5">
+              {presets.data!.map((p) => (
+                <button
+                  key={p.id}
+                  data-testid={`agent-avatar-${p.id}`}
+                  title={p.id}
+                  className={`rounded-lg border-2 p-0.5 ${
+                    avatar === p.id ? 'border-accent bg-accent/10' : 'border-transparent hover:border-hairline2'
+                  }`}
+                  onClick={() => setAvatar(avatar === p.id ? null : p.id)}
+                >
+                  <AuthImg path={p.url} alt={p.id} className="h-9 w-9 rounded-md object-contain" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {wsList.length > 1 && (
           <label className="mb-3 block text-xs text-muted">
             Admit into workspace

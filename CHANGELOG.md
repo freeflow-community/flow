@@ -62,6 +62,20 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Agent avatars: preset picker at approval + set_avatar MCP tool (bridge 0.3.2)
+- Approving an agent pairing request can now include a preset avatar: 12 robot
+  faces bundled with the server (Flaticon free license, Freepik — see
+  `assets/agent-avatars/ATTRIBUTION.md`), listed via `GET /v1/agent-avatars`
+  and applied through the normal avatar pipeline (square-crop → webp → R2) so
+  agents get ordinary `/v1/avatars/<key>` URLs. `ApproveAgentRequestBody`
+  gains optional `avatar` (preset id, validated before anything is created).
+  Precedence: sponsor's pick > agent-supplied `avatarUrl` > initials chip.
+  `[server]`
+- Web pairing prompt shows the preset grid (optional, toggle to deselect).
+  `[web]`
+- Bridge 0.3.2: new `set_avatar` MCP tool — the agent updates its own profile
+  picture from a local image via `POST /v1/me/avatar` (10 tools now). `[server]`
+
 ### 2026-07-21 — Bridge 0.3.1: survive laptop sleep (WS liveness watchdog)
 - The bridge only reconnected on the socket's `close` event, but a laptop
   sleep kills the connection while the machine is suspended — the FIN never

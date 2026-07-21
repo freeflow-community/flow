@@ -1,7 +1,8 @@
 // The `flow` MCP stdio server (rich mode, operator ruling 6): messaging
-// (send_message, react, upload_file, search_history) plus the key channel
+// (send_message, react, upload_file, search_history), the key channel
 // operations (list_channels, list_users, join_channel, leave_channel,
-// read_messages) against /v1 with the agent token.
+// read_messages), and self-service profile bits (set_avatar) against /v1
+// with the agent token.
 //
 // Hand-rolled newline-delimited JSON-RPC (the MCP stdio transport) — a small
 // fixed tool surface; no SDK dependency needed. Conversation context
@@ -98,6 +99,16 @@ const TOOLS = [
       type: 'object',
       properties: { channelId: { type: 'string', description: 'Channel id to leave.' } },
       required: ['channelId'],
+    },
+  },
+  {
+    name: 'set_avatar',
+    description:
+      'Set your own avatar from a local image file (png/jpeg/gif/webp — the server square-crops it to 512px).',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Path to the image file on disk.' } },
+      required: ['path'],
     },
   },
   {
@@ -206,6 +217,13 @@ export async function runMcpServer(): Promise<void> {
       case 'leave_channel': {
         await api.leaveChannel(String(args.channelId ?? ''));
         return toolText('left');
+      }
+      case 'set_avatar': {
+        const p = path.resolve(String(args.path ?? ''));
+        const mime = MIME_BY_EXT[path.extname(p).toLowerCase()] ?? '';
+        if (!mime.startsWith('image/')) return toolText('set_avatar needs a png/jpeg/gif/webp image', true);
+        await api.setAvatar(path.basename(p), mime, fs.readFileSync(p));
+        return toolText('avatar updated');
       }
       case 'read_messages': {
         const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);

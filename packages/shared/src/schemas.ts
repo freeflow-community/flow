@@ -267,6 +267,8 @@ export type AgentLoginBody = z.infer<typeof AgentLoginBody>;
 
 export const ApproveAgentRequestBody = z.object({
   workspaceId: z.string().uuid(),
+  /** Preset avatar id (e.g. "robot-03") the sponsor picked; omitted = keep the agent's own avatarUrl (or none). */
+  avatar: z.string().regex(/^robot-\d{2}$/).optional(),
 });
 export type ApproveAgentRequestBody = z.infer<typeof ApproveAgentRequestBody>;
 

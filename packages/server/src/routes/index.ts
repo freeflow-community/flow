@@ -49,6 +49,7 @@ import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
+import { listAgentAvatarPresets, readAgentAvatarPreset } from '../services/agentAvatars.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -310,8 +311,21 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/agent-requests/:id/approve', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(ApproveAgentRequestBody, req.body);
-    await ag.approveAgentRequest(id, req.user.id, body.workspaceId);
+    await ag.approveAgentRequest(id, req.user.id, body.workspaceId, body.avatar);
     return { ok: true };
+  });
+
+  // Preset agent avatars for the approval prompt's picker (fixed set, cacheable).
+  app.get('/v1/agent-avatars', { preHandler: requireAuth }, async () => ({
+    avatars: listAgentAvatarPresets().map((id) => ({ id, url: `/v1/agent-avatars/${id}` })),
+  }));
+
+  app.get('/v1/agent-avatars/:id', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply
+      .header('content-type', 'image/png')
+      .header('cache-control', 'private, max-age=86400')
+      .send(readAgentAvatarPreset(id));
   });
 
   app.post('/v1/agent-requests/:id/deny', { preHandler: requireAuth }, async (req) => {

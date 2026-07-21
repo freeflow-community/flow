@@ -25,6 +25,8 @@ import { publishEvent, subjectMeta, subjectUserNotify } from '../bus.js';
 import { requireMembership } from './workspaces.js';
 import { killAgentCredentials, removeMemberDeep } from './memberRemoval.js';
 import { hashSecret, toUserDTO, verifySecret } from './auth.js';
+import { setAvatar } from './users.js';
+import { readAgentAvatarPreset } from './agentAvatars.js';
 
 const { agentPairingRequests, agentTokens, channels, channelMembers, users, workspaceMembers, workspaces } = schema;
 
@@ -171,8 +173,14 @@ export async function listPairingRequests(sponsorId: string): Promise<AgentPairi
  * sponsor (operator ruling — a permission knob can come later). The token is
  * NOT minted here; the agent's next poll delivers it.
  */
-export async function approveAgentRequest(requestId: string, actorId: string, workspaceId: string): Promise<void> {
+export async function approveAgentRequest(
+  requestId: string,
+  actorId: string,
+  workspaceId: string,
+  avatarPreset?: string,
+): Promise<void> {
   await requireMembership(workspaceId, actorId);
+  if (avatarPreset) readAgentAvatarPreset(avatarPreset); // validate before creating anything
   const row = (await db.select().from(agentPairingRequests).where(eq(agentPairingRequests.id, requestId)).limit(1))[0];
   // sponsor mismatch reads as not-found: other users' requests are invisible
   if (!row || row.sponsorUserId !== actorId) throw notFound('pairing request not found');
@@ -216,6 +224,12 @@ export async function approveAgentRequest(requestId: string, actorId: string, wo
       await tx.insert(channelMembers).values({ channelId: general[0].id, userId }).onConflictDoNothing();
     }
   });
+  // apply the sponsor's preset pick through the normal avatar pipeline
+  // (square-crop → webp → R2) before announcing the join, so the
+  // member.joined event already carries the final avatarUrl
+  if (avatarPreset) {
+    await setAvatar(userId, readAgentAvatarPreset(avatarPreset), 'image/png');
+  }
   const userRow = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0]!;
   publishEvent(subjectMeta(workspaceId), {
     type: 'member.joined',
