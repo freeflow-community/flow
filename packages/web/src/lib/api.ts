@@ -43,6 +43,13 @@ export async function api<T>(
   return json as T;
 }
 
+/** Streaming URL for in-place playback (<video src>): a long-TTL presigned R2
+ * URL, or null when the server must proxy (local dev / legacy rows) — callers
+ * fall back to blobUrl(). Not cached: each call mints a fresh TTL. */
+export function fileStreamUrl(fileId: string): Promise<{ url: string | null; expiresInSeconds: number }> {
+  return api('GET', `/v1/files/${fileId}/url`);
+}
+
 /** Presigned upload: reserve → PUT the bytes (direct to R2, or the server-proxied
  * fallback in local dev) → complete (server verifies + thumbnails). */
 export async function uploadFile(workspaceId: string, file: File): Promise<FileDTO> {

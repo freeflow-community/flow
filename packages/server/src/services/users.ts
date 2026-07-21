@@ -58,7 +58,7 @@ export async function patchMe(
 /** Square-crop to 512px webp (phase2.md §6), store unencrypted, update avatar_url. */
 export async function setAvatar(userId: string, data: Buffer, mimeType: string): Promise<UserDTO> {
   if (!AVATAR_MIMES.has(mimeType)) throw badRequest('bad_image', 'avatar must be png, jpeg, gif, or webp');
-  if (data.length > config.maxFileBytes) throw badRequest('file_too_large', 'avatar image too large');
+  if (data.length > config.maxServerUploadBytes) throw badRequest('file_too_large', 'avatar image too large');
   let webp: Buffer;
   try {
     webp = await sharp(data)

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { api, blobUrl, fileText } from '../lib/api';
+import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
 import { useAuth, useSelection } from '../state';
 import { useToggleReaction } from '../hooks';
@@ -498,23 +498,47 @@ function ImageAttachment({ file }: { file: FileDTO }) {
 
 /** Inline video card (ui_nits): preview-card chrome (collapse chevron, hover
  * Download) + native <video> controls, expand affordance opens a lightbox.
- * The blob is fetched whole through the authed cache (≤20 MB cap) so the
- * first frame doubles as the poster and seeking is local; the server also
- * speaks Range for players that stream the URL directly. */
+ * Prefers a presigned streaming URL (R2 serves Range, so the browser streams
+ * and seeks without downloading the file — videos can be hundreds of MB);
+ * falls back to whole-blob fetch when the server can't presign (local dev,
+ * legacy rows). On error with a streamed URL we re-mint once — the TTL may
+ * simply have expired in a long-open tab. */
 function VideoAttachment({ file }: { file: FileDTO }) {
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [url, setUrl] = useState<string | null>(null);
+  const [streamed, setStreamed] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [retried, setRetried] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   const download = useDownload(file);
 
   useEffect(() => {
     let alive = true;
-    void blobUrl(`/v1/files/${file.id}`)
-      .then((u) => { if (alive) setUrl(u); })
+    void fileStreamUrl(file.id)
+      .then((r) => {
+        if (!alive) return null;
+        if (r.url) {
+          setStreamed(true);
+          setUrl(r.url);
+          return null;
+        }
+        return blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); });
+      })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, [file.id]);
+
+  const onVideoError = () => {
+    if (streamed && !retried) {
+      setRetried(true);
+      setUrl(null);
+      void fileStreamUrl(file.id)
+        .then((r) => (r.url ? setUrl(r.url) : setFailed(true)))
+        .catch(() => setFailed(true));
+      return;
+    }
+    setFailed(true);
+  };
 
   // Browser can't fetch or decode this video (codec/container) → plain chip.
   if (failed) return <FileChip file={file} />;
@@ -531,7 +555,7 @@ function VideoAttachment({ file }: { file: FileDTO }) {
               controls
               preload="metadata"
               className="max-h-[480px] max-w-[576px] rounded-lg border border-hairline bg-black"
-              onError={() => setFailed(true)}
+              onError={onVideoError}
             />
           ) : (
             <div className="flex h-[240px] w-[426px] items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">

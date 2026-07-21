@@ -34,12 +34,17 @@ without ever passing through the app server:
 
 1. **`POST /v1/workspaces/:id/files/presign`** with
    `{filename, mimeType, sizeBytes}`. The server checks membership and the
-   20 MB cap, inserts a `files` row with `status='pending'`, and returns
+   size cap, inserts a `files` row with `status='pending'`, and returns
    `{file: FileDTO, upload: {url, method: 'PUT', headers}}`.
    - On R2 the URL is presigned with **content-length and content-type as
      signed headers** — the uploader must send *exactly* the declared size
      and type or R2 rejects the PUT with 403. This is how the size cap
      survives the server never seeing the bytes.
+   - **Two caps** (2026-07-21 ruling): the presign path allows 500 MB
+     (`FLOW_MAX_FILE_MB` to tune) because the bytes stream to R2; the
+     server-buffered paths — legacy multipart, Slack-compat `files.upload`,
+     avatars — keep 20 MB (`maxServerUploadBytes`) because they hold whole
+     files in app-server memory.
    - On the local driver `presignPut` returns `null`, so the server
      substitutes its own fallback target: `PUT /v1/files/:id/content`
      (server-relative URL, needs the bearer token; enforces the same
@@ -50,10 +55,11 @@ without ever passing through the app server:
    reject requests with both a signed query string and an Authorization
    header.
 3. **`POST /v1/files/:id/complete`**. The server HEADs the object (exists?
-   size matches the declaration?), and for images GETs the bytes to extract
-   dimensions and generate a max-512px webp thumbnail (`thumbs/<id>`), then
-   flips the row to `status='ready'`. Idempotent — a retry after success
-   returns the DTO again.
+   size matches the declaration?), and for images ≤ 32 MB
+   (`thumbSourceMaxBytes` — the sidecar step pulls the object into memory)
+   GETs the bytes to extract dimensions and generate a max-512px webp
+   thumbnail (`thumbs/<id>`), then flips the row to `status='ready'`.
+   Idempotent — a retry after success returns the DTO again.
 
 `pending` files are invisible everywhere: not downloadable, not attachable
 to messages (`validateAttachments` filters on `ready`), never hydrated into
@@ -81,6 +87,18 @@ The short TTL is the security model: URLs are minted per-request *after*
 the access check, so a leaked URL is stale in minutes and there are no
 long-lived public links. (If shareable links are ever wanted, that's a new
 feature — don't just lengthen the TTL.)
+
+### Streaming URLs (media playback)
+
+`GET /v1/files/:id/url` returns JSON `{url, expiresInSeconds}` — a
+**1-hour** presigned GET (inline disposition) meant to be handed directly to
+a media element or player, so a feature-length video can play and seek
+without re-minting. `url` is `null` on the local driver or for legacy
+encrypted rows; callers fall back to fetching bytes through the proxy
+route. The web video card uses this (streams + seeks via R2 Range; re-mints
+once on error in case the TTL expired in a long-open tab). Native clients
+don't use it yet — they stream the download to disk and play the local file
+(Parity gap; the fix is AVPlayer pointed at this URL).
 
 ### Client redirect rules
 

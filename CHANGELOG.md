@@ -9,6 +9,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- macOS/iOS: video playback downloads the whole file before playing (streamed
+  to disk, not RAM); web streams in place via the presigned URL. Matters at
+  the new 500 MB scale — native fix is AVPlayer on the `/v1/files/:id/url`
+  presigned URL.
 - macOS: no mention-of-non-member CTA after @mentioning someone outside the
   channel (web offers "Add to channel" — matters most for agents, which never
   see mentions in channels they haven't joined).
@@ -50,6 +54,24 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-21 — 500 MB file cap + streaming video playback
+- Direct (presigned) uploads now allow 500 MB per file (`FLOW_MAX_FILE_MB` to
+  tune) — the bytes stream to R2, so the server never buffers them. The
+  server-buffered paths (legacy multipart, Slack-compat `files.upload`,
+  avatars) keep the old 20 MB cap. Images above 32 MB skip thumbnail
+  generation (the sidecar step would pull the object into server memory). `[server]`
+- New `GET /v1/files/:id/url`: JSON `{url, expiresInSeconds}` with a 1-hour
+  presigned URL for in-place media playback (null on the local driver /
+  legacy rows — callers fall back to the proxy fetch). `[server]`
+- Web video cards stream instead of full-fetching: `<video src>` points at
+  the presigned URL (R2 serves Range, so playback starts immediately and
+  seeking never downloads the file); expired-URL errors re-mint once. Falls
+  back to the old whole-blob path in local dev. `[web]`
+- macOS/iOS upload/download now stream from/to disk (`URLSession`
+  upload(fromFile:)/download(for:)) instead of holding whole files in
+  memory — a 200 MB video no longer costs 200 MB of RAM. Playback still
+  downloads before playing (see Parity). `[macos] [ios]`
 
 ### 2026-07-21 — R2 bucket CORS (prod fix)
 - Web uploads/downloads against R2 failed on first prod smoke: browsers

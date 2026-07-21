@@ -15,7 +15,8 @@ export function buildApp(): FastifyInstance {
   });
   void app.register(formbody); // Slack SDKs send application/x-www-form-urlencoded
   void app.register(multipart, {
-    limits: { fileSize: config.maxFileBytes, files: 1, fields: 4 },
+    // server-buffered path keeps the small cap; big files go via presign→R2
+    limits: { fileSize: config.maxServerUploadBytes, files: 1, fields: 4 },
   });
   // Raw-bytes catch-all for the local-driver presigned-upload fallback
   // (PUT /v1/files/:id/content arrives as image/png, application/pdf, …).

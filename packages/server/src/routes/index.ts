@@ -498,6 +498,13 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.send(f.data);
   });
 
+  // streaming URL for in-place playback (<video src>): JSON, not a redirect,
+  // so clients can hand it straight to a media element / player
+  app.get('/v1/files/:id/url', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return fl.getStreamUrl(id, req.user.id);
+  });
+
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const dl = await fl.getThumbDownload(id, req.user.id);
