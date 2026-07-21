@@ -7,7 +7,7 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
-import { removeMemberDeep, removeSponsoredAgents } from './memberRemoval.js';
+import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents } from './memberRemoval.js';
 
 const { workspaces, workspaceMembers, invites, channels, channelMembers, users, sessions, emailTokens, appLinkCodes } =
   schema;
@@ -216,6 +216,10 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
   const tombstoneEligible = !!u && !u.isBot && !u.isAgent;
   // Sponsor-departure cascade (AGENT_MEMBERS.md): their agents go with them.
   if (tombstoneEligible) await removeSponsoredAgents(workspaceId, targetId);
+  // Removing an agent here (admin panel) must mean the same as the Agents
+  // modal: revoke tokens + kill username/key, or the daemon lingers as an
+  // authenticated zombie with no memberships.
+  if (u?.isAgent) await killAgentCredentials(targetId);
   await removeMemberDeep(workspaceId, targetId, async (tx) => {
     // removeMemberDeep has already deleted the target's row for THIS workspace
     // before `also` runs, so any remaining row means they're still elsewhere.

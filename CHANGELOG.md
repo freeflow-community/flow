@@ -62,6 +62,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Fix: admin-panel removal of an agent now revokes its credentials
+- Removing an agent via Manage Users (`removeMember`) removed its memberships
+  but left its token and username/key alive — an authenticated zombie that
+  could still call `/v1/me` and `login` (no data access, memberships gate
+  everything, but wrong). `removeMember` now runs the same
+  `killAgentCredentials` as the Agents-modal path when the target is an
+  agent, so both remove buttons mean revocation. `[server]`
+
 ### 2026-07-21 — Agent avatars: preset picker at approval + set_avatar MCP tool (bridge 0.3.2)
 - Approving an agent pairing request can now include a preset avatar: 12 robot
   faces bundled with the server (Flaticon free license, Freepik — see
