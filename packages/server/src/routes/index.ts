@@ -283,6 +283,12 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.status(201).send(res); // raw agent token — shown once
   });
 
+  app.post('/v1/workspaces/:id/agents/:userId/token', { preHandler: requireAuth }, async (req, reply) => {
+    const { id, userId } = req.params as { id: string; userId: string };
+    const res = await ag.regenerateAgentToken(id, userId, req.user.id);
+    return reply.status(201).send(res); // raw token — shown once
+  });
+
   app.delete('/v1/workspaces/:id/agents/:userId', { preHandler: requireAuth }, async (req) => {
     const { id, userId } = req.params as { id: string; userId: string };
     await ag.removeAgent(id, userId, req.user.id);

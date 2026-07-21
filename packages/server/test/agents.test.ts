@@ -173,6 +173,23 @@ describe('agent token auth', () => {
     expect(dto.isAgent).toBe(false);
   });
 
+  it('regenerate revokes the old token and mints a working new one (admin only)', async () => {
+    const inv = await ag.createAgentInvite(workspaceId, ownerId);
+    const res = await ag.registerAgent({ inviteKey: inv.key, name: 'RegenBot' });
+    await expect(ag.regenerateAgentToken(workspaceId, res.user.id, memberId)).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    const regen = await ag.regenerateAgentToken(workspaceId, res.user.id, ownerId);
+    expect(regen.agentToken).toMatch(/^flow-agent-token-/);
+    expect(regen.agentToken).not.toBe(res.agentToken);
+    await expect(auth.authenticate(res.agentToken)).rejects.toMatchObject({ statusCode: 401 });
+    const dto = await auth.authenticate(regen.agentToken);
+    expect(dto.id).toBe(res.user.id);
+    await expect(ag.regenerateAgentToken(workspaceId, memberId, ownerId)).rejects.toMatchObject({
+      statusCode: 404, // humans aren't agents
+    });
+  });
+
   it('rejects unknown and revoked tokens', async () => {
     await expect(auth.authenticate('flow-agent-token-bogus')).rejects.toMatchObject({ statusCode: 401 });
     const inv = await ag.createAgentInvite(workspaceId, ownerId);

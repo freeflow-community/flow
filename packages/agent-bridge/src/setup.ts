@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
-import { registerAgent } from './api.js';
+import { FlowApi, registerAgent } from './api.js';
 
 async function ask(rl: readline.Interface, q: string, def?: string): Promise<string> {
   const suffix = def ? ` [${def}]` : '';
@@ -24,21 +24,34 @@ export async function runSetup(configPath: string): Promise<string> {
     const serverUrl = (
       await ask(rl, 'Flow server URL', process.env.FLOW_SERVER_URL ?? 'https://app.flowtoo.org')
     ).replace(/\/+$/, '');
-    let inviteKey = '';
-    while (!inviteKey.startsWith('flow-agent-')) {
-      inviteKey = await ask(rl, 'Invite key (flow-agent-…, from "Invite an Agent" in the web app)');
-      if (!inviteKey.startsWith('flow-agent-')) console.log('  that does not look like a flow-agent-… key');
+    let key = '';
+    while (!key.startsWith('flow-agent-')) {
+      key = await ask(
+        rl,
+        'Invite key (flow-agent-…) — or an agent token (flow-agent-token-…, from "Regenerate token") to reuse an existing agent',
+      );
+      if (!key.startsWith('flow-agent-')) console.log('  that does not look like a flow-agent-… key or token');
     }
-    const name = await ask(rl, 'Agent name (blank = use the invite’s name hint)');
-    const description = await ask(rl, 'Description (optional)');
 
-    console.log('\nRegistering…');
-    const res = await registerAgent(serverUrl, {
-      inviteKey,
-      ...(name ? { name } : {}),
-      ...(description ? { description } : {}),
-    });
-    console.log(`registered ${res.user.displayName} <@${res.user.id}> in workspace "${res.workspace.name}"\n`);
+    let agentToken: string;
+    if (key.startsWith('flow-agent-token-')) {
+      // Existing agent: validate the token and skip registration.
+      console.log('\nAgent token detected — verifying…');
+      const me = await new FlowApi(serverUrl, key).me();
+      console.log(`connecting as existing agent ${me.displayName} <@${me.id}>\n`);
+      agentToken = key;
+    } else {
+      const name = await ask(rl, 'Agent name (blank = use the invite’s name hint)');
+      const description = await ask(rl, 'Description (optional)');
+      console.log('\nRegistering…');
+      const res = await registerAgent(serverUrl, {
+        inviteKey: key,
+        ...(name ? { name } : {}),
+        ...(description ? { description } : {}),
+      });
+      console.log(`registered ${res.user.displayName} <@${res.user.id}> in workspace "${res.workspace.name}"\n`);
+      agentToken = res.agentToken;
+    }
 
     let kind = '';
     while (!['claude', 'codex', 'demo'].includes(kind)) {
@@ -46,7 +59,7 @@ export async function runSetup(configPath: string): Promise<string> {
     }
     const config: Record<string, unknown> = {
       serverUrl,
-      agentToken: res.agentToken,
+      agentToken,
       runtime: { kind } as Record<string, unknown>,
     };
     if (kind !== 'demo') {

@@ -71,6 +71,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   and offers admin Remove agent (confirm first — revokes tokens, keeps
   history). `[web]`
 
+### 2026-07-20 — Regenerate agent token (lost agent.json recovery)
+- Admin Agents modal: **Regenerate token** per agent —
+  `POST /v1/workspaces/:id/agents/:userId/token` revokes all live tokens and
+  returns a fresh one raw, shown once. The bridge setup wizard now accepts a
+  `flow-agent-token-…` in place of an invite key (validates via /v1/me, skips
+  registration, reconnects as the existing agent) — invite keys are
+  single-use, so a lost config no longer forces a new agent identity.
+  Answers AGENTS_DESIGN open question 3: regenerate is in v1 (operator
+  request after hitting exactly this). `[server] [web]`
+
 ### 2026-07-20 — Agents always reachable in the DM list
 - Workspace agents with no existing 1:1 DM now show as virtual rows under
   Direct Messages (presence dot + 🤖); clicking creates/opens the DM (server

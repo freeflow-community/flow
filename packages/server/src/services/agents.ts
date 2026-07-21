@@ -147,6 +147,37 @@ export async function registerAgent(input: {
 }
 
 /**
+ * Regenerate an agent's token (owner/admin): revoke all live tokens, mint a
+ * fresh one, return it raw exactly once. For "I lost my agent.json" — keeps
+ * the agent's identity (name, DMs, message history) instead of forcing a
+ * fresh invite → new user.
+ */
+export async function regenerateAgentToken(
+  workspaceId: string,
+  agentUserId: string,
+  actorId: string,
+): Promise<{ agentToken: string }> {
+  await requireAdmin(workspaceId, actorId);
+  const target = (await db.select().from(users).where(eq(users.id, agentUserId)).limit(1))[0];
+  if (!target?.isAgent) throw notFound('agent not found');
+  const membership = await db
+    .select({ one: sql`1` })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, agentUserId)))
+    .limit(1);
+  if (membership.length === 0) throw notFound('agent not found');
+  const agentToken = `flow-agent-token-${newToken()}`;
+  await db.transaction(async (tx) => {
+    await tx
+      .update(agentTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(agentTokens.userId, agentUserId), isNull(agentTokens.revokedAt)));
+    await tx.insert(agentTokens).values({ id: newId(), tokenHash: hashToken(agentToken), userId: agentUserId });
+  });
+  return { agentToken };
+}
+
+/**
  * Remove an agent (owner/admin) — same semantics as app removal: leave the
  * workspace + channels, delete 1:1 DMs, revoke every token, keep the user row
  * for authorship. Re-inviting mints a fresh identity.

@@ -16,6 +16,8 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
   const [invite, setInvite] = useState<AgentInviteDTO | null>(null);
   const [copied, setCopied] = useState<'server' | 'key' | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [regenerated, setRegenerated] = useState<{ userId: string; token: string } | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const agents = (members.data ?? []).filter((m) => m.isAgent);
@@ -44,6 +46,20 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
       setCopied(which);
     } catch {
       setCopied(null);
+    }
+  };
+
+  const regenerate = async (userId: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await api<{ agentToken: string }>('POST', `/v1/workspaces/${workspaceId}/agents/${userId}/token`);
+      setRegenerated({ userId, token: res.agentToken });
+      setTokenCopied(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -146,16 +162,48 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
               </button>
             </span>
           ) : (
-            <button
-              data-testid={`agent-remove-${a.displayName}`}
-              className="shrink-0 text-xs text-red-600 hover:underline"
-              onClick={() => setConfirmRemove(a.userId)}
-            >
-              Remove agent
-            </button>
+            <span className="flex shrink-0 items-center gap-3">
+              <button
+                data-testid={`agent-regenerate-${a.displayName}`}
+                className="text-xs text-accent-soft hover:underline disabled:opacity-50"
+                disabled={busy}
+                title="Revoke the current token and mint a new one (for a lost agent.json)"
+                onClick={() => void regenerate(a.userId)}
+              >
+                Regenerate token
+              </button>
+              <button
+                data-testid={`agent-remove-${a.displayName}`}
+                className="text-xs text-red-600 hover:underline"
+                onClick={() => setConfirmRemove(a.userId)}
+              >
+                Remove agent
+              </button>
+            </span>
           )}
         </div>
       ))}
+      {regenerated && (
+        <div className="mt-2 rounded-lg border border-hairline2 bg-daypill/40 p-3">
+          <p className="mb-2 text-xs text-red-600">
+            New agent token — copy it now, it won&rsquo;t be shown again. The old token no longer works.
+            Paste it into the bridge setup (it accepts tokens as well as invite keys) or your agent.json.
+          </p>
+          <div className="flex items-start gap-2">
+            <code data-testid="agent-token-regenerated" className="block grow rounded bg-daypill p-2 text-xs break-all select-all">
+              {regenerated.token}
+            </code>
+            <button
+              className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+              onClick={() => {
+                void navigator.clipboard.writeText(regenerated.token).then(() => setTokenCopied(true)).catch(() => {});
+              }}
+            >
+              {tokenCopied ? 'Copied ✓' : 'Copy'}
+            </button>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

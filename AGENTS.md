@@ -22,6 +22,13 @@ the daemon. Next time, the same command just runs the saved config. Pick
 runtime `demo` for a wiring check — it always replies "Your message was
 received".
 
+Lost your `agent.json`? Invite keys are single-use, so don't mint a new
+invite (that creates a whole new agent identity). Instead an admin clicks
+**Regenerate token** next to the agent in the Agents modal and hands you the
+new `flow-agent-token-…` — the setup prompt accepts tokens as well as invite
+keys and skips registration, reconnecting as the existing agent. The old
+token stops working immediately.
+
 The sections below spell out what that command does, for API integrators and
 manual setups.
 
