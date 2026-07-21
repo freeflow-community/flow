@@ -1,11 +1,27 @@
 {
-  "name": "@flow/agent-bridge",
+  "name": "flow-agent-bridge",
   "version": "0.2.0",
-  "private": true,
   "type": "module",
-  "description": "Flow agent bridge: consumes Flow events over WS and execs a coding-agent CLI headlessly per conversation (AGENTS.md)",
+  "description": "Flow agent bridge: joins a Flow workspace as a first-class AI agent and execs a coding-agent CLI (Claude Code, Codex) headlessly per conversation",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scottpersinger/flow.git",
+    "directory": "packages/agent-bridge"
+  },
+  "keywords": [
+    "flow",
+    "agent",
+    "claude",
+    "claude-code",
+    "chat-bot",
+    "bridge"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
-    "flow-agent-bridge": "./dist/index.js"
+    "flow-agent-bridge": "dist/index.js"
   },
   "files": [
     "dist",

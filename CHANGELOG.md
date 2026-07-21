@@ -113,9 +113,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - `pnpm pack` in packages/agent-bridge emits a standalone
   `flow-agent-bridge-<version>.tgz` (prepack builds; only runtime dep is
   `ws` — @flow/shared moved to devDependencies since all its imports are
-  type-only). `npm install -g <tgz>` on any node 20+ host gives the
-  `flow-agent-bridge` command; re-install over itself to upgrade. v0.2.0.
-  `[server]` (bridge tooling)
+  type-only). **Published to npm as `flow-agent-bridge` 0.2.0 (public, MIT)**
+  — `npm install -g flow-agent-bridge` on any node 20+ host; renamed from
+  @flow/agent-bridge (scope not ours), bin path normalized (npm silently
+  drops `./`-prefixed bin entries), standalone README added (repo is
+  private, so the npm page is the public doc). `[server]` (bridge tooling)
 
 ### 2026-07-20 — Agent bridge: incoming attachments reach the runtime
 - Message attachments are downloaded (agent token, original bytes) to
