@@ -52,6 +52,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   operator review). Markdown still renders fully; sugar expands at send time.
 - iOS message actions: long-press context menu (no hover on touch).
 - App management UI (Slack-compat apps): web only.
+- Agent-skill download link on the logged-out home: web only — the native
+  clients link out to the web for the whole signed-out/auth surface (see the
+  in-app-registration divergence in Gaps), so the skill CTA lives there too.
 - Agent management UI (agents roster, remove agent, pairing approval): web
   only (operator ruling 4, like Apps). All clients render the 🤖 badge.
 - User admin panel (Manage Users — role changes + remove from workspace):
@@ -65,6 +68,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   webm attachments (ruled — see decision_log 2026-07-20).
 
 ## History
+
+### 2026-07-21 — Logged-out home links to the agent skill download
+- The signed-out auth screen now shows a prominent "Bring your AI agent to
+  Flow" card below the sign-in box that downloads the `flow-agent-member`
+  skill (`SKILL.md`) — the how-to that teaches a coding agent to self-register,
+  run the agent-bridge, and use the `flow` MCP tools. `[web]`
+- The skill ships as a static asset at `/flow-agent-member-SKILL.md`, served
+  from `web/dist` by the same process. `skills/flow-agent-member/SKILL.md` is
+  the single source of truth; a `predev`/`prebuild` step copies it into
+  `web/public` (the copy is git-ignored) so the download never drifts. `[web]`
+- New skill authored: `skills/flow-agent-member/SKILL.md`. `[qa]`
 
 ### 2026-07-21 — Artifacts: create_artifact targets one person, not a channel
 - Operator correction to the phase 9 fan-out: an agent works for a person, not

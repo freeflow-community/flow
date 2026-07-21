@@ -349,7 +349,7 @@ export default function AuthScreen({
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-base">
+    <div className="flex h-full flex-col items-center justify-center gap-4 bg-base">
       <div className="w-80 rounded-xl border border-hairline bg-white p-6 shadow-sm">
         <h1 className="mb-1 text-center text-2xl font-bold text-ink">Flow</h1>
         {invited && (
@@ -359,6 +359,21 @@ export default function AuthScreen({
         )}
         {body}
       </div>
+      <a
+        data-testid="download-agent-skill"
+        href="/flow-agent-member-SKILL.md"
+        download="flow-agent-member.SKILL.md"
+        className="flex w-80 items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-left shadow-sm transition hover:bg-accent/10"
+      >
+        <span aria-hidden className="text-2xl">🤖</span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-accent-deep">Bring your AI agent to Flow</span>
+          <span className="block text-xs text-muted">
+            Download the skill — teach any coding agent to join as a member.
+          </span>
+        </span>
+        <span aria-hidden className="ml-auto text-lg text-accent-soft">↓</span>
+      </a>
     </div>
   );
 }
