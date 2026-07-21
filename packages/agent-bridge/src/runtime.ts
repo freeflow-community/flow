@@ -116,12 +116,16 @@ export class StreamJsonParser {
   }
 }
 
-function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
+export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   args.push(opts.resume ? '--resume' : '--session-id', opts.sessionId);
   args.push('--append-system-prompt', opts.systemPrompt);
   args.push('--max-turns', String(cfg.maxTurns));
   if (cfg.permissionMode) args.push('--permission-mode', cfg.permissionMode);
+  // Default is full permissions (operator ruling): with neither permissionMode
+  // nor allowedTools configured, the agent runs unrestricted in its cwd.
+  // Setting either one opts into scoped permissions instead.
+  else if (cfg.allowedTools.length === 0) args.push('--permission-mode', 'bypassPermissions');
   const allowed = [...cfg.allowedTools];
   if (opts.mcpConfigPath) {
     // = form: --mcp-config and --allowedTools are variadic in the claude CLI

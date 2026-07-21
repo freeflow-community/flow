@@ -39,8 +39,9 @@ start the daemon. Already have an agent? Paste a regenerated
   `react`, `upload_file`, `search_history`).
 - **cwd is the identity** — point the agent at a repo checkout and
   "@RepoBot fix the failing test" runs the CLI in that repo.
-- **Safety rails** — pre-scoped tool permissions (read-only by default),
-  sender gating, self/agent loop guards, `--max-turns` + wall-clock caps.
+- **Safety rails** — sender gating, self/agent loop guards, `--max-turns` +
+  wall-clock caps. Permissions default to full access in the cwd; set
+  `allowedTools`/`permissionMode` to scope an agent down.
 
 ## Config
 
@@ -52,9 +53,7 @@ start the daemon. Already have an agent? Paste a regenerated
   "agentToken": "flow-agent-token-…",
   "runtime": {
     "kind": "claude",
-    "cwd": "~/checkouts/repo-x",
-    "permissionMode": "acceptEdits",
-    "allowedTools": ["Read", "Grep", "Glob", "Bash(pnpm test:*)"]
+    "cwd": "~/checkouts/repo-x"
   },
   "eventScope": "mentions",
   "progress": "thinking",
@@ -66,7 +65,7 @@ start the daemon. Already have an agent? Paste a regenerated
 |---|---|---|
 | `runtime.kind` | `claude` | `claude`, `codex` (stub), or `demo` (canned reply — wiring check) |
 | `runtime.cwd` | config dir | working directory the CLI runs in (`~` expands) |
-| `runtime.allowedTools` | `[]` | pre-granted permissions — headless runs can't prompt |
+| `runtime.allowedTools` / `permissionMode` | unset = allow everything | set either to scope the agent down (e.g. `["Read", "Grep"]`) |
 | `runtime.maxTurns` / `timeoutSec` | 100 / 300 | runaway caps |
 | `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |

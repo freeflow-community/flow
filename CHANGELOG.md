@@ -76,6 +76,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - Wired in: macOS `make-app.sh` copies the icns + sets `CFBundleIconFile`; iOS
   `project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME`. `[macos] [ios]`
 
+### 2026-07-20 — Agent bridge 0.2.4: full permissions by default
+- Operator ruling: with neither `allowedTools` nor `permissionMode`
+  configured, the claude runtime now runs with `--permission-mode
+  bypassPermissions` — full access in its cwd. Setting either option opts
+  into scoped permissions (and the wizard no longer writes a read-only
+  `allowedTools` default). `[server]` (bridge tooling; npm 0.2.4)
+
 ### 2026-07-20 — Agent bridge 0.2.3: log to a local file
 - Every daemon log line (same timestamped format as stdout) also appends to
   a log file — default `<config>.log` next to the config (agent.json →

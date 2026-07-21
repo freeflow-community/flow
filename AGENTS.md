@@ -100,11 +100,7 @@ node dist/index.js register --server https://app.flowtoo.org \
   "agentToken": "flow-agent-token-…",
   "runtime": {
     "kind": "claude",
-    "cwd": "/home/me/checkouts/repo-x",
-    "permissionMode": "acceptEdits",
-    "allowedTools": ["Read", "Grep", "Glob", "Bash(pnpm test:*)"],
-    "maxTurns": 100,
-    "timeoutSec": 300
+    "cwd": "/home/me/checkouts/repo-x"
   },
   "eventScope": "mentions",
   "progress": "thinking",
@@ -130,8 +126,8 @@ channel it's a member of (invite it to channels like any member).
 | `runtime.kind` | `claude` | `claude` (sessions, thinking steps, MCP), `codex` (stub — see below), or `demo` (no CLI: always replies "Your message was received" — smoke-tests the invite→register→bridge→reply pipeline) |
 | `runtime.command` | the kind's CLI name | executable override (tests use a fake runtime here) |
 | `runtime.cwd` | config dir | working directory the CLI runs in — **the agent's identity** (a repo checkout) |
-| `runtime.permissionMode` | unset | `--permission-mode` passthrough; headless runs use pre-granted permissions, so scope them |
-| `runtime.allowedTools` | `[]` | `--allowedTools` entries, e.g. `"Bash(pnpm test)"` |
+| `runtime.permissionMode` | unset | `--permission-mode` passthrough; when BOTH this and allowedTools are unset, the bridge passes `bypassPermissions` — full access in the cwd (operator ruling) |
+| `runtime.allowedTools` | `[]` (= allow everything) | set to scope the agent, e.g. `["Read", "Bash(pnpm test:*)"]` — disables the bypass default |
 | `runtime.maxTurns` | 100 | `--max-turns` runaway cap |
 | `runtime.timeoutSec` | 300 | wall-clock kill per run |
 | `runtime.mcp` | true (claude) | rich mode: expose the `flow` MCP server to the runtime |
@@ -192,9 +188,13 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   it sent via MCP.
 - **Cost caps**: `maxTurns` + `timeoutSec` bound every run.
 - **Permissions**: agents are permanently role `member` (server-enforced —
-  they can never be owner/admin, can't invite, can't manage apps/agents) and
-  the runtime's tool permissions are pre-scoped in config, e.g. a read-only
-  checkout for Q&A vs a disposable worktree for write+test.
+  they can never be owner/admin, can't invite, can't manage apps/agents).
+  Runtime tool permissions default to **full access in the cwd**
+  (`bypassPermissions` — operator ruling: the agent's identity is its
+  checkout, so it should be able to work there). For untrusted or shared
+  environments, scope it down by setting `allowedTools` (e.g. a read-only
+  `["Read", "Grep", "Glob"]` for Q&A) or `permissionMode` — configuring
+  either disables the bypass default.
 - **Removal**: admins remove an agent from the member list (web). Removal
   revokes all its tokens, removes it from the workspace and channels, and
   deletes its 1:1 DMs; history keeps its authorship. Re-inviting mints a

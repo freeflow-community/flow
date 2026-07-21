@@ -72,11 +72,9 @@ export async function runSetup(configPath: string): Promise<string> {
         else console.log(`  ${resolved} does not exist — try again`);
       }
       (config.runtime as Record<string, unknown>).cwd = cwd;
-      if (kind === 'claude') {
-        // Sane read-only default so a fresh agent can answer questions without
-        // being able to mutate anything; widen in the config file deliberately.
-        (config.runtime as Record<string, unknown>).allowedTools = ['Read', 'Grep', 'Glob'];
-      }
+      // No allowedTools written: the default is full permissions in the cwd
+      // (operator ruling) — add allowedTools/permissionMode to the saved
+      // config to scope the agent down.
     }
 
     const abs = path.resolve(configPath);

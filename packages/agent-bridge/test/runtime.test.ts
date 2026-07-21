@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEMO_REPLY, StreamJsonParser, formatToolStep, runRuntime } from '../src/runtime.js';
+import { DEMO_REPLY, StreamJsonParser, buildClaudeArgs, formatToolStep, runRuntime } from '../src/runtime.js';
+import type { RuntimeConfig } from '../src/config.js';
 import { expandHome, loadConfig } from '../src/config.js';
 
 describe('StreamJsonParser', () => {
@@ -47,6 +48,33 @@ describe('formatToolStep', () => {
     expect(formatToolStep('SomethingNew', {})).toBe('SomethingNew');
     const long = 'x'.repeat(200);
     expect(formatToolStep('Bash', { command: long }).length).toBeLessThanOrEqual('Bash: '.length + 80);
+  });
+});
+
+describe('buildClaudeArgs permissions', () => {
+  const base: RuntimeConfig = {
+    kind: 'claude', command: 'claude', extraArgs: [], cwd: '/tmp',
+    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300,
+    mcp: false, systemPromptExtra: undefined,
+  };
+  const opts = { sessionId: 's', resume: false, prompt: 'p', systemPrompt: '', onToolStep: () => {}, log: () => {} };
+
+  it('defaults to bypassPermissions (allow everything)', () => {
+    const args = buildClaudeArgs(base, opts);
+    expect(args.join(' ')).toContain('--permission-mode bypassPermissions');
+    expect(args.join(' ')).not.toContain('--allowedTools');
+  });
+
+  it('allowedTools opts into scoped permissions (no bypass)', () => {
+    const args = buildClaudeArgs({ ...base, allowedTools: ['Read'] }, opts);
+    expect(args.join(' ')).not.toContain('bypassPermissions');
+    expect(args.join(' ')).toContain('--allowedTools=Read');
+  });
+
+  it('explicit permissionMode always wins', () => {
+    const args = buildClaudeArgs({ ...base, permissionMode: 'acceptEdits' }, opts);
+    expect(args.join(' ')).toContain('--permission-mode acceptEdits');
+    expect(args.join(' ')).not.toContain('bypassPermissions');
   });
 });
 
