@@ -32,6 +32,9 @@ export const users = pgTable('users', {
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+  // Tombstone: set when a human is removed from their last workspace. The row is
+  // kept for message authorship; the service vacates `email` so it frees up.
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

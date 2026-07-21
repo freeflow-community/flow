@@ -1,5 +1,41 @@
 # Decision log
 
+## 2026-07-21 — Delete a user when removed from their last workspace
+
+Operator ask: when an admin removes a user and it was that user's last
+workspace, "completely delete" the user — motivation being to free up an email
+address (`scottp@berkeleyzone.net`) to run through the invite/registration flow
+again.
+
+Rulings:
+
+- **Tombstone, not hard delete.** `messages.user_id` (and `channels.created_by`,
+  `invites.invited_by`, `files.user_id`, `workspaces.created_by`) reference
+  `users.id` with **no cascade**, and `memberRemoval.ts` deliberately keeps the
+  user row so authored messages keep their name. A literal `DELETE FROM users`
+  would fail the moment the person ever posted. So removal on the last workspace
+  sets `users.deleted_at`, keeping the row and its message authorship intact.
+- **Free the email by rewriting it, not by a partial unique index.** The address
+  is freed by mangling the tombstoned row's `email` to `tombstone+<id>+<email>`
+  (original preserved for audit, uniqueness guaranteed by the id prefix). This
+  leaves the single `UNIQUE(email)` index and every `where(email = …)` lookup in
+  `auth.ts` (register/login/forgot/signin) untouched — a tombstone simply can't
+  be found by its old address, so re-registration inserts a fresh row. Chosen
+  over swapping in a `WHERE deleted_at IS NULL` partial index, which would have
+  forced a `deleted_at IS NULL` filter into all of those queries.
+- **Humans only.** The tombstone runs only through `removeMember` (the admin
+  panel path) and is additionally guarded by `!isBot && !isAgent`. Bots/agents
+  keep their `deleteApp` / `removeAgent` lifecycles; tombstoning their user row
+  would orphan `apps` / `agent_tokens`.
+- **Atomic with the removal + full credential wipe.** The tombstone runs inside
+  `removeMemberDeep`'s transaction via its `also(tx)` hook, after the
+  workspace-membership row is deleted, so "last workspace" is decided race-free.
+  It also scrubs the password to a sentinel and deletes sessions, email tokens,
+  and app-link codes so nothing the account held can still authenticate.
+- **Owner caveat (unchanged):** the workspace owner can't be removed, so a sole
+  owner is never tombstoned through this path — reassign/transfer would be a
+  separate feature.
+
 ## 2026-07-21 — Admin panel to manage users (build decisions)
 
 Operator answers (AskUserQuestion) that scoped the feature:

@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { SIDEBAR_COLOR_IDS, type InviteDTO, type MemberRole, type WorkspaceDTO, type WorkspaceMemberDTO } from '@flow/shared';
-import { db, schema } from '../db/index.js';
+import { db, schema, type Tx } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -9,7 +9,8 @@ import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
 import { removeMemberDeep } from './memberRemoval.js';
 
-const { workspaces, workspaceMembers, invites, channels, channelMembers, users } = schema;
+const { workspaces, workspaceMembers, invites, channels, channelMembers, users, sessions, emailTokens, appLinkCodes } =
+  schema;
 
 function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberRole): WorkspaceDTO {
   const dto: WorkspaceDTO = {
@@ -191,6 +192,13 @@ export async function setMemberRole(
  * Admin panel: remove a member from the workspace (and every channel there).
  * Owner/admin only; the owner can't be removed and you can't remove yourself.
  * Reuses removeMemberDeep, which publishes the member.left cascade.
+ *
+ * Last-workspace rule (decision_log 2026-07-21): if this was the member's only
+ * workspace, the human user is tombstoned in the SAME transaction — deleted_at
+ * set and the unique email vacated so the address is free to register again.
+ * The row is kept so their past messages keep their author name. Bots/agents
+ * are never tombstoned here — they have their own deleteApp / removeAgent
+ * lifecycles, and dropping their user row would orphan apps/agent_tokens.
  */
 export async function removeMember(workspaceId: string, actorId: string, targetId: string): Promise<void> {
   const actor = await requireMembership(workspaceId, actorId);
@@ -198,7 +206,42 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
   if (targetId === actorId) throw badRequest('self_remove', 'you cannot remove yourself');
   const target = await requireMembership(workspaceId, targetId);
   if (target.role === 'owner') throw forbidden('the workspace owner cannot be removed');
-  await removeMemberDeep(workspaceId, targetId);
+  const [u] = await db
+    .select({ isBot: users.isBot, isAgent: users.isAgent, email: users.email })
+    .from(users)
+    .where(eq(users.id, targetId))
+    .limit(1);
+  const tombstoneEligible = !!u && !u.isBot && !u.isAgent;
+  await removeMemberDeep(workspaceId, targetId, async (tx) => {
+    // removeMemberDeep has already deleted the target's row for THIS workspace
+    // before `also` runs, so any remaining row means they're still elsewhere.
+    if (!tombstoneEligible) return;
+    const stillMember = await tx
+      .select({ one: sql`1` })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, targetId))
+      .limit(1);
+    if (stillMember.length > 0) return;
+    await tombstoneUser(tx, targetId, u.email);
+  });
+}
+
+/**
+ * Mark a user dead and free their address. Keeps the row (message authorship)
+ * but rewrites the unique `email` so the original string is available to a
+ * fresh registration, scrubs the password to an unusable sentinel, and drops
+ * every credential (sessions, email tokens, app-link codes) so nothing that
+ * account held can still authenticate. The mangled email preserves the original
+ * for audit and can never collide (the user id prefix is unique).
+ */
+async function tombstoneUser(tx: Tx, userId: string, email: string): Promise<void> {
+  await tx
+    .update(users)
+    .set({ deletedAt: new Date(), email: `tombstone+${userId}+${email}`, passwordHash: `!deleted:${userId}` })
+    .where(eq(users.id, userId));
+  await tx.delete(sessions).where(eq(sessions.userId, userId));
+  await tx.delete(emailTokens).where(eq(emailTokens.userId, userId));
+  await tx.delete(appLinkCodes).where(eq(appLinkCodes.userId, userId));
 }
 
 /** Owner/admin only (spec permission rules). Returns invite URL with raw token (shown once). */

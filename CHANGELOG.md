@@ -59,6 +59,18 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-21 — Tombstone a user when removed from their last workspace
+- Removing a human member from their **only** workspace now tombstones the
+  account in the same transaction as the removal: `users.deleted_at` is set, the
+  unique `email` is rewritten (`tombstone+<id>+<email>`) so the original address
+  is free to register again, the password is scrubbed to an unusable sentinel,
+  and all sessions / email tokens / app-link codes are dropped. The row is kept
+  so the person's past messages keep their author name. Bots/agents are never
+  tombstoned this way — they keep their `deleteApp` / `removeAgent` lifecycles.
+  Migration `0014_user_tombstone.sql` adds the nullable column; because the
+  tombstone's email no longer matches, `register`/`login`/`invite` lookups need
+  no changes. `[server]`
+
 ### 2026-07-21 — Agent bridge 0.2.5: channel-operation MCP tools
 - The `flow` MCP server grows from 4 to 9 tools: `list_channels`,
   `list_users`, `join_channel`, `leave_channel`, and `read_messages` (newest
