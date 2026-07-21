@@ -592,13 +592,13 @@ export function registerRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
-  // MCP fan-out: create a personal artifact for every human channel member
-  // (used by the flow MCP's create_artifact tool; decision log 2026-07-21)
-  app.post('/v1/channels/:id/artifacts', { preHandler: requireAuth }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+  // Put an artifact in one other person's sidebar (the flow MCP's
+  // create_artifact tool). One recipient, not a channel fan-out — operator
+  // correction 2026-07-21. Caller must share a channel with the recipient.
+  app.post('/v1/artifacts/share', { preHandler: requireAuth }, async (req, reply) => {
     const body = parse(ShareArtifactBody, req.body);
-    const artifacts = await ar.shareArtifact(id, req.user.id, body.fileId, body.name);
-    return reply.status(201).send({ artifacts });
+    const dto = await ar.shareArtifactWith(body.userId, req.user.id, body.fileId, body.name);
+    return reply.status(201).send(dto);
   });
 
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {

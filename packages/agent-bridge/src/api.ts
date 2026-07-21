@@ -144,14 +144,10 @@ export class FlowApi {
     return (await res.json()) as UserDTO;
   }
 
-  /** Phase 9 fan-out: a personal artifact bookmark of `fileId` for every
-   * human member of the channel (the caller must be a member with file access). */
-  async shareArtifact(channelId: string, fileId: string, name?: string): Promise<ArtifactDTO[]> {
-    const r = await this.req<{ artifacts: ArtifactDTO[] }>('POST', `/v1/channels/${channelId}/artifacts`, {
-      fileId,
-      ...(name ? { name } : {}),
-    });
-    return r.artifacts;
+  /** Phase 9: put an artifact bookmark of `fileId` in one person's sidebar.
+   * The caller must share a channel with them and be able to read the file. */
+  shareArtifactWith(userId: string, fileId: string, name?: string): Promise<ArtifactDTO> {
+    return this.req('POST', '/v1/artifacts/share', { userId, fileId, ...(name ? { name } : {}) });
   }
 
   async uploadFile(workspaceId: string, filename: string, mimeType: string, data: Buffer): Promise<FileDTO> {

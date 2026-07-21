@@ -626,3 +626,19 @@ Implementation judgment calls (also pending review):
   bridge/server creates one personal artifact row per human member of that
   channel (agents excluded), each independently removable. In a DM with the
   agent that's just the human peer.
+
+## 2026-07-21 — Phase 9 correction: artifacts target one person, not a channel
+
+- **`create_artifact` creates an artifact for a single recipient** (operator
+  correction, superseding the 2026-07-21 fan-out ruling). The earlier design
+  created one personal row per human member of the channel; that was too
+  broad — an agent working for one person should not fill five sidebars.
+- **Recipient defaults to the user who triggered the agent** (`FLOW_USER_ID`,
+  the author of the message the bridge is responding to — the DM peer, or the
+  person who @-mentioned it in a channel). Overridable with an explicit
+  `userId`.
+- **Authorization is now "caller and target share a channel"** rather than
+  "caller names a channel". Same anti-spam property (an agent can only reach
+  people it already shares a channel with), and it drops the requirement for
+  conversation context — fixing the gap where an agent with no
+  `FLOW_CHANNEL_ID` could not create an artifact at all.
