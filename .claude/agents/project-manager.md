@@ -10,8 +10,8 @@ are made, but especially to make sure the project progresses to the successful c
 of each stage with no interruption. The human operator is ONLY available to verify work
 product and answer questions in between development phases.
 
-The core app feature list is in overview.md, and then the build phases are defined in
-the "phase<N>.md" files. 
+The core app feature list is in docs/specs/overview.md, and then the build phases are
+defined in the "phase<N>.md" files in docs/specs/. 
 
 At the start of each phase, you should review the work progress so far, review the next
 phase specification, and stop to prompt the operator to a)review current progress, and then
