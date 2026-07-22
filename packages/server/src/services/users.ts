@@ -44,6 +44,7 @@ export async function patchMe(
     statusText?: string | undefined;
     notificationPrefs?: NotificationPrefs | undefined;
     statusSuppressAlerts?: boolean | undefined;
+    unfurlOwnLinks?: boolean | undefined;
   },
 ): Promise<UserDTO> {
   const set: Partial<{
@@ -52,8 +53,10 @@ export async function patchMe(
     statusEmoji: string;
     statusText: string;
     statusSuppressAlerts: boolean;
+    unfurlOwnLinks: boolean;
     notificationPrefs: SQL;
   }> = {};
+  if (patch.unfurlOwnLinks !== undefined) set.unfurlOwnLinks = patch.unfurlOwnLinks;
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.timezone !== undefined) set.timezone = patch.timezone;
   if (patch.statusEmoji !== undefined) set.statusEmoji = patch.statusEmoji;

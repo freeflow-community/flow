@@ -50,6 +50,7 @@ import * as rx from '../services/reactions.js';
 import * as fl from '../services/files.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
+import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
 import * as ar from '../services/artifacts.js';
@@ -206,6 +207,19 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply
       .header('content-type', 'image/webp')
       .header('cache-control', 'private, max-age=31536000, immutable') // key changes per upload
+      .header('x-content-type-options', 'nosniff')
+      .send(data);
+  });
+
+  // Phase 11 §6: proxied link-preview images. Content-addressed and derived
+  // from public pages, but still auth'd — an open image proxy is an abuse
+  // vector, and this keeps the client's loading path identical to avatars.
+  app.get('/v1/unfurl-images/:key', { preHandler: requireAuth }, async (req, reply) => {
+    const { key } = req.params as { key: string };
+    const data = await unfurl.getUnfurlImage(key);
+    return reply
+      .header('content-type', 'image/webp')
+      .header('cache-control', 'private, max-age=31536000, immutable') // key is a content hash
       .header('x-content-type-options', 'nosniff')
       .send(data);
   });
@@ -491,6 +505,14 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const q = parse(ListThreadQuery, req.query);
     return msg.listThread(id, req.user.id, q.after, q.limit);
+  });
+
+  // Phase 11 §10: the sender removes one link preview from their message.
+  // Writes a tombstone, so a re-render (or an edit) can't resurrect it.
+  app.delete('/v1/messages/:id/unfurls/:urlHash', { preHandler: requireAuth }, async (req) => {
+    const { id, urlHash } = req.params as { id: string; urlHash: string };
+    await unfurl.deleteUnfurlAsUser(id, urlHash, req.user.id);
+    return { ok: true };
   });
 
   // ---- reactions (phase2.md §2) --------------------------------

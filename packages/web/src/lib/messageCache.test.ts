@@ -27,6 +27,7 @@ function msg(over: Partial<MessageDTO> = {}): MessageDTO {
     lastReplyAt: null,
     replyParticipantUserIds: [],
     reactions: [],
+    unfurls: [],
     files: [],
     ...over,
   };

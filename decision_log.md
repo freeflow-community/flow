@@ -1,5 +1,29 @@
 # Decision log
 
+## 2026-07-22 — Unfurling does not consult robots.txt
+
+Phase 11 §3 says to fetch robots.txt per origin and honor `Disallow` for our
+bot UA and `*`. Implemented as specced, and the first real link a human pasted
+(an Instagram post) produced no card: Instagram's robots.txt ends with
+`User-agent: *` / `Disallow: /`, whitelisting only named crawlers (Amazonbot,
+ClaudeBot, GPTBot…). The same is true of X, Facebook and most large social
+sites — precisely the links people most want previewed. Slack gets these
+because publishers whitelist `Slackbot-LinkExpanding` by name; a new service
+has no such standing, and §11 puts authenticated/oEmbed-token unfurls out of
+scope for v1.
+
+Ruling (operator): **robots.txt is not consulted for unfurls.** The rationale
+is that robots.txt governs bulk crawling, whereas an unfurl is a single fetch
+of a URL a user explicitly pasted into a conversation — closer to the user's
+own browser following the link than to a crawler.
+
+Deviation from spec §3, taken knowingly. Risks accepted: this is not what
+Slack's own bot does, and a site may block or rate-limit our egress IP.
+
+The robots parser/cache is **kept, not deleted**, behind
+`FLOW_UNFURL_RESPECT_ROBOTS=1` (default off) — that env var is the lever to
+pull if egress starts getting blocked, and it restores spec behaviour exactly.
+
 ## 2026-07-21 — @-mentioning a non-member of a channel
 
 Surfaced live: @-mentioning an agent that wasn't a member of the channel did

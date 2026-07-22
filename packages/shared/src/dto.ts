@@ -137,6 +137,42 @@ export interface ArtifactDTO {
   file: FileDTO;
 }
 
+/** Phase 11 §8 link preview card. All fields except `url` and `type` are
+ * optional — clients render whatever is present and must tolerate absences.
+ *
+ * NOTE (server core pass): images are not proxied yet (§6), so `image` is
+ * absent on every card today. Cards render text-only until the proxy lands;
+ * clients should already handle `image` being present so no client change is
+ * needed when it does. */
+export interface UnfurlDTO {
+  /** The normalized URL this card is keyed on. */
+  url: string;
+  /** sha256(normalized url) — the id used to delete an individual unfurl. */
+  urlHash: string;
+  canonicalUrl?: string;
+  type: 'link' | 'image' | 'video' | 'audio' | 'file';
+  layout?: 'thumbnail' | 'large_image' | 'media';
+  siteName?: string;
+  faviconUrl?: string;
+  title?: string;
+  description?: string;
+  author?: string;
+  publishedAt?: string;
+  image?: {
+    url: string;
+    thumbUrl?: string;
+    width?: number;
+    height?: number;
+    alt?: string;
+  };
+  media?: {
+    provider?: string;
+    durationSec?: number;
+  };
+  fetchedAt: string;
+  expiresAt: string;
+}
+
 export interface MessageDTO {
   id: string;
   channelId: string;
@@ -153,6 +189,10 @@ export interface MessageDTO {
   replyParticipantUserIds: string[];
   reactions: ReactionAggDTO[];
   files: FileDTO[];
+  /** Phase 11: link preview cards, in first-in-message order. Empty when the
+   * message has no links, unfurling is off, or the worker hasn't finished —
+   * cards arrive later via a `message.updated` event. */
+  unfurls: UnfurlDTO[];
 }
 
 /** notifications.kind: 0=mention (incl. group mentions), 1=dm, 2=thread_reply, 3=channel activity (notify_level=all) */

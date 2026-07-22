@@ -47,6 +47,21 @@ export const config = {
   get webUrlBase(): string {
     return process.env.FLOW_WEB_URL ?? 'http://127.0.0.1:8787';
   },
+  /**
+   * Phase 11 §3: consult robots.txt before unfurling?
+   *
+   * DEFAULT OFF, by operator ruling 2026-07-22 (see decision_log.md). The spec
+   * says to honor robots, but every large social site blanket-disallows
+   * unknown agents (`User-agent: *` / `Disallow: /`), so Instagram, X and
+   * Facebook links — the ones users most want previewed — would never unfurl.
+   * The ruling is that a link a user explicitly pasted is not crawling.
+   *
+   * Set FLOW_UNFURL_RESPECT_ROBOTS=1 to restore spec behaviour; that is the
+   * lever to pull if our egress IP starts getting blocked or rate-limited.
+   */
+  get unfurlRespectRobots(): boolean {
+    return process.env.FLOW_UNFURL_RESPECT_ROBOTS === '1';
+  },
   verifyTokenTtlHours: 48,
   resetTokenTtlMinutes: 60,
   signinTokenTtlMinutes: 15, // passwordless sign-in link — short-lived by design

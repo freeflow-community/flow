@@ -10,6 +10,7 @@ import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import { Modal } from './modals';
+import { UnfurlCard } from './UnfurlCard';
 
 export default function MessageList({
   messages,
@@ -267,6 +268,16 @@ function MessageRow({
             )}
             {message.files.map((f) => (
               <Attachment key={f.id} file={f} />
+            ))}
+            {/* Phase 11: link previews sit below the body/attachments and above
+                reactions. Only the author gets the remove affordance (§10). */}
+            {message.unfurls.map((u) => (
+              <UnfurlCard
+                key={u.urlHash}
+                unfurl={u}
+                messageId={message.id}
+                canRemove={message.userId === auth.user.id}
+              />
             ))}
             {message.reactions.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1">

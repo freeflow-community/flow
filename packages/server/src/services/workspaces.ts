@@ -32,16 +32,35 @@ function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberRole): W
 export async function updateWorkspace(
   workspaceId: string,
   actorId: string,
-  patch: { sidebarColor: string },
+  patch: {
+    sidebarColor?: string | undefined;
+    // phase 11 §10 — null allowlist clears it back to "all domains allowed"
+    unfurlEnabled?: boolean | undefined;
+    unfurlDomainAllowlist?: string[] | null | undefined;
+  },
 ): Promise<WorkspaceDTO> {
   const m = await requireMembership(workspaceId, actorId);
   if (m.role !== 'owner' && m.role !== 'admin') throw forbidden('only owners and admins can change workspace settings');
-  if (!SIDEBAR_COLOR_IDS.includes(patch.sidebarColor)) {
-    throw badRequest('bad_color', `sidebarColor must be one of: ${SIDEBAR_COLOR_IDS.join(', ')}`);
+  const set: Partial<{
+    sidebarColor: string;
+    unfurlEnabled: boolean;
+    unfurlDomainAllowlist: string[] | null;
+  }> = {};
+  if (patch.sidebarColor !== undefined) {
+    if (!SIDEBAR_COLOR_IDS.includes(patch.sidebarColor)) {
+      throw badRequest('bad_color', `sidebarColor must be one of: ${SIDEBAR_COLOR_IDS.join(', ')}`);
+    }
+    set.sidebarColor = patch.sidebarColor;
+  }
+  if (patch.unfurlEnabled !== undefined) set.unfurlEnabled = patch.unfurlEnabled;
+  if (patch.unfurlDomainAllowlist !== undefined) {
+    set.unfurlDomainAllowlist = patch.unfurlDomainAllowlist === null
+      ? null
+      : patch.unfurlDomainAllowlist.map((d) => d.trim().toLowerCase()).filter(Boolean);
   }
   const updated = await db
     .update(workspaces)
-    .set({ sidebarColor: patch.sidebarColor })
+    .set(set)
     .where(eq(workspaces.id, workspaceId))
     .returning();
   if (!updated[0]) throw notFound('workspace not found');
