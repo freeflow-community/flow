@@ -31,6 +31,7 @@ export default function MessageList({
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true); // at (or near) the bottom, so growth should keep us there
+  const lastTopRef = useRef(0);
   const lastId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'auto' });
@@ -44,8 +45,19 @@ export default function MessageList({
     const scroller = scrollerRef.current;
     const content = contentRef.current;
     if (!scroller || !content) return;
+    // A scroll event lands a frame after the scroll that caused it, so by the
+    // time it runs the content may already have grown again (a late unfurl
+    // card, an image finishing). Distance-from-bottom alone therefore can't
+    // tell "the user scrolled away" from "the page grew under us" — reading it
+    // that way let our own pinning scroll come back as a 286px gap and latch
+    // pinned=false, stranding the viewport above the newest card. Growth never
+    // moves scrollTop up, so that (not the distance) is the leaving-the-bottom
+    // signal; the distance only ever pins us back on.
     const onScroll = () => {
-      pinnedRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+      const top = scroller.scrollTop;
+      if (scroller.scrollHeight - top - scroller.clientHeight < 40) pinnedRef.current = true;
+      else if (top < lastTopRef.current - 1) pinnedRef.current = false;
+      lastTopRef.current = top;
     };
     scroller.addEventListener('scroll', onScroll);
     const observer = new ResizeObserver(() => {
