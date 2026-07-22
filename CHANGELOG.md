@@ -84,6 +84,24 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-22 — Web: keep the viewport pinned when a link preview lands
+- Fixed: a message list sitting at the bottom stopped following its own
+  content, so a late-arriving unfurl card (and its image) rendered below the
+  fold instead of scrolling into view. `[web]`
+- Cause was a race in the stay-pinned logic, not in unfurling. A scroll event
+  is delivered a frame after the scroll that produced it, so the pinning
+  `scrollTop = scrollHeight` came back as a *scroll* whose measured
+  distance-from-bottom already included the card image that had loaded in the
+  meantime (measured: a 296px gap). `onScroll` read that as "the user scrolled
+  away" and latched `pinned = false`, which then vetoed every later
+  re-pin. Distance now only ever pins us back *on*; leaving the bottom is
+  signalled by `scrollTop` actually moving up, which content growth never
+  does. `[web]`
+- Verified in a browser against the QA workspace: channel load settled 592px
+  short of the bottom before, 0px after; a card arriving on a pinned list now
+  lands fully visible; scrolled-up readers are still not yanked down by
+  growth, and scrolling back to the bottom re-pins. `[qa]`
+
 ### 2026-07-22 — Native: link preview cards (macOS + iOS)
 - macOS and iOS render `MessageDTO.unfurls`, closing the phase 11 parity gap.
   Accent rail, favicon + site name, title, description, author/date and image,
