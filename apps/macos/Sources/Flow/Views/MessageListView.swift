@@ -286,6 +286,12 @@ struct MessageRow: View {
                     onOpenThread(message.threadRootId ?? message.id)
                 }
             }
+            if !message.body.isEmpty, !message.isDeleted, !message.pending {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message.body, forType: .string)
+                }
+            }
             if !message.files.isEmpty, !message.isDeleted, !message.pending {
                 Button("Save as Artifact") { saveAsArtifact() }
             }
