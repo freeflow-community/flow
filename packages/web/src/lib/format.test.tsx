@@ -48,3 +48,60 @@ describe('inline markdown', () => {
     expect(withPill).toContain('ok</code>');
   });
 });
+
+describe('block markdown', () => {
+  it('renders ATX headings at the right level with inline content', () => {
+    expect(html('# Big **title**')).toContain('<h1');
+    expect(html('# Big **title**')).toContain('<strong>title</strong>');
+    expect(html('### small')).toContain('<h3');
+    expect(html('####### too many')).toBe('####### too many'); // 7 hashes is not a heading
+  });
+
+  it('renders unordered lists from -, *, and +', () => {
+    const out = html('- one\n* two\n+ three');
+    expect(out).toContain('<ul');
+    expect(out.match(/<li>/g)?.length).toBe(3);
+    expect(out).toContain('<li>one</li>');
+  });
+
+  it('renders ordered lists preserving the start index', () => {
+    const out = html('3. third\n4. fourth');
+    expect(out).toContain('<ol');
+    expect(out).toContain('start="3"');
+    expect(out).toContain('<li>third</li>');
+  });
+
+  it('renders a GFM pipe table with header, rows, and alignment', () => {
+    const out = html('| Name | Score |\n|:-----|------:|\n| Ann | 10 |\n| Bo | 7 |');
+    expect(out).toContain('<table');
+    expect(out).toContain('<th');
+    expect(out).toContain('Score');
+    expect(out).toContain('text-right'); // second column right-aligned
+    expect(out.match(/<tr>/g)?.length).toBe(3); // header + 2 body rows
+    expect(out).toContain('<td');
+  });
+
+  it('normalizes ragged table rows to the header column count', () => {
+    const out = html('| A | B |\n|---|---|\n| only-one |');
+    // two <td> in the body row even though only one cell was given
+    const bodyTds = out.split('<tbody>')[1] ?? '';
+    expect(bodyTds.match(/<td/g)?.length).toBe(2);
+  });
+
+  it('renders horizontal rules but not tables from a plain line + dashes', () => {
+    expect(html('---')).toContain('<hr');
+    expect(html('***')).toContain('<hr');
+    // "a | b" then "---" is NOT a table (separator lacks a pipe) — stays plain + rule
+    const out = html('a | b\n---');
+    expect(out).not.toContain('<table');
+    expect(out).toContain('<hr');
+  });
+
+  it('keeps table/list/heading markup out of fenced code', () => {
+    const out = html('```\n# not a heading\n- not a list\n| not | a table |\n```');
+    expect(out).not.toContain('<h1');
+    expect(out).not.toContain('<ul');
+    expect(out).not.toContain('<table');
+    expect(out).toContain('# not a heading');
+  });
+});
