@@ -9,6 +9,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- macOS: phase 10 notification settings — no Notifications section in the
+  profile/settings UI, banner path doesn't consult `suppressAlert` yet, and
+  the status picker doesn't set `status_suppress_alerts` (web shipped
+  2026-07-21; iOS out of scope for phase 10 per spec).
 - iOS: no Artifacts UI (phase 9) — no sidebar section, artifact panel, or
   save-as-artifact action; the `artifact.*` WS events are safely ignored.
   Server + web + macOS shipped together 2026-07-21.
@@ -91,6 +95,45 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   the single source of truth; a `predev`/`prebuild` step copies it into
   `web/public` (the copy is git-ignored) so the download never drifts. `[web]`
 - New skill authored: `skills/flow-agent-member/SKILL.md`. `[qa]`
+
+### 2026-07-21 — Phase 10 (web): notification settings UI + banner gating
+- The Profile popup becomes **Settings** (avatar menu → "Settings…"): existing
+  profile fields plus a Notifications section with five live-saved toggles —
+  Direct messages, Mentions of me, Group mentions (@here/@channel), Thread
+  replies (each gating banners via `suppressAlert`), and "Keep banners on
+  screen" (`persistentBanners` → `requireInteraction: true`, verified sticky
+  on Chromium/macOS where the OS alert-style setting has no effect on web
+  notifications). Off means no banner — the bell keeps every row. `[web]`
+- `maybeBanner` now honors the server-computed `suppressAlert` from the WS
+  event; kind-3 channel-activity rows stop bannering (they were mis-titled
+  "mentioned you"). The status picker marks Focusing / In a meeting / At
+  lunch / Do not disturb as "pauses notifications" — picking one sets
+  `statusSuppressAlerts` server-side, picking anything else (or clearing)
+  lifts it. `[web]`
+- Verified live against the local stack: mention pref off → Alice's mention
+  writes the row (bell 28→29) with zero banner; status + toggles restore
+  normally. macOS consumption of the flag is the remaining client slice
+  (Parity). `[qa]`
+
+### 2026-07-21 — Phase 10 (server slice): notification prefs + status suppression → `suppressAlert`
+- The alert decision moves server-side (spec `docs/specs/phase10.md`): every
+  `NotificationDTO` (WS fan-out and `GET /v1/me/notifications`) now carries
+  **`suppressAlert`** — computed per recipient from new per-user prefs and
+  their status — and **`subkind`** (`mention` | `here` | `channel`) splitting
+  direct mentions from group mentions, which used to collapse into kind 0.
+  Rows are always written; the flag gates OS banners only, so the bell stays
+  a complete inbox. Migration `0017_notification_prefs.sql`:
+  `users.notification_prefs` (jsonb, shallow-merged via `PATCH /v1/me`'s new
+  `notificationPrefs`), `users.status_suppress_alerts` (set by clients for
+  Focusing / In a meeting / At lunch / Do not disturb), `notifications.subkind`.
+  `UserDTO` echoes both new user fields. Behavior change once clients consume
+  the flag: kind-3 channel-activity rows are always suppressed (today they
+  banner, mis-titled "mentioned you"). A direct mention beats a group mention
+  for the same user in the same message. **Clients don't read the flag yet —
+  web/macOS slices land next.** New DB-backed suite
+  `test/notifications.test.ts` (13 tests: subkind recording incl. faked
+  presence for `<!here>`, direct-beats-group, the suppress mapping, merge
+  semantics, live list-time gating). `[server]` `[qa]`
 
 ### 2026-07-21 — Artifacts: create_artifact targets one person, not a channel
 - Operator correction to the phase 9 fan-out: an agent works for a person, not

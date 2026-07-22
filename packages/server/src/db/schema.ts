@@ -38,6 +38,11 @@ export const users = pgTable('users', {
   agentKeyHash: text('agent_key_hash'),
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
+  // Phase 10: per-user notification prefs ({dm, mention, groupMention,
+  // threadReply, persistentBanners} — absent key = default) and the
+  // status-driven "suppress all alerts" flag (DND-family statuses).
+  notificationPrefs: jsonb('notification_prefs').$type<Record<string, boolean>>().notNull().default({}),
+  statusSuppressAlerts: boolean('status_suppress_alerts').notNull().default(false),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   // Tombstone: set when a human is removed from their last workspace. The row is
   // kept for message authorship; the service vacates `email` so it frees up.
@@ -246,6 +251,8 @@ export const notifications = pgTable(
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
     kind: smallint('kind').notNull(), // 0=mention 1=dm 2=thread_reply 3=channel activity
+    // phase 10: for kind 0 — 'mention' | 'here' | 'channel'; NULL otherwise
+    subkind: text('subkind'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     readAt: timestamp('read_at', { withTimezone: true }),
   },
