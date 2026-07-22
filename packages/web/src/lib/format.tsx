@@ -4,6 +4,10 @@
 // Phase 3.5 item 2: bodies stay literal markdown on the wire; ``` fenced code
 // and ">" quote lines gain block styling at render time, and outgoing sugar
 // (shortcodes, mentions) is not expanded inside fenced code regions.
+//
+// Block markdown extended to headings (#…######), unordered/ordered lists,
+// GFM pipe tables, and horizontal rules — all rendered at display time; the
+// wire format stays literal so other clients still show plain markdown.
 import { Fragment } from 'react';
 import type { ReactNode } from 'react';
 import type { WorkspaceMemberDTO } from '@flow/shared';
@@ -105,18 +109,72 @@ export function classifyLines(lines: string[]): LineKind[] {
   });
 }
 
+export type CellAlign = 'left' | 'center' | 'right' | null;
+
 export type BodySegment =
   | { kind: 'code'; content: string } // fence marker lines stripped
   | { kind: 'quote'; content: string } // leading "> " stripped per line
+  | { kind: 'heading'; level: number; content: string } // "#"…"######" stripped
+  | { kind: 'ulist'; items: string[] } // "- "/"* "/"+ " markers stripped
+  | { kind: 'olist'; start: number; items: string[] } // "N." markers stripped
+  | { kind: 'table'; header: string[]; align: CellAlign[]; rows: string[][] }
+  | { kind: 'hr' }
   | { kind: 'plain'; content: string };
 
-/** Split a body into fenced code blocks, runs of quote lines, and plain paragraphs. */
+const HEADING_RE = /^(#{1,6})\s+(.*)$/;
+const HR_RE = /^(-{3,}|\*{3,}|_{3,})\s*$/;
+const ULIST_RE = /^\s*[-*+]\s+(.*)$/;
+const OLIST_RE = /^\s*(\d+)\.\s+(.*)$/;
+
+/** A GFM table separator row: pipes, dashes, optional colons — and at least one of each. */
+function isTableSep(line: string): boolean {
+  return line.includes('|') && line.includes('-') && /^[\s|:-]+$/.test(line);
+}
+
+/** A table header row must carry a pipe and be followed by a separator row. */
+function isTableStart(lines: string[], i: number): boolean {
+  return lines[i]!.includes('|') && i + 1 < lines.length && isTableSep(lines[i + 1]!);
+}
+
+/** Split "| a | b |" into ['a','b'], tolerating optional outer pipes. */
+function parseRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+
+function parseAlign(cell: string): CellAlign {
+  const left = cell.startsWith(':');
+  const right = cell.endsWith(':');
+  if (left && right) return 'center';
+  if (right) return 'right';
+  if (left) return 'left';
+  return null;
+}
+
+/** True when a line begins a non-plain block — the plain-run terminator. */
+function startsBlock(lines: string[], i: number): boolean {
+  const l = lines[i]!;
+  return (
+    l.startsWith('```') ||
+    l.startsWith('>') ||
+    HEADING_RE.test(l) ||
+    HR_RE.test(l) ||
+    ULIST_RE.test(l) ||
+    OLIST_RE.test(l) ||
+    isTableStart(lines, i)
+  );
+}
+
+/** Split a body into fenced code, quotes, headings, lists, tables, rules, and plain paragraphs. */
 export function segmentBody(body: string): BodySegment[] {
   const segments: BodySegment[] = [];
   const lines = body.split('\n');
   let i = 0;
   while (i < lines.length) {
-    if (lines[i]!.startsWith('```')) {
+    const line = lines[i]!;
+    if (line.startsWith('```')) {
       const content: string[] = [];
       i++; // opening fence
       while (i < lines.length && !lines[i]!.startsWith('```')) {
@@ -125,16 +183,48 @@ export function segmentBody(body: string): BodySegment[] {
       }
       if (i < lines.length) i++; // closing fence
       segments.push({ kind: 'code', content: content.join('\n') });
-    } else if (lines[i]!.startsWith('>')) {
+    } else if (line.startsWith('>')) {
       const content: string[] = [];
       while (i < lines.length && lines[i]!.startsWith('>')) {
         content.push(lines[i]!.replace(/^>\s?/, ''));
         i++;
       }
       segments.push({ kind: 'quote', content: content.join('\n') });
+    } else if (HEADING_RE.test(line)) {
+      const m = HEADING_RE.exec(line)!;
+      segments.push({ kind: 'heading', level: m[1]!.length, content: m[2]! });
+      i++;
+    } else if (HR_RE.test(line)) {
+      segments.push({ kind: 'hr' });
+      i++;
+    } else if (isTableStart(lines, i)) {
+      const header = parseRow(line);
+      const align = parseRow(lines[i + 1]!).map(parseAlign);
+      i += 2; // header + separator
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i]!.includes('|') && lines[i]!.trim() !== '' && !lines[i]!.startsWith('```')) {
+        rows.push(parseRow(lines[i]!));
+        i++;
+      }
+      segments.push({ kind: 'table', header, align, rows });
+    } else if (ULIST_RE.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && ULIST_RE.test(lines[i]!)) {
+        items.push(ULIST_RE.exec(lines[i]!)![1]!);
+        i++;
+      }
+      segments.push({ kind: 'ulist', items });
+    } else if (OLIST_RE.test(line)) {
+      const start = parseInt(OLIST_RE.exec(line)![1]!, 10);
+      const items: string[] = [];
+      while (i < lines.length && OLIST_RE.test(lines[i]!)) {
+        items.push(OLIST_RE.exec(lines[i]!)![2]!);
+        i++;
+      }
+      segments.push({ kind: 'olist', start: Number.isFinite(start) ? start : 1, items });
     } else {
       const content: string[] = [];
-      while (i < lines.length && !lines[i]!.startsWith('```') && !lines[i]!.startsWith('>')) {
+      while (i < lines.length && !startsBlock(lines, i)) {
         content.push(lines[i]!);
         i++;
       }
@@ -144,22 +234,43 @@ export function segmentBody(body: string): BodySegment[] {
   return segments;
 }
 
+const HEADING_CLASS: Record<number, string> = {
+  1: 'mt-2 mb-1 text-lg font-bold',
+  // NB: avoid `text-base` — it collides with the custom `--color-base` theme
+  // token in Tailwind v4 and paints the heading near-white on the base bg.
+  2: 'mt-2 mb-1 text-[1.05rem] font-bold',
+  3: 'mt-1.5 mb-0.5 text-sm font-bold',
+  4: 'mt-1.5 mb-0.5 text-sm font-semibold',
+  5: 'mt-1 mb-0.5 text-sm font-semibold',
+  6: 'mt-1 mb-0.5 text-sm font-semibold',
+};
+
+const ALIGN_CLASS: Record<'left' | 'center' | 'right', string> = {
+  left: 'text-left',
+  center: 'text-center',
+  right: 'text-right',
+};
+
 /**
  * Block-level body renderer: code → <pre><code> (no mention pills, fences
- * hidden), quote runs → styled <blockquote> with inline content through
- * renderBody, plain text unchanged through renderBody. Render inside a
- * whitespace-pre-wrap container.
+ * hidden), quotes → <blockquote>, headings → sized/bold, lists → <ul>/<ol>,
+ * tables → a scrollable <table>, rules → <hr>, plain text through renderBody.
+ * Inline content (mention pills + inline markdown) runs through renderBody
+ * inside every text-bearing block. Render inside a whitespace-pre-wrap
+ * container (block elements override it locally where needed).
  */
 export function renderBlocks(
   body: string,
   names: Record<string, string>,
   currentUserId: string | undefined,
 ): ReactNode[] {
+  const inline = (text: string) => renderBody(text, names, currentUserId);
   return segmentBody(body).map((seg, i): ReactNode => {
+    const key = `b${i}`;
     if (seg.kind === 'code') {
       return (
         <pre
-          key={`b${i}`}
+          key={key}
           data-testid="code-block"
           className="my-1 max-w-full overflow-x-auto rounded-lg bg-[#f4f2ee] px-3 py-2 font-mono text-[13px] leading-relaxed whitespace-pre"
         >
@@ -170,15 +281,80 @@ export function renderBlocks(
     if (seg.kind === 'quote') {
       return (
         <blockquote
-          key={`b${i}`}
+          key={key}
           data-testid="quote-block"
           className="my-1 border-l-[3px] border-accent bg-accent/5 py-0.5 pr-2 pl-2.5 text-ink-soft"
         >
-          {renderBody(seg.content, names, currentUserId)}
+          {inline(seg.content)}
         </blockquote>
       );
     }
-    return <Fragment key={`b${i}`}>{renderBody(seg.content, names, currentUserId)}</Fragment>;
+    if (seg.kind === 'heading') {
+      const Tag = `h${Math.min(seg.level, 6)}` as 'h1';
+      return (
+        <Tag key={key} data-testid="heading" className={HEADING_CLASS[seg.level] ?? HEADING_CLASS[6]}>
+          {inline(seg.content)}
+        </Tag>
+      );
+    }
+    if (seg.kind === 'hr') {
+      return <hr key={key} data-testid="rule" className="my-2 border-t border-hairline" />;
+    }
+    if (seg.kind === 'ulist') {
+      return (
+        <ul key={key} data-testid="ulist" className="my-1 list-disc space-y-0.5 pl-5">
+          {seg.items.map((it, j) => (
+            <li key={j}>{inline(it)}</li>
+          ))}
+        </ul>
+      );
+    }
+    if (seg.kind === 'olist') {
+      return (
+        <ol key={key} data-testid="olist" start={seg.start} className="my-1 list-decimal space-y-0.5 pl-5">
+          {seg.items.map((it, j) => (
+            <li key={j}>{inline(it)}</li>
+          ))}
+        </ol>
+      );
+    }
+    if (seg.kind === 'table') {
+      const cols = seg.header.length;
+      const cellAlign = (c: number) => {
+        const a = seg.align[c];
+        return a ? ` ${ALIGN_CLASS[a]}` : '';
+      };
+      return (
+        <div key={key} data-testid="table" className="my-1 max-w-full overflow-x-auto">
+          <table className="border-collapse text-[13px]">
+            <thead>
+              <tr>
+                {seg.header.map((cell, c) => (
+                  <th
+                    key={c}
+                    className={`border border-hairline2 bg-[#f4f2ee] px-2 py-1 font-semibold${cellAlign(c) || ' text-left'}`}
+                  >
+                    {inline(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {seg.rows.map((row, r) => (
+                <tr key={r}>
+                  {Array.from({ length: cols }, (_, c) => (
+                    <td key={c} className={`border border-hairline px-2 py-1${cellAlign(c)}`}>
+                      {inline(row[c] ?? '')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+    return <Fragment key={key}>{inline(seg.content)}</Fragment>;
   });
 }
 
