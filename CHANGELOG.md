@@ -69,6 +69,18 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-22 — iOS: share videos from the photo picker
+- The composer's Photos picker was `matching: .images`, so videos in the photo
+  library were unselectable. Widened to `.any(of: [.images, .videos])` and
+  relabeled the menu item "Photos & Videos". `[ios]`
+- `uploadPhotos` now branches on content type: videos load as an on-disk file
+  URL via a `PickedMovie` `Transferable` (FileRepresentation → temp copy) so a
+  large movie never lands in memory, and pass through untouched; still images
+  keep the existing original-bytes / HEIC→JPEG re-encode path. Server already
+  accepts video mimes, so no server change. `[ios]`
+- Note: this closes the *sending* side only. Inline video playback on iOS is
+  still a chip → QuickLook (see Parity "no inline video preview/playback card").
+
 ### 2026-07-21 — Logged-out home links to the agent skill download
 - The signed-out auth screen now shows a prominent "Bring your AI agent to
   Flow" card below the sign-in box that downloads the `flow-agent-member`
