@@ -715,7 +715,7 @@ struct StatusFooterView: View {
                 .padding(.bottom, 4)
             ForEach(Array(MC.statusOptions.enumerated()), id: \.offset) { index, option in
                 Button {
-                    setStatus(option.emoji, option.text)
+                    setStatus(option.emoji, option.text, option.suppresses)
                 } label: {
                     HStack(spacing: 8) {
                         Text(option.emoji)
@@ -740,7 +740,7 @@ struct StatusFooterView: View {
             }
             Divider().padding(.vertical, 4)
             Button {
-                setStatus("", "")
+                setStatus("", "", false)
             } label: {
                 Text("Clear status")
                     .font(.system(size: 13, weight: .semibold))
@@ -762,12 +762,18 @@ struct StatusFooterView: View {
         .accessibilityIdentifier("status.picker")
     }
 
-    private func setStatus(_ emoji: String, _ text: String) {
+    /// `suppresses` is always sent, never left to default: the server only
+    /// touches the column when the field is present, so omitting it strands
+    /// the previous value — picking "Available" after "Do not disturb" would
+    /// leave alerts paused. Web does the same (STATUS_OPTIONS, default false).
+    private func setStatus(_ emoji: String, _ text: String, _ suppresses: Bool) {
         busy = true
         Task {
             defer { busy = false }
             do {
-                try await app.engine.setStatus(emoji: emoji, text: text)
+                try await app.engine.setStatus(
+                    emoji: emoji, text: text, suppressAlerts: suppresses
+                )
                 showPicker = false
             } catch {
                 app.showError(error.localizedDescription)

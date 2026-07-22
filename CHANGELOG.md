@@ -101,13 +101,18 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 - **My Profile** pushes an edit form: avatar change via the photo library
   (HEIC re-encoded to JPEG, same rule the composer uses), display name,
   timezone, email; saves through `PATCH /v1/me`. `[ios]`
-- iOS status picks send `statusSuppressAlerts` alongside the emoji + text, so
-  a DND-family status pauses alerts and a plain one resumes them — the server
-  leaves the column untouched when the field is omitted, so a client that
-  never sends it can strand suppression on. `MC.statusOptions` grew the
-  `suppresses` flag (matching web's `STATUS_OPTIONS`), `PatchMeBody` the
-  field, and `SyncEngine.setStatus` an optional `suppressAlerts:` parameter.
-  `[ios]` `[macos]`
+- iOS and macOS status picks now send `statusSuppressAlerts` alongside the
+  emoji + text, so a DND-family status pauses alerts and a plain one resumes
+  them. `MC.statusOptions` grew the `suppresses` flag (matching web's
+  `STATUS_OPTIONS`), `PatchMeBody` the field, and `SyncEngine.setStatus` a
+  `suppressAlerts:` parameter. `[ios]` `[macos]`
+- **Fixed: macOS could strand notifications paused.** The server only writes
+  the column when the field is present, and the macOS status picker never sent
+  it — so picking "Available" after "Do not disturb" left alerts suppressed
+  behind an innocent-looking status. Confirmed against the dev server: a
+  flagless `PATCH /v1/me` returned `statusText: "Available"` with
+  `statusSuppressAlerts: true`. Every macOS pick (and Clear status) now sends
+  the flag explicitly, as web already did. `[macos]`
 - `uploadAvatar` now republishes the avatar-path map, so a new avatar repaints
   message rows immediately instead of waiting for the next member refresh
   (shared engine — fixes the same lag on macOS). `[ios]` `[macos]`
