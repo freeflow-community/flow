@@ -79,6 +79,18 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-22 — Release: `flow-agent-bridge` 0.4.0
+- Version bump carrying the two bridge changes below (answer in threads / stay
+  in threads, and the 5→10 min default turn timeout) out to installed agents.
+  Minor, not patch: the agent's replying behaviour visibly changes on upgrade.
+  `[agent-bridge]`
+- Publishing is automatic — `.github/workflows/publish-bridge.yml` publishes on
+  any push to `main` touching the package, but **only when `package.json`'s
+  version isn't already on the registry**. The changes themselves merged
+  (#13) without a bump, so that run correctly skipped with
+  "0.3.4 already on npm — nothing to do". The version bump *is* the release
+  trigger; a behavioural change to this package needs one in the same PR.
+
 ### 2026-07-22 — Web message hover menu: quick reactions, Copy, bigger hit targets
 - The hover menu now leads with one-tap quick reactions 👍 👀 🙌 (toggle like
   any reaction), a divider, then the existing 🙂 full-picker button. `[web]`
