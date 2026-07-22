@@ -1,7 +1,7 @@
 # Changelog
 
 Convention: every feature/fix entry tags the platforms it landed on —
-`[server]` `[web]` `[macos]` `[ios]` `[qa]`. A change that lands on one client
+`[server]` `[web]` `[macos]` `[ios]` `[bridge]` `[qa]`. A change that lands on one client
 but not the others MUST add a line to **Parity** below (and remove it when
 closed). Updated with every milestone commit (PM) and interactive-session fix
 (coordinator).
@@ -87,6 +87,22 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-22 — agent-bridge: startup version check against npm
+- **New: the bridge checks npm on startup and warns when it's stale.** Nothing
+  ever told a running agent it was behind — operators only found out by reading
+  the package manually. On boot the bridge now reads its own `package.json`
+  version, fetches `flow-agent-bridge/latest` from the npm registry, and
+  semver-compares. `[bridge]`
+- If it's behind, it logs a warning and posts one notice ("I'm running v0.4.0,
+  but v0.5.1 is available on npm…") to the first non-DM channel it's a member
+  of. Best-effort throughout: the check runs non-blocking after the socket
+  connects, and every failure path (offline, registry down, unreadable
+  package.json, no channel) is swallowed — it never delays or crashes startup.
+  `[bridge]`
+- Semver core comparison (`isOutdated`) ignores prerelease/build metadata and a
+  leading `v`, and fails safe (returns not-outdated) on unparseable input.
+  Covered by `test/version.test.ts`. `[bridge]`
 
 ### 2026-07-22 — iOS: browse, join and create channels
 - **Fixed: iOS had no way to reach a channel you weren't already in.** The
