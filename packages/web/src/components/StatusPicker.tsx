@@ -8,15 +8,16 @@ import { useAuth, useLive } from '../state';
 import { Avatar } from './Avatar';
 import { ProfileModal } from './modals';
 
-export const STATUS_OPTIONS: { emoji: string; text: string }[] = [
-  { emoji: '🎧', text: 'Focusing' },
-  { emoji: '🗓️', text: 'In a meeting' },
+/** suppresses: phase 10 DND-family statuses — sets statusSuppressAlerts server-side. */
+export const STATUS_OPTIONS: { emoji: string; text: string; suppresses?: boolean }[] = [
+  { emoji: '🎧', text: 'Focusing', suppresses: true },
+  { emoji: '🗓️', text: 'In a meeting', suppresses: true },
   { emoji: '🌴', text: 'Vacationing' },
   { emoji: '🏠', text: 'Working remotely' },
   { emoji: '🤒', text: 'Out sick' },
-  { emoji: '🍽️', text: 'At lunch' },
+  { emoji: '🍽️', text: 'At lunch', suppresses: true },
   { emoji: '💬', text: 'Available' },
-  { emoji: '🚫', text: 'Do not disturb' },
+  { emoji: '🚫', text: 'Do not disturb', suppresses: true },
 ];
 
 export default function StatusFooter() {
@@ -29,10 +30,14 @@ export default function StatusFooter() {
   const [busy, setBusy] = useState(false);
   const me = auth.user;
 
-  const setStatus = async (emoji: string, text: string) => {
+  const setStatus = async (emoji: string, text: string, suppresses = false) => {
     setBusy(true);
     try {
-      const updated = await api<UserDTO>('PATCH', '/v1/me', { statusEmoji: emoji, statusText: text });
+      const updated = await api<UserDTO>('PATCH', '/v1/me', {
+        statusEmoji: emoji,
+        statusText: text,
+        statusSuppressAlerts: suppresses,
+      });
       auth.setUser(updated);
       void qc.invalidateQueries({ queryKey: ['members'] });
       void qc.invalidateQueries({ queryKey: ['me'] });
@@ -56,10 +61,11 @@ export default function StatusFooter() {
               data-testid={`status-option-${i + 1}`}
               disabled={busy}
               className="flex w-full items-center gap-2 rounded-[9px] p-2 text-left hover:bg-accent/10"
-              onClick={() => void setStatus(o.emoji, o.text)}
+              onClick={() => void setStatus(o.emoji, o.text, o.suppresses)}
             >
               <span className="w-[22px] text-center text-[17px]">{o.emoji}</span>
               <span className="text-[13.5px] font-semibold text-ink">{o.text}</span>
+              {o.suppresses && <span className="ml-auto text-[11px] text-faint">pauses notifications</span>}
             </button>
           ))}
           <button
@@ -83,7 +89,7 @@ export default function StatusFooter() {
             className="block w-full px-4 py-1.5 text-left text-sm whitespace-nowrap hover:bg-accent/10"
             onClick={() => { setMenuOpen(false); setShowProfile(true); }}
           >
-            My Profile…
+            Settings…
           </button>
           <button
             data-testid="avatar-menu-signout"

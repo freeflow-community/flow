@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useAuth, useSelection } from '../state';
+import { typingKey, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useMemberMap, useNameMap, useThread } from '../hooks';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
@@ -17,10 +17,14 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
   const auth = useAuth();
   const sel = useSelection();
   const thread = useThread(rootId);
+  const live = useLive();
   const names = useNameMap(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
+  // Mobile: the thread covers the channel full-screen (its ✕ closes it)
+  // instead of splitting an already-narrow viewport into two columns.
+  const { isMobile } = useMobileNav();
 
   const messages = useMemo(() => {
     if (!thread.data) return [];
@@ -29,16 +33,22 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
 
   const channelId = thread.data?.root.channelId;
 
+  // Typing in this thread's composer — scoped to the thread, so it appears
+  // here and not in the channel behind it.
+  const typingNames = Object.entries(channelId ? (live.typing[typingKey(channelId, rootId)] ?? {}) : {})
+    .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
+    .map(([uid]) => names[uid] ?? 'Someone');
+
   return (
     <aside
       data-testid="thread-panel"
-      className="relative flex shrink-0 flex-col border-l border-hairline shadow-[-6px_0_16px_rgba(57,52,47,0.10)]"
-      style={{ width }}
+      className="relative flex shrink-0 flex-col border-l border-hairline bg-base shadow-[-6px_0_16px_rgba(57,52,47,0.10)] max-md:fixed max-md:inset-0 max-md:z-30 max-md:border-l-0"
+      style={isMobile ? undefined : { width }}
     >
       {/* Left-edge drag handle: dragging left widens the panel. */}
       <div
         data-testid="thread-resizer"
-        className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize hover:bg-accent/30"
+        className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize hover:bg-accent/30 max-md:hidden"
         onPointerDown={(e) => {
           e.preventDefault();
           dragRef.current = { x: e.clientX, w: width };
@@ -80,6 +90,15 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
         onLoadOlder={() => {}}
         showThreadAffordances={false}
       />
+      <div className="h-5 px-4 text-xs text-muted" data-testid="thread-typing-indicator-slot">
+        {typingNames.length === 1 && (
+          <span data-testid="thread-typing-indicator">{typingNames[0]} is typing…</span>
+        )}
+        {typingNames.length > 1 && (
+          <span data-testid="thread-typing-indicator">Several people are typing…</span>
+        )}
+      </div>
+
       {channelId && (
         <Composer
           channelId={channelId}

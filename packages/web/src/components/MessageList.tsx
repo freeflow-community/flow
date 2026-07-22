@@ -537,7 +537,7 @@ function ImageAttachment({ file }: { file: FileDTO }) {
             {/* ~2x preview (ui_nits item 1). Thumbs cap at 512px, so an img
                 never stretches past its intrinsic size — large images land at
                 512 CSS px (soft on retina; noted at review). */}
-            <AuthImg path={imgPath} alt={file.name} className="max-h-[480px] max-w-[576px] rounded-lg border border-hairline" />
+            <AuthImg path={imgPath} alt={file.name} className="max-h-[480px] max-w-[min(576px,100%)] rounded-lg border border-hairline" />
           </button>
           <DownloadHoverButton file={file} onDownload={download} />
         </div>
@@ -605,11 +605,11 @@ function VideoAttachment({ file }: { file: FileDTO }) {
               src={url}
               controls
               preload="metadata"
-              className="max-h-[480px] max-w-[576px] rounded-lg border border-hairline bg-black"
+              className="max-h-[480px] max-w-[min(576px,100%)] rounded-lg border border-hairline bg-black"
               onError={onVideoError}
             />
           ) : (
-            <div className="flex h-[240px] w-[426px] items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">
+            <div className="flex h-[240px] w-[min(426px,100%)] items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">
               ▶
             </div>
           )}
@@ -761,7 +761,7 @@ function PdfAttachment({ file }: { file: FileDTO }) {
     <div className="mt-1">
       <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
       {!collapsed && (
-        <div className="group/att relative mt-0.5 h-[400px] w-[320px]">
+        <div className="group/att relative mt-0.5 h-[400px] w-[min(320px,100%)]">
           {url ? (
             <embed
               src={`${url}#toolbar=0&navpanes=0`}

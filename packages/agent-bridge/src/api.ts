@@ -113,9 +113,13 @@ export class FlowApi {
     return this.req('POST', `/v1/channels/${channelId}/leave`);
   }
 
+  /** The whole thread, root first — the server returns the root separately. */
   async listThread(rootId: string, limit = 200): Promise<MessageDTO[]> {
-    const r = await this.req<{ messages: MessageDTO[] }>('GET', `/v1/messages/${rootId}/thread?limit=${limit}`);
-    return r.messages;
+    const r = await this.req<{ root: MessageDTO; messages: MessageDTO[] }>(
+      'GET',
+      `/v1/messages/${rootId}/thread?limit=${limit}`,
+    );
+    return r.root ? [r.root, ...r.messages] : r.messages;
   }
 
   addReaction(messageId: string, emoji: string): Promise<unknown> {

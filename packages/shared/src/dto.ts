@@ -10,8 +10,29 @@ export interface UserDTO {
   statusText: string; // '' = no status
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
+  /** Per-user notification prefs (phase 10). Missing key = on. */
+  notificationPrefs: NotificationPrefs;
+  /** While true, all notification alerts are suppressed (status-driven DND). */
+  statusSuppressAlerts: boolean;
   createdAt: string;
 }
+
+/** Per-user notification preferences (phase 10). All optional; absent = default (on/off as noted). */
+export interface NotificationPrefs {
+  /** DM + group-DM messages (kind 1). Default on. */
+  dm?: boolean | undefined;
+  /** Direct <@user> mentions (kind 0, subkind 'mention'). Default on. */
+  mention?: boolean | undefined;
+  /** <!here>/<!channel>/<!everyone> group mentions (kind 0, subkind 'here'/'channel'). Default on. */
+  groupMention?: boolean | undefined;
+  /** Replies to threads the user started or participated in (kind 2). Default on. */
+  threadReply?: boolean | undefined;
+  /** Web-only presentation pref: OS notifications persist until dismissed (requireInteraction). Default off. */
+  persistentBanners?: boolean | undefined;
+}
+
+/** Why a kind-0 (mention) notification fired: direct mention vs group-mention variant. */
+export type NotificationSubkind = 'mention' | 'here' | 'channel';
 
 export interface WorkspaceDTO {
   id: string;
@@ -144,6 +165,14 @@ export interface NotificationDTO {
   channelId: string;
   workspaceId: string;
   kind: NotificationKind;
+  /** For kind 0: what fired the mention (null for other kinds and legacy rows). */
+  subkind: NotificationSubkind | null;
+  /**
+   * Server-computed at fan-out/list time (phase 10): true when the user's
+   * prefs or a suppressing status say NO OS banner for this notification.
+   * The row/bell entry exists regardless — this gates alerts only.
+   */
+  suppressAlert: boolean;
   createdAt: string;
   readAt: string | null;
   /** The triggering message, for banner text / list rendering. */

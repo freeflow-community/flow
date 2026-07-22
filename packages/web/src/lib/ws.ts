@@ -31,9 +31,9 @@ export class SocketClient {
     this.ws = null;
   }
 
-  sendTyping(channelId: string): void {
+  sendTyping(channelId: string, threadRootId?: string): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ op: 'typing', channelId }));
+      this.ws.send(JSON.stringify({ op: 'typing', channelId, ...(threadRootId ? { threadRootId } : {}) }));
     }
   }
 

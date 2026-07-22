@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth, useLive, useSelection } from '../state';
+import { typingKey, useAuth, useLive, useSelection } from '../state';
 import { useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMembers, useMessages, useNameMap, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import NotificationsBell from './NotificationsBell';
+import { MobileMenuButton } from './MobileMenuButton';
 import { EditChannelModal, UserCard } from './modals';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
@@ -53,14 +54,16 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const shown = headerIds.slice(0, 3);
   const extra = headerIds.length - shown.length;
 
-  const typingNames = Object.entries(live.typing[channelId] ?? {})
+  // Main-composer typing only — thread typing shows in its own panel.
+  const typingNames = Object.entries(live.typing[typingKey(channelId)] ?? {})
     .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
     .map(([uid]) => names[uid] ?? 'Someone');
 
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-base">
-      <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px]">
-        <div className="min-w-0">
+      <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
+        <MobileMenuButton />
+        <div className="min-w-0 flex-1">
           <h2
             data-testid="channel-header"
             className={`truncate text-[15px] font-bold ${dmOtherId || channel?.kind === 'standard' ? 'cursor-pointer hover:underline' : ''}`}
@@ -79,8 +82,9 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           {channel?.topic && <p className="truncate text-xs text-muted">{channel.topic}</p>}
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center">
+        <div className="flex shrink-0 items-center gap-3">
+          {/* decorative member stack — dropped on mobile so the title gets the room */}
+          <div className="flex items-center max-md:hidden">
             {shown.map((id, i) => {
               const m = memberMap[id];
               return (

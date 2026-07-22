@@ -110,23 +110,24 @@ final class AppState: ObservableObject {
         hasMore[channelId] = value
     }
 
-    func typingReceived(channelId: String, userId: String) {
-        typing[channelId, default: [:]][userId] = Date()
+    func typingReceived(channelId: String, threadRootId: String? = nil, userId: String) {
+        let key = TypingKey.make(channelId: channelId, threadRootId: threadRootId)
+        typing[key, default: [:]][userId] = Date()
         // Expire after ~5s.
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(5.2))
             guard let self else { return }
-            if let at = self.typing[channelId]?[userId],
+            if let at = self.typing[key]?[userId],
                Date().timeIntervalSince(at) >= 5 {
-                self.typing[channelId]?.removeValue(forKey: userId)
+                self.typing[key]?.removeValue(forKey: userId)
             }
         }
     }
 
     /// A message from this user arrived — drop their lingering typing entry
     /// instead of waiting out the 5s window.
-    func typingStopped(channelId: String, userId: String) {
-        typing[channelId]?.removeValue(forKey: userId)
+    func typingStopped(channelId: String, threadRootId: String? = nil, userId: String) {
+        typing[TypingKey.make(channelId: channelId, threadRootId: threadRootId)]?.removeValue(forKey: userId)
     }
 
     func presenceReceived(userId: String, online: Bool) {
@@ -177,8 +178,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func typingUserIds(channelId: String) -> [String] {
-        (typing[channelId] ?? [:])
+    /// Who's typing in one composer. `threadRootId` nil = the channel's main
+    /// composer, so a thread's typists never surface in the channel view.
+    func typingUserIds(channelId: String, threadRootId: String? = nil) -> [String] {
+        (typing[TypingKey.make(channelId: channelId, threadRootId: threadRootId)] ?? [:])
             .filter { Date().timeIntervalSince($0.value) < 5 }
             .map(\.key)
             .sorted()

@@ -43,15 +43,37 @@ export interface Selection {
 export interface LiveState {
   status: SocketStatus;
   presence: Record<string, boolean>;
-  typing: Record<string, Record<string, number>>; // channelId -> userId -> ts(ms)
+  /** typingKey(channelId, threadRootId) -> userId -> ts(ms). Keyed by composer,
+   * not by channel, so a thread's indicator never shows in the main view. */
+  typing: Record<string, Record<string, number>>;
   notificationUnread: number;
   setNotificationUnread(n: number): void;
-  sendTyping(channelId: string): void;
+  sendTyping(channelId: string, threadRootId?: string): void;
+}
+
+/**
+ * Mobile navigation state (responsive layout): below the `md` breakpoint the
+ * rail + sidebar collapse into a slide-in drawer over a full-width content
+ * pane. `isMobile` mirrors the `(max-width: 767px)` media query; the drawer is
+ * always "open" (in flow) on desktop.
+ */
+export interface MobileNav {
+  isMobile: boolean;
+  drawerOpen: boolean;
+  openDrawer(): void;
+  closeDrawer(): void;
+}
+
+/** Typing indicators are per-composer: a channel's main composer and each of
+ * its threads are separate conversations and get separate keys. */
+export function typingKey(channelId: string, threadRootId?: string | null): string {
+  return `${channelId}|${threadRootId ?? ''}`;
 }
 
 export const AuthContext = createContext<AuthState | null>(null);
 export const SelectionContext = createContext<Selection | null>(null);
 export const LiveContext = createContext<LiveState | null>(null);
+export const MobileNavContext = createContext<MobileNav | null>(null);
 
 export function useAuth(): AuthState {
   const v = useContext(AuthContext);
@@ -66,5 +88,10 @@ export function useSelection(): Selection {
 export function useLive(): LiveState {
   const v = useContext(LiveContext);
   if (!v) throw new Error('LiveContext missing');
+  return v;
+}
+export function useMobileNav(): MobileNav {
+  const v = useContext(MobileNavContext);
+  if (!v) throw new Error('MobileNavContext missing');
   return v;
 }

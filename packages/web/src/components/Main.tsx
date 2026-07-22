@@ -6,7 +6,7 @@ import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
-import { ADMIN_VIEW_ID, LiveContext, useAuth, useSelection } from '../state';
+import { ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
 import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
@@ -15,6 +15,7 @@ import ArtifactView from './ArtifactView';
 import ThreadPanel from './ThreadPanel';
 import { OpenInAppBanner } from './OpenInApp';
 import NotificationsBell from './NotificationsBell';
+import { MobileMenuButton } from './MobileMenuButton';
 import AgentPairingPrompt from './AgentPairingPrompt';
 
 export default function Main() {
@@ -25,10 +26,18 @@ export default function Main() {
   const [presence, setPresence] = useState<Record<string, boolean>>({});
   const [typing, setTyping] = useState<Record<string, Record<string, number>>>({});
   const [notificationUnread, setNotificationUnread] = useState(0);
+  // Responsive layout: below `md` the rail+sidebar collapse into a slide-in
+  // drawer over a full-width content pane (see the layout JSX below).
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  );
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const socketRef = useRef<SocketClient | null>(null);
   // refs so the socket handler always sees current selection
   const selRef = useRef(sel);
   selRef.current = sel;
+  const authRef = useRef(auth);
+  authRef.current = auth;
   const names = useNameMap(sel.workspaceId);
   const namesRef = useRef(names);
   namesRef.current = names;
@@ -50,6 +59,23 @@ export default function Main() {
       void Notification.requestPermission();
     }
   }, []);
+
+  // Track the mobile breakpoint; leaving mobile always dismisses the drawer.
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const onChange = () => {
+      setIsMobile(mq.matches);
+      if (!mq.matches) setDrawerOpen(false);
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // On mobile, picking a channel/artifact from the drawer closes it so the
+  // conversation takes the full screen. (Covers every selection path at once.)
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [sel.channelId, sel.artifactId]);
 
   useEffect(() => {
     const token = getToken();
@@ -73,12 +99,12 @@ export default function Main() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function clearTyping(channelId: string, userId: string): void {
+  function clearTyping(key: string, userId: string): void {
     setTyping((prev) => {
-      const chan = prev[channelId];
+      const chan = prev[key];
       if (!chan || !(userId in chan)) return prev;
       const { [userId]: _gone, ...rest } = chan;
-      return { ...prev, [channelId]: rest };
+      return { ...prev, [key]: rest };
     });
   }
 
@@ -100,8 +126,9 @@ export default function Main() {
         // (local-first; no refetch of the whole list per incoming message).
         const msg = event.data as MessageDTO;
         if (event.type === 'message.created' || event.type === 'thread.reply') {
-          // The sender's message arrived — drop their lingering typing entry.
-          clearTyping(msg.channelId, msg.userId);
+          // The sender's message arrived — drop their lingering typing entry
+          // for the composer they sent it from (main view or that thread).
+          clearTyping(typingKey(msg.channelId, msg.threadRootId), msg.userId);
         }
         const insert = event.type === 'message.created' || event.type === 'thread.reply';
         applyMessageEvent(qc, msg, insert);
@@ -119,18 +146,21 @@ export default function Main() {
       case 'typing': {
         const t = event.data as TypingData;
         if (t.userId === auth.user.id) break;
+        // Scoped to the composer it came from: a thread's indicator belongs to
+        // that thread, not the channel's main view.
+        const key = typingKey(t.channelId, t.threadRootId);
         setTyping((prev) => ({
           ...prev,
-          [t.channelId]: { ...(prev[t.channelId] ?? {}), [t.userId]: Date.now() },
+          [key]: { ...(prev[key] ?? {}), [t.userId]: Date.now() },
         }));
         // The render-time 5s filter never re-renders on its own, so a stale
         // entry would linger; sweep it once the window has passed.
         window.setTimeout(() => {
           setTyping((prev) => {
-            const at = prev[t.channelId]?.[t.userId];
+            const at = prev[key]?.[t.userId];
             if (at === undefined || Date.now() - at < 5000) return prev;
-            const { [t.userId]: _gone, ...rest } = prev[t.channelId]!;
-            return { ...prev, [t.channelId]: rest };
+            const { [t.userId]: _gone, ...rest } = prev[key]!;
+            return { ...prev, [key]: rest };
           });
         }, 5200);
         break;
@@ -192,12 +222,19 @@ export default function Main() {
 
   function maybeBanner(n: NotificationDTO): void {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    // phase 10: the server computed the alert decision (prefs + status)
+    if (n.suppressAlert) return;
     if (!document.hidden && n.channelId === selRef.current.channelId) return;
     const sender = namesRef.current[n.message.userId] ?? 'Someone';
     const title =
       n.kind === 1 ? `${sender} (DM)` : n.kind === 2 ? `${sender} replied in a thread` : `${sender} mentioned you`;
     try {
-      new Notification(title, { body: plainBody(n.message.body, namesRef.current), tag: n.id });
+      new Notification(title, {
+        body: plainBody(n.message.body, namesRef.current),
+        tag: n.id,
+        // presentation pref: persist until dismissed (browser permitting)
+        requireInteraction: authRef.current.user.notificationPrefs.persistentBanners === true,
+      });
     } catch {
       /* banner is best-effort */
     }
@@ -210,19 +247,49 @@ export default function Main() {
       typing,
       notificationUnread,
       setNotificationUnread,
-      sendTyping: (channelId: string) => socketRef.current?.sendTyping(channelId),
+      sendTyping: (channelId: string, threadRootId?: string) =>
+        socketRef.current?.sendTyping(channelId, threadRootId),
     }),
     [status, presence, typing, notificationUnread],
   );
 
+  const mobileNav = useMemo(
+    () => ({
+      isMobile,
+      drawerOpen,
+      openDrawer: () => setDrawerOpen(true),
+      closeDrawer: () => setDrawerOpen(false),
+    }),
+    [isMobile, drawerOpen],
+  );
+
   return (
     <LiveContext.Provider value={live}>
+     <MobileNavContext.Provider value={mobileNav}>
       <div className="flex h-full flex-col bg-base text-ink">
         <OpenInAppBanner />
         <AgentPairingPrompt />
-        <div className="flex min-h-0 flex-1">
-          <WorkspaceRail />
-          <Sidebar />
+        <div className="relative flex min-h-0 flex-1">
+          {/* Rail + sidebar. Desktop: inline flex columns. Mobile (<md): a
+              fixed slide-in drawer over the content, toggled by the header
+              hamburger and dismissed by the backdrop or a selection. */}
+          <div
+            data-testid="nav-drawer"
+            className={`z-40 flex shrink-0 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:w-[min(86vw,320px)] max-md:shadow-[6px_0_28px_rgba(20,8,40,.4)] max-md:transition-transform max-md:duration-200 ${
+              drawerOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'
+            }`}
+          >
+            <WorkspaceRail />
+            <Sidebar />
+          </div>
+          {isMobile && drawerOpen && (
+            <button
+              data-testid="nav-drawer-backdrop"
+              aria-label="Close menu"
+              className="fixed inset-0 z-30 bg-black/40 md:hidden"
+              onClick={() => setDrawerOpen(false)}
+            />
+          )}
           <div className="flex min-h-0 min-w-0 flex-1">
             {sel.artifactId ? (
               <ArtifactView key={sel.artifactId} artifactId={sel.artifactId} />
@@ -237,8 +304,11 @@ export default function Main() {
               </>
             ) : (
               <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex h-[60px] items-center justify-end border-b border-hairline px-[22px]">
-                  <NotificationsBell />
+                <div className="flex h-[60px] items-center justify-between border-b border-hairline px-[22px]">
+                  <MobileMenuButton />
+                  <div className="ml-auto">
+                    <NotificationsBell />
+                  </div>
                 </div>
                 <div className="flex flex-1 items-center justify-center text-faint">
                   Select a channel
@@ -248,6 +318,7 @@ export default function Main() {
           </div>
         </div>
       </div>
+     </MobileNavContext.Provider>
     </LiveContext.Provider>
   );
 }

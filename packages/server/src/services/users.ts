@@ -5,8 +5,8 @@
 // content and §6 requires cacheability), referenced by users.avatar_url. The
 // URL embeds a fresh key per upload, so clients may cache immutably.
 import sharp from 'sharp';
-import { and, eq, inArray } from 'drizzle-orm';
-import type { UserDTO } from '@flow/shared';
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import type { NotificationPrefs, UserDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { blobStore } from '../storage/index.js';
@@ -42,13 +42,27 @@ export async function patchMe(
     timezone?: string | undefined;
     statusEmoji?: string | undefined;
     statusText?: string | undefined;
+    notificationPrefs?: NotificationPrefs | undefined;
+    statusSuppressAlerts?: boolean | undefined;
   },
 ): Promise<UserDTO> {
-  const set: Partial<{ displayName: string; timezone: string; statusEmoji: string; statusText: string }> = {};
+  const set: Partial<{
+    displayName: string;
+    timezone: string;
+    statusEmoji: string;
+    statusText: string;
+    statusSuppressAlerts: boolean;
+    notificationPrefs: SQL;
+  }> = {};
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.timezone !== undefined) set.timezone = patch.timezone;
   if (patch.statusEmoji !== undefined) set.statusEmoji = patch.statusEmoji;
   if (patch.statusText !== undefined) set.statusText = patch.statusText;
+  if (patch.statusSuppressAlerts !== undefined) set.statusSuppressAlerts = patch.statusSuppressAlerts;
+  // shallow-merge over the stored prefs: only the keys sent change
+  if (patch.notificationPrefs !== undefined) {
+    set.notificationPrefs = sql`${users.notificationPrefs} || ${JSON.stringify(patch.notificationPrefs)}::jsonb`;
+  }
   const updated = await db.update(users).set(set).where(eq(users.id, userId)).returning();
   if (!updated[0]) throw notFound('user not found');
   await broadcastUserUpdated(updated[0]);

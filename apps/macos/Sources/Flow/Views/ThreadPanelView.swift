@@ -80,7 +80,7 @@ struct ThreadPanelView: View {
             }
 
             if let root {
-                TypingIndicatorView(channelId: root.channelId, userNames: userNames.value)
+                TypingIndicatorView(channelId: root.channelId, threadRootId: root.id, userNames: userNames.value)
                 ComposerView(
                     channelId: root.channelId,
                     workspaceId: workspaceId.value,

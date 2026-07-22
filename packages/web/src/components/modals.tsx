@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { SIDEBAR_COLORS } from '@flow/shared';
-import type { ChannelDTO, InviteDTO, UserDTO } from '@flow/shared';
+import type { ChannelDTO, InviteDTO, NotificationPrefs, UserDTO } from '@flow/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useChannelMembers, useMembers, useWorkspaces } from '../hooks';
@@ -27,7 +27,10 @@ export function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onMouseDown={onClose}>
       <div
         data-testid={testid}
-        className={`${wide ? 'w-[560px]' : 'w-96'} rounded-xl bg-white p-5 text-ink shadow-2xl`}
+        className={`${
+          // cap to the viewport on phones so the dialog never overflows
+          wide ? 'w-[min(560px,calc(100vw-2rem))]' : 'w-[min(24rem,calc(100vw-2rem))]'
+        } max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl bg-white p-5 text-ink shadow-2xl`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {children}
@@ -408,6 +411,37 @@ export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: str
   );
 }
 
+/** One live-saved notification-pref toggle (phase 10 settings). */
+function PrefToggle({
+  label,
+  hint,
+  checked,
+  onChange,
+  testid,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  testid: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2.5 py-1 text-sm text-ink">
+      <input
+        type="checkbox"
+        data-testid={testid}
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-4 w-4 accent-accent"
+      />
+      <span>
+        {label}
+        {hint && <span className="text-xs text-faint"> — {hint}</span>}
+      </span>
+    </label>
+  );
+}
+
 export function ProfileModal({ onClose }: { onClose: () => void }) {
   const auth = useAuth();
   const qc = useQueryClient();
@@ -416,6 +450,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const timezones = Intl.supportedValuesOf('timeZone');
+  const prefs = auth.user.notificationPrefs;
 
   const save = async () => {
     try {
@@ -423,6 +458,16 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
       auth.setUser(me);
       await qc.invalidateQueries({ queryKey: ['members'] });
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
+
+  /** Live-saved pref toggle: one PATCH per flip, shallow-merged server-side. */
+  const setPref = async (key: keyof NotificationPrefs, value: boolean) => {
+    try {
+      const me = await api<UserDTO>('PATCH', '/v1/me', { notificationPrefs: { [key]: value } });
+      auth.setUser(me);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed');
     }
@@ -445,7 +490,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal onClose={onClose} testid="profile-modal">
-      <h3 className="mb-3 font-bold">My Profile</h3>
+      <h3 className="mb-3 font-bold">Settings</h3>
       <div className="mb-3 flex items-center gap-3">
         {auth.user.avatarUrl ? (
           <AuthImg path={auth.user.avatarUrl} alt="avatar" className="h-14 w-14 rounded-full object-cover" />
@@ -469,8 +514,24 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         value={timezone} onChange={(e) => setTimezone(e.target.value)}>
         {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
       </select>
-      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-      <div className="flex justify-end gap-2">
+
+      <div className="mt-2 mb-1 border-t border-hairline pt-3 text-xs font-semibold text-faint uppercase">
+        Notifications
+      </div>
+      <p className="mb-1 text-xs text-faint">Off means no banner — everything still lands in the 🔔 list.</p>
+      <PrefToggle testid="pref-dm" label="Direct messages" hint="any message in a DM"
+        checked={prefs.dm !== false} onChange={(v) => void setPref('dm', v)} />
+      <PrefToggle testid="pref-mention" label="Mentions of me" hint="@you"
+        checked={prefs.mention !== false} onChange={(v) => void setPref('mention', v)} />
+      <PrefToggle testid="pref-group-mention" label="Group mentions" hint="@here, @channel"
+        checked={prefs.groupMention !== false} onChange={(v) => void setPref('groupMention', v)} />
+      <PrefToggle testid="pref-thread-reply" label="Thread replies" hint="threads you started or joined"
+        checked={prefs.threadReply !== false} onChange={(v) => void setPref('threadReply', v)} />
+      <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
+        checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
+
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      <div className="mt-3 flex justify-end gap-2">
         <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
         <button data-testid="profile-save"
           className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"

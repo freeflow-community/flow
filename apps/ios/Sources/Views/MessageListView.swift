@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// iOS port of the macOS message list (Views/MessageListView.swift): day
 /// dividers, Slack-style author grouping (5-minute rule), markdown block
@@ -222,6 +223,13 @@ struct MessageRow: View {
                         onOpenThread(message.threadRootId ?? message.id)
                     } label: {
                         Label("Reply in Thread", systemImage: "bubble.left.and.bubble.right")
+                    }
+                }
+                if !message.body.isEmpty {
+                    Button {
+                        UIPasteboard.general.string = message.body
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
                     }
                 }
                 if isMine {

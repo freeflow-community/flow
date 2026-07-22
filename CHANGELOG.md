@@ -9,6 +9,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- macOS: phase 10 notification settings — no Notifications section in the
+  profile/settings UI, banner path doesn't consult `suppressAlert` yet, and
+  the status picker doesn't set `status_suppress_alerts` (web shipped
+  2026-07-21; iOS out of scope for phase 10 per spec).
 - iOS: no Artifacts UI (phase 9) — no sidebar section, artifact panel, or
   save-as-artifact action; the `artifact.*` WS events are safely ignored.
   Server + web + macOS shipped together 2026-07-21.
@@ -45,6 +49,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   render inline players with an expand affordance.
 
 ### Deliberate divergences (ruled)
+- Copy message text: explicit "Copy" item in the message menu on iOS + macOS
+  (their custom Text rows aren't natively selectable); web omits it because
+  browser text selection + Cmd/Ctrl-C already copies message text.
 - Emoji picker: custom grid + search on web and iOS (reaction sheet); native
   character palette on macOS.
 - iOS composer: plain text + @-mention autocomplete only — no live-styled
@@ -66,6 +73,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
   support, so macOS shows the file chip (Download / open externally) for
   webm attachments (ruled — see decision_log 2026-07-20).
+- Responsive/mobile layout (drawer nav, viewport-capped media and modals):
+  web only, and inherently so — the native clients lay themselves out per
+  platform, and the iOS app is the native phone experience. Not a gap.
 
 ## History
 
@@ -79,6 +89,88 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   targets, `rounded-xl` pill — easier to aim at and read. `[web]`
 - With Copy now on all three clients, the "web omits Copy" Parity divergence is
   retired.
+### 2026-07-22 — Typing indicators are per-composer, not per-channel
+- Typing in a thread showed "X is typing…" in the channel's **main** view (and
+  on macOS/iOS, channel typing showed inside the thread panel too) — the
+  `typing` frame only ever carried `channelId`, so a thread's composer was
+  indistinguishable from the main one. `[server] [web] [macos] [ios]`
+- The WS `typing` frame and `TypingData` gained an optional `threadRootId`;
+  the gateway passes it through. Clients now key typing state by
+  `(channelId, threadRootId)` — `typingKey()` on web, `TypingKey.make()` in the
+  shared native layer — so each composer has its own indicator, its own 5s
+  expiry, and its own send throttle. `[server] [web] [macos] [ios]`
+- Backward compatible: a client that omits `threadRootId` reads as the main
+  composer, i.e. exactly today's behaviour, so old and new clients interoperate.
+- Web's thread panel gained the typing indicator it never had (macOS/iOS
+  already rendered one — it was just showing the channel's typists). `[web]`
+
+### 2026-07-22 — Agent bridge: default turn timeout 5 min → 10 min
+- `runtime.timeoutSec` defaults to `600` (was `300`). Real coding turns run
+  past five minutes and were being killed mid-work with
+  "timed out after 300s". Still a per-turn runaway cap, and still overridable
+  per agent in the config. `[agent-bridge]`
+
+### 2026-07-22 — Agent bridge: answer in threads, and stay in them
+- A top-level **channel** message the agent answers (an @-mention, or any
+  message under `eventScope: all`) is now answered in a **new thread rooted at
+  that message** instead of in the channel proper, so an agent exchange never
+  fills the main view. DMs and group DMs are exempt — the DM already is the
+  conversation. `[agent-bridge]`
+- Once the agent has spoken in a thread it answers **every** reply there, with
+  or without an @-mention. Participation resolves from live sessions first,
+  then from the thread's own messages (so it survives a bridge restart), cached
+  per thread root; a failed lookup is not cached. The self/other-agent loop
+  guards still apply inside threads. `[agent-bridge]`
+- The conversation key is now `(channelId, replyThreadRootId)`, so the thread
+  the agent opens continues the same CLI session rather than starting a second
+  one. The status line, the reply, the error reply, and the MCP server's
+  `FLOW_THREAD_ROOT_ID` all target that same thread. `[agent-bridge]`
+- `FlowApi.listThread` now returns the thread **root** as well as its replies
+  (the server always returned it separately and the bridge dropped it) — the
+  root is both a participation signal and useful first-turn context.
+  `[agent-bridge]`
+- New `test/routing.test.ts` (15 tests) covers both rules; verified by mutation
+  that they fail when either rule is removed. `[qa]`
+
+### 2026-07-22 — Web: responsive layout for mobile browsers
+- The three-column desktop layout (rail + sidebar + content [+ thread]) now
+  collapses to a single pane below the `md` breakpoint (`max-width: 767px`).
+  The rail + sidebar become a slide-in drawer over a full-width conversation,
+  opened by a `☰` button in each pane header and dismissed by the backdrop,
+  by picking a channel/artifact, or by crossing back above the breakpoint.
+  `[web]`
+- New `MobileNavContext` (`isMobile` / `drawerOpen` + open/close) drives it;
+  the sidebar's stored width and its drag handle, and the thread panel's
+  width + handle, are desktop-only. The thread panel covers the screen on
+  mobile instead of splitting an already-narrow viewport — its existing ✕
+  closes it. `[web]`
+- Fixed horizontal overflow that made the whole page pan sideways on a phone:
+  inline image/video previews, the video placeholder, and the PDF embed used
+  fixed pixel widths (`max-w-[576px]`, `w-[426px]`, `w-[320px]`) with no
+  viewport cap — now `min(<px>, 100%)`. Modals were `w-[560px]`/`w-96` and
+  overflowed a 390px screen; they now cap to `calc(100vw-2rem)` and scroll
+  vertically within `calc(100dvh-2rem)`. `[web]`
+- The channel header's decorative member-avatar stack is hidden on mobile so
+  the channel title gets the room. `[web]`
+
+### 2026-07-22 — Copy message text from the message menu
+- The message action menu gained a **Copy** command that puts the message
+  `body` on the system clipboard — iOS long-press context menu (`UIPasteboard`)
+  and macOS right-click context menu (`NSPasteboard`). Shown only for
+  non-empty, non-deleted messages; available to any author. `[ios] [macos]`
+- Web intentionally has no explicit Copy item — browser-native text selection
+  + Cmd/Ctrl-C already covers it (see Parity divergence).
+### 2026-07-22 — iOS: share videos from the photo picker
+- The composer's Photos picker was `matching: .images`, so videos in the photo
+  library were unselectable. Widened to `.any(of: [.images, .videos])` and
+  relabeled the menu item "Photos & Videos". `[ios]`
+- `uploadPhotos` now branches on content type: videos load as an on-disk file
+  URL via a `PickedMovie` `Transferable` (FileRepresentation → temp copy) so a
+  large movie never lands in memory, and pass through untouched; still images
+  keep the existing original-bytes / HEIC→JPEG re-encode path. Server already
+  accepts video mimes, so no server change. `[ios]`
+- Note: this closes the *sending* side only. Inline video playback on iOS is
+  still a chip → QuickLook (see Parity "no inline video preview/playback card").
 
 ### 2026-07-21 — Logged-out home links to the agent skill download
 - The signed-out auth screen now shows a prominent "Bring your AI agent to
@@ -90,6 +182,45 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   the single source of truth; a `predev`/`prebuild` step copies it into
   `web/public` (the copy is git-ignored) so the download never drifts. `[web]`
 - New skill authored: `skills/flow-agent-member/SKILL.md`. `[qa]`
+
+### 2026-07-21 — Phase 10 (web): notification settings UI + banner gating
+- The Profile popup becomes **Settings** (avatar menu → "Settings…"): existing
+  profile fields plus a Notifications section with five live-saved toggles —
+  Direct messages, Mentions of me, Group mentions (@here/@channel), Thread
+  replies (each gating banners via `suppressAlert`), and "Keep banners on
+  screen" (`persistentBanners` → `requireInteraction: true`, verified sticky
+  on Chromium/macOS where the OS alert-style setting has no effect on web
+  notifications). Off means no banner — the bell keeps every row. `[web]`
+- `maybeBanner` now honors the server-computed `suppressAlert` from the WS
+  event; kind-3 channel-activity rows stop bannering (they were mis-titled
+  "mentioned you"). The status picker marks Focusing / In a meeting / At
+  lunch / Do not disturb as "pauses notifications" — picking one sets
+  `statusSuppressAlerts` server-side, picking anything else (or clearing)
+  lifts it. `[web]`
+- Verified live against the local stack: mention pref off → Alice's mention
+  writes the row (bell 28→29) with zero banner; status + toggles restore
+  normally. macOS consumption of the flag is the remaining client slice
+  (Parity). `[qa]`
+
+### 2026-07-21 — Phase 10 (server slice): notification prefs + status suppression → `suppressAlert`
+- The alert decision moves server-side (spec `docs/specs/phase10.md`): every
+  `NotificationDTO` (WS fan-out and `GET /v1/me/notifications`) now carries
+  **`suppressAlert`** — computed per recipient from new per-user prefs and
+  their status — and **`subkind`** (`mention` | `here` | `channel`) splitting
+  direct mentions from group mentions, which used to collapse into kind 0.
+  Rows are always written; the flag gates OS banners only, so the bell stays
+  a complete inbox. Migration `0017_notification_prefs.sql`:
+  `users.notification_prefs` (jsonb, shallow-merged via `PATCH /v1/me`'s new
+  `notificationPrefs`), `users.status_suppress_alerts` (set by clients for
+  Focusing / In a meeting / At lunch / Do not disturb), `notifications.subkind`.
+  `UserDTO` echoes both new user fields. Behavior change once clients consume
+  the flag: kind-3 channel-activity rows are always suppressed (today they
+  banner, mis-titled "mentioned you"). A direct mention beats a group mention
+  for the same user in the same message. **Clients don't read the flag yet —
+  web/macOS slices land next.** New DB-backed suite
+  `test/notifications.test.ts` (13 tests: subkind recording incl. faked
+  presence for `<!here>`, direct-beats-group, the suppress mapping, merge
+  semantics, live list-time gating). `[server]` `[qa]`
 
 ### 2026-07-21 — Artifacts: create_artifact targets one person, not a channel
 - Operator correction to the phase 9 fan-out: an agent works for a person, not

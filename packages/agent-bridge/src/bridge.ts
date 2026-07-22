@@ -51,6 +51,8 @@ export class AgentBridge {
   private channels = new Map<string, ChannelDTO>();
   private members = new Map<string, WorkspaceMemberDTO>();
   private conversations = new Map<string, Conversation>();
+  /** threadRootId → "we've spoken in this thread" (see inThread). */
+  private threadParticipation = new Map<string, boolean>();
   private readonly sem: Semaphore;
   private refreshTimer: NodeJS.Timeout | null = null;
 
@@ -141,13 +143,13 @@ export class AgentBridge {
     if (!this.channels.has(msg.channelId) || !this.members.has(msg.userId)) {
       await this.refreshDirectory().catch((err: Error) => this.log(`directory refresh failed: ${err.message}`));
     }
-    if (!this.inScope(msg)) return;
+    if (!(await this.inScope(msg))) return;
     if (msg.body.trim() === '/reset') return this.handleReset(msg);
     this.enqueue(msg);
   }
 
   /** Sender gating + self/agent loop guard + event-scope filter. */
-  private inScope(msg: MessageDTO): boolean {
+  private async inScope(msg: MessageDTO): Promise<boolean> {
     if (msg.userId === this.me.id) return false; // never our own messages (incl. MCP-sent)
     if (msg.deletedAt) return false;
     const sender = this.members.get(msg.userId);
@@ -158,17 +160,61 @@ export class AgentBridge {
     if (chan.kind === 'dm' || chan.kind === 'group_dm') return true;
     if (msg.body.startsWith(THINKING_PREFIX)) return false; // another agent's status line
     if (this.cfg.eventScope === 'all') return true;
-    return msg.body.includes(`<@${this.me.id}>`); // @-mention
+    if (msg.body.includes(`<@${this.me.id}>`)) return true; // @-mention
+    // Every reply in a thread we're part of, mentioned or not.
+    if (msg.threadRootId) return this.inThread(msg.channelId, msg.threadRootId);
+    return false;
   }
 
+  /**
+   * Where our reply to `msg` goes.
+   *
+   * A thread reply stays in its thread. A top-level *channel* message we've
+   * decided to answer (an @-mention, or any message under eventScope 'all')
+   * is answered in a NEW thread rooted at that message, so the agent's
+   * back-and-forth never fills the channel's main view. DMs are exempt — the
+   * DM already is the conversation, and threading it would be noise.
+   */
+  private replyRoot(msg: MessageDTO): string | undefined {
+    if (msg.threadRootId) return msg.threadRootId;
+    const chan = this.channels.get(msg.channelId);
+    if (!chan || chan.kind === 'dm' || chan.kind === 'group_dm') return undefined;
+    return msg.id;
+  }
+
+  /** One CLI session per reply target, so a thread we open continues that session. */
   private convKey(msg: MessageDTO): string {
-    return `${msg.channelId}|${msg.threadRootId ?? ''}`;
+    return `${msg.channelId}|${this.replyRoot(msg) ?? ''}`;
+  }
+
+  /**
+   * Are we a participant in this thread? Once the agent has spoken in a
+   * thread it answers *every* subsequent reply there, mention or not — a
+   * thread it's in is a conversation with it. Checked against live sessions
+   * first, then the thread itself (which survives a bridge restart), with the
+   * verdict cached per root.
+   */
+  private async inThread(channelId: string, rootId: string): Promise<boolean> {
+    if (this.conversations.has(`${channelId}|${rootId}`)) return true;
+    const cached = this.threadParticipation.get(rootId);
+    if (cached !== undefined) return cached;
+    let joined = false;
+    try {
+      const msgs = await this.api.listThread(rootId);
+      joined = msgs.some((m) => m.userId === this.me.id && !m.deletedAt);
+    } catch (err) {
+      // Don't cache a lookup failure — a transient error would mute the thread.
+      this.log(`thread lookup failed for ${rootId}: ${(err as Error).message}`);
+      return false;
+    }
+    this.threadParticipation.set(rootId, joined);
+    return joined;
   }
 
   private async handleReset(msg: MessageDTO): Promise<void> {
     this.conversations.delete(this.convKey(msg));
     await this.api
-      .sendMessage(msg.channelId, '🤖 context reset — the next message starts a fresh session.', msg.threadRootId ?? undefined)
+      .sendMessage(msg.channelId, '🤖 context reset — the next message starts a fresh session.', this.replyRoot(msg))
       .catch((err: Error) => this.log(`reset reply failed: ${err.message}`));
   }
 
@@ -207,16 +253,20 @@ export class AgentBridge {
   }
 
   private async processMessage(conv: Conversation, msg: MessageDTO): Promise<void> {
+    // Everything about this turn — status line, MCP context, the reply itself
+    // — targets the same thread (a new one when we're answering a top-level
+    // channel message).
+    const replyRoot = this.replyRoot(msg);
     const progress = new ProgressReporter(
       this.api,
       this.socket,
       this.cfg.progress,
       msg.channelId,
-      msg.threadRootId ?? undefined,
+      replyRoot,
       (m) => this.log(m),
     );
     progress.start();
-    const mcpConfigPath = this.cfg.runtime.mcp ? this.writeMcpConfig(msg) : undefined;
+    const mcpConfigPath = this.cfg.runtime.mcp ? this.writeMcpConfig(msg, replyRoot) : undefined;
     try {
       const prompt = await this.buildPrompt(conv, msg);
       const run = (resume: boolean) =>
@@ -243,7 +293,9 @@ export class AgentBridge {
         conv.started = true;
         const text = result.text.trim();
         if (text.length > 0) {
-          await this.api.sendMessage(msg.channelId, text, msg.threadRootId ?? undefined);
+          await this.api.sendMessage(msg.channelId, text, replyRoot);
+          // We've now spoken here — every later reply in this thread is ours to answer.
+          if (replyRoot) this.threadParticipation.set(replyRoot, true);
         }
       } else {
         this.log(`runtime error: ${result.error ?? 'unknown'}`);
@@ -255,11 +307,7 @@ export class AgentBridge {
           else conv.sessionId = randomUUID();
         }
         await this.api
-          .sendMessage(
-            msg.channelId,
-            `🤖 sorry — I hit an error (${result.error ?? 'unknown'}).`,
-            msg.threadRootId ?? undefined,
-          )
+          .sendMessage(msg.channelId, `🤖 sorry — I hit an error (${result.error ?? 'unknown'}).`, replyRoot)
           .catch(() => {});
       }
     } finally {
@@ -281,6 +329,11 @@ export class AgentBridge {
   }
 
   private buildSystemPrompt(msg: MessageDTO, mcp: boolean): string {
+    const threadNote = msg.threadRootId
+      ? ' (inside a thread — replies stay in it)'
+      : this.replyRoot(msg)
+        ? ' (your reply opens a thread on that message, and the conversation continues there)'
+        : '';
     const roster = [...this.members.values()]
       .filter((m) => m.userId !== this.me.id)
       .slice(0, 50)
@@ -288,7 +341,7 @@ export class AgentBridge {
       .join(', ');
     const lines = [
       `You are ${this.me.displayName}, an AI agent participating in the Flow workspace "${this.workspace.name}" as user <@${this.me.id}>.`,
-      `You are conversing in ${this.channelLabel(msg.channelId)}${msg.threadRootId ? ' (inside a thread)' : ''}. Each incoming prompt begins with a bracketed metadata line identifying the sender — it is context, not part of the message.`,
+      `You are conversing in ${this.channelLabel(msg.channelId)}${threadNote}. Each incoming prompt begins with a bracketed metadata line identifying the sender — it is context, not part of the message.`,
       `Reply in concise chat style; Flow renders markdown. Mention users by writing <@userId> literally, e.g. <@${msg.userId}>.`,
       roster ? `Workspace members: ${roster}.` : '',
       mcp
@@ -357,7 +410,7 @@ export class AgentBridge {
   }
 
   /** Per-run MCP config: the flow stdio server with conversation context in env. */
-  private writeMcpConfig(msg: MessageDTO): string | undefined {
+  private writeMcpConfig(msg: MessageDTO, replyRoot: string | undefined): string | undefined {
     const entry = fileURLToPath(new URL('./index.js', import.meta.url));
     if (!fs.existsSync(entry)) {
       this.log('mcp disabled: built entrypoint not found (run pnpm build in packages/agent-bridge)');
@@ -373,7 +426,9 @@ export class AgentBridge {
             FLOW_AGENT_TOKEN: this.cfg.agentToken,
             FLOW_WORKSPACE_ID: this.workspace.id,
             FLOW_CHANNEL_ID: msg.channelId,
-            FLOW_THREAD_ROOT_ID: msg.threadRootId ?? '',
+            // The thread we're answering in — for a top-level channel message
+            // that's the new thread rooted at it, so MCP sends land there too.
+            FLOW_THREAD_ROOT_ID: replyRoot ?? '',
             // Who the agent is working for this run — the author of the
             // message it's responding to. Default recipient for create_artifact.
             FLOW_USER_ID: msg.userId,

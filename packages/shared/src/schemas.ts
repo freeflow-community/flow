@@ -188,6 +188,14 @@ export const MarkNotificationsReadBody = z.object({
 export type MarkNotificationsReadBody = z.infer<typeof MarkNotificationsReadBody>;
 
 // ---- profiles --------------------------------------------------
+export const NotificationPrefsBody = z.object({
+  dm: z.boolean().optional(),
+  mention: z.boolean().optional(),
+  groupMention: z.boolean().optional(),
+  threadReply: z.boolean().optional(),
+  persistentBanners: z.boolean().optional(),
+});
+
 export const PatchMeBody = z
   .object({
     displayName: z.string().min(1).max(80).optional(),
@@ -210,13 +218,20 @@ export const PatchMeBody = z
       .refine((s) => s === '' || /^\p{RGI_Emoji}$/v.test(s), 'must be empty or a single unicode emoji')
       .optional(),
     statusText: z.string().max(80).optional(),
+    // phase 10: per-user notification prefs (shallow-merged server-side) and
+    // status-driven alert suppression (set by the status picker for Focusing /
+    // In a meeting / At lunch / Do not disturb; cleared on Available/clear).
+    notificationPrefs: NotificationPrefsBody.optional(),
+    statusSuppressAlerts: z.boolean().optional(),
   })
   .refine(
     (b) =>
       b.displayName !== undefined ||
       b.timezone !== undefined ||
       b.statusEmoji !== undefined ||
-      b.statusText !== undefined,
+      b.statusText !== undefined ||
+      b.notificationPrefs !== undefined ||
+      b.statusSuppressAlerts !== undefined,
     'nothing to update',
   )
   .refine(

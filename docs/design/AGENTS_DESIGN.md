@@ -67,8 +67,16 @@ Flow WS ──> agent-bridge daemon ──spawn──> claude -p --resume <sess>
 - **Connection**: holds the agent-token WS (real presence — the agent shows
   online while the daemon runs). Subscribes to DMs, @-mentions, and
   (config-optional) full traffic of channels it's a member of.
+- **Answers in threads**: a top-level *channel* message the agent answers (an
+  @-mention, or anything under `eventScope: all`) is answered in a **new
+  thread rooted at that message** — the agent's back-and-forth never fills the
+  channel's main view. DMs are exempt: the DM already is the conversation.
+  Once the agent has spoken in a thread it answers **every** reply there,
+  mentioned or not (a thread it's in is a conversation with it); participation
+  is resolved from live sessions first, then from the thread itself, so it
+  survives a bridge restart.
 - **One CLI session per conversation**: the bridge maps
-  `(channelId, threadRootId)` → a runtime session, assigned deterministically
+  `(channelId, replyThreadRootId)` → a runtime session, assigned deterministically
   via `--session-id <uuid>` on first message and `--resume` after — each DM or
   thread is a persistent conversation with its own context, and separate
   conversations run **concurrently** (cap N; serialize within a conversation).

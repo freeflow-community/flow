@@ -38,7 +38,7 @@ struct ComposerView: View {
                     Button {
                         showPhotoPicker = true
                     } label: {
-                        Label("Photo Library", systemImage: "photo.on.rectangle")
+                        Label("Photos & Videos", systemImage: "photo.on.rectangle")
                     }
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
                         Button {
@@ -69,7 +69,7 @@ struct ComposerView: View {
                     .onSubmit(send)
                     .onChange(of: text) { _, newValue in
                         guard !newValue.isEmpty else { return }
-                        Task { await app.engine.typing(channelId: channelId) }
+                        Task { await app.engine.typing(channelId: channelId, threadRootId: threadRootId) }
                     }
 
                 Button(action: send) {
@@ -89,7 +89,12 @@ struct ComposerView: View {
             }
             .ignoresSafeArea()
         }
-        .photosPicker(isPresented: $showPhotoPicker, selection: $photoSelection, maxSelectionCount: 10, matching: .images)
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoSelection,
+            maxSelectionCount: 10,
+            matching: .any(of: [.images, .videos])
+        )
         .onChange(of: photoSelection) { _, items in
             guard !items.isEmpty else { return }
             photoSelection = []
@@ -150,13 +155,24 @@ struct ComposerView: View {
 
     // MARK: - Uploads (shared pipeline: engine.uploadFile → attachment bar)
 
-    /// Photo library picks: original bytes when the format is web-friendly,
-    /// HEIC/others re-encoded to JPEG so server thumbnailing works.
+    /// Photo library picks. Videos pass through untouched (loaded as a file URL
+    /// so a large movie never lands in memory); still images use original bytes
+    /// when the format is web-friendly, HEIC/others re-encoded to JPEG so server
+    /// thumbnailing works.
     private func uploadPhotos(_ items: [PhotosPickerItem]) {
         for item in items {
+            let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
             uploading += 1
             Task {
                 defer { uploading -= 1 }
+                if isVideo {
+                    guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else {
+                        app.showError("Couldn't load the selected video")
+                        return
+                    }
+                    await upload(movie.url)
+                    return
+                }
                 guard let data = try? await item.loadTransferable(type: Data.self) else {
                     app.showError("Couldn't load the selected photo")
                     return
@@ -394,6 +410,26 @@ private struct MemberRow: Decodable, FetchableRecord, Equatable, Sendable {
     var isAgent: Bool? // first-class AI agent → 🤖 badge
 }
 
+/// A video picked from the photo library, delivered as an on-disk file URL so a
+/// large movie is copied to temp (via FileRepresentation) rather than loaded
+/// into memory the way `loadTransferable(type: Data.self)` would.
+private struct PickedMovie: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            let epochMs = Int(Date().timeIntervalSince1970 * 1000)
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent("video-\(epochMs)-\(received.file.lastPathComponent)")
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.copyItem(at: received.file, to: dest)
+            return Self(url: dest)
+        }
+    }
+}
+
 /// Camera capture via UIImagePickerController (only offered when a camera
 /// exists — the menu hides it on simulators/devices without one).
 private struct CameraPicker: UIViewControllerRepresentable {
@@ -435,11 +471,14 @@ private struct CameraPicker: UIViewControllerRepresentable {
 /// AppState owns the map and expiry; this just renders it).
 struct TypingIndicatorView: View {
     let channelId: String
+    /// nil = the channel's main composer; set = that thread's composer, so the
+    /// two never show each other's typists.
+    var threadRootId: String? = nil
     let userNames: [String: String]
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        let ids = app.typingUserIds(channelId: channelId)
+        let ids = app.typingUserIds(channelId: channelId, threadRootId: threadRootId)
         HStack {
             if !ids.isEmpty {
                 let names = ids.map { userNames[$0] ?? "Someone" }
