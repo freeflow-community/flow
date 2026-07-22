@@ -73,9 +73,21 @@ export const CreateInviteBody = z.object({
 export type CreateInviteBody = z.infer<typeof CreateInviteBody>;
 
 /** PATCH /v1/workspaces/:id — owner/admin only (phase 3.5: workspace branding). */
-export const UpdateWorkspaceBody = z.object({
-  sidebarColor: z.string().min(1).max(32),
-});
+export const UpdateWorkspaceBody = z
+  .object({
+    sidebarColor: z.string().min(1).max(32).optional(),
+    // phase 11 §10: workspace-wide unfurl switch, and optional allowlist mode
+    // (null clears it back to "allow all domains").
+    unfurlEnabled: z.boolean().optional(),
+    unfurlDomainAllowlist: z.array(z.string().min(1).max(253)).max(200).nullable().optional(),
+  })
+  .refine(
+    (b) =>
+      b.sidebarColor !== undefined ||
+      b.unfurlEnabled !== undefined ||
+      b.unfurlDomainAllowlist !== undefined,
+    'nothing to update',
+  );
 export type UpdateWorkspaceBody = z.infer<typeof UpdateWorkspaceBody>;
 
 export const AcceptInviteBody = z.object({
@@ -223,6 +235,8 @@ export const PatchMeBody = z
     // In a meeting / At lunch / Do not disturb; cleared on Available/clear).
     notificationPrefs: NotificationPrefsBody.optional(),
     statusSuppressAlerts: z.boolean().optional(),
+    // phase 11 §10: don't unfurl links in my own messages
+    unfurlOwnLinks: z.boolean().optional(),
   })
   .refine(
     (b) =>
@@ -231,7 +245,8 @@ export const PatchMeBody = z
       b.statusEmoji !== undefined ||
       b.statusText !== undefined ||
       b.notificationPrefs !== undefined ||
-      b.statusSuppressAlerts !== undefined,
+      b.statusSuppressAlerts !== undefined ||
+      b.unfurlOwnLinks !== undefined,
     'nothing to update',
   )
   .refine(

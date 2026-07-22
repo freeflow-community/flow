@@ -1,6 +1,8 @@
 node_modules/
 dist/
 *.log
+# …but frozen changelog archives are project history, not build noise.
+!CHANGES_ARCHIVE_*.log
 .DS_Store
 .env
 .env.local

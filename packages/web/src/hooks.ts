@@ -213,6 +213,7 @@ export function useSendMessage(channelId: string) {
         lastReplyAt: null,
         replyParticipantUserIds: [],
         reactions: [],
+        unfurls: [], // cards arrive from the server, never optimistically
         files: vars.files ?? [],
         pending: true,
       };

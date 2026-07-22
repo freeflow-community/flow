@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
-import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO } from '@flow/shared';
+import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO, UnfurlDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
@@ -10,6 +10,7 @@ import { filesForMessages, validateAttachments, toFileDTO } from './files.js';
 import { computeRecipients, insertNotifications, publishNotifications } from './notifications.js';
 import { enqueueMessageEvents } from './appEvents.js';
 import { publishEvent, subjectMsg } from '../bus.js';
+import { scheduleForMessage, unfurlsForMessages } from './unfurl/index.js';
 
 const { messages, channelMembers, messageFiles } = schema;
 
@@ -20,6 +21,7 @@ interface DtoExtras {
   reactions?: ReactionAggDTO[] | undefined;
   files?: FileDTO[] | undefined;
   replyParticipants?: string[] | undefined;
+  unfurls?: UnfurlDTO[] | undefined;
 }
 
 export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
@@ -38,6 +40,7 @@ export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
     replyParticipantUserIds: extras?.replyParticipants ?? [],
     reactions: extras?.reactions ?? [],
     files: extras?.files ?? [],
+    unfurls: extras?.unfurls ?? [],
   };
 }
 
@@ -78,16 +81,18 @@ async function replyParticipantsForRoots(rows: MessageRow[]): Promise<Map<string
 /** Page hydration (phase2.md §2/§3): one grouped reactions query + one files join per page. */
 async function hydrate(rows: MessageRow[]): Promise<MessageDTO[]> {
   const ids = rows.map((r) => r.id);
-  const [reactions, files, participants] = await Promise.all([
+  const [reactions, files, participants, unfurls] = await Promise.all([
     reactionsForMessages(ids),
     filesForMessages(ids),
     replyParticipantsForRoots(rows),
+    unfurlsForMessages(ids),
   ]);
   return rows.map((r) =>
     toMessageDTO(r, {
       reactions: reactions.get(r.id),
       files: files.get(r.id),
       replyParticipants: participants.get(r.id),
+      unfurls: unfurls.get(r.id),
     }),
   );
 }
@@ -197,7 +202,16 @@ export async function sendMessage(
     data: dto,
   });
   publishNotifications(planned, alertContext, dto, chan.workspaceId, now.toISOString());
+  // §1: never blocks the send path — cards arrive later via message.updated.
+  void scheduleForMessage(dto);
   return dto;
+}
+
+/** Single hydrated message; used by the unfurl worker to republish. */
+export async function getMessageById(messageId: string): Promise<MessageDTO | null> {
+  const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+  if (!rows[0]) return null;
+  return (await hydrate([rows[0]]))[0] ?? null;
 }
 
 /** Channel history: top-level messages, newest first, cursor on id (spec §2 index). */
@@ -274,6 +288,9 @@ export async function editMessage(messageId: string, userId: string, body: strin
     ts: editedAt.toISOString(),
     data: dto,
   });
+  // §1: an edit can introduce new links. Already-attached and tombstoned
+  // hashes are skipped inside, so this is safe to call on every edit.
+  void scheduleForMessage(dto);
   return dto;
 }
 

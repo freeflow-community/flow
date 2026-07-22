@@ -43,6 +43,8 @@ export const users = pgTable('users', {
   // status-driven "suppress all alerts" flag (DND-family statuses).
   notificationPrefs: jsonb('notification_prefs').$type<Record<string, boolean>>().notNull().default({}),
   statusSuppressAlerts: boolean('status_suppress_alerts').notNull().default(false),
+  // Phase 11 §10: don't unfurl links in my own messages.
+  unfurlOwnLinks: boolean('unfurl_own_links').notNull().default(true),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   // Tombstone: set when a human is removed from their last workspace. The row is
   // kept for message authorship; the service vacates `email` so it frees up.
@@ -96,6 +98,10 @@ export const workspaces = pgTable('workspaces', {
   slug: citext('slug').notNull().unique(),
   name: text('name').notNull(),
   sidebarColor: text('sidebar_color').notNull().default('violet'), // preset id (phase 3.5)
+  // Phase 11 §10: workspace switch, plus optional allowlist mode for regulated
+  // deployments (null = allow all domains).
+  unfurlEnabled: boolean('unfurl_enabled').notNull().default(true),
+  unfurlDomainAllowlist: text('unfurl_domain_allowlist').array(),
   createdBy: uuid('created_by').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -348,3 +354,46 @@ export const pendingAppEvents = pgTable(
     index('pending_app_events_due').on(t.nextAttemptAt).where(sql`delivered_at IS NULL AND failed_at IS NULL`),
   ],
 );
+
+// ---- Phase 11: URL unfurling (docs/specs/phase11.md) ----------------
+
+/** §7 cache, keyed by sha256 of the normalized URL. Holds negative entries
+ * (`ok=false`) so a dead link isn't refetched on every mention. */
+export const unfurlCache = pgTable(
+  'unfurl_cache',
+  {
+    urlHash: text('url_hash').primaryKey(),
+    normalizedUrl: text('normalized_url').notNull(),
+    ok: boolean('ok').notNull(),
+    failureReason: text('failure_reason'),
+    data: jsonb('data'),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('unfurl_cache_expires_idx').on(t.expiresAt)],
+);
+
+/** §1 attachment of cache entries to messages, plus the §10 per-unfurl
+ * tombstone. channelId is denormalized for the 6h suppression lookup. */
+export const messageUnfurls = pgTable(
+  'message_unfurls',
+  {
+    messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
+    urlHash: text('url_hash').notNull(),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    position: smallint('position').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.urlHash] }),
+    index('message_unfurls_suppression_idx').on(t.channelId, t.urlHash, t.createdAt),
+  ],
+);
+
+/** §10 operator-maintained denylist: blocks the host and any subdomain. */
+export const unfurlDomainDenylist = pgTable('unfurl_domain_denylist', {
+  domain: text('domain').primaryKey(),
+  note: text('note'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
