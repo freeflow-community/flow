@@ -157,6 +157,14 @@ struct AppDatabase: Sendable {
                 t.add(column: "isAgent", .boolean)
             }
         }
+        // Phase 11: link preview cards, cached with the message (JSON, like
+        // reactions/files). Rows written before this default to "[]", so a
+        // cached message just has no cards until it's refetched.
+        migrator.registerMigration("v7") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "unfurls", .text).notNull().defaults(to: "[]") // JSON
+            }
+        }
         try migrator.migrate(writer)
     }
 

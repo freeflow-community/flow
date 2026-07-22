@@ -9,10 +9,8 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
-- Phase 11 unfurls: **macOS and iOS don't render link preview cards** — they
-  ignore `MessageDTO.unfurls`, so previews are web-only for now. The §10
-  settings UI (per-user "don't unfurl my links", per-workspace
-  switch/allowlist) is missing on *every* client, web included — API-only.
+- Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
+  per-workspace switch/allowlist) is missing on *every* client — API-only.
 - macOS: phase 10 notification settings — no Notifications section in the
   profile/settings UI, banner path doesn't consult `suppressAlert` yet, and
   the status picker doesn't set `status_suppress_alerts` (web shipped
@@ -85,3 +83,23 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-22 — Native: link preview cards (macOS + iOS)
+- macOS and iOS render `MessageDTO.unfurls`, closing the phase 11 parity gap.
+  Accent rail, favicon + site name, title, description, author/date and image,
+  in the same slot as the web card (below attachments, above reactions).
+  Tapping the card opens the page; the ✕ removes it (author only — hover on
+  macOS, always shown on iOS since touch has no hover). `[macos] [ios]`
+- One shared `UnfurlCardView` under `Support/`, like `MarkdownTableView`, so
+  the two platforms can't drift. `Unfurl` decodes leniently (every field but
+  the URL optional) and is cached with the message as JSON in a new `unfurls`
+  column — local DB migration v7; rows cached before it simply have no cards
+  until refetched. `[macos] [ios]`
+- **Favicons are now proxied too, fixing a spec violation shipped earlier
+  today.** The server was emitting the *remote* favicon URL and the web card
+  hotlinked it, contrary to §6 ("never hotlink") and §8 (which shows
+  `favicon_url` as an internal URL) — every card render leaked the viewer's IP
+  to that third-party origin. Favicons now go through the same validate +
+  re-encode + store pipeline, and the web card loads them via `AuthImg`.
+  Trade-off: `.ico` favicons are dropped (sharp can't decode ICO), so those
+  cards show the site name without a mark. `[server] [web]`

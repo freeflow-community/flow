@@ -45,17 +45,9 @@ export function UnfurlCard({
         {(unfurl.siteName || host) && (
           <div className="flex items-center gap-1.5 text-xs text-muted">
             {unfurl.faviconUrl && (
-              <img
-                src={unfurl.faviconUrl}
-                alt=""
-                width={14}
-                height={14}
-                className="h-3.5 w-3.5 rounded-sm object-contain"
-                // A dead favicon must not leave a broken-image glyph.
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}
-              />
+              // Proxied like the main image — the server never hands us a
+              // third-party favicon URL, so this is an auth'd internal path.
+              <AuthImg path={unfurl.faviconUrl} alt="" className="h-3.5 w-3.5 rounded-sm object-contain" />
             )}
             <span className="truncate">{unfurl.siteName ?? host}</span>
           </div>
