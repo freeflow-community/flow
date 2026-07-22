@@ -79,6 +79,49 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-22 — Typing indicators are per-composer, not per-channel
+- Typing in a thread showed "X is typing…" in the channel's **main** view (and
+  on macOS/iOS, channel typing showed inside the thread panel too) — the
+  `typing` frame only ever carried `channelId`, so a thread's composer was
+  indistinguishable from the main one. `[server] [web] [macos] [ios]`
+- The WS `typing` frame and `TypingData` gained an optional `threadRootId`;
+  the gateway passes it through. Clients now key typing state by
+  `(channelId, threadRootId)` — `typingKey()` on web, `TypingKey.make()` in the
+  shared native layer — so each composer has its own indicator, its own 5s
+  expiry, and its own send throttle. `[server] [web] [macos] [ios]`
+- Backward compatible: a client that omits `threadRootId` reads as the main
+  composer, i.e. exactly today's behaviour, so old and new clients interoperate.
+- Web's thread panel gained the typing indicator it never had (macOS/iOS
+  already rendered one — it was just showing the channel's typists). `[web]`
+
+### 2026-07-22 — Agent bridge: default turn timeout 5 min → 10 min
+- `runtime.timeoutSec` defaults to `600` (was `300`). Real coding turns run
+  past five minutes and were being killed mid-work with
+  "timed out after 300s". Still a per-turn runaway cap, and still overridable
+  per agent in the config. `[agent-bridge]`
+
+### 2026-07-22 — Agent bridge: answer in threads, and stay in them
+- A top-level **channel** message the agent answers (an @-mention, or any
+  message under `eventScope: all`) is now answered in a **new thread rooted at
+  that message** instead of in the channel proper, so an agent exchange never
+  fills the main view. DMs and group DMs are exempt — the DM already is the
+  conversation. `[agent-bridge]`
+- Once the agent has spoken in a thread it answers **every** reply there, with
+  or without an @-mention. Participation resolves from live sessions first,
+  then from the thread's own messages (so it survives a bridge restart), cached
+  per thread root; a failed lookup is not cached. The self/other-agent loop
+  guards still apply inside threads. `[agent-bridge]`
+- The conversation key is now `(channelId, replyThreadRootId)`, so the thread
+  the agent opens continues the same CLI session rather than starting a second
+  one. The status line, the reply, the error reply, and the MCP server's
+  `FLOW_THREAD_ROOT_ID` all target that same thread. `[agent-bridge]`
+- `FlowApi.listThread` now returns the thread **root** as well as its replies
+  (the server always returned it separately and the bridge dropped it) — the
+  root is both a participation signal and useful first-turn context.
+  `[agent-bridge]`
+- New `test/routing.test.ts` (15 tests) covers both rules; verified by mutation
+  that they fail when either rule is removed. `[qa]`
+
 ### 2026-07-22 — Web: responsive layout for mobile browsers
 - The three-column desktop layout (rail + sidebar + content [+ thread]) now
   collapses to a single pane below the `md` breakpoint (`max-width: 767px`).

@@ -54,7 +54,7 @@ export default function Composer({
     if (maybeAutoCloseFence(el, value)) return; // rebuilt via setDraft
     decorate(el, value);
     setText(value);
-    if (value) live.sendTyping(channelId);
+    if (value) live.sendTyping(channelId, threadRootId);
   };
 
   /** Typing the third backtick of a new opening fence turns it into an
@@ -72,7 +72,7 @@ export default function Composer({
     if (fencesBefore % 2 === 1) return false; // this closes an existing block
     if (value.slice(lineEnd).split('\n').some(isFenceLine)) return false;
     setDraft(value.slice(0, lineEnd) + '\n\n```' + value.slice(lineEnd), caret + 1);
-    live.sendTyping(channelId);
+    live.sendTyping(channelId, threadRootId);
     return true;
   };
 
@@ -164,7 +164,7 @@ export default function Composer({
     const value = domToText(el);
     const [start, end] = getSelectionOffsets(el) ?? [value.length, value.length];
     setDraft(value.slice(0, start) + insert + value.slice(end), start + insert.length);
-    live.sendTyping(channelId);
+    live.sendTyping(channelId, threadRootId);
   };
 
   // trailing-token autocomplete for @mentions and :shortcodes: — first match

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth, useLive, useSelection } from '../state';
+import { typingKey, useAuth, useLive, useSelection } from '../state';
 import { useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMembers, useMessages, useNameMap, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
@@ -54,7 +54,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const shown = headerIds.slice(0, 3);
   const extra = headerIds.length - shown.length;
 
-  const typingNames = Object.entries(live.typing[channelId] ?? {})
+  // Main-composer typing only — thread typing shows in its own panel.
+  const typingNames = Object.entries(live.typing[typingKey(channelId)] ?? {})
     .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
     .map(([uid]) => names[uid] ?? 'Someone');
 

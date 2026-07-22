@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useAuth, useMobileNav, useSelection } from '../state';
+import { typingKey, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useMemberMap, useNameMap, useThread } from '../hooks';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
@@ -17,6 +17,7 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
   const auth = useAuth();
   const sel = useSelection();
   const thread = useThread(rootId);
+  const live = useLive();
   const names = useNameMap(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const [width, setWidth] = useState(storedWidth);
@@ -31,6 +32,12 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
   }, [thread.data]);
 
   const channelId = thread.data?.root.channelId;
+
+  // Typing in this thread's composer — scoped to the thread, so it appears
+  // here and not in the channel behind it.
+  const typingNames = Object.entries(channelId ? (live.typing[typingKey(channelId, rootId)] ?? {}) : {})
+    .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
+    .map(([uid]) => names[uid] ?? 'Someone');
 
   return (
     <aside
@@ -83,6 +90,15 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
         onLoadOlder={() => {}}
         showThreadAffordances={false}
       />
+      <div className="h-5 px-4 text-xs text-muted" data-testid="thread-typing-indicator-slot">
+        {typingNames.length === 1 && (
+          <span data-testid="thread-typing-indicator">{typingNames[0]} is typing…</span>
+        )}
+        {typingNames.length > 1 && (
+          <span data-testid="thread-typing-indicator">Several people are typing…</span>
+        )}
+      </div>
+
       {channelId && (
         <Composer
           channelId={channelId}

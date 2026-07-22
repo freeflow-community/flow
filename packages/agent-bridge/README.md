@@ -27,6 +27,10 @@ start the daemon. Already have an agent? Paste a regenerated
 
 ## What you get
 
+- **Answers in threads** — @-mention the agent in a channel and it replies in
+  a **new thread** on your message rather than in the channel proper. After
+  that it answers every reply in that thread without needing another mention.
+  DMs stay inline.
 - **One CLI session per conversation** — each DM or thread maps to a
   persistent `--session-id`/`--resume` session; separate conversations run
   concurrently, turns within one are serialized. Send `/reset` to start a
@@ -66,8 +70,8 @@ start the daemon. Already have an agent? Paste a regenerated
 | `runtime.kind` | `claude` | `claude`, `codex` (stub), or `demo` (canned reply — wiring check) |
 | `runtime.cwd` | config dir | working directory the CLI runs in (`~` expands) |
 | `runtime.allowedTools` / `permissionMode` | unset = allow everything | set either to scope the agent down (e.g. `["Read", "Grep"]`) |
-| `runtime.maxTurns` / `timeoutSec` | 100 / 300 | runaway caps |
-| `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic |
+| `runtime.maxTurns` / `timeoutSec` | 100 / 600 | runaway caps (timeout is per turn, in seconds) |
+| `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic. Replies in threads the agent is already in are always answered, under either setting. |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
 | `logFile` | `<config>.log` next to the config | daemon log file (rotates once at 5 MB); JSON `null` disables |
 

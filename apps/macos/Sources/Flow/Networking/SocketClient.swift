@@ -37,9 +37,11 @@ actor SocketClient {
     }
 
     /// Sends a typing frame if connected. (Throttling lives in SyncEngine.)
-    func sendTyping(channelId: String) async {
+    /// `threadRootId` scopes the indicator to a thread's composer.
+    func sendTyping(channelId: String, threadRootId: String? = nil) async {
         guard let wsTask else { return }
-        let frame: [String: String] = ["op": "typing", "channelId": channelId]
+        var frame: [String: String] = ["op": "typing", "channelId": channelId]
+        if let threadRootId { frame["threadRootId"] = threadRootId }
         guard let data = try? JSONEncoder().encode(frame),
               let text = String(data: data, encoding: .utf8) else { return }
         try? await wsTask.send(.string(text))

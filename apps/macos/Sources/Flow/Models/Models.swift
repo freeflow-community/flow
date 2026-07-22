@@ -462,6 +462,17 @@ struct RenameArtifactBody: Encodable, Sendable { let name: String }
 struct TypingData: Decodable, Sendable {
     let userId: String
     let channelId: String
+    /// Set when typing in a thread's composer — the indicator belongs to that
+    /// thread, not the channel's main view. Absent = the main composer.
+    let threadRootId: String?
+}
+
+/// Typing indicators are per-composer: a channel's main composer and each of
+/// its threads are separate conversations and get separate keys.
+enum TypingKey {
+    static func make(channelId: String, threadRootId: String?) -> String {
+        "\(channelId)|\(threadRootId ?? "")"
+    }
 }
 
 struct PresenceData: Decodable, Sendable {
