@@ -15,6 +15,7 @@ import { FlowApi } from './api.js';
 import { FlowSocket } from './gateway.js';
 import { ProgressReporter } from './progress.js';
 import { runRuntime } from './runtime.js';
+import { currentVersion, isOutdated, latestPublishedVersion } from './version.js';
 
 const THINKING_PREFIX = '🤖 *thinking…*';
 
@@ -102,6 +103,38 @@ export class AgentBridge {
       log: (m) => this.log(m),
     });
     this.socket.connect();
+    // Best-effort staleness check — never blocks startup or crashes on failure.
+    void this.checkVersion();
+  }
+
+  /**
+   * On startup, compare our installed version with the latest on npm. If we're
+   * behind, log it and post one notice to the first non-DM channel we're in.
+   * Every failure path (offline, registry down, no channel) is swallowed —
+   * this is advisory, not a gate.
+   */
+  private async checkVersion(): Promise<void> {
+    let current: string;
+    try {
+      current = currentVersion();
+    } catch (err) {
+      this.log(`version check skipped: ${(err as Error).message}`);
+      return;
+    }
+    const latest = await latestPublishedVersion();
+    if (!latest || !isOutdated(current, latest)) return;
+    this.log(`⚠️ version ${current} is behind latest ${latest} on npm — restart after updating`);
+    const chan = [...this.channels.values()].find(
+      (c) => c.isMember && c.kind !== 'dm' && c.kind !== 'group_dm',
+    );
+    if (!chan) return;
+    await this.api
+      .sendMessage(
+        chan.id,
+        `⚠️ I'm running flow-agent-bridge v${current}, but v${latest} is available on npm. ` +
+          `Update the package and restart me to get the latest.`,
+      )
+      .catch((err: Error) => this.log(`version notice post failed: ${err.message}`));
   }
 
   stop(): void {
