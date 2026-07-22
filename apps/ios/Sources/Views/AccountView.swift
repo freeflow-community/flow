@@ -202,6 +202,10 @@ struct MyProfileView: View {
     private var trimmedName: String { displayName.trimmingCharacters(in: .whitespaces) }
 
     var body: some View {
+        // Read on the main actor here: PhotosPicker's label closure is Sendable,
+        // so touching @State from inside it is a concurrency violation (a
+        // warning today, an error under the Swift 6 language mode).
+        let uploading = avatarBusy
         Form {
             Section {
                 HStack(spacing: 14) {
@@ -215,7 +219,7 @@ struct MyProfileView: View {
                     // Re-render when the avatar key changes after an upload.
                     .id(app.currentUser?.avatarUrl ?? "")
                     PhotosPicker(selection: $photoItem, matching: .images) {
-                        Text(avatarBusy ? "Uploading…" : "Change Avatar…")
+                        Text(uploading ? "Uploading…" : "Change Avatar…")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(MC.accent)
                     }
