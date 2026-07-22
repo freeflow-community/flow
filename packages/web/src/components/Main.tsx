@@ -29,6 +29,8 @@ export default function Main() {
   // refs so the socket handler always sees current selection
   const selRef = useRef(sel);
   selRef.current = sel;
+  const authRef = useRef(auth);
+  authRef.current = auth;
   const names = useNameMap(sel.workspaceId);
   const namesRef = useRef(names);
   namesRef.current = names;
@@ -192,12 +194,19 @@ export default function Main() {
 
   function maybeBanner(n: NotificationDTO): void {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    // phase 10: the server computed the alert decision (prefs + status)
+    if (n.suppressAlert) return;
     if (!document.hidden && n.channelId === selRef.current.channelId) return;
     const sender = namesRef.current[n.message.userId] ?? 'Someone';
     const title =
       n.kind === 1 ? `${sender} (DM)` : n.kind === 2 ? `${sender} replied in a thread` : `${sender} mentioned you`;
     try {
-      new Notification(title, { body: plainBody(n.message.body, namesRef.current), tag: n.id });
+      new Notification(title, {
+        body: plainBody(n.message.body, namesRef.current),
+        tag: n.id,
+        // presentation pref: persist until dismissed (browser permitting)
+        requireInteraction: authRef.current.user.notificationPrefs.persistentBanners === true,
+      });
     } catch {
       /* banner is best-effort */
     }

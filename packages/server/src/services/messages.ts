@@ -130,7 +130,7 @@ export async function sendMessage(
   }
 
   const attachRows = await validateAttachments(fileIds ?? [], chan.workspaceId, userId);
-  const recipients = await computeRecipients(chan, userId, body, mentions ?? [], threadRootId);
+  const { recipients, alertContext } = await computeRecipients(chan, userId, body, mentions ?? [], threadRootId);
 
   const id = newId();
   const enc = encryptBody(body);
@@ -196,7 +196,7 @@ export async function sendMessage(
     ts: now.toISOString(),
     data: dto,
   });
-  publishNotifications(planned, dto, chan.workspaceId, now.toISOString());
+  publishNotifications(planned, alertContext, dto, chan.workspaceId, now.toISOString());
   return dto;
 }
 
