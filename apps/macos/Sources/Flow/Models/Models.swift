@@ -88,6 +88,47 @@ struct PresignedUpload: Codable, Sendable {
     var upload: Target
 }
 
+/// Phase 11 link preview card (server `UnfurlDTO`). Everything except `url`
+/// and `type` is optional — the server sends whatever it could extract, and
+/// clients render what's present. Decoding is lenient for the same reason: a
+/// card gaining a field later must not break an older client.
+struct Unfurl: Codable, Sendable, Equatable, Identifiable {
+    struct Image: Codable, Sendable, Equatable {
+        var url: String
+        var thumbUrl: String?
+        var width: Int?
+        var height: Int?
+        var alt: String?
+    }
+
+    var url: String
+    var urlHash: String
+    var canonicalUrl: String?
+    var type: String
+    /// "thumbnail" | "large_image" | "media"
+    var layout: String?
+    var siteName: String?
+    var faviconUrl: String?
+    var title: String?
+    var description: String?
+    var author: String?
+    var publishedAt: String?
+    var image: Image?
+
+    var id: String { urlHash }
+
+    /// The page this card points at — canonical when the server resolved one.
+    var target: String { canonicalUrl ?? url }
+
+    var isLargeImage: Bool { layout == "large_image" }
+
+    /// Host without "www.", the fallback when the page gave no og:site_name.
+    var hostLabel: String {
+        guard let host = URLComponents(string: target)?.host else { return "" }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+}
+
 /// A file attached to a message (server FileDTO shape).
 struct FileAttachment: Codable, Sendable, Equatable, Identifiable {
     var id: String
@@ -234,6 +275,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var replyParticipantUserIds: [String]
     var reactions: [ReactionAgg]
     var files: [FileAttachment]
+    /// Phase 11 link preview cards, in first-in-message order.
+    var unfurls: [Unfurl]
     /// Local-only: true for optimistic rows not yet confirmed by the server.
     var pending: Bool
 
@@ -242,7 +285,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
         case createdAt, editedAt, deletedAt, replyCount, lastReplyAt
-        case replyParticipantUserIds, reactions, files, pending
+        case replyParticipantUserIds, reactions, files, unfurls, pending
     }
 
     init(
@@ -250,7 +293,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         clientMsgId: String, body: String, createdAt: String, editedAt: String?,
         deletedAt: String?, replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
-        reactions: [ReactionAgg] = [], files: [FileAttachment] = [], pending: Bool
+        reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
+        unfurls: [Unfurl] = [], pending: Bool
     ) {
         self.id = id
         self.channelId = channelId
@@ -266,6 +310,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.replyParticipantUserIds = replyParticipantUserIds
         self.reactions = reactions
         self.files = files
+        self.unfurls = unfurls
         self.pending = pending
     }
 
@@ -285,6 +330,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         replyParticipantUserIds = try c.decodeIfPresent([String].self, forKey: .replyParticipantUserIds) ?? []
         reactions = try c.decodeIfPresent([ReactionAgg].self, forKey: .reactions) ?? []
         files = try c.decodeIfPresent([FileAttachment].self, forKey: .files) ?? []
+        unfurls = try c.decodeIfPresent([Unfurl].self, forKey: .unfurls) ?? []
         pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false
     }
 }

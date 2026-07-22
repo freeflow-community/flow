@@ -867,6 +867,22 @@ actor SyncEngine {
         }
     }
 
+    /// Phase 11 §10: the author removes one link preview from their message.
+    /// The server tombstones it and republishes the message, so the local row
+    /// is patched optimistically and the event confirms it.
+    func deleteUnfurl(messageId: String, urlHash: String) async {
+        do {
+            let _: OkResponse = try await api.delete("/v1/messages/\(messageId)/unfurls/\(urlHash)")
+            try? await db.writer.write { db in
+                guard var msg = try Message.fetchOne(db, key: messageId) else { return }
+                msg.unfurls.removeAll { $0.urlHash == urlHash }
+                try msg.update(db)
+            }
+        } catch {
+            await appState?.showError("Couldn't remove preview: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Threads
 
     func openThread(rootId: String?) async {

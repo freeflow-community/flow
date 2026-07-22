@@ -128,7 +128,15 @@ export async function buildUnfurl(normalizedUrl: string): Promise<UnfurlDTO> {
 
   // §6: never hotlink — fetch, validate, re-encode and store the image behind
   // our own URL. Returns null on any problem, leaving a text-only card.
-  const image = meta.imageUrl ? await proxyImage(meta.imageUrl, deadline) : null;
+  //
+  // The favicon goes through the same pipeline (§8 shows favicon_url as an
+  // internal URL): pointing clients at a third-party favicon would leak every
+  // viewer's IP to that origin on every render. Note this drops .ico favicons —
+  // sharp can't decode ICO — so those cards show the site name without a mark.
+  const [image, favicon] = await Promise.all([
+    meta.imageUrl ? proxyImage(meta.imageUrl, deadline) : null,
+    meta.faviconUrl ? proxyImage(meta.faviconUrl, deadline) : null,
+  ]);
   // Recompute the layout hint from the real decoded dimensions: og:image:width
   // is frequently absent (X gives none at all), so the metadata-only guess
   // under-reports large images.
@@ -152,7 +160,8 @@ export async function buildUnfurl(normalizedUrl: string): Promise<UnfurlDTO> {
         }
       : {}),
     ...(meta.siteName ? { siteName: meta.siteName } : {}),
-    ...(meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {}),
+    // the proxied favicon, never the remote one
+    ...(favicon ? { faviconUrl: favicon.thumbUrl } : {}),
     ...(meta.title ? { title: meta.title } : {}),
     ...(meta.description ? { description: meta.description } : {}),
     ...(meta.author ? { author: meta.author } : {}),

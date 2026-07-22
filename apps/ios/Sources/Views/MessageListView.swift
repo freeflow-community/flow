@@ -185,6 +185,21 @@ struct MessageRow: View {
                         AttachmentView(file: file)
                     }
 
+                    // Phase 11: link previews sit below the body/attachments
+                    // and above reactions. Only the author may remove one.
+                    ForEach(message.unfurls) { unfurl in
+                        UnfurlCardView(
+                            unfurl: unfurl,
+                            canRemove: message.userId == currentUserId,
+                            onRemove: {
+                                Task {
+                                    await app.engine.deleteUnfurl(
+                                        messageId: message.id, urlHash: unfurl.urlHash)
+                                }
+                            }
+                        )
+                    }
+
                     if !message.reactions.isEmpty {
                         reactionChips
                     }
