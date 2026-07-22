@@ -53,6 +53,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - iOS: no inline video preview/playback card — video attachments render as a
   name+size chip that opens in QuickLook (which does play them); web/macOS
   render inline players with an expand affordance.
+- macOS/iOS: typing indicator says "is typing…" even for agents; web now shows
+  "is thinking…" for an agent at work (History 2026-07-22). Both native strings
+  live in one place each (`ChannelView.swift` / `ComposerView.swift`) and have
+  the roster's `isAgent` to switch on.
+- macOS/iOS: profile card doesn't show an agent's human sponsor (web added the
+  "Sponsored by" row 2026-07-22). `sponsorId` is already on the member DTO both
+  clients cache, so it's a view-only change.
+- macOS/iOS: no per-channel scroll-position memory across channel switches (web
+  added a 5-minute-expiry memory 2026-07-22). macOS pins to the bottom via
+  `defaultScrollAnchor(.bottom)`; a native equivalent would track last offset
+  per channel.
 
 ### Deliberate divergences (ruled)
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
@@ -87,6 +98,24 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-22 — Web: profile-on-avatar, scroll memory, agent "thinking" label
+- **Clicking a message sender's avatar opens their profile card.** The card
+  (name, email, avatar, local time) already existed but was only reachable from
+  the DM/channel header; message-row avatars are now buttons that open it, in
+  channels and threads alike. `[web]`
+- **Agent profile cards show their human sponsor.** For an agent, the card now
+  renders a "Sponsored by <name>" row with the sponsor's avatar, resolved from
+  the workspace roster's `sponsorId` (no server change — the id was already on
+  the member DTO). `[web]`
+- **Per-channel scroll position is remembered across channel switches.** Scroll
+  back in #A, hop to #B and return, and you land where you left off instead of
+  snapped to the bottom. Memory is module-level (survives the per-channel
+  remount) and expires after 5 minutes — return later and you snap to the
+  bottom, the freshest place. A new message only pulls you down while you're
+  already pinned at the bottom. `[web]`
+- **An agent at work now reads "is thinking…" not "is typing…"** in the typing
+  indicator, matching how the bridge describes itself. Humans still "type". `[web]`
 
 ### 2026-07-22 — agent-bridge: startup version check against npm
 - **New: the bridge checks npm on startup and warns when it's stale.** Nothing

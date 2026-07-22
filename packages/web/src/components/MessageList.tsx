@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
@@ -9,8 +9,15 @@ import { useToggleReaction } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
-import { Modal } from './modals';
+import { Modal, UserCard } from './modals';
 import { UnfurlCard } from './UnfurlCard';
+
+/** Remembered scroll position per channel, so switching away and back lands
+ * where you left off (ui_nits). Kept module-level (survives the per-channel
+ * remount forced by `key={channelId}`) and short-lived: after TTL the entry is
+ * ignored and you snap back to the bottom, the freshest place to be. */
+const SCROLL_MEMORY_TTL = 5 * 60_000;
+const scrollMemory = new Map<string, { top: number; ts: number; pinned: boolean }>();
 
 export default function MessageList({
   messages,
@@ -19,6 +26,7 @@ export default function MessageList({
   hasMore,
   onLoadOlder,
   showThreadAffordances,
+  scrollKey,
 }: {
   messages: MessageDTO[];
   names: Record<string, string>;
@@ -26,6 +34,8 @@ export default function MessageList({
   hasMore: boolean;
   onLoadOlder: () => void;
   showThreadAffordances: boolean;
+  /** Enables per-view scroll-position memory (channels pass their id; threads omit it). */
+  scrollKey?: string;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -33,8 +43,29 @@ export default function MessageList({
   const pinnedRef = useRef(true); // at (or near) the bottom, so growth should keep us there
   const lastTopRef = useRef(0);
   const lastId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
+
+  // On mount, restore a recent remembered position; otherwise land at the
+  // bottom. Runs before paint so the viewport never flashes the bottom first.
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const mem = scrollKey ? scrollMemory.get(scrollKey) : undefined;
+    if (mem && Date.now() - mem.ts < SCROLL_MEMORY_TTL && !mem.pinned) {
+      scroller.scrollTop = mem.top;
+      pinnedRef.current = false;
+      lastTopRef.current = mem.top;
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+      pinnedRef.current = true;
+      if (scrollKey) scrollMemory.delete(scrollKey); // expired → forget it
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A new message keeps us at the bottom only while we're pinned there — if the
+  // user has scrolled up (to read, or restored from memory), don't yank them.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+    if (pinnedRef.current) bottomRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [lastId]);
 
   // Attachments (images, text previews) finish loading after the initial
@@ -53,11 +84,15 @@ export default function MessageList({
     // pinned=false, stranding the viewport above the newest card. Growth never
     // moves scrollTop up, so that (not the distance) is the leaving-the-bottom
     // signal; the distance only ever pins us back on.
+    const remember = () => {
+      if (scrollKey) scrollMemory.set(scrollKey, { top: scroller.scrollTop, ts: Date.now(), pinned: pinnedRef.current });
+    };
     const onScroll = () => {
       const top = scroller.scrollTop;
       if (scroller.scrollHeight - top - scroller.clientHeight < 40) pinnedRef.current = true;
       else if (top < lastTopRef.current - 1) pinnedRef.current = false;
       lastTopRef.current = top;
+      remember();
     };
     scroller.addEventListener('scroll', onScroll);
     const observer = new ResizeObserver(() => {
@@ -65,9 +100,11 @@ export default function MessageList({
     });
     observer.observe(content);
     return () => {
+      remember(); // capture the final position for the return visit
       scroller.removeEventListener('scroll', onScroll);
       observer.disconnect();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -188,6 +225,8 @@ function MessageRow({
   const qc = useQueryClient();
   const toggle = useToggleReaction();
   const [showPicker, setShowPicker] = useState(false);
+  // Clicking the sender's avatar opens their profile card (ui_nits).
+  const [showCard, setShowCard] = useState(false);
   // Editing state lives in the selection context so the composer's ↑-to-edit
   // (ui_nits item 4) can start an edit on this row.
   const editing = sel.editingMessageId === message.id;
@@ -229,7 +268,15 @@ function MessageRow({
     >
       <div className="w-[38px] shrink-0">
         {showHeader && (
-          <Avatar userId={message.userId} name={sender} avatarUrl={member?.avatarUrl} size={38} radius={11} />
+          <button
+            type="button"
+            data-testid={`avatar-${message.userId}`}
+            title={`View ${sender}'s profile`}
+            className="block cursor-pointer leading-none"
+            onClick={() => setShowCard(true)}
+          >
+            <Avatar userId={message.userId} name={sender} avatarUrl={member?.avatarUrl} size={38} radius={11} />
+          </button>
         )}
       </div>
 
@@ -422,6 +469,8 @@ function MessageRow({
           )}
         </div>
       )}
+
+      {showCard && <UserCard userId={message.userId} onClose={() => setShowCard(false)} />}
 
       {confirmDelete && (
         <Modal onClose={() => setConfirmDelete(false)} testid="delete-confirm-modal">
