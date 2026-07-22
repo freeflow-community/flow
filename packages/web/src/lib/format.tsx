@@ -236,7 +236,9 @@ export function segmentBody(body: string): BodySegment[] {
 
 const HEADING_CLASS: Record<number, string> = {
   1: 'mt-2 mb-1 text-lg font-bold',
-  2: 'mt-2 mb-1 text-base font-bold',
+  // NB: avoid `text-base` — it collides with the custom `--color-base` theme
+  // token in Tailwind v4 and paints the heading near-white on the base bg.
+  2: 'mt-2 mb-1 text-[1.05rem] font-bold',
   3: 'mt-1.5 mb-0.5 text-sm font-bold',
   4: 'mt-1.5 mb-0.5 text-sm font-semibold',
   5: 'mt-1 mb-0.5 text-sm font-semibold',
