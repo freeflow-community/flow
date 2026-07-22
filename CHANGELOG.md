@@ -49,6 +49,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   render inline players with an expand affordance.
 
 ### Deliberate divergences (ruled)
+- Copy message text: explicit "Copy" item in the message menu on iOS + macOS
+  (their custom Text rows aren't natively selectable); web omits it because
+  browser text selection + Cmd/Ctrl-C already copies message text.
 - Emoji picker: custom grid + search on web and iOS (reaction sheet); native
   character palette on macOS.
 - iOS composer: plain text + @-mention autocomplete only — no live-styled
@@ -73,6 +76,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-22 — Copy message text from the message menu
+- The message action menu gained a **Copy** command that puts the message
+  `body` on the system clipboard — iOS long-press context menu (`UIPasteboard`)
+  and macOS right-click context menu (`NSPasteboard`). Shown only for
+  non-empty, non-deleted messages; available to any author. `[ios] [macos]`
+- Web intentionally has no explicit Copy item — browser-native text selection
+  + Cmd/Ctrl-C already covers it (see Parity divergence).
 ### 2026-07-22 — iOS: share videos from the photo picker
 - The composer's Photos picker was `matching: .images`, so videos in the photo
   library were unselectable. Widened to `.any(of: [.images, .videos])` and
