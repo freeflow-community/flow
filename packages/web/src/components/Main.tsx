@@ -6,7 +6,7 @@ import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
-import { ADMIN_VIEW_ID, LiveContext, MobileNavContext, useAuth, useSelection } from '../state';
+import { ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
 import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
@@ -99,12 +99,12 @@ export default function Main() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function clearTyping(channelId: string, userId: string): void {
+  function clearTyping(key: string, userId: string): void {
     setTyping((prev) => {
-      const chan = prev[channelId];
+      const chan = prev[key];
       if (!chan || !(userId in chan)) return prev;
       const { [userId]: _gone, ...rest } = chan;
-      return { ...prev, [channelId]: rest };
+      return { ...prev, [key]: rest };
     });
   }
 
@@ -126,8 +126,9 @@ export default function Main() {
         // (local-first; no refetch of the whole list per incoming message).
         const msg = event.data as MessageDTO;
         if (event.type === 'message.created' || event.type === 'thread.reply') {
-          // The sender's message arrived — drop their lingering typing entry.
-          clearTyping(msg.channelId, msg.userId);
+          // The sender's message arrived — drop their lingering typing entry
+          // for the composer they sent it from (main view or that thread).
+          clearTyping(typingKey(msg.channelId, msg.threadRootId), msg.userId);
         }
         const insert = event.type === 'message.created' || event.type === 'thread.reply';
         applyMessageEvent(qc, msg, insert);
@@ -145,18 +146,21 @@ export default function Main() {
       case 'typing': {
         const t = event.data as TypingData;
         if (t.userId === auth.user.id) break;
+        // Scoped to the composer it came from: a thread's indicator belongs to
+        // that thread, not the channel's main view.
+        const key = typingKey(t.channelId, t.threadRootId);
         setTyping((prev) => ({
           ...prev,
-          [t.channelId]: { ...(prev[t.channelId] ?? {}), [t.userId]: Date.now() },
+          [key]: { ...(prev[key] ?? {}), [t.userId]: Date.now() },
         }));
         // The render-time 5s filter never re-renders on its own, so a stale
         // entry would linger; sweep it once the window has passed.
         window.setTimeout(() => {
           setTyping((prev) => {
-            const at = prev[t.channelId]?.[t.userId];
+            const at = prev[key]?.[t.userId];
             if (at === undefined || Date.now() - at < 5000) return prev;
-            const { [t.userId]: _gone, ...rest } = prev[t.channelId]!;
-            return { ...prev, [t.channelId]: rest };
+            const { [t.userId]: _gone, ...rest } = prev[key]!;
+            return { ...prev, [key]: rest };
           });
         }, 5200);
         break;
@@ -243,7 +247,8 @@ export default function Main() {
       typing,
       notificationUnread,
       setNotificationUnread,
-      sendTyping: (channelId: string) => socketRef.current?.sendTyping(channelId),
+      sendTyping: (channelId: string, threadRootId?: string) =>
+        socketRef.current?.sendTyping(channelId, threadRootId),
     }),
     [status, presence, typing, notificationUnread],
   );

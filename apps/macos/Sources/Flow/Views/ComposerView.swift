@@ -73,7 +73,7 @@ struct ComposerView: View {
                 }
                 .onChange(of: text) { _, newValue in
                     guard !newValue.isEmpty else { return }
-                    Task { await app.engine.typing(channelId: channelId) }
+                    Task { await app.engine.typing(channelId: channelId, threadRootId: threadRootId) }
                 }
 
                 Button {

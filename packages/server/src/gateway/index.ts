@@ -273,12 +273,15 @@ export function attachGateway(server: HttpServer): { close(): void } {
           const chan = state.chans.get(frame.channelId);
           if (!chan) return;
           if (chan.isPrivate && !state.member.has(frame.channelId)) return;
+          // threadRootId (optional) rides along so clients can scope the
+          // indicator to the thread it was typed in rather than the channel.
+          const threadRootId = typeof frame.threadRootId === 'string' ? frame.threadRootId : undefined;
           publishEvent(subjectTyping(chan.workspaceId, frame.channelId), {
             type: 'typing',
             workspaceId: chan.workspaceId,
             channelId: frame.channelId,
             ts: new Date().toISOString(),
-            data: { userId: state.userId, channelId: frame.channelId },
+            data: { userId: state.userId, channelId: frame.channelId, ...(threadRootId ? { threadRootId } : {}) },
           });
         }
       })();

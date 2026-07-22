@@ -885,12 +885,14 @@ actor SyncEngine {
 
     // MARK: - Typing
 
-    /// Throttled to one frame per ~3s per channel.
-    func typing(channelId: String) async {
+    /// Throttled to one frame per ~3s per composer (a channel's main composer
+    /// and each of its threads throttle independently).
+    func typing(channelId: String, threadRootId: String? = nil) async {
         let now = Date()
-        if let last = typingLastSent[channelId], now.timeIntervalSince(last) < 3 { return }
-        typingLastSent[channelId] = now
-        await socket.sendTyping(channelId: channelId)
+        let key = TypingKey.make(channelId: channelId, threadRootId: threadRootId)
+        if let last = typingLastSent[key], now.timeIntervalSince(last) < 3 { return }
+        typingLastSent[key] = now
+        await socket.sendTyping(channelId: channelId, threadRootId: threadRootId)
     }
 
     // MARK: - Event handling
@@ -906,8 +908,10 @@ actor SyncEngine {
             }
             let isNew = await applyServerMessage(m)
             if event.type == "message.created" || event.type == "thread.reply" {
-                // The sender's message arrived — clear their typing indicator.
-                await appState?.typingStopped(channelId: m.channelId, userId: m.userId)
+                // The sender's message arrived — clear their typing indicator
+                // for the composer they sent it from (main view or that thread).
+                await appState?.typingStopped(
+                    channelId: m.channelId, threadRootId: m.threadRootId, userId: m.userId)
             }
             if event.type == "message.created", isNew, m.userId != currentUser?.id {
                 if m.channelId == activeChannelId {
@@ -924,7 +928,8 @@ actor SyncEngine {
 
         case .typing(let t):
             if t.userId != currentUser?.id {
-                await appState?.typingReceived(channelId: t.channelId, userId: t.userId)
+                await appState?.typingReceived(
+                    channelId: t.channelId, threadRootId: t.threadRootId, userId: t.userId)
             }
 
         case .presence(let p):

@@ -37,6 +37,9 @@ export interface Event<T = unknown> {
 export interface TypingData {
   userId: string;
   channelId: string;
+  /** Set when typing in a thread's composer — the indicator belongs to that
+   * thread, not the channel's main view. Absent = the main composer. */
+  threadRootId?: string;
 }
 
 export interface PresenceData {
@@ -71,7 +74,9 @@ export type UserUpdatedData = UserDTO;
 // ---- WS protocol frames (phase1.md §4) --------------------------
 export type ClientFrame =
   | { op: 'auth'; token: string }
-  | { op: 'typing'; channelId: string }
+  // threadRootId scopes the indicator to a thread's composer; absent = the
+  // channel's main composer. Older clients omit it and read as main-composer.
+  | { op: 'typing'; channelId: string; threadRootId?: string }
   | { op: 'pong' };
 
 export type ServerFrame =

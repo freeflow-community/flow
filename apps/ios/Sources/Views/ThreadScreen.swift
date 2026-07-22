@@ -85,7 +85,7 @@ struct ThreadScreen: View {
                 .defaultScrollAnchor(.bottom)
             }
             if let chId = channelId.value {
-                TypingIndicatorView(channelId: chId, userNames: userNames)
+                TypingIndicatorView(channelId: chId, threadRootId: rootId, userNames: userNames)
                 Divider()
                 ComposerView(channelId: chId, threadRootId: rootId, placeholder: "Reply in thread")
             }

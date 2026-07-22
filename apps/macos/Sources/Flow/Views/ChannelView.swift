@@ -226,11 +226,14 @@ struct ChannelView: View {
 
 struct TypingIndicatorView: View {
     let channelId: String
+    /// nil = the channel's main composer; set = that thread's composer, so the
+    /// two never show each other's typists.
+    var threadRootId: String? = nil
     let userNames: [String: String]
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        let ids = app.typingUserIds(channelId: channelId)
+        let ids = app.typingUserIds(channelId: channelId, threadRootId: threadRootId)
         HStack {
             if !ids.isEmpty {
                 let names = ids.map { userNames[$0] ?? "Someone" }

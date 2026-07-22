@@ -101,7 +101,7 @@ export function loadConfig(configPath: string): BridgeConfig {
     permissionMode: r.permissionMode,
     allowedTools: r.allowedTools ?? [],
     maxTurns: r.maxTurns ?? 100, // real coding tasks blow past small caps — 25 wedged first turns via max-turns errors
-    timeoutSec: r.timeoutSec ?? 300,
+    timeoutSec: r.timeoutSec ?? 600, // real coding turns run past 5 min; 10 is the runaway cap
     mcp: r.mcp ?? (kind === 'claude'),
     systemPromptExtra: r.systemPromptExtra,
   };

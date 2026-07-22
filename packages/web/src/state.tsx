@@ -43,10 +43,12 @@ export interface Selection {
 export interface LiveState {
   status: SocketStatus;
   presence: Record<string, boolean>;
-  typing: Record<string, Record<string, number>>; // channelId -> userId -> ts(ms)
+  /** typingKey(channelId, threadRootId) -> userId -> ts(ms). Keyed by composer,
+   * not by channel, so a thread's indicator never shows in the main view. */
+  typing: Record<string, Record<string, number>>;
   notificationUnread: number;
   setNotificationUnread(n: number): void;
-  sendTyping(channelId: string): void;
+  sendTyping(channelId: string, threadRootId?: string): void;
 }
 
 /**
@@ -60,6 +62,12 @@ export interface MobileNav {
   drawerOpen: boolean;
   openDrawer(): void;
   closeDrawer(): void;
+}
+
+/** Typing indicators are per-composer: a channel's main composer and each of
+ * its threads are separate conversations and get separate keys. */
+export function typingKey(channelId: string, threadRootId?: string | null): string {
+  return `${channelId}|${threadRootId ?? ''}`;
 }
 
 export const AuthContext = createContext<AuthState | null>(null);
