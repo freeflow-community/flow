@@ -79,6 +79,25 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-22 — Native: GFM table rendering (macOS + iOS)
+- Markdown pipe tables now render as real tables in the native clients, closing
+  the gap opened when the web client shipped them. Hairline cell borders, a
+  tinted header row, per-column alignment from the separator row's colons, and
+  horizontal scrolling when a table is wider than the bubble. `[macos] [ios]`
+- Parsing lives in the shared `MarkdownBlocks` segmenter (a new
+  `.table(header:align:rows:)` segment) and deliberately mirrors the web
+  grammar in `format.tsx`: a header row containing a pipe followed by a
+  `|`/`-`/`:` separator row, optional outer pipes, cells trimmed. Tables are
+  found *inside* plain runs, so prose before and after stays its own paragraph;
+  a table inside fenced code is left alone. `[macos] [ios]`
+- Rendering lives in one shared `MarkdownTableView` under `Support/`, so macOS
+  and iOS cannot drift. Cells run through `MentionRendering`, so mention pills
+  and inline markdown work inside a table. Ragged rows (fewer/more cells than
+  the header) are padded and truncated rather than crashing the list. `[macos] [ios]`
+- 6 new cases in `MarkdownBlocksTests` cover alignment, missing outer pipes,
+  prose separation, header-only tables, pipes that are *not* tables, tables
+  inside code fences, and ragged rows. `[qa]`
+
 ### 2026-07-22 — Release: `flow-agent-bridge` 0.4.0
 - Version bump carrying the two bridge changes below (answer in threads / stay
   in threads, and the 5→10 min default turn timeout) out to installed agents.

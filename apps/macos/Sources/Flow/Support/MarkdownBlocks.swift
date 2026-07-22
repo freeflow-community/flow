@@ -13,10 +13,20 @@ enum MarkdownBlocks {
         case code  // a line inside a fenced region
     }
 
+    /// Column alignment from a GFM separator row's colons (`:--`, `:-:`, `--:`).
+    enum CellAlign: Equatable {
+        case left
+        case center
+        case right
+    }
+
     enum Segment: Equatable {
         case paragraph(String)
         case quote(String) // ">"/"> " markers stripped, lines joined with \n
         case code(String)  // fence marker lines dropped
+        /// A GFM pipe table. `align` is per column and may be shorter than
+        /// `header` when the separator row has fewer cells; nil = unset.
+        case table(header: [String], align: [CellAlign?], rows: [[String]])
     }
 
     /// Splits into lines KEEPING each line's trailing "\n" so concatenating
@@ -101,6 +111,8 @@ enum MarkdownBlocks {
     static func segments(_ body: String) -> [Segment] {
         let raw = lines(body)
         let ks = kinds(of: raw)
+        // Newline-stripped view: table detection needs to look ahead a line.
+        let text = raw.map { String(strippingNewline($0)) }
         var segs: [Segment] = []
         var i = 0
         while i < raw.count {
@@ -127,21 +139,81 @@ enum MarkdownBlocks {
                 segs.append(.quote(content.joined(separator: "\n")))
                 i = j
             case .plain:
+                // A plain run can contain tables; flush the prose accumulated
+                // so far whenever one starts, then resume after it.
                 var content: [String] = []
                 var j = i
-                while j < raw.count, ks[j] == .plain {
-                    content.append(String(strippingNewline(raw[j])))
-                    j += 1
+                func flushParagraph() {
+                    let joined = content.joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !joined.isEmpty { segs.append(.paragraph(joined)) }
+                    content.removeAll()
                 }
-                let joined = content.joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !joined.isEmpty { segs.append(.paragraph(joined)) }
+                while j < raw.count, ks[j] == .plain {
+                    guard isTableStart(text, ks, j) else {
+                        content.append(text[j])
+                        j += 1
+                        continue
+                    }
+                    flushParagraph()
+                    let header = parseTableRow(text[j])
+                    let align = parseTableRow(text[j + 1]).map(parseTableAlign)
+                    var k = j + 2
+                    var rows: [[String]] = []
+                    // Body rows run until a line stops looking like one.
+                    while k < raw.count, ks[k] == .plain, text[k].contains("|"),
+                          !text[k].trimmingCharacters(in: .whitespaces).isEmpty {
+                        rows.append(parseTableRow(text[k]))
+                        k += 1
+                    }
+                    segs.append(.table(header: header, align: align, rows: rows))
+                    j = k
+                }
+                flushParagraph()
                 i = j
             case .code:
                 i += 1 // unreachable: code lines are consumed by the fence case
             }
         }
         return segs
+    }
+
+    // MARK: - GFM pipe tables
+    //
+    // Same grammar as the web client (packages/web/src/lib/format.tsx): a
+    // header row containing a pipe, immediately followed by a separator row of
+    // pipes/dashes/optional colons. Outer pipes are optional.
+
+    /// A separator row: pipes, dashes, optional colons — and at least one of
+    /// each of pipe and dash.
+    static func isTableSeparator(_ line: String) -> Bool {
+        guard line.contains("|"), line.contains("-") else { return false }
+        return line.allSatisfy { $0 == " " || $0 == "\t" || $0 == "|" || $0 == ":" || $0 == "-" }
+    }
+
+    /// Splits "| a | b |" into ["a", "b"], tolerating optional outer pipes.
+    static func parseTableRow(_ line: String) -> [String] {
+        var s = line.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("|") { s.removeFirst() }
+        if s.hasSuffix("|") { s.removeLast() }
+        return s.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    static func parseTableAlign(_ cell: String) -> CellAlign? {
+        let left = cell.hasPrefix(":")
+        let right = cell.hasSuffix(":")
+        if left, right { return .center }
+        if right { return .right }
+        if left { return .left }
+        return nil
+    }
+
+    /// Does a table start at `i`? Header must carry a pipe and the next line
+    /// must be a separator — and both must be plain (a fence or quote line
+    /// ends the run before we get here).
+    private static func isTableStart(_ text: [String], _ kinds: [LineKind], _ i: Int) -> Bool {
+        guard text[i].contains("|"), i + 1 < text.count, kinds[i + 1] == .plain else { return false }
+        return isTableSeparator(text[i + 1])
     }
 
     private static func strippingNewline(_ line: Substring) -> Substring {

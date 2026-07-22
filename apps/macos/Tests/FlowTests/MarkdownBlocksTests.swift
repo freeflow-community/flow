@@ -104,6 +104,65 @@ final class MarkdownBlocksTests: XCTestCase {
         )
     }
 
+    // MARK: - GFM pipe tables
+
+    func testTableParsesHeaderAlignAndRows() {
+        let body = "| Name | Qty |\n| :--- | ---: |\n| Apple | 3 |\n| Pear | 12 |"
+        XCTAssertEqual(MarkdownBlocks.segments(body), [
+            .table(
+                header: ["Name", "Qty"],
+                align: [.left, .right],
+                rows: [["Apple", "3"], ["Pear", "12"]]
+            ),
+        ])
+    }
+
+    func testTableWithoutOuterPipesAndCenterAlign() {
+        let body = "a | b\n:-: | -\n1 | 2"
+        XCTAssertEqual(MarkdownBlocks.segments(body), [
+            .table(header: ["a", "b"], align: [.center, nil], rows: [["1", "2"]]),
+        ])
+    }
+
+    func testTableSeparatedFromSurroundingProse() {
+        let body = "before\n| a |\n| - |\n| 1 |\nafter"
+        XCTAssertEqual(MarkdownBlocks.segments(body), [
+            .paragraph("before"),
+            .table(header: ["a"], align: [nil], rows: [["1"]]),
+            .paragraph("after"),
+        ])
+    }
+
+    func testHeaderOnlyTableHasNoRows() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("| a | b |\n| - | - |"),
+            [.table(header: ["a", "b"], align: [nil, nil], rows: [])]
+        )
+    }
+
+    func testPipeTextWithoutSeparatorStaysProse() {
+        // A lone pipe line is not a table — the separator row is what makes one.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("a | b\nnot a table"),
+            [.paragraph("a | b\nnot a table")]
+        )
+    }
+
+    func testTableInsideFencedCodeIsNotParsed() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("```\n| a |\n| - |\n```"),
+            [.code("| a |\n| - |")]
+        )
+    }
+
+    func testRaggedTableRowsArePreservedVerbatim() {
+        // The renderer pads/truncates; the parser must not lose cells.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |"),
+            [.table(header: ["a", "b"], align: [nil, nil], rows: [["1"], ["1", "2", "3"]])]
+        )
+    }
+
     // MARK: - UTF-16 ranges (composer attribute pass)
 
     func testClassifiedLineRangesAreContiguousUTF16() {
