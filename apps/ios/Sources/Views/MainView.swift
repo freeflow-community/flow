@@ -12,7 +12,7 @@ struct MainView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ChannelListView()
+            ChannelListView(onOpenChannel: { path.append($0) })
                 .navigationDestination(for: String.self) { channelId in
                     ChannelScreen(channelId: channelId)
                 }
