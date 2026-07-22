@@ -79,6 +79,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 ## History
 
+### 2026-07-22 — Web message hover menu: quick reactions, Copy, bigger hit targets
+- The hover menu now leads with one-tap quick reactions 👍 👀 🙌 (toggle like
+  any reaction), a divider, then the existing 🙂 full-picker button. `[web]`
+- Added a **Copy** button (📋) that writes the message text to the clipboard
+  via `navigator.clipboard` — matches the Copy command shipped on iOS + macOS.
+  Shown only for messages with body text. `[web]`
+- Enlarged the menu: `text-sm`→`text-lg` glyphs, roomier `px-1.5 py-1` hit
+  targets, `rounded-xl` pill — easier to aim at and read. `[web]`
+- With Copy now on all three clients, the "web omits Copy" Parity divergence is
+  retired.
 ### 2026-07-22 — Typing indicators are per-composer, not per-channel
 - Typing in a thread showed "X is typing…" in the channel's **main** view (and
   on macOS/iOS, channel typing showed inside the thread panel too) — the
