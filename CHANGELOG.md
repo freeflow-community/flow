@@ -88,6 +88,30 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-22 — iOS: browse, join and create channels
+- **Fixed: iOS had no way to reach a channel you weren't already in.** The
+  channel list queried `isMember == true` and offered no browse, join or
+  create affordance, so a phone-only user could never discover `#app-ideas`
+  or start a new channel — web and macOS have had both since phase 2. `[ios]`
+- New "Browse" section lists public channels you're not in, each with a Join
+  that enrolls you and pushes straight into the channel. Same filter macOS
+  uses (`!isMember && !isPrivate && !isDM`); the server already excludes
+  archived channels and invisible private ones, so no extra guard is needed.
+  `[ios]`
+- New-channel button in the nav bar opens a form (name, optional topic,
+  private toggle) and drops you into the created channel. Name normalization
+  is character-for-character the macOS rule (lowercased, spaces to dashes),
+  with a live "Will be created as #…" hint. `[ios]`
+- No new sync work: `refreshChannels` already cached every channel the server
+  lets you see, non-member rows included — the list was simply filtering them
+  out. `ChannelListView` gained an `onOpenChannel` callback so it can push onto
+  the `NavigationStack` path that `MainView` owns. `[ios]`
+- Verified in the simulator against the local dev server: Browse renders
+  `#app-ideas` with Join, and joining moves it live into Channels (with its
+  unread badge) while the emptied Browse section disappears. The Join and
+  Create taps themselves were not driven — no UI automation tool was used —
+  but both call the same `SyncEngine` methods macOS already ships. `[ios]` `[qa]`
+
 ### 2026-07-22 — iOS: account avatar button (profile + status picker)
 - The channel list's plain `person.crop.circle` toolbar menu is now a real
   avatar button — the user's avatar with their status emoji badged on it —
