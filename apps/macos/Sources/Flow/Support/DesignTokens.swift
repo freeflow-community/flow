@@ -45,16 +45,18 @@ enum MC {
         return avatarPalette[hash % avatarPalette.count]
     }
 
-    /// Canned statuses (design 3a status picker).
-    static let statusOptions: [(emoji: String, text: String)] = [
-        ("🎧", "Focusing"),
-        ("🗓️", "In a meeting"),
-        ("🌴", "Vacationing"),
-        ("🏠", "Working remotely"),
-        ("🤒", "Out sick"),
-        ("🍽️", "At lunch"),
-        ("💬", "Available"),
-        ("🚫", "Do not disturb"),
+    /// Canned statuses (design 3a status picker). `suppresses` marks the
+    /// DND-family entries that pause alerts server-side (phase 10) — same
+    /// list and flags as the web client's STATUS_OPTIONS.
+    static let statusOptions: [(emoji: String, text: String, suppresses: Bool)] = [
+        ("🎧", "Focusing", true),
+        ("🗓️", "In a meeting", true),
+        ("🌴", "Vacationing", false),
+        ("🏠", "Working remotely", false),
+        ("🤒", "Out sick", false),
+        ("🍽️", "At lunch", true),
+        ("💬", "Available", false),
+        ("🚫", "Do not disturb", true),
     ]
 }
 
