@@ -782,10 +782,14 @@ actor SyncEngine {
     }
 
     /// Set (or clear, with two empty strings) the user's status emoji + label.
-    func setStatus(emoji: String, text: String) async throws {
+    /// `suppressAlerts` mirrors the web client's DND-family flag; nil leaves
+    /// the server's current value alone.
+    func setStatus(emoji: String, text: String, suppressAlerts: Bool? = nil) async throws {
         let me: User = try await api.patch(
             "/v1/me",
-            body: PatchMeBody(statusEmoji: emoji, statusText: text)
+            body: PatchMeBody(
+                statusEmoji: emoji, statusText: text, statusSuppressAlerts: suppressAlerts
+            )
         )
         currentUser = me
         try? await db.writer.write { db in try me.save(db) }
@@ -803,6 +807,9 @@ actor SyncEngine {
         currentUser = me
         try? await db.writer.write { db in try me.save(db) }
         await appState?.setPhase(.signedIn(me))
+        // New avatar key: republish the map so message rows repaint at once
+        // instead of waiting for the next member refresh.
+        await pushAvatarPaths()
     }
 
     func fetchUser(_ userId: String) async throws -> User {

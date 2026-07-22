@@ -483,15 +483,20 @@ struct PatchMeBody: Encodable, Sendable {
     let timezone: String?
     let statusEmoji: String? // set with statusText together; "" clears
     let statusText: String?
+    /// Phase 10: DND-family statuses pause alerts. Omitted = server keeps the
+    /// current value, so senders that support the flag must always send it.
+    let statusSuppressAlerts: Bool?
 
     init(
         displayName: String? = nil, timezone: String? = nil,
-        statusEmoji: String? = nil, statusText: String? = nil
+        statusEmoji: String? = nil, statusText: String? = nil,
+        statusSuppressAlerts: Bool? = nil
     ) {
         self.displayName = displayName
         self.timezone = timezone
         self.statusEmoji = statusEmoji
         self.statusText = statusText
+        self.statusSuppressAlerts = statusSuppressAlerts
     }
 }
 struct MarkNotificationsReadBody: Encodable, Sendable { let upToId: String }

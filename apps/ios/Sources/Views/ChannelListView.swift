@@ -52,16 +52,7 @@ struct ChannelListView: View {
                 } label: { Image(systemName: "square.grid.2x2") }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    if let u = app.currentUser {
-                        Text(u.displayName)
-                        Text(u.email).font(.caption)
-                    }
-                    Divider()
-                    Button("Sign Out", role: .destructive) {
-                        Task { await app.engine.logout() }
-                    }
-                } label: { Image(systemName: "person.crop.circle") }
+                AccountToolbarButton()
             }
         }
         .task {

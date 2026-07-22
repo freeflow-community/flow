@@ -66,6 +66,14 @@ struct ChannelScreen: View {
         .background(MC.base)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        // Same avatar affordance the web keeps in the sidebar footer: on a
+        // phone the sidebar isn't on screen inside a channel, so the account
+        // button rides the channel's nav bar too.
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                AccountToolbarButton()
+            }
+        }
         .task {
             app.selectChannel(channelId)
             users.start(db: app.db) { try User.fetchAll($0) }

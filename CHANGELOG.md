@@ -14,7 +14,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - macOS: phase 10 notification settings — no Notifications section in the
   profile/settings UI, banner path doesn't consult `suppressAlert` yet, and
   the status picker doesn't set `status_suppress_alerts` (web shipped
-  2026-07-21; iOS out of scope for phase 10 per spec).
+  2026-07-21). The shared `setStatus(emoji:text:suppressAlerts:)` now carries
+  the flag and iOS sends it; macOS just needs to pass it at the call site.
+- iOS: no Notifications section in the account/profile UI (web shipped the
+  per-user pref toggles in phase 10). Nothing on-device consumes them yet —
+  iOS has no push notifications — so this closes with the APNs work.
 - iOS: no Artifacts UI (phase 9) — no sidebar section, artifact panel, or
   save-as-artifact action; the `artifact.*` WS events are safely ignored.
   Server + web + macOS shipped together 2026-07-21.
@@ -83,6 +87,40 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-22 — iOS: account avatar button (profile + status picker)
+- The channel list's plain `person.crop.circle` toolbar menu is now a real
+  avatar button — the user's avatar with their status emoji badged on it —
+  and the same button rides the channel screen's nav bar, since a phone never
+  shows the sidebar footer the web/macOS affordance lives in. `[ios]`
+- Tapping it opens an account sheet: profile header (avatar, name +
+  connection dot, email, current status), the eight canned statuses with
+  "Pauses notifications" on the DND-family rows and a checkmark on the active
+  one, Clear status, "My Profile…" and Sign Out — the web avatar menu +
+  status picker, merged into one sheet for touch. `[ios]`
+- **My Profile** pushes an edit form: avatar change via the photo library
+  (HEIC re-encoded to JPEG, same rule the composer uses), display name,
+  timezone, email; saves through `PATCH /v1/me`. `[ios]`
+- iOS and macOS status picks now send `statusSuppressAlerts` alongside the
+  emoji + text, so a DND-family status pauses alerts and a plain one resumes
+  them. `MC.statusOptions` grew the `suppresses` flag (matching web's
+  `STATUS_OPTIONS`), `PatchMeBody` the field, and `SyncEngine.setStatus` a
+  `suppressAlerts:` parameter. `[ios]` `[macos]`
+- **Fixed: macOS could strand notifications paused.** The server only writes
+  the column when the field is present, and the macOS status picker never sent
+  it — so picking "Available" after "Do not disturb" left alerts suppressed
+  behind an innocent-looking status. Confirmed against the dev server: a
+  flagless `PATCH /v1/me` returned `statusText: "Available"` with
+  `statusSuppressAlerts: true`. Every macOS pick (and Clear status) now sends
+  the flag explicitly, as web already did. `[macos]`
+- `uploadAvatar` now republishes the avatar-path map, so a new avatar repaints
+  message rows immediately instead of waiting for the next member refresh
+  (shared engine — fixes the same lag on macOS). `[ios]` `[macos]`
+- Verified by hand in the simulator against the local dev server (status pick
+  round-trips to `PATCH /v1/me`); no headless QA hook ships with this — a
+  `FLOW_DEBUG_SET_STATUS` modifier hung off the toolbar item never fired
+  (toolbar-hosted views get neither `.task` nor `.onAppear` reliably) and was
+  dropped rather than shipped unverified. `[ios]` `[qa]`
 
 ### 2026-07-22 — Web: keep the viewport pinned when a link preview lands
 - Fixed: a message list sitting at the bottom stopped following its own
