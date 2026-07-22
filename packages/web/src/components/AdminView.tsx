@@ -10,6 +10,7 @@ import { useAuth, useSelection } from '../state';
 import { useMembers, useWorkspaces } from '../hooks';
 import { Avatar } from './Avatar';
 import NotificationsBell from './NotificationsBell';
+import { MobileMenuButton } from './MobileMenuButton';
 
 export default function AdminView() {
   const auth = useAuth();
@@ -27,8 +28,9 @@ export default function AdminView() {
 
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-base">
-      <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px]">
-        <div className="min-w-0">
+      <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
+        <MobileMenuButton />
+        <div className="min-w-0 flex-1">
           <h2 data-testid="admin-header" className="truncate text-[15px] font-bold">
             🛡️ Manage users
           </h2>

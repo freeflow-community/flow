@@ -49,9 +49,23 @@ export interface LiveState {
   sendTyping(channelId: string): void;
 }
 
+/**
+ * Mobile navigation state (responsive layout): below the `md` breakpoint the
+ * rail + sidebar collapse into a slide-in drawer over a full-width content
+ * pane. `isMobile` mirrors the `(max-width: 767px)` media query; the drawer is
+ * always "open" (in flow) on desktop.
+ */
+export interface MobileNav {
+  isMobile: boolean;
+  drawerOpen: boolean;
+  openDrawer(): void;
+  closeDrawer(): void;
+}
+
 export const AuthContext = createContext<AuthState | null>(null);
 export const SelectionContext = createContext<Selection | null>(null);
 export const LiveContext = createContext<LiveState | null>(null);
+export const MobileNavContext = createContext<MobileNav | null>(null);
 
 export function useAuth(): AuthState {
   const v = useContext(AuthContext);
@@ -66,5 +80,10 @@ export function useSelection(): Selection {
 export function useLive(): LiveState {
   const v = useContext(LiveContext);
   if (!v) throw new Error('LiveContext missing');
+  return v;
+}
+export function useMobileNav(): MobileNav {
+  const v = useContext(MobileNavContext);
+  if (!v) throw new Error('MobileNavContext missing');
   return v;
 }
