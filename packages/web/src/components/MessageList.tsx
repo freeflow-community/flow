@@ -119,6 +119,10 @@ function DayDivider({ iso }: { iso: string }) {
   );
 }
 
+/** Quick one-tap reactions shown first in the message hover menu (operator
+ * pick). The 🙂 button beside them still opens the full picker. */
+const QUICK_REACTIONS = ['👍', '👀', '🙌'];
+
 /** Open-external glyph (box with an arrow leaving it) for the save-as-artifact
  * action. The rest of the UI uses unicode/emoji glyphs, but no codepoint draws
  * this mark — hence the one inline SVG. Strokes follow the button's text color. */
@@ -320,10 +324,25 @@ function MessageRow({
       </div>
 
       {!message.deletedAt && !editing && !pending && (
-        <div className="absolute top-0 right-[22px] hidden gap-1 rounded-lg border border-hairline bg-white px-1 shadow-sm group-hover:flex">
+        <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
+          {QUICK_REACTIONS.map((emoji) => {
+            const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
+            return (
+              <button
+                key={emoji}
+                data-testid={`quick-react-${emoji}-${message.id}`}
+                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                title={`React ${emoji}`}
+                onClick={() => toggle.mutate({ message, emoji, mine: mineR })}
+              >
+                {emoji}
+              </button>
+            );
+          })}
+          <div className="mx-0.5 h-6 w-px self-center bg-hairline" />
           <button
             data-testid={`add-reaction-${message.id}`}
-            className="px-1 text-sm hover:bg-daypill"
+            className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
             title="Add reaction"
             onClick={() => setShowPicker(true)}
           >
@@ -331,17 +350,27 @@ function MessageRow({
           </button>
           {showThreadAffordances && (
             <button
-              className="px-1 text-sm hover:bg-daypill"
+              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
               title="Reply in thread"
               onClick={() => sel.openThread(message.threadRootId ?? message.id)}
             >
               💬
             </button>
           )}
+          {message.body && (
+            <button
+              data-testid={`copy-message-${message.id}`}
+              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+              title="Copy text"
+              onClick={() => void navigator.clipboard?.writeText(message.body)}
+            >
+              📋
+            </button>
+          )}
           {message.files.length > 0 && (
             <button
               data-testid={`bookmark-artifact-${message.id}`}
-              className="flex items-center px-1 text-sm hover:bg-daypill"
+              className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
               title="Save as artifact"
               onClick={() => void bookmarkFiles()}
             >
@@ -352,7 +381,7 @@ function MessageRow({
             <>
               <button
                 data-testid={`edit-message-${message.id}`}
-                className="px-1 text-sm hover:bg-daypill"
+                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
                 title="Edit"
                 onClick={() => sel.setEditingMessage(message.id)}
               >
@@ -360,7 +389,7 @@ function MessageRow({
               </button>
               <button
                 data-testid={`delete-message-${message.id}`}
-                className="px-1 text-sm hover:bg-daypill"
+                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
                 title="Delete"
                 onClick={() => setConfirmDelete(true)}
               >
