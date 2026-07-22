@@ -73,8 +73,32 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
   support, so macOS shows the file chip (Download / open externally) for
   webm attachments (ruled — see decision_log 2026-07-20).
+- Responsive/mobile layout (drawer nav, viewport-capped media and modals):
+  web only, and inherently so — the native clients lay themselves out per
+  platform, and the iOS app is the native phone experience. Not a gap.
 
 ## History
+
+### 2026-07-22 — Web: responsive layout for mobile browsers
+- The three-column desktop layout (rail + sidebar + content [+ thread]) now
+  collapses to a single pane below the `md` breakpoint (`max-width: 767px`).
+  The rail + sidebar become a slide-in drawer over a full-width conversation,
+  opened by a `☰` button in each pane header and dismissed by the backdrop,
+  by picking a channel/artifact, or by crossing back above the breakpoint.
+  `[web]`
+- New `MobileNavContext` (`isMobile` / `drawerOpen` + open/close) drives it;
+  the sidebar's stored width and its drag handle, and the thread panel's
+  width + handle, are desktop-only. The thread panel covers the screen on
+  mobile instead of splitting an already-narrow viewport — its existing ✕
+  closes it. `[web]`
+- Fixed horizontal overflow that made the whole page pan sideways on a phone:
+  inline image/video previews, the video placeholder, and the PDF embed used
+  fixed pixel widths (`max-w-[576px]`, `w-[426px]`, `w-[320px]`) with no
+  viewport cap — now `min(<px>, 100%)`. Modals were `w-[560px]`/`w-96` and
+  overflowed a 390px screen; they now cap to `calc(100vw-2rem)` and scroll
+  vertically within `calc(100dvh-2rem)`. `[web]`
+- The channel header's decorative member-avatar stack is hidden on mobile so
+  the channel title gets the room. `[web]`
 
 ### 2026-07-22 — Copy message text from the message menu
 - The message action menu gained a **Copy** command that puts the message

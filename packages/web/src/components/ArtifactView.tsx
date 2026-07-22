@@ -9,6 +9,7 @@ import { bytesLabel } from '../lib/format';
 import { isHtmlFile, isImageFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { useSelection } from '../state';
 import { useArtifacts } from '../hooks';
+import { MobileMenuButton } from './MobileMenuButton';
 
 export default function ArtifactView({ artifactId }: { artifactId: string }) {
   const sel = useSelection();
@@ -66,7 +67,8 @@ function ArtifactHeader({
     a.click();
   };
   return (
-    <div className="flex h-[60px] shrink-0 items-center gap-2 border-b border-hairline px-[22px]">
+    <div className="flex h-[60px] shrink-0 items-center gap-2 border-b border-hairline px-[22px] max-md:px-3">
+      <MobileMenuButton />
       {editing ? (
         <input
           className="min-w-0 flex-1 rounded border border-hairline2 bg-white px-2 py-1 text-[15px] font-bold"

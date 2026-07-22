@@ -4,7 +4,7 @@ import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { fileGlyph } from '../lib/fileKind';
-import { ADMIN_VIEW_ID, useAuth, useLive, useSelection } from '../state';
+import { ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
@@ -49,6 +49,9 @@ export default function Sidebar() {
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
   const wsMenuRef = useRef<HTMLDivElement>(null);
+  // Inside the mobile drawer the sidebar fills whatever the rail leaves, so
+  // the stored desktop width (and its drag handle) sit this one out.
+  const { isMobile } = useMobileNav();
 
   // Dismiss the workspace dropdown on outside click or Escape
   // (QA w7g2 finding: it previously only closed via the trigger).
@@ -121,8 +124,11 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="relative flex shrink-0 flex-col text-white"
-      style={{ width, background: `linear-gradient(to bottom, ${color.top}, ${color.bottom})` }}
+      className="relative flex shrink-0 flex-col text-white max-md:min-w-0 max-md:grow max-md:basis-0"
+      style={{
+        width: isMobile ? undefined : width,
+        background: `linear-gradient(to bottom, ${color.top}, ${color.bottom})`,
+      }}
     >
       <div ref={wsMenuRef} className="relative flex items-center justify-between px-3.5 pt-5 pb-2">
         <button
@@ -270,7 +276,7 @@ export default function Sidebar() {
 
       <div
         data-testid="sidebar-resizer"
-        className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize hover:bg-white/30"
+        className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize hover:bg-white/30 max-md:hidden"
         onPointerDown={(e) => {
           e.preventDefault();
           dragRef.current = { x: e.clientX, w: width };
