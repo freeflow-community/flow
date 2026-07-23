@@ -26,6 +26,17 @@ html, body, #root {
   height: 100%;
 }
 
+/* Jump-to-message highlight (phase 12): a message reached from the Activity
+   feed flashes briefly so the eye can find it after the scroll. */
+@keyframes mc-flash {
+  0%, 25% { background-color: color-mix(in oklch, var(--color-unread) 22%, transparent); }
+  100%    { background-color: transparent; }
+}
+.mc-flash {
+  animation: mc-flash 2s ease-out;
+  border-radius: 8px;
+}
+
 /* Composer contenteditable (phase 3.5 item 2): live block styling per line.
    The editor holds one <div> per draft line; composerDom.ts assigns cmp-*
    classes as you type. */

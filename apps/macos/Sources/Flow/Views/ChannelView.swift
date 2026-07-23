@@ -41,7 +41,11 @@ struct ChannelView: View {
                 onOpenProfile: { userId in
                     profileUserId = userId
                 },
-                scrollKey: channelId
+                scrollKey: channelId,
+                // Jump-to-message (phase 12): the main list owns the target
+                // unless it's a thread reply (ThreadPanelView handles those).
+                focusMessageId: app.openThreadRootId == nil ? app.focusMessageId : nil,
+                onFocused: { app.focusMessageId = nil }
             )
 
             TypingIndicatorView(channelId: channelId, userNames: userNames.value)
@@ -96,6 +100,11 @@ struct ChannelView: View {
                 }
             }
         }
+        // Jump-to-message (phase 12): a target from the Activity feed may sit
+        // beyond the loaded page — page older history until it's in the list,
+        // then MessageListView scrolls to it. Give up once history is exhausted.
+        .onChange(of: app.focusMessageId) { _, _ in pageToFocusIfNeeded() }
+        .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }
@@ -109,6 +118,18 @@ struct ChannelView: View {
             if let c = channel.value {
                 ChannelEditSheet(channel: c)
             }
+        }
+    }
+
+    /// Page older history toward a jump-to-message target until it's loaded
+    /// (thread-reply targets are handled by ThreadPanelView, not here).
+    private func pageToFocusIfNeeded() {
+        guard app.openThreadRootId == nil, let fid = app.focusMessageId else { return }
+        if messages.value.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
+        if app.hasMore[channelId] ?? false {
+            Task { await app.engine.loadOlder(channelId: channelId) }
+        } else {
+            app.focusMessageId = nil // not in this channel's history
         }
     }
 

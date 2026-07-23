@@ -17,6 +17,10 @@ struct MessageListView: View {
     /// Enables per-channel scroll-position memory (channels pass their id;
     /// threads omit it and always open at the newest reply).
     var scrollKey: String? = nil
+    /// Jump-to-message target (phase 12): scroll it into view + flash it once
+    /// it's in the list, then call onFocused. Nil in the normal case.
+    var focusMessageId: String? = nil
+    var onFocused: () -> Void = {}
 
     /// Top-visible message id, tracked via `.scrollPosition` — recorded per
     /// channel so a return visit re-anchors there.
@@ -24,6 +28,8 @@ struct MessageListView: View {
     /// The scrollKey we've already applied a restore/bottom decision for, so a
     /// new message in the *current* channel doesn't re-trigger a restore.
     @State private var appliedKey: String?
+    /// The row currently flashing after a jump (fades out on a timer).
+    @State private var flashId: String?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -51,6 +57,7 @@ struct MessageListView: View {
                                 currentUserId: currentUserId,
                                 showHeader: showsHeader(at: index),
                                 showThreadAffordances: showThreadAffordances,
+                                highlighted: message.id == flashId,
                                 onOpenThread: onOpenThread,
                                 onEdit: onEdit,
                                 onDelete: onDelete,
@@ -68,7 +75,11 @@ struct MessageListView: View {
                 if let key = scrollKey, let id { MessageScrollMemory.record(key, topMessageId: id) }
             }
             .onChange(of: messages.last?.id) { _, newId in
-                guard let newId else { return }
+                // A pending jump owns the scroll position — skip both the
+                // scroll-memory restore and the follow-to-bottom (tryFocus
+                // handles the scroll, and marks appliedKey so this doesn't
+                // re-fire a restore once the target is cleared).
+                guard focusMessageId == nil, let newId else { return }
                 if scrollKey != appliedKey {
                     // The channel just (re)loaded: restore a remembered position
                     // if it's fresh and still present, else land at the bottom.
@@ -91,6 +102,29 @@ struct MessageListView: View {
             // under-scrolls, so anchor the scroll view at the bottom instead
             // (also keeps the list pinned while attachments finish sizing).
             .defaultScrollAnchor(.bottom)
+            .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
+            // A jump target may arrive only after older history pages in.
+            .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
+            .onAppear { tryFocus(proxy) }
+        }
+    }
+
+    /// Center + flash the jump target once it's actually in the list, then
+    /// release the target (paging in ChannelView brings it in if it's old).
+    private func tryFocus(_ proxy: ScrollViewProxy) {
+        guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(fid, anchor: .center)
+        }
+        // The jump decided this channel's scroll position — mark it applied so
+        // the scroll-memory restore doesn't yank away once focus is cleared.
+        appliedKey = scrollKey
+        flashId = fid
+        onFocused()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            withAnimation(.easeOut(duration: 0.6)) {
+                if flashId == fid { flashId = nil }
+            }
         }
     }
 
@@ -148,6 +182,8 @@ struct MessageRow: View {
     let currentUserId: String?
     let showHeader: Bool
     let showThreadAffordances: Bool
+    /// Flashing after a jump-to-message (phase 12).
+    var highlighted: Bool = false
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
     let onDelete: (Message) -> Void
@@ -299,6 +335,8 @@ struct MessageRow: View {
         .padding(.horizontal, 22)
         .padding(.top, showHeader ? 10 : 1)
         .padding(.bottom, 1)
+        .background(highlighted ? MC.unread.opacity(0.16) : Color.clear)
+        .animation(.easeOut(duration: 0.6), value: highlighted)
         .opacity(message.pending ? 0.55 : 1)
         .contentShape(Rectangle())
         .onHover { setHovering($0) }

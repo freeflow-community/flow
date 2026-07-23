@@ -10,6 +10,8 @@ struct ThreadPanelView: View {
     @StateObject private var workspaceId = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var profileUserId: String?
+    /// The reply currently flashing after a jump-to-message (phase 12).
+    @State private var flashId: String?
 
     private var root: Message? {
         thread.value.first { $0.id == rootId }
@@ -49,6 +51,7 @@ struct ThreadPanelView: View {
                                 currentUserId: app.currentUser?.id,
                                 showHeader: true,
                                 showThreadAffordances: false,
+                                highlighted: message.id == flashId,
                                 onOpenThread: { _ in },
                                 onEdit: { editingMessage = $0 },
                                 onDelete: { msg in
@@ -75,10 +78,16 @@ struct ThreadPanelView: View {
                 }
                 .defaultScrollAnchor(.bottom) // open at the newest reply
                 .onChange(of: thread.value.last?.id) { _, newId in
-                    if let newId {
-                        proxy.scrollTo(newId, anchor: .bottom)
-                    }
+                    // A pending jump owns the scroll position.
+                    guard app.focusMessageId == nil, let newId else { return }
+                    proxy.scrollTo(newId, anchor: .bottom)
                 }
+                // Jump-to-message (phase 12): scroll to + flash a thread reply
+                // reached from the Activity feed. The thread loads whole, so no
+                // paging is needed here (unlike the channel's main list).
+                .onChange(of: app.focusMessageId) { _, _ in tryFocus(proxy) }
+                .onChange(of: thread.value.count) { _, _ in tryFocus(proxy) }
+                .onAppear { tryFocus(proxy) }
             }
 
             if let root {
@@ -136,5 +145,21 @@ struct ThreadPanelView: View {
               !last.isDeleted, !last.pending else { return false }
         editingMessage = last
         return true
+    }
+
+    /// Center + flash the jump-to-message target once the thread has loaded it,
+    /// then release the shared target.
+    private func tryFocus(_ proxy: ScrollViewProxy) {
+        guard let fid = app.focusMessageId, thread.value.contains(where: { $0.id == fid }) else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(fid, anchor: .center)
+        }
+        flashId = fid
+        app.focusMessageId = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            withAnimation(.easeOut(duration: 0.6)) {
+                if flashId == fid { flashId = nil }
+            }
+        }
     }
 }

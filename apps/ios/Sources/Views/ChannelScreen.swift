@@ -49,7 +49,12 @@ struct ChannelScreen: View {
                 onEdit: { editingMessage = $0 },
                 onDelete: { msg in
                     Task { await app.engine.deleteMessage(id: msg.id) }
-                }
+                },
+                // Jump-to-message (phase 12): the Activity feed only sets a
+                // target for top-level messages on iOS (thread replies live in
+                // a separate pushed screen — see CHANGELOG Parity).
+                focusMessageId: app.focusMessageId,
+                onFocused: { app.focusMessageId = nil }
             )
             TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
             Divider()
@@ -61,6 +66,10 @@ struct ChannelScreen: View {
         .navigationDestination(item: $threadRoute) { route in
             ThreadScreen(rootId: route.rootId)
         }
+        // Jump-to-message (phase 12): page older history until the target is
+        // loaded, then MessageListView scrolls to it; give up when exhausted.
+        .onChange(of: app.focusMessageId) { _, _ in pageToFocusIfNeeded() }
+        .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
         .modifier(DebugTestSend(channelId: channelId, app: app))
         .modifier(DebugMessageActions(channelId: channelId, app: app) { threadRoute = ThreadRoute(rootId: $0) })
         .background(MC.base)
@@ -87,4 +96,14 @@ struct ChannelScreen: View {
         }
     }
 
+    /// Page older history toward a jump-to-message target until it's loaded.
+    private func pageToFocusIfNeeded() {
+        guard let fid = app.focusMessageId else { return }
+        if messages.value.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
+        if app.hasMore[channelId] ?? false {
+            Task { await app.engine.loadOlder(channelId: channelId) }
+        } else {
+            app.focusMessageId = nil // not in this channel's loaded history
+        }
+    }
 }

@@ -10,11 +10,22 @@ struct MainView: View {
     @StateObject private var allChannels = DBObserved<[Channel]>(initial: [])
     @State private var path: [String] = []
 
+    /// Sentinel route for the virtual Activity feed (phase 12) — pushed onto the
+    /// same `[String]` stack as channel ids (real ids are UUIDs, so this can't
+    /// collide). Matches the web client's `ACTIVITY_VIEW_ID`.
+    static let activityRoute = "__activity__"
+
     var body: some View {
         NavigationStack(path: $path) {
             ChannelListView(onOpenChannel: { path.append($0) })
-                .navigationDestination(for: String.self) { channelId in
-                    ChannelScreen(channelId: channelId)
+                .navigationDestination(for: String.self) { route in
+                    if route == Self.activityRoute {
+                        // Tapping a row replaces the stack with that channel:
+                        // pops the feed and lands in the conversation.
+                        ActivityFeedView(onOpenChannel: { path = [$0] })
+                    } else {
+                        ChannelScreen(channelId: route)
+                    }
                 }
         }
         .task {

@@ -17,6 +17,15 @@ export interface AuthState {
  */
 export const ADMIN_VIEW_ID = '__admin__';
 
+/**
+ * Sentinel channel id for the Activity feed (phase 12) — an always-present,
+ * virtual per-user "channel" that replaces the notifications bell. When it's
+ * the active selection the content pane renders <ActivityView>, which surfaces
+ * this user's notification rows (mentions/DMs/thread replies/activity) as a
+ * message-like stream. Not a real channel — there is no server row.
+ */
+export const ACTIVITY_VIEW_ID = '__activity__';
+
 export interface Selection {
   workspaceId: string | null;
   channelId: string | null;
@@ -27,6 +36,10 @@ export interface Selection {
   artifactId: string | null;
   /** Message being edited inline (hover menu or composer ↑) — ui_nits item 4. */
   editingMessageId: string | null;
+  /** Message to scroll to + flash after navigation (phase 12 Activity feed
+   * jump-to-message). The channel/thread view pages history until it's loaded,
+   * scrolls to it, then clears this. */
+  focusMessageId: string | null;
   /** Admin panel pinned into the channel list (admins only; per-device). */
   adminPanelOpen: boolean;
   selectWorkspace(id: string | null): void;
@@ -34,6 +47,11 @@ export interface Selection {
   selectArtifact(id: string | null): void;
   openThread(id: string | null): void;
   setEditingMessage(id: string | null): void;
+  /** Navigate to a specific message: selects its channel (and thread, if any)
+   * and marks it as the scroll-to + flash target. */
+  jumpToMessage(channelId: string, messageId: string, threadRootId?: string | null): void;
+  /** Clear the scroll-to target once it's been reached (or given up on). */
+  clearFocusMessage(): void;
   /** Pin the admin row into the sidebar and open it (from the workspace menu). */
   openAdminPanel(): void;
   /** Unpin/close the admin row (its "close like any other channel" affordance). */

@@ -17,6 +17,13 @@ struct MessageListView: View {
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
     let onDelete: (Message) -> Void
+    /// Jump-to-message target (phase 12): scroll it into view + flash it once
+    /// it's in the list, then call onFocused. Nil in the normal case.
+    var focusMessageId: String? = nil
+    var onFocused: () -> Void = {}
+
+    /// The row currently flashing after a jump (fades out on a timer).
+    @State private var flashId: String?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -43,6 +50,7 @@ struct MessageListView: View {
                                 currentUserId: currentUserId,
                                 showHeader: showsHeader(at: index),
                                 showThreadAffordances: showThreadAffordances,
+                                highlighted: message.id == flashId,
                                 onOpenThread: onOpenThread,
                                 onEdit: onEdit,
                                 onDelete: onDelete
@@ -55,22 +63,42 @@ struct MessageListView: View {
                 .padding(.vertical, 8)
             }
             .onChange(of: messages.last?.id) { _, newId in
-                if newId != nil {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
+                // A pending jump owns the scroll position — don't yank to bottom.
+                guard focusMessageId == nil, newId != nil else { return }
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
             // First open must land on the newest message (same rationale as
             // macOS: scrollTo from onAppear runs before lazy rows lay out).
             // Async avatar/attachment loads grow row heights after the
             // initial layout, so settle-scroll once shortly after the list
-            // populates or changes.
+            // populates or changes — unless a jump owns the scroll position.
             .task(id: messages.count) {
+                guard focusMessageId == nil else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
             .defaultScrollAnchor(.bottom)
+            // Jump-to-message (phase 12): center + flash the target once it's in
+            // the list (older history pages in via ChannelScreen), then release.
+            .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
+            .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
+            .onAppear { tryFocus(proxy) }
+        }
+    }
+
+    private func tryFocus(_ proxy: ScrollViewProxy) {
+        guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(fid, anchor: .center)
+        }
+        flashId = fid
+        onFocused()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            withAnimation(.easeOut(duration: 0.6)) {
+                if flashId == fid { flashId = nil }
+            }
         }
     }
 
@@ -128,6 +156,8 @@ struct MessageRow: View {
     let currentUserId: String?
     let showHeader: Bool
     let showThreadAffordances: Bool
+    /// Flashing after a jump-to-message (phase 12).
+    var highlighted: Bool = false
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
     let onDelete: (Message) -> Void
@@ -214,6 +244,8 @@ struct MessageRow: View {
         .padding(.horizontal, 14)
         .padding(.top, showHeader ? 10 : 1)
         .padding(.bottom, 1)
+        .background(highlighted ? MC.unread.opacity(0.16) : Color.clear)
+        .animation(.easeOut(duration: 0.6), value: highlighted)
         .opacity(message.pending ? 0.55 : 1)
         .contentShape(Rectangle())
         // Long-press context menu: iOS's answer to the macOS hover menu —

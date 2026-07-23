@@ -9,7 +9,6 @@ import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useMembers, useWorkspaces } from '../hooks';
 import { Avatar } from './Avatar';
-import NotificationsBell from './NotificationsBell';
 import { MobileMenuButton } from './MobileMenuButton';
 
 export default function AdminView() {
@@ -44,7 +43,6 @@ export default function AdminView() {
           >
             Close
           </button>
-          <NotificationsBell />
         </div>
       </header>
 

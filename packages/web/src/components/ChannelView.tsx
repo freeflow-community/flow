@@ -5,7 +5,6 @@ import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
-import NotificationsBell from './NotificationsBell';
 import { MobileMenuButton } from './MobileMenuButton';
 import { EditChannelModal, UserCard } from './modals';
 
@@ -36,6 +35,21 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newestId, channelId]);
+
+  // Jump-to-message (phase 12): a target from the Activity feed may sit beyond
+  // the loaded pages — page older history until it's in the list (MessageList
+  // then scrolls to it). Give up (and release the target) once history is
+  // exhausted. Thread-reply targets are handled by ThreadPanel, not here.
+  const focusId = sel.threadRootId ? null : sel.focusMessageId;
+  useEffect(() => {
+    if (!focusId) return;
+    if (messages.some((m) => m.id === focusId)) return; // loaded — MessageList takes it
+    if (messagesQ.hasNextPage && !messagesQ.isFetchingNextPage) {
+      void messagesQ.fetchNextPage();
+    } else if (!messagesQ.hasNextPage) {
+      sel.clearFocusMessage(); // not in this channel's history
+    }
+  }, [focusId, messages, messagesQ.hasNextPage, messagesQ.isFetchingNextPage, sel]);
 
   const isDm = channel && channel.kind !== 'standard';
   // 1:1 DM header click opens the other member's card (ruling 4); self-DM shows your own.
@@ -103,7 +117,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             })}
             {extra > 0 && <span className="ml-1.5 text-xs text-muted">+{extra}</span>}
           </div>
-          <NotificationsBell />
         </div>
       </header>
 
@@ -119,6 +132,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         hasMore={messagesQ.hasNextPage ?? false}
         onLoadOlder={() => void messagesQ.fetchNextPage()}
         showThreadAffordances
+        focusMessageId={focusId}
+        onFocused={() => sel.clearFocusMessage()}
       />
 
       <div className="h-5 px-[22px] text-xs text-muted" data-testid="typing-indicator-slot">
