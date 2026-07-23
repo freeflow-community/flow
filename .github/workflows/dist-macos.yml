@@ -1,0 +1,70 @@
+# Build a signed + notarized macOS DMG of Flow.app (phase 14). Same env-var
+# contract as a local run (docs/specs/phase14.md §2) — CI only adds keychain
+# plumbing: import the Developer ID cert into a temporary keychain and create
+# the notarytool profile in-job. Secrets live in GitHub Actions secrets, never
+# in the repo.
+#
+# One-time repo setup (Settings → Secrets and variables → Actions):
+#   MACOS_CERT_P12        base64 of the Developer ID Application .p12
+#   MACOS_CERT_PASSWORD   password for that .p12
+#   MACOS_SIGN_IDENTITY   e.g. "Developer ID Application: Jane Doe (AB12CD34EF)"
+#   MACOS_NOTARY_APPLE_ID Apple ID email for notarization
+#   MACOS_NOTARY_TEAM_ID  Apple Developer Team ID
+#   MACOS_NOTARY_PASSWORD app-specific password (appleid.apple.com)
+name: dist-macos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dist:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import Developer ID certificate into a temporary keychain
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/flow-signing.keychain-db"
+          KEYCHAIN_PW=$(uuidgen)
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          printf '%s' "$CERT_P12" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          # Let codesign use the key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          # Make the temp keychain searchable alongside the login keychain.
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$CERT_PATH"
+
+      - name: Store notarization credentials as a keychain profile
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials "flow-notary" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD"
+
+      - name: Build signed + notarized DMG
+        env:
+          FLOW_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          FLOW_NOTARY_PROFILE: flow-notary
+        working-directory: apps/macos
+        run: tools/dist.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flow-dmg
+          path: apps/macos/dist/Flow.dmg
+          if-no-files-found: error

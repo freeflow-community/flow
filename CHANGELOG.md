@@ -117,6 +117,25 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-23 — Phase 14: signed + notarized macOS distribution
+- **New `apps/macos/tools/dist.sh` produces a signed, notarized `dist/Flow.dmg`**
+  in one non-interactive command — release build (reuses `make-app.sh` so bundle
+  assembly never drifts), Developer ID signature under the hardened runtime with
+  a secure timestamp, blocking notarization, stapled ticket, DMG, and a final
+  `spctl`/`stapler` gate check. Opens on a clean Mac with no Gatekeeper warning.
+  `[macos]`
+- Env-var contract `FLOW_SIGN_IDENTITY` + `FLOW_NOTARY_PROFILE` (docs/specs/
+  phase14.md §2); the script holds no secrets and **aborts** if either is unset
+  or the identity is absent — never falls back to ad-hoc (an ad-hoc build can't
+  be notarized). `[macos]`
+- Empty `tools/Flow.entitlements` (Keychain + UserNotifications need none under
+  the hardened runtime; grow only as notarization dictates). `[macos]`
+- `.github/workflows/dist-macos.yml` runs the same script in CI behind the same
+  env contract, adding only keychain plumbing (import cert to a temp keychain,
+  create the notary profile in-job), and uploads the DMG artifact. `[macos]`
+- Packaging only — no client behavior changes, so no Parity line. Distribution
+  (a download link) and auto-update are deliberate follow-ups, not this phase.
+
 ### 2026-07-23 — "What's new" from the Build label
 - **Clicking the `Build …` label at the foot of the workspace menu opens a
   "What's new" lightbox** that renders `FEATURES.md`. `[web]` `[macos]`
