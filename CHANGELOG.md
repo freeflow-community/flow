@@ -35,9 +35,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - iOS: no Notifications section in the account/profile UI (web shipped the
   per-user pref toggles in phase 10). Nothing on-device consumes them yet —
   iOS has no push notifications — so this closes with the APNs work.
-- iOS: no Artifacts UI (phase 9) — no sidebar section, artifact panel, or
-  save-as-artifact action; the `artifact.*` WS events are safely ignored.
-  Server + web + macOS shipped together 2026-07-21.
+- iOS: no Artifacts UI — no nested sidebar rows, artifact side panel, or
+  pin-as-artifact action; the `artifact.*` WS events are safely ignored. Now
+  the per-channel model (phase 13); server + web + macOS shipped together
+  2026-07-23.
 - macOS/iOS: no agent pairing prompt — sponsors must approve agent
   registrations in the web app (the `agent.pairing` WS event is safely ignored
   by the native clients; roster `sponsorId` likewise unused there yet).
@@ -116,6 +117,37 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-23 — Phase 13: side-panel, per-channel artifacts
+- **Artifacts are now per-channel shared objects, not personal bookmarks.**
+  Everyone in a channel sees the same artifacts (privacy = use a private
+  channel); they nest under their channel in the sidebar and open in a
+  right-hand **side panel** beside the conversation. "Save as artifact" is now
+  **"Pin as artifact."** `[server]` `[web]` `[macos]`
+- **The side panel is a tabbed container**: a Thread tab (when a thread is open)
+  plus a tab for each of the channel's artifacts, switchable at the top —
+  threads and artifacts coexist. The panel ✕ closes it; the Thread tab has its
+  own ✕. In the sidebar the selected artifact reads as bold text (no second
+  highlight pill under the active channel). `[web]` `[macos]`
+- **Backing files are mutable**: an artifact re-points at a freshly uploaded
+  file, so agents can *update* an artifact's content in place. Files stay
+  immutable blobs. `[server]`
+- **Data model** (`0019_artifacts_channel.sql`): the `artifacts` table is
+  recreated channel-scoped (`channel_id`, `owns_file`, `created_by`,
+  `updated_at`); pins are idempotent per `(channel, file)`. Existing per-user
+  bookmarks are dropped — no channel to map them to (operator decision). Events
+  ride a per-channel subject; the gateway's `visible()` filter keeps
+  private-channel artifacts private for free. `[server]`
+- **Delete removes the artifact's own file** when it owns it (agent-generated),
+  guarded so a file still attached to a message or pinned elsewhere is kept.
+  Reverses the phase-9 "never touch the file" ruling for owned files only.
+  `[server]`
+- **Flow MCP**: `create_artifact` now pins into the current channel (drops the
+  one-recipient model); new **`update_artifact`** renames and/or replaces
+  content in place. `[bridge]`
+- Supersedes the phase-9 per-user artifact rulings (see decision_log
+  2026-07-23). QA: pin/side-panel/nested-sidebar + agent create→update→delete.
+  `[qa]`
 
 ### 2026-07-23 — Phase 14: signed + notarized macOS distribution
 - **New `apps/macos/tools/dist.sh` produces a signed, notarized `dist/Flow.dmg`**

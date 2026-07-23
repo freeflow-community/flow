@@ -114,7 +114,7 @@ const TOOLS = [
   {
     name: 'create_artifact',
     description:
-      "Create an artifact — a named file that appears in one person's Artifacts sidebar. Defaults to the person you're replying to. Provide the content inline, or a local file path, or the id of an already-uploaded file.",
+      'Create an artifact — a named file pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Provide the content inline, or a local file path, or the id of an already-uploaded file. Returns the artifact id (use it with update_artifact).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -122,9 +122,26 @@ const TOOLS = [
         content: { type: 'string', description: 'Inline file content to upload (use with name; mimeType recommended).' },
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML artifacts).' },
         path: { type: 'string', description: 'Path to a local file to upload instead of inline content.' },
-        fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to use as-is.' },
-        userId: { type: 'string', description: 'Recipient user id (default: the person whose message you are responding to). You must share a channel with them.' },
+        fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to pin as-is.' },
+        channelId: { type: 'string', description: 'Channel to pin the artifact in (default: the current conversation).' },
       },
+    },
+  },
+  {
+    name: 'update_artifact',
+    description:
+      'Update an existing artifact in place — rename it and/or replace its content. Everyone viewing it sees the new version. Provide new content inline, a local file path, or the id of an already-uploaded file to replace the backing file; and/or a new name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        artifactId: { type: 'string', description: 'Id of the artifact to update (from create_artifact).' },
+        name: { type: 'string', description: 'New display name (optional).' },
+        content: { type: 'string', description: 'New inline content to replace the file with (mimeType recommended).' },
+        mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML).' },
+        path: { type: 'string', description: 'Path to a local file whose contents replace the artifact.' },
+        fileId: { type: 'string', description: 'Id of an already-uploaded file to point the artifact at.' },
+      },
+      required: ['artifactId'],
     },
   },
   {
@@ -166,9 +183,6 @@ export async function runMcpServer(): Promise<void> {
   const workspaceId = process.env.FLOW_WORKSPACE_ID ?? '';
   const defaultChannelId = process.env.FLOW_CHANNEL_ID ?? '';
   const defaultThreadRootId = process.env.FLOW_THREAD_ROOT_ID || undefined;
-  // Author of the message this run is responding to — create_artifact's default
-  // recipient. Absent for channel-agnostic clients (mcp-init), which must pass userId.
-  const defaultUserId = process.env.FLOW_USER_ID ?? '';
   if (!serverUrl || !token) {
     process.stderr.write('flow mcp: FLOW_SERVER_URL and FLOW_AGENT_TOKEN are required\n');
     process.exit(1);
@@ -185,6 +199,34 @@ export async function runMcpServer(): Promise<void> {
     write({ jsonrpc: '2.0', id, error: { code, message } });
   };
   const toolText = (text: string, isError = false) => ({ content: [{ type: 'text', text }], isError });
+
+  /** Resolve artifact args to a file id: an existing `fileId` (pinned as-is,
+   * ownsFile=false), or a `path`/`content` upload (owned by the artifact,
+   * ownsFile=true). Returns `{ error: true }` when no source was given. */
+  async function resolveArtifactFile(
+    args: Record<string, unknown>,
+    label: string | undefined,
+  ): Promise<{ fileId: string; label: string | undefined; ownsFile: boolean } | { error: true }> {
+    const existing = (args.fileId as string | undefined) || '';
+    if (existing) return { fileId: existing, label, ownsFile: false };
+    let filename: string;
+    let mime: string;
+    let data: Buffer;
+    if (args.path) {
+      const p = path.resolve(String(args.path));
+      data = fs.readFileSync(p);
+      filename = path.basename(p);
+      mime = String(args.mimeType ?? '') || MIME_BY_EXT[path.extname(p).toLowerCase()] || 'application/octet-stream';
+    } else if (typeof args.content === 'string') {
+      filename = label ?? 'artifact.txt';
+      mime = String(args.mimeType ?? '') || 'text/plain';
+      data = Buffer.from(args.content, 'utf8');
+    } else {
+      return { error: true };
+    }
+    const file = await api.uploadFile(workspaceId, filename, mime, data);
+    return { fileId: file.id, label: label ?? filename, ownsFile: true };
+  }
 
   async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     const channelId = (args.channelId as string | undefined) || defaultChannelId;
@@ -251,35 +293,33 @@ export async function runMcpServer(): Promise<void> {
         return toolText('avatar updated');
       }
       case 'create_artifact': {
-        // resolve a file id: bookmark an existing file, or upload path/content
-        let fileId = (args.fileId as string | undefined) || '';
-        let label = (args.name as string | undefined) || undefined;
-        if (!fileId) {
-          let filename: string;
-          let mime: string;
-          let data: Buffer;
-          if (args.path) {
-            const p = path.resolve(String(args.path));
-            data = fs.readFileSync(p);
-            filename = path.basename(p);
-            mime = String(args.mimeType ?? '') || MIME_BY_EXT[path.extname(p).toLowerCase()] || 'application/octet-stream';
-          } else if (typeof args.content === 'string') {
-            filename = label ?? 'artifact.txt';
-            mime = String(args.mimeType ?? '') || 'text/plain';
-            data = Buffer.from(args.content, 'utf8');
-          } else {
-            return toolText('create_artifact needs one of: content, path, or fileId', true);
-          }
-          const file = await api.uploadFile(workspaceId, filename, mime, data);
-          fileId = file.id;
-          label = label ?? filename;
+        if (!channelId) {
+          return toolText('create_artifact needs a channelId (no conversation context to infer the channel)', true);
         }
-        const recipient = (args.userId as string | undefined) || defaultUserId;
-        if (!recipient) {
-          return toolText('create_artifact needs a userId (no conversation context to infer the recipient)', true);
+        // resolve a file id: pin an existing file, or upload path/content (owned)
+        const resolved = await resolveArtifactFile(args, (args.name as string | undefined) || undefined);
+        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, or fileId`, true);
+        const created = await api.createArtifact(channelId, resolved.fileId, resolved.label, resolved.ownsFile);
+        return toolText(`artifact "${created.name}" created (id ${created.id})`);
+      }
+      case 'update_artifact': {
+        const artifactId = (args.artifactId as string | undefined) || '';
+        if (!artifactId) return toolText('update_artifact needs an artifactId', true);
+        const name = (args.name as string | undefined) || undefined;
+        const hasNewContent = args.fileId || args.path || typeof args.content === 'string';
+        if (!name && !hasNewContent) {
+          return toolText('update_artifact needs a name and/or new content (content, path, or fileId)', true);
         }
-        const created = await api.shareArtifactWith(recipient, fileId, label);
-        return toolText(`artifact "${created.name}" created for <@${recipient}>`);
+        const patch: { name?: string; fileId?: string; ownsFile?: boolean } = {};
+        if (name) patch.name = name;
+        if (hasNewContent) {
+          const resolved = await resolveArtifactFile(args, name);
+          if ('error' in resolved) return toolText('update_artifact could not read the new content', true);
+          patch.fileId = resolved.fileId;
+          patch.ownsFile = resolved.ownsFile;
+        }
+        const updated = await api.updateArtifact(artifactId, patch);
+        return toolText(`artifact "${updated.name}" updated`);
       }
       case 'read_messages': {
         const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);

@@ -4,10 +4,12 @@ import PDFKit
 import SwiftUI
 import WebKit
 
-// Phase 9: full content-pane viewer for an artifact (a personal bookmark of a
-// file shared in chat). Renders images, video, PDF, HTML (sandboxed
-// WKWebView), and text; anything else gets a download card — mirrors the web
-// ArtifactView. The underlying file stays access-checked server-side.
+// Phase 13: the artifact tab's body inside the tabbed side panel (see
+// SidePanelView). A compact toolbar (rename + size + download) sits above the
+// viewer, which renders images, video, PDF, HTML (sandboxed WKWebView), and
+// text; anything else gets a download card — mirrors the web ArtifactBody. The
+// panel chrome (tab strip, close) lives in SidePanelView; the underlying file
+// stays access-checked server-side.
 
 struct ArtifactPanelView: View {
     let artifactId: String
@@ -21,7 +23,7 @@ struct ArtifactPanelView: View {
         Group {
             if let artifact {
                 VStack(spacing: 0) {
-                    ArtifactHeaderView(artifact: artifact)
+                    ArtifactToolbarView(artifact: artifact)
                     Rectangle().fill(MC.hairline).frame(height: 1)
                     ArtifactContentView(file: artifact.file)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -42,8 +44,9 @@ struct ArtifactPanelView: View {
     }
 }
 
-/// Header: click-to-edit name (rename), file size, Download and Close.
-private struct ArtifactHeaderView: View {
+/// Compact toolbar above the artifact viewer: click-to-edit name (rename), file
+/// size, and Download. Closing/switching is handled by the side panel's tabs.
+private struct ArtifactToolbarView: View {
     let artifact: Artifact
     @EnvironmentObject private var app: AppState
     @State private var editing = false
@@ -56,8 +59,8 @@ private struct ArtifactHeaderView: View {
             if editing {
                 TextField("Artifact name", text: $draft)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(maxWidth: 360)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(maxWidth: 320)
                     .focused($nameFocused)
                     .onSubmit { saveRename() }
                     .onExitCommand { editing = false }
@@ -69,8 +72,8 @@ private struct ArtifactHeaderView: View {
                     nameFocused = true
                 } label: {
                     Text(artifact.name)
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(MC.ink)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MC.muted)
                         .lineLimit(1)
                 }
                 .buttonStyle(.plain)
@@ -87,17 +90,10 @@ private struct ArtifactHeaderView: View {
             }
             .help("Download")
             .accessibilityIdentifier("artifact.download")
-            Button {
-                app.selectArtifact(nil)
-            } label: {
-                Image(systemName: "xmark")
-            }
-            .help("Close")
-            .accessibilityIdentifier("artifact.close")
         }
         .buttonStyle(.borderless)
-        .padding(.horizontal, 22)
-        .frame(height: 52)
+        .padding(.horizontal, 16)
+        .frame(height: 38)
     }
 
     private func saveRename() {

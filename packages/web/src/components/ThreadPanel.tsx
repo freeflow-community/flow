@@ -13,7 +13,7 @@ function storedWidth(): number {
   return Number.isFinite(w) && w > 0 ? clampWidth(w) : DEFAULT_WIDTH;
 }
 
-export default function ThreadPanel({ rootId }: { rootId: string }) {
+export default function ThreadPanel({ rootId, embedded = false }: { rootId: string; embedded?: boolean }) {
   const auth = useAuth();
   const sel = useSelection();
   const thread = useThread(rootId);
@@ -38,6 +38,49 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
   const typingNames = Object.entries(channelId ? (live.typing[typingKey(channelId, rootId)] ?? {}) : {})
     .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
     .map(([uid]) => names[uid] ?? 'Someone');
+
+  const body = (
+    <>
+      <MessageList
+        key={rootId}
+        messages={messages}
+        names={names}
+        membersById={memberMap}
+        hasMore={false}
+        onLoadOlder={() => {}}
+        showThreadAffordances={false}
+        focusMessageId={sel.focusMessageId}
+        onFocused={() => sel.clearFocusMessage()}
+      />
+      <div className="h-5 px-4 text-xs text-muted" data-testid="thread-typing-indicator-slot">
+        {typingNames.length === 1 && (
+          <span data-testid="thread-typing-indicator">{typingNames[0]} is typing…</span>
+        )}
+        {typingNames.length > 1 && (
+          <span data-testid="thread-typing-indicator">Several people are typing…</span>
+        )}
+      </div>
+
+      {channelId && (
+        <Composer
+          channelId={channelId}
+          threadRootId={rootId}
+          placeholder="Reply in thread"
+          onArrowUpEdit={arrowUpEdit(messages, auth.user.id, sel.setEditingMessage)}
+        />
+      )}
+    </>
+  );
+
+  // Embedded in the tabbed side panel (phase 13): the container owns the aside,
+  // width/resizer and tab strip, so drop our own chrome and just fill the slot.
+  if (embedded) {
+    return (
+      <div data-testid="thread-panel" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {body}
+      </div>
+    );
+  }
 
   return (
     <aside
@@ -81,34 +124,7 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
           ✕
         </button>
       </header>
-      <MessageList
-        key={rootId}
-        messages={messages}
-        names={names}
-        membersById={memberMap}
-        hasMore={false}
-        onLoadOlder={() => {}}
-        showThreadAffordances={false}
-        focusMessageId={sel.focusMessageId}
-        onFocused={() => sel.clearFocusMessage()}
-      />
-      <div className="h-5 px-4 text-xs text-muted" data-testid="thread-typing-indicator-slot">
-        {typingNames.length === 1 && (
-          <span data-testid="thread-typing-indicator">{typingNames[0]} is typing…</span>
-        )}
-        {typingNames.length > 1 && (
-          <span data-testid="thread-typing-indicator">Several people are typing…</span>
-        )}
-      </div>
-
-      {channelId && (
-        <Composer
-          channelId={channelId}
-          threadRootId={rootId}
-          placeholder="Reply in thread"
-          onArrowUpEdit={arrowUpEdit(messages, auth.user.id, sel.setEditingMessage)}
-        />
-      )}
+      {body}
     </aside>
   );
 }

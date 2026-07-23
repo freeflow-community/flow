@@ -232,17 +232,23 @@ export async function requireFileAccess(fileId: string, userId: string): Promise
   if (f.userId === userId) return f;
   await requireMembership(f.workspaceId, userId); // 404s non-members without leaking
 
-  // An artifact row is itself the grant: it exists either because this user
-  // bookmarked a file they could already read, or because a channel member
-  // sent it to them (shareArtifactWith checks the sender's access first).
-  // Agent-created artifacts are never attached to a message, so without this
-  // the owner of the artifact couldn't read it.
-  const bookmarked = await db
-    .select({ id: artifacts.id })
+  // A channel artifact backed by this file is itself the grant (phase 13):
+  // if the file backs an artifact in a channel this user can access, they can
+  // read it. Agent-generated artifact files are never attached to a message,
+  // so without this a channel member couldn't render the artifact.
+  const pinned = await db
+    .select({ channelId: artifacts.channelId })
     .from(artifacts)
-    .where(and(eq(artifacts.userId, userId), eq(artifacts.fileId, fileId)))
-    .limit(1);
-  if (bookmarked.length > 0) return f;
+    .where(eq(artifacts.fileId, fileId))
+    .groupBy(artifacts.channelId);
+  for (const p of pinned) {
+    try {
+      await requireChannelAccess(p.channelId, userId);
+      return f;
+    } catch {
+      /* try the next channel this file is pinned in */
+    }
+  }
 
   const attached = await db
     .select({ channelId: messages.channelId })
@@ -390,6 +396,35 @@ export async function sweepOrphanFiles(): Promise<number> {
     if (o.thumbKey) await store.delete(o.thumbKey);
   }
   return orphans.length;
+}
+
+/** Phase 13: delete a file + its blob iff nothing references it — no message
+ * attachment and no (other) artifact. Used when an owned artifact is deleted or
+ * re-pointed at a new file; a file still shared in a message or pinned
+ * elsewhere is kept untouched. Best-effort: never throws. */
+export async function reapFileIfUnreferenced(fileId: string): Promise<boolean> {
+  try {
+    const rows = await db
+      .select({ id: files.id, storageKey: files.storageKey, thumbKey: files.thumbKey })
+      .from(files)
+      .where(
+        and(
+          eq(files.id, fileId),
+          sql`NOT EXISTS (SELECT 1 FROM message_files mf WHERE mf.file_id = ${files.id})`,
+          sql`NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.file_id = ${files.id})`,
+        ),
+      )
+      .limit(1);
+    const f = rows[0];
+    if (!f) return false; // still referenced — leave it
+    const store = blobStore();
+    await db.delete(files).where(eq(files.id, f.id));
+    await store.delete(f.storageKey);
+    if (f.thumbKey) await store.delete(f.thumbKey);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null;

@@ -700,3 +700,41 @@ Implementation judgment calls (also pending review):
   separate pushed screen there, so a thread-reply row lands in the channel
   without opening the thread. Logged as a Parity gap rather than blocking the
   phase.
+
+## 2026-07-23 — Phase 13 (side-panel, per-channel artifacts) rulings
+
+Supersedes both phase-9 artifact rulings above (the per-user model and the
+one-recipient MCP correction).
+
+- **Artifacts are per-channel shared objects**, not personal per-user
+  bookmarks. Every member of a channel sees the same artifacts; privacy is
+  achieved by pinning in a private channel. The gateway's existing `visible()`
+  filter (envelope `channelId` + private-channel membership) enforces this on
+  the event stream, so no new access plumbing was needed.
+- **Backing files are mutable.** An artifact points at a file that can be
+  swapped for a freshly uploaded one — this is how an agent "updates" an
+  artifact. Files themselves stay immutable blobs; the artifact row carries the
+  current `file_id` plus an `owns_file` flag.
+- **The side panel is a tabbed container** (operator decision, revised during
+  the build from an initial "mutually exclusive slot"). The right-hand pane —
+  which occupies the same space as the thread panel — shows a tab strip: a
+  Thread tab when a thread is open, plus one tab per artifact pinned in the
+  active channel. Threads and artifacts coexist; the active tab picks what
+  shows. Opening a channel-nested artifact selects its channel behind the panel.
+  The panel ✕ closes everything; the Thread tab has its own ✕. In the sidebar
+  the selected artifact is bold text with no highlight pill, so it doesn't stack
+  a second white pill under the active channel's.
+- **Migration drops existing per-user artifact rows** (operator decision) —
+  they have no channel to map to and are low-value pins of already-shared
+  files. The table is recreated channel-scoped in `0019_artifacts_channel.sql`.
+- **Deleting an artifact deletes its own backing file** when the artifact owns
+  it (agent-generated / uploaded-for-artifact), guarded so a file still
+  attached to a message or pinned by another artifact is kept. This reverses
+  the phase-9 "removing an artifact never deletes the file" ruling — but only
+  for owned files; pins of message attachments still leave the file untouched.
+- **MCP `create_artifact` targets the current channel** (`FLOW_CHANNEL_ID`),
+  dropping the single-recipient model; **`update_artifact`** is new (rename
+  and/or replace content in place). An artifact is shared, so any channel
+  member — not just its creator — can rename, update, or delete it.
+- **macOS parity ships in-phase** (not a gap); iOS artifacts UI remains a
+  Parity gap, now tracking the per-channel model.

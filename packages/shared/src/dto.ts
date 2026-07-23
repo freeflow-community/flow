@@ -128,15 +128,19 @@ export interface PresignedUploadDTO {
   };
 }
 
-/** Phase 9: a personal per-user bookmark of a shared file, shown in the
- * sidebar's Artifacts section. Deleting an artifact never deletes the file. */
+/** Phase 13: a per-channel shared artifact — a named file pinned to a channel,
+ * shown nested under that channel in the sidebar and opened in the side panel.
+ * Everyone in the channel sees it (privacy = use a private channel). The
+ * backing file is mutable: an agent "updates" an artifact by re-pointing it at
+ * a freshly uploaded file. */
 export interface ArtifactDTO {
   id: string;
   workspaceId: string;
-  userId: string; // owner — artifacts are personal
+  channelId: string; // the channel this artifact belongs to (shared with all members)
   fileId: string;
   name: string; // display name, defaults to the file name
   createdAt: string;
+  updatedAt: string; // bumped when the name or backing file changes
   /** The underlying file, hydrated so clients can render without a second fetch. */
   file: FileDTO;
 }

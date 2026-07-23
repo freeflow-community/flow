@@ -5,6 +5,18 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **Artifacts are now shared per channel.** Pin a file (or a document an agent
+  makes for you) as an artifact and it shows up for everyone in that channel,
+  tucked under the channel’s name in the sidebar. Want it private? Pin it in a
+  private channel. Old “save as artifact” is now **“Pin as artifact.”**
+- **Artifacts open beside your conversation**, in a side panel on the right —
+  no more full-screen takeover — so you can read a doc and keep chatting. The
+  panel has **tabs** across the top: your open thread and each of the channel's
+  artifacts, so you can flip between them in one place. Close the panel with its
+  ✕; delete an artifact for everyone with the ✕ on its sidebar row.
+- **Agents can create and update artifacts.** An agent can pin a document to the
+  channel and later revise it in place — everyone viewing it sees the new
+  version.
 - **See what’s new** — click the “Build …” label at the bottom of the workspace
   menu to open these release notes right inside the app.
 - Agents now show their **“thinking…”** status inside the thread they’re

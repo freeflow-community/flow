@@ -393,7 +393,7 @@ struct MessageRow: View {
                 }
             }
             if !message.files.isEmpty, !message.isDeleted, !message.pending {
-                Button("Save as Artifact") { saveAsArtifact() }
+                Button("Pin as Artifact") { pinAsArtifact() }
             }
             if isMine, !message.isDeleted, !message.pending {
                 Button("Edit…") { onEdit(message) }
@@ -460,7 +460,7 @@ struct MessageRow: View {
             }
 
             if !message.files.isEmpty {
-                MenuIconButton(help: "Save as artifact", action: saveAsArtifact) {
+                MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
                     // Web draws this one as an inline SVG (box + leaving arrow);
                     // the matching SF Symbol keeps the same open-external read.
                     Image(systemName: "arrow.up.right.square")
@@ -525,21 +525,22 @@ struct MessageRow: View {
         }
     }
 
-    /// Bookmarks the message's attached file(s) as personal artifacts
-    /// (phase 9, idempotent server-side); the newly created artifact's panel
-    /// opens automatically per spec.
-    private func saveAsArtifact() {
+    /// Pins the message's attached file(s) as shared artifacts in this channel
+    /// (phase 13, idempotent server-side); the newly created artifact opens in
+    /// the side panel automatically.
+    private func pinAsArtifact() {
         let files = message.files
         guard !files.isEmpty else { return }
+        let channelId = message.channelId
         Task {
             do {
                 var last: Artifact?
                 for file in files {
-                    last = try await app.engine.createArtifact(fileId: file.id)
+                    last = try await app.engine.createArtifact(channelId: channelId, fileId: file.id)
                 }
                 if let last { app.selectArtifact(last.id) }
             } catch {
-                app.showError("Couldn't save artifact: \(error.localizedDescription)")
+                app.showError("Couldn't pin artifact: \(error.localizedDescription)")
             }
         }
     }

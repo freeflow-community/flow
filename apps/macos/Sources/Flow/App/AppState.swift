@@ -30,9 +30,8 @@ final class AppState: ObservableObject {
     @Published var selectedWorkspaceId: String?
     @Published var selectedChannelId: String?
     @Published var openThreadRootId: String?
-    /// Open artifact tab (phase 9) — when set, the content pane shows the
-    /// artifact panel; the selected channel stays put behind it so closing
-    /// the artifact returns to it.
+    /// Open artifact (phase 13) — when set, the right-hand side panel shows the
+    /// artifact next to its channel (mutually exclusive with the thread panel).
     @Published var selectedArtifactId: String?
     /// Activity feed (phase 12) — the always-present virtual "channel" that
     /// replaced the notifications bell. When true the content pane shows
@@ -43,7 +42,8 @@ final class AppState: ObservableObject {
     /// should scroll to and flash after navigation (set when a notification is
     /// tapped in the Activity feed). Cleared once reached (or given up on).
     @Published var focusMessageId: String?
-    /// My artifact bookmarks for the active workspace (phase 9), newest first.
+    /// Visible artifacts for the active workspace (phase 13) — those in channels
+    /// I'm a member of, newest first. Grouped by channel in the sidebar.
     @Published private(set) var artifacts: [Artifact] = []
     @Published private(set) var connection: Connection = .connecting
     /// userId -> online?
@@ -249,12 +249,39 @@ final class AppState: ObservableObject {
         Task { await engine.selectChannel(id) }
     }
 
-    /// Opens (or closes, with nil) an artifact tab. The channel selection is
-    /// untouched: the panel covers the channel content and closing returns
-    /// to it.
+    /// Open/activate an artifact tab in the side panel (phase 13). The panel is
+    /// a tabbed container shared with the thread — opening an artifact does NOT
+    /// close an open thread (they coexist as tabs); it just makes the artifact
+    /// the visible tab and selects its channel so the conversation shows behind.
+    /// nil just clears the active artifact (the thread tab, if any, stays).
     func selectArtifact(_ id: String?) {
-        if id != nil { showActivity = false }
+        if let id {
+            showActivity = false
+            if let a = artifacts.first(where: { $0.id == id }), a.channelId != selectedChannelId {
+                selectedChannelId = a.channelId
+                Task { await engine.selectChannel(a.channelId) }
+            }
+        }
         selectedArtifactId = id
+    }
+
+    /// Switch the side panel to the Thread tab (the thread stays open).
+    func showThread() {
+        selectedArtifactId = nil
+    }
+
+    /// Close the whole side panel — clears the thread and the active artifact.
+    func closeSidePanel() {
+        selectedArtifactId = nil
+        if openThreadRootId != nil {
+            openThreadRootId = nil
+            Task { await engine.openThread(rootId: nil) }
+        }
+    }
+
+    /// Artifacts pinned in a given channel (for the sidebar's nested rows).
+    func artifacts(inChannel channelId: String) -> [Artifact] {
+        artifacts.filter { $0.channelId == channelId }
     }
 
     /// Show the Activity feed (phase 12). Like opening an artifact it covers the
@@ -265,6 +292,7 @@ final class AppState: ObservableObject {
     }
 
     func openThread(_ rootId: String?) {
+        if rootId != nil { selectedArtifactId = nil } // shares the slot with the artifact panel (phase 13)
         openThreadRootId = rootId
         Task { await engine.openThread(rootId: rootId) }
     }

@@ -30,9 +30,11 @@ export interface Selection {
   workspaceId: string | null;
   channelId: string | null;
   threadRootId: string | null;
-  /** Selected artifact tab (phase 9) — when set, the content pane shows the
-   * artifact panel; takes precedence over channelId (which stays put so
-   * closing the artifact returns to the last channel). */
+  /** Active artifact tab in the side panel (phase 13). The side panel is a
+   * tabbed container shared with the thread: `artifactId` set → that artifact
+   * is the visible tab; null with `threadRootId` set → the Thread tab is
+   * visible. Threads and artifacts coexist (both can be open); this just picks
+   * which tab shows. */
   artifactId: string | null;
   /** Message being edited inline (hover menu or composer ↑) — ui_nits item 4. */
   editingMessageId: string | null;
@@ -44,8 +46,14 @@ export interface Selection {
   adminPanelOpen: boolean;
   selectWorkspace(id: string | null): void;
   selectChannel(id: string | null): void;
+  /** Open/activate an artifact tab (null just clears the active artifact — e.g.
+   * when the shown artifact is deleted; the thread tab, if any, stays). */
   selectArtifact(id: string | null): void;
   openThread(id: string | null): void;
+  /** Make the Thread tab the visible one (thread stays open). */
+  showThread(): void;
+  /** Close the whole side panel — clears the thread and the active artifact. */
+  closeSidePanel(): void;
   setEditingMessage(id: string | null): void;
   /** Navigate to a specific message: selects its channel (and thread, if any)
    * and marks it as the scroll-to + flash target. */

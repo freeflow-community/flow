@@ -82,7 +82,7 @@ struct SidebarView: View {
                         .help("Create a channel")
                     }
                     ForEach(joinedChannels) { channel in
-                        channelRow(channel)
+                        channelWithArtifacts(channel) { channelRow(channel) }
                     }
 
                     sectionHeader("Direct messages") {
@@ -98,16 +98,7 @@ struct SidebarView: View {
                         .accessibilityIdentifier("sidebar.newDM")
                     }
                     ForEach(dmChannels) { channel in
-                        dmRow(channel)
-                    }
-
-                    // Artifact tabs (phase 9): personal file bookmarks; the
-                    // section only appears once something is saved.
-                    if !app.artifacts.isEmpty {
-                        sectionHeader("Artifacts") {}
-                        ForEach(app.artifacts) { artifact in
-                            artifactRow(artifact)
-                        }
+                        channelWithArtifacts(channel) { dmRow(channel) }
                     }
 
                     if !browsableChannels.isEmpty {
@@ -385,40 +376,13 @@ struct SidebarView: View {
 
     /// An artifact tab row (phase 9): selectable like a channel, type glyph +
     /// name; remove via the context menu (never deletes the underlying file).
-    private func artifactRow(_ artifact: Artifact) -> some View {
-        let active = app.selectedArtifactId == artifact.id
-        return Button {
-            app.selectArtifact(artifact.id)
-        } label: {
-            HStack(spacing: 9) {
-                Text(artifact.file.artifactGlyph)
-                    .font(.system(size: 12))
-                    .opacity(active ? 0.7 : 0.85)
-                    .frame(width: 14)
-                Text(artifact.name)
-                    .font(.system(size: 14, weight: active ? .semibold : .regular))
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.82))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("sidebar.artifact.\(artifact.name)")
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .contextMenu {
-            Button("Remove Artifact", role: .destructive) { removeArtifact(artifact) }
-        }
-    }
-
-    private func removeArtifact(_ artifact: Artifact) {
-        Task {
-            do { try await app.engine.deleteArtifact(artifact) }
-            catch { app.showError(error.localizedDescription) }
+    /// A channel/DM row followed by its pinned artifacts, nested beneath it
+    /// (phase 13). Kept as a helper so the sidebar body stays cheap to type-check.
+    @ViewBuilder
+    private func channelWithArtifacts(_ channel: Channel, @ViewBuilder row: () -> some View) -> some View {
+        row()
+        ForEach(app.artifacts(inChannel: channel.id)) { artifact in
+            ArtifactSidebarRow(artifact: artifact)
         }
     }
 
@@ -974,5 +938,66 @@ struct CreateChannelSheet: View {
         }
         .padding(20)
         .frame(width: 360)
+    }
+}
+
+/// An artifact row nested under its channel (phase 13): the whole row selects
+/// the artifact (bold, no pill when active — see the foreground styling); a ✕
+/// revealed on hover deletes the shared artifact (also in the context menu).
+private struct ArtifactSidebarRow: View {
+    @EnvironmentObject private var app: AppState
+    let artifact: Artifact
+    @State private var hovering = false
+
+    private var active: Bool { app.selectedArtifactId == artifact.id }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button {
+                app.selectArtifact(artifact.id)
+            } label: {
+                HStack(spacing: 9) {
+                    Text(artifact.file.artifactGlyph)
+                        .font(.system(size: 12))
+                        .opacity(active ? 1 : 0.85)
+                        .frame(width: 14)
+                    // Bold white text marks the selection — no white pill, which
+                    // would stack under the active channel's pill.
+                    Text(artifact.name)
+                        .font(.system(size: 14, weight: active ? .bold : .regular))
+                        .foregroundStyle(.white.opacity(active ? 1 : 0.82))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if hovering {
+                Button(action: remove) {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.white.opacity(0.6))
+                .help("Delete artifact")
+                .accessibilityIdentifier("sidebar.artifact.remove.\(artifact.name)")
+            }
+        }
+        .padding(.leading, 20) // nested under its channel
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.artifact.\(artifact.name)")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+        .contextMenu {
+            Button("Delete Artifact", role: .destructive, action: remove)
+        }
+    }
+
+    private func remove() {
+        Task {
+            do { try await app.engine.deleteArtifact(artifact) }
+            catch { app.showError(error.localizedDescription) }
+        }
     }
 }

@@ -86,3 +86,7 @@ html, body, #root {
 .mc-scroll::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.15); border-radius: 4px; }
 /* on-violet variant */
 .mc-scroll-dark::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.2); }
+
+/* scrollable but no visible bar (e.g. the side-panel tab strip) */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

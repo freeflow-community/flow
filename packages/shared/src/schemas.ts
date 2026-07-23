@@ -310,30 +310,31 @@ export const UpdateAppBody = z
   .refine((b) => b.eventUrl !== undefined || b.eventTypes !== undefined, 'nothing to update');
 export type UpdateAppBody = z.infer<typeof UpdateAppBody>;
 
-// ---- artifacts (phase 9) ---------------------------------------
-/** POST /v1/artifacts — bookmark a file for yourself. Name defaults to the file name. */
+// ---- artifacts (phase 13: per-channel shared) -------------------
+/** POST /v1/artifacts — pin a file as an artifact in a channel. Any member of
+ * the channel can pin. Name defaults to the file name. `ownsFile` marks an
+ * artifact whose file was uploaded for it (agent-generated) so deleting the
+ * artifact can reap the file. */
 export const CreateArtifactBody = z.object({
+  channelId: z.string().uuid(),
   fileId: z.string().uuid(),
   name: z.string().min(1).max(255).optional(),
+  ownsFile: z.boolean().optional(),
 });
 export type CreateArtifactBody = z.infer<typeof CreateArtifactBody>;
 
-/** PATCH /v1/artifacts/:id — rename (owner only). */
-export const UpdateArtifactBody = z.object({
-  name: z.string().min(1).max(255),
-});
+/** PATCH /v1/artifacts/:id — rename and/or re-point at a new file (the agent
+ * "update" path). At least one field required. */
+export const UpdateArtifactBody = z
+  .object({
+    name: z.string().min(1).max(255).optional(),
+    fileId: z.string().uuid().optional(),
+    ownsFile: z.boolean().optional(),
+  })
+  .refine((b) => b.name !== undefined || b.fileId !== undefined, {
+    message: 'provide a name and/or a fileId',
+  });
 export type UpdateArtifactBody = z.infer<typeof UpdateArtifactBody>;
-
-/** POST /v1/artifacts/share — create an artifact in one other person's
- * sidebar (the MCP create_artifact path). One recipient, not a channel
- * fan-out: operator correction 2026-07-21. The caller must share a channel
- * with the recipient. */
-export const ShareArtifactBody = z.object({
-  fileId: z.string().uuid(),
-  userId: z.string().uuid(),
-  name: z.string().min(1).max(255).optional(),
-});
-export type ShareArtifactBody = z.infer<typeof ShareArtifactBody>;
 
 // ---- files: presigned direct upload (R2) -----------------------
 export const PresignUploadBody = z.object({

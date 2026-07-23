@@ -209,7 +209,7 @@ function DayDivider({ iso }: { iso: string }) {
  * pick). The 🙂 button beside them still opens the full picker. */
 const QUICK_REACTIONS = ['👍', '👀', '🙌'];
 
-/** Open-external glyph (box with an arrow leaving it) for the save-as-artifact
+/** Open-external glyph (box with an arrow leaving it) for the pin-as-artifact
  * action. The rest of the UI uses unicode/emoji glyphs, but no codepoint draws
  * this mark — hence the one inline SVG. Strokes follow the button's text color. */
 function ExternalLinkIcon() {
@@ -288,12 +288,12 @@ function MessageRow({
     sel.setEditingMessage(null);
   };
 
-  // Bookmark the message's file(s) as personal artifacts (phase 9); the new
-  // artifact panel is selected automatically per spec.
-  const bookmarkFiles = async () => {
+  // Pin the message's file(s) as shared artifacts in this channel (phase 13);
+  // the new artifact opens in the side panel automatically.
+  const pinFiles = async () => {
     let last: ArtifactDTO | null = null;
     for (const f of message.files) {
-      last = await api<ArtifactDTO>('POST', '/v1/artifacts', { fileId: f.id });
+      last = await api<ArtifactDTO>('POST', '/v1/artifacts', { channelId: message.channelId, fileId: f.id });
     }
     await qc.invalidateQueries({ queryKey: ['artifacts', sel.workspaceId] });
     if (last) sel.selectArtifact(last.id);
@@ -503,10 +503,10 @@ function MessageRow({
           )}
           {message.files.length > 0 && (
             <button
-              data-testid={`bookmark-artifact-${message.id}`}
+              data-testid={`pin-artifact-${message.id}`}
               className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title="Save as artifact"
-              onClick={() => void bookmarkFiles()}
+              title="Pin as artifact"
+              onClick={() => void pinFiles()}
             >
               <ExternalLinkIcon />
             </button>

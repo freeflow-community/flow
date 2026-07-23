@@ -29,6 +29,14 @@ export function subjectPresence(workspaceId: string): string {
 export function subjectMeta(workspaceId: string): string {
   return `ws.${workspaceId}.meta`;
 }
+/** Per-channel artifact stream (phase 13). Under the workspace wildcard so the
+ * gateway forwards it, but NOT a `.meta` subject (those drive membership
+ * bookkeeping). The event envelope carries channelId, so the gateway's
+ * visible() filter delivers only to channel members — private-channel privacy
+ * comes for free. */
+export function subjectArtifact(workspaceId: string, channelId: string): string {
+  return `ws.${workspaceId}.chan.${channelId}.artifact`;
+}
 export function subjectWorkspaceAll(workspaceId: string): string {
   return `ws.${workspaceId}.>`;
 }
