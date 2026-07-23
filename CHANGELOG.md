@@ -9,6 +9,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- iOS: no build tag in the UI — web + macOS show the `MMDD.N` build number at
+  the foot of the workspace menu. iOS has no workspace dropdown to hang it on;
+  needs a home for it (an About/settings row) plus the plist/env plumbing.
 - iOS: optimistic-send failures aren't recoverable — web + macOS keep a failed
   message in the stream with a Retry/Discard affordance (retry re-POSTs with the
   original `clientMsgId`); iOS still needs the `failed` flag on its message row,
@@ -122,6 +125,18 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   of the thread (`typingKey(channelId, threadRootId)`). `FlowSocket.sendTyping`
   now forwards the optional `threadRootId`; server + web already supported it.
   Regression test in `test/progress.test.ts`. `[bridge]`
+
+### 2026-07-22 — Build number in the workspace menu
+- **A readable build tag now shows at the foot of the workspace menu.** Format
+  `MMDD.N` — the HEAD commit's month-day plus a per-day index (commits that
+  landed that day), e.g. `Build 0722.27`. It increments on every release and
+  resets to `.1` each new day, derived from git so there's no manual
+  bookkeeping. `[web]` `[macos]`
+- Web injects it at Vite build time (`define` → `__BUILD__`/`__BUILD_SHA__`,
+  git short SHA in the row's tooltip); macOS `make-app.sh` writes `FlowBuild`/
+  `FlowBuildSHA` into the bundle Info.plist, read via `BuildInfo`. Both honor
+  `BUILD_NUMBER`/`BUILD_SHA` env overrides for CI and fall back to `dev`
+  outside a checkout. `[web]` `[macos]`
 
 ### 2026-07-22 — Optimistic send: a failed message stays put with Retry
 - **A send that fails no longer discards the message.** Both clients already
