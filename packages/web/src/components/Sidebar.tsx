@@ -180,11 +180,7 @@ export default function Sidebar() {
               All Workspaces
             </MenuItem>
             <hr className="my-1 border-hairline3" />
-            <div
-              data-testid="build-number"
-              className="px-3 py-1 text-xs text-ink/40"
-              title={__BUILD_SHA__ ? `commit ${__BUILD_SHA__}` : undefined}
-            >
+            <div data-testid="build-number" className="px-3 py-1 text-xs text-ink/40">
               Build {__BUILD__}
             </div>
           </div>
