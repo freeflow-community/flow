@@ -137,6 +137,16 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 - Verified: web `vitest` (24 pass, incl. new `markSendFailed` cache tests) +
   `tsc --noEmit`; macOS `swift build` clean. `[qa]`
 
+### 2026-07-22 — macOS: message hover menu matches the web version
+- **The macOS message hover pill now reads identically to the web one.** Added
+  the three one-tap quick reactions (👍 👀 🙌) and a hairline divider ahead of
+  the existing actions, plus a 📋 Copy-text button, and swapped the monochrome
+  SF Symbols for the same emoji glyphs the web client uses (🙂 add-reaction,
+  💬 reply-in-thread, ✏️ edit, 🗑 delete). Buttons gain the web's
+  `hover:bg-daypill` rounded highlight; save-as-artifact keeps the SF Symbol
+  open-external mark (web draws it as an inline SVG). Same per-button gating
+  as web (thread/copy/artifact/edit/delete conditions unchanged). `[macos]`
+
 ### 2026-07-22 — Phase 12: #Activity feed replaces the notifications bell
 - **New: an always-present "Activity" entry at the top of the channel list,
   and the notifications bell is gone.** Activity surfaces exactly the alerted
