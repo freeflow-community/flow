@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the notarized Flow.app (phase 14).
+
+  Intentionally EMPTY. Keychain and UserNotifications both work under the
+  hardened runtime with no entitlement. Add a key here ONLY if notarization or
+  runtime behavior proves one is required (see docs/specs/phase14.md §4), and
+  add just that key. Do NOT enable App Sandbox in this phase.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
