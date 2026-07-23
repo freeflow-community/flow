@@ -590,6 +590,11 @@ struct SidebarView: View {
             Button("Invite People…") { showInvite = true }
             Divider()
             Button("All Workspaces") { app.selectWorkspace(nil) }
+            Divider()
+            // Build tag (web parity): a disabled row at the menu's foot. Bare
+            // Text in a Menu renders as a non-interactive, dimmed item.
+            Text(BuildInfo.label)
+                .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
             HStack(spacing: 4) {
                 Text(currentWorkspace?.name ?? "Workspace")

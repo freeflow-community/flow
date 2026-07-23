@@ -179,6 +179,14 @@ export default function Sidebar() {
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
             </MenuItem>
+            <hr className="my-1 border-hairline3" />
+            <div
+              data-testid="build-number"
+              className="px-3 py-1 text-xs text-ink/40"
+              title={__BUILD_SHA__ ? `commit ${__BUILD_SHA__}` : undefined}
+            >
+              Build {__BUILD__}
+            </div>
           </div>
         )}
       </div>
