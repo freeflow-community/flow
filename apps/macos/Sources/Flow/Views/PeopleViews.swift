@@ -138,6 +138,7 @@ struct MemberProfileSheet: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var user: User?
+    @State private var sponsor: User?
     @State private var error: String?
 
     var body: some View {
@@ -148,6 +149,9 @@ struct MemberProfileSheet: View {
                 .accessibilityIdentifier("profile.name")
             if user?.isAgent == true {
                 Text("AI agent").font(.caption).foregroundStyle(.secondary)
+            }
+            if let sponsor {
+                sponsorRow(sponsor)
             }
             if let email = user?.email {
                 Text(email)
@@ -188,9 +192,37 @@ struct MemberProfileSheet: View {
         .padding(24)
         .frame(width: 300)
         .task {
-            do { user = try await app.engine.fetchUser(userId) }
-            catch { self.error = error.localizedDescription }
+            do {
+                let u = try await app.engine.fetchUser(userId)
+                user = u
+                // Agents carry a human sponsor; show who it is (ui_nits).
+                if u.isAgent == true, let sid = u.sponsorId {
+                    sponsor = try? await app.engine.fetchUser(sid)
+                }
+            } catch { self.error = error.localizedDescription }
         }
+    }
+
+    /// "Sponsored by <name>" chip for an agent's card.
+    private func sponsorRow(_ s: User) -> some View {
+        HStack(spacing: 6) {
+            Text("Sponsored by").font(.caption).foregroundStyle(.secondary)
+            Group {
+                if let path = s.avatarUrl, path.hasPrefix("/v1/avatars/") {
+                    AuthImage(path: path) { Circle().fill(.secondary.opacity(0.2)) }
+                        .scaledToFill()
+                        .frame(width: 18, height: 18)
+                        .clipShape(Circle())
+                } else {
+                    Circle().fill(.secondary.opacity(0.2)).frame(width: 18, height: 18)
+                }
+            }
+            Text(s.displayName).font(.callout.weight(.semibold))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(.secondary.opacity(0.12)))
+        .accessibilityIdentifier("profile.sponsor")
     }
 
     private var avatar: some View {

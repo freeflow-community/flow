@@ -165,6 +165,12 @@ struct AppDatabase: Sendable {
                 t.add(column: "unfurls", .text).notNull().defaults(to: "[]") // JSON
             }
         }
+        // Agents carry a human sponsor; the profile card shows it (ui_nits).
+        migrator.registerMigration("v8") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "sponsorId", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

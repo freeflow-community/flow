@@ -53,17 +53,19 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - iOS: no inline video preview/playback card — video attachments render as a
   name+size chip that opens in QuickLook (which does play them); web/macOS
   render inline players with an expand affordance.
-- macOS/iOS: typing indicator says "is typing…" even for agents; web now shows
-  "is thinking…" for an agent at work (History 2026-07-22). Both native strings
-  live in one place each (`ChannelView.swift` / `ComposerView.swift`) and have
-  the roster's `isAgent` to switch on.
-- macOS/iOS: profile card doesn't show an agent's human sponsor (web added the
-  "Sponsored by" row 2026-07-22). `sponsorId` is already on the member DTO both
-  clients cache, so it's a view-only change.
-- macOS/iOS: no per-channel scroll-position memory across channel switches (web
-  added a 5-minute-expiry memory 2026-07-22). macOS pins to the bottom via
-  `defaultScrollAnchor(.bottom)`; a native equivalent would track last offset
-  per channel.
+- iOS: typing indicator says "is typing…" even for agents; web + macOS show
+  "is thinking…" for an agent at work (History 2026-07-22). The string lives in
+  `ComposerView.swift`; the shared `AppState.agentIds` set is already populated
+  on iOS (it reuses the macOS core) — it's a view-only switch.
+- iOS: no member-profile popup at all — tapping another user's avatar does
+  nothing (web + macOS open a profile card; macOS also shows an agent's
+  "Sponsored by" row). Needs a new `MemberProfileSheet` on iOS plus avatar taps
+  wired through `MessageListView`. `UserDTO.sponsorId` (shared) already carries
+  the data.
+- iOS: no per-channel scroll-position memory across channel switches (web +
+  macOS added a 5-minute-expiry memory 2026-07-22). The shared
+  `MessageScrollMemory` store is available to iOS; only the SwiftUI wiring in
+  iOS `MessageListView` is missing.
 
 ### Deliberate divergences (ruled)
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
@@ -98,6 +100,31 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-22 — macOS: profile-on-avatar sponsor, scroll memory, agent "thinking"
+- Closes the three macOS parity gaps opened by the web nits earlier today.
+  iOS follows in a later pass (the shared data model below is already in place
+  for it). `[macos]`
+- **Tapping a message sender's avatar opens their profile card** (channels and
+  threads), via a new `onOpenProfile` callback threaded through `MessageListView`
+  → `MessageRow`. macOS already had the card; it was only reachable from the
+  header before. `[macos]`
+- **Agent profile cards show a "Sponsored by" row** with the sponsor's avatar
+  and name. This needed a data path: `UserDTO` gained a `sponsorId` field
+  (`toUserDTO` fills it from `sponsorUserId` for agents), the Swift `User` model
+  + a `user.sponsorId` DB migration (v8) carry it, and the card resolves the
+  sponsor with a second `fetchUser`. `[server]` `[macos]`
+- **Agents "think" in the typing indicator** — `TypingIndicatorView` now says
+  "<name> is thinking…" for an agent, driven by a new shared
+  `AppState.agentIds` set (derived alongside the avatar map in `SyncEngine`).
+  `[macos]`
+- **Per-channel scroll-position memory** — a shared, process-lifetime
+  `MessageScrollMemory` store remembers the top-visible message id per channel
+  (5-minute expiry); `MessageListView` re-anchors there on return via
+  `.scrollPosition`, else lands at the bottom. Threads keep their always-newest
+  behavior. `[macos]`
+- Verified with `swift build` (clean). The `UserDTO.sponsorId` addition is
+  backward-compatible and typechecks across server + web. `[macos]` `[server]`
 
 ### 2026-07-22 — Web: profile-on-avatar, scroll memory, agent "thinking" label
 - **Clicking a message sender's avatar opens their profile card.** The card

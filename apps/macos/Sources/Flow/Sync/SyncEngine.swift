@@ -291,13 +291,18 @@ actor SyncEngine {
         await pushAvatarPaths()
     }
 
-    /// Publishes the userId -> avatarUrl map so message rows can render avatars.
+    /// Publishes the userId -> avatarUrl map so message rows can render avatars,
+    /// and the set of agent ids so the typing indicator can say "thinking".
     private func pushAvatarPaths() async {
         let rows: [(String, String)] = (try? await db.reader.read { db in
             try Row.fetchAll(db, sql: "SELECT id, avatarUrl FROM user WHERE avatarUrl IS NOT NULL")
                 .map { ($0["id"] as String, $0["avatarUrl"] as String) }
         }) ?? []
         await appState?.setAvatarPaths(Dictionary(uniqueKeysWithValues: rows))
+        let agents: [String] = (try? await db.reader.read { db in
+            try String.fetchAll(db, sql: "SELECT id FROM user WHERE isAgent = 1")
+        }) ?? []
+        await appState?.setAgentIds(Set(agents))
     }
 
     // MARK: - Channels

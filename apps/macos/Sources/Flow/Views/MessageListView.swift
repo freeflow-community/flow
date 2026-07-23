@@ -12,6 +12,18 @@ struct MessageListView: View {
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
     let onDelete: (Message) -> Void
+    /// Tapping a sender's avatar opens their profile (ui_nits).
+    var onOpenProfile: (String) -> Void = { _ in }
+    /// Enables per-channel scroll-position memory (channels pass their id;
+    /// threads omit it and always open at the newest reply).
+    var scrollKey: String? = nil
+
+    /// Top-visible message id, tracked via `.scrollPosition` — recorded per
+    /// channel so a return visit re-anchors there.
+    @State private var topVisibleId: String?
+    /// The scrollKey we've already applied a restore/bottom decision for, so a
+    /// new message in the *current* channel doesn't re-trigger a restore.
+    @State private var appliedKey: String?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -41,7 +53,8 @@ struct MessageListView: View {
                                 showThreadAffordances: showThreadAffordances,
                                 onOpenThread: onOpenThread,
                                 onEdit: onEdit,
-                                onDelete: onDelete
+                                onDelete: onDelete,
+                                onOpenProfile: onOpenProfile
                             )
                         }
                         .id(message.id)
@@ -49,8 +62,25 @@ struct MessageListView: View {
                 }
                 .padding(.vertical, 8)
             }
+            .scrollPosition(id: $topVisibleId, anchor: .top)
+            .onChange(of: topVisibleId) { _, id in
+                // Continuously remember where we are so a return visit restores it.
+                if let key = scrollKey, let id { MessageScrollMemory.record(key, topMessageId: id) }
+            }
             .onChange(of: messages.last?.id) { _, newId in
-                if let newId {
+                guard let newId else { return }
+                if scrollKey != appliedKey {
+                    // The channel just (re)loaded: restore a remembered position
+                    // if it's fresh and still present, else land at the bottom.
+                    appliedKey = scrollKey
+                    if let key = scrollKey, let remembered = MessageScrollMemory.fresh(key),
+                       messages.contains(where: { $0.id == remembered }) {
+                        proxy.scrollTo(remembered, anchor: .top)
+                    } else {
+                        proxy.scrollTo(newId, anchor: .bottom)
+                    }
+                } else {
+                    // A genuinely new message in the current channel → follow it down.
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
@@ -121,6 +151,7 @@ struct MessageRow: View {
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
     let onDelete: (Message) -> Void
+    var onOpenProfile: (String) -> Void = { _ in }
 
     @EnvironmentObject private var app: AppState
     @State private var hovering = false
@@ -153,13 +184,20 @@ struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if showHeader {
-                AvatarChip(
-                    userId: message.userId,
-                    name: senderName,
-                    avatarPath: avatarPath,
-                    size: 38,
-                    radius: 11
-                )
+                Button {
+                    onOpenProfile(message.userId)
+                } label: {
+                    AvatarChip(
+                        userId: message.userId,
+                        name: senderName,
+                        avatarPath: avatarPath,
+                        size: 38,
+                        radius: 11
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("View \(senderName)'s profile")
+                .accessibilityIdentifier("message.avatar.\(message.userId)")
             } else {
                 Color.clear.frame(width: 38, height: 1)
             }

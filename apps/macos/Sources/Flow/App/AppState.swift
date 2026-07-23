@@ -47,6 +47,9 @@ final class AppState: ObservableObject {
     @Published private(set) var notificationUnread: Int = 0
     /// userId -> avatar path (/v1/avatars/<key>), for message rows & popovers.
     @Published private(set) var avatarPaths: [String: String] = [:]
+    /// Set of agent user ids — the typing indicator says an agent "thinks"
+    /// rather than "types" (ui_nits). Derived from cached user rows.
+    @Published private(set) var agentIds: Set<String> = []
     @Published var errorMessage: String?
 
     let db: AppDatabase
@@ -136,6 +139,10 @@ final class AppState: ObservableObject {
 
     func setAvatarPaths(_ paths: [String: String]) {
         avatarPaths = paths
+    }
+
+    func setAgentIds(_ ids: Set<String>) {
+        agentIds = ids
     }
 
     func setArtifacts(_ list: [Artifact]) {

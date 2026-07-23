@@ -37,7 +37,11 @@ struct ChannelView: View {
                 },
                 onDelete: { message in
                     Task { await app.engine.deleteMessage(id: message.id) }
-                }
+                },
+                onOpenProfile: { userId in
+                    profileUserId = userId
+                },
+                scrollKey: channelId
             )
 
             TypingIndicatorView(channelId: channelId, userNames: userNames.value)
@@ -236,8 +240,7 @@ struct TypingIndicatorView: View {
         let ids = app.typingUserIds(channelId: channelId, threadRootId: threadRootId)
         HStack {
             if !ids.isEmpty {
-                let names = ids.map { userNames[$0] ?? "Someone" }
-                Text(typingText(names))
+                Text(typingText(ids))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("typing.indicator")
@@ -248,11 +251,15 @@ struct TypingIndicatorView: View {
         .padding(.horizontal, 16)
     }
 
-    private func typingText(_ names: [String]) -> String {
-        switch names.count {
-        case 1: "\(names[0]) is typing…"
-        case 2: "\(names[0]) and \(names[1]) are typing…"
-        default: "Several people are typing…"
+    /// An agent at work "thinks" rather than "types" (ui_nits).
+    private func typingText(_ ids: [String]) -> String {
+        let names = ids.map { userNames[$0] ?? "Someone" }
+        switch ids.count {
+        case 1:
+            let verb = app.agentIds.contains(ids[0]) ? "thinking" : "typing"
+            return "\(names[0]) is \(verb)…"
+        case 2: return "\(names[0]) and \(names[1]) are typing…"
+        default: return "Several people are typing…"
         }
     }
 }
