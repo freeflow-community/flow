@@ -1,7 +1,9 @@
-// Artifacts (phase 9): personal per-user bookmarks — create/list/rename/delete,
-// idempotency, access control, the channel fan-out (humans only), and the
-// orphan-sweep exemption for artifact-only files. DB-backed — scratch database
-// on the dev postgres (docker compose in packages/infra, host port 5442).
+// Artifacts (phase 13): per-channel shared objects — create/pin, list, rename,
+// the agent "update" path (re-point at a new file), delete (reaping an owned
+// file, keeping a referenced one), authorization (members only), private-channel
+// isolation, the channel-artifact file-access grant, and the orphan-sweep
+// exemption. DB-backed — scratch database on the dev postgres (docker compose in
+// packages/infra, host port 5442).
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -41,8 +43,10 @@ const { artifacts, files, users, workspaceMembers } = schema;
 let aliceId = '';
 let bobId = '';
 let agentId = '';
+let lonerId = ''; // workspace member, not a member of `channelId`
 let workspaceId = '';
 let channelId = ''; // standard channel: alice, bob, agent
+let privateId = ''; // private channel: alice only
 
 async function registerHuman(email: string, name: string): Promise<string> {
   const res = await auth.register(email, { password: 'password123', displayName: name, autoVerify: true });
@@ -55,23 +59,34 @@ async function uploadedFile(userId: string, name = `f-${randomUUID()}.txt`): Pro
   return dto.id;
 }
 
+/** Pin a file into `channelId` after sharing it there, so any member can read it. */
+async function sharedFile(userId: string, name?: string): Promise<string> {
+  const fileId = await uploadedFile(userId, name);
+  await msg.sendMessage(channelId, userId, randomUUID(), 'here', undefined, [fileId], undefined);
+  return fileId;
+}
+
 beforeAll(async () => {
   await migrate(process.env.DATABASE_URL!);
   await db.execute(`TRUNCATE users, workspaces, sessions, invites, pending_signups RESTART IDENTITY CASCADE` as never);
   aliceId = await registerHuman('alice@example.test', 'Alice');
   bobId = await registerHuman('bob@example.test', 'Bob');
   agentId = await registerHuman('robo@example.test', 'Robo');
+  lonerId = await registerHuman('loner@example.test', 'Loner');
   await db.update(users).set({ isAgent: true }).where(eq(users.id, agentId));
 
   const w = await ws.createWorkspace(aliceId, 'Artifacts Test', `artifacts-${randomUUID().slice(0, 8)}`);
   workspaceId = w.id;
-  for (const uid of [bobId, agentId]) {
+  for (const uid of [bobId, agentId, lonerId]) {
     await db.insert(workspaceMembers).values({ workspaceId, userId: uid, role: 'member' });
   }
   const chan = await ch.createChannel(workspaceId, aliceId, 'artifacts');
   channelId = chan.id;
   await ch.addMember(channelId, aliceId, bobId);
   await ch.addMember(channelId, aliceId, agentId);
+
+  const priv = await ch.createChannel(workspaceId, aliceId, 'secret', undefined, true);
+  privateId = priv.id;
 });
 
 afterAll(async () => {
@@ -80,120 +95,143 @@ afterAll(async () => {
 });
 
 describe('createArtifact', () => {
-  it('bookmarks an own upload, defaulting the name to the file name', async () => {
-    const fileId = await uploadedFile(aliceId, 'notes.txt');
-    const a = await ar.createArtifact(aliceId, fileId, undefined);
-    expect(a.userId).toBe(aliceId);
+  it('pins a shared file, defaulting the name to the file name', async () => {
+    const fileId = await sharedFile(aliceId, 'notes.txt');
+    const a = await ar.createArtifact(aliceId, channelId, { fileId });
+    expect(a.channelId).toBe(channelId);
     expect(a.name).toBe('notes.txt');
     expect(a.file.id).toBe(fileId);
   });
 
-  it('is idempotent per (user, file)', async () => {
-    const fileId = await uploadedFile(aliceId);
-    const first = await ar.createArtifact(aliceId, fileId, 'One');
-    const again = await ar.createArtifact(aliceId, fileId, 'Two');
-    expect(again.id).toBe(first.id);
-    expect(again.name).toBe('One'); // re-bookmarking never renames
+  it('is idempotent per (channel, file) for pins', async () => {
+    const fileId = await sharedFile(aliceId);
+    const first = await ar.createArtifact(aliceId, channelId, { fileId, name: 'One' });
+    const again = await ar.createArtifact(bobId, channelId, { fileId, name: 'Two' });
+    expect(again.id).toBe(first.id); // shared object — same row for both members
+    expect(again.name).toBe('One'); // re-pinning never renames
+  });
+
+  it('creates distinct rows for owned (agent-generated) artifacts', async () => {
+    const f1 = await uploadedFile(agentId);
+    const f2 = await uploadedFile(agentId);
+    const a1 = await ar.createArtifact(agentId, channelId, { fileId: f1, ownsFile: true });
+    const a2 = await ar.createArtifact(agentId, channelId, { fileId: f2, ownsFile: true });
+    expect(a1.id).not.toBe(a2.id);
   });
 
   it("rejects files the caller can't access", async () => {
-    // alice's upload is unattached — visible to the uploader only (files access rule)
-    const fileId = await uploadedFile(aliceId);
-    await expect(ar.createArtifact(bobId, fileId, undefined)).rejects.toThrow('file not found');
+    // an unattached upload is visible to the uploader only (files access rule)
+    const fileId = await uploadedFile(agentId);
+    await expect(ar.createArtifact(aliceId, channelId, { fileId })).rejects.toThrow('file not found');
   });
 
-  it('allows bookmarking a file another member shared in an accessible channel', async () => {
-    const fileId = await uploadedFile(aliceId);
-    await msg.sendMessage(channelId, aliceId, randomUUID(), 'here you go', undefined, [fileId], undefined);
-    const a = await ar.createArtifact(bobId, fileId, undefined);
-    expect(a.userId).toBe(bobId);
+  it('rejects a non-member of the channel', async () => {
+    const fileId = await sharedFile(aliceId);
+    await expect(ar.createArtifact(lonerId, channelId, { fileId })).rejects.toThrow(/join the channel/);
   });
 });
 
-describe('list / rename / delete', () => {
-  it('lists only the caller-owned artifacts for the workspace, newest first', async () => {
-    const fileId = await uploadedFile(aliceId);
-    const mine = await ar.createArtifact(aliceId, fileId, 'Newest');
-    const listA = await ar.listArtifacts(workspaceId, aliceId);
-    expect(listA[0]!.id).toBe(mine.id);
-    expect(listA.every((a) => a.userId === aliceId)).toBe(true);
+describe('list — per-channel visibility', () => {
+  it('shows an artifact to every member of the channel', async () => {
+    const fileId = await sharedFile(aliceId);
+    const pinned = await ar.createArtifact(aliceId, channelId, { fileId, name: 'Shared' });
+    const bobs = await ar.listArtifacts(workspaceId, bobId);
+    expect(bobs.some((a) => a.id === pinned.id)).toBe(true);
   });
 
-  it('renames (owner only)', async () => {
-    const fileId = await uploadedFile(aliceId);
-    const a = await ar.createArtifact(aliceId, fileId, 'Old');
-    const renamed = await ar.renameArtifact(a.id, aliceId, 'New');
+  it('hides it from a workspace member who is not in the channel', async () => {
+    const fileId = await sharedFile(aliceId);
+    const pinned = await ar.createArtifact(aliceId, channelId, { fileId });
+    const loners = await ar.listArtifacts(workspaceId, lonerId);
+    expect(loners.some((a) => a.id === pinned.id)).toBe(false);
+  });
+
+  it('keeps private-channel artifacts private to its members', async () => {
+    // alice uploads + pins in the private channel she alone belongs to
+    const fileId = await uploadedFile(aliceId, 'secret.txt');
+    await msg.sendMessage(privateId, aliceId, randomUUID(), 'psst', undefined, [fileId], undefined);
+    const secret = await ar.createArtifact(aliceId, privateId, { fileId, name: 'Secret' });
+    expect((await ar.listArtifacts(workspaceId, aliceId)).some((a) => a.id === secret.id)).toBe(true);
+    expect((await ar.listArtifacts(workspaceId, bobId)).some((a) => a.id === secret.id)).toBe(false);
+    // and bob (a non-member) cannot even manage it
+    await expect(ar.deleteArtifact(secret.id, bobId)).rejects.toThrow('channel not found');
+  });
+});
+
+describe('rename / update', () => {
+  it('renames (any member)', async () => {
+    const fileId = await sharedFile(aliceId);
+    const a = await ar.createArtifact(aliceId, channelId, { fileId, name: 'Old' });
+    const renamed = await ar.renameArtifact(a.id, bobId, 'New'); // a different member may rename
     expect(renamed.name).toBe('New');
-    await expect(ar.renameArtifact(a.id, bobId, 'Steal')).rejects.toThrow('artifact not found');
+    expect(new Date(renamed.updatedAt).getTime()).toBeGreaterThanOrEqual(new Date(a.createdAt).getTime());
   });
 
-  it('deletes the bookmark without touching the file', async () => {
-    const fileId = await uploadedFile(aliceId);
-    const a = await ar.createArtifact(aliceId, fileId, undefined);
+  it('re-points at a new file and reaps the old owned file', async () => {
+    const oldFile = await uploadedFile(agentId, 'v1.txt');
+    const a = await ar.createArtifact(agentId, channelId, { fileId: oldFile, ownsFile: true });
+    const newFile = await uploadedFile(agentId, 'v2.txt');
+    const updated = await ar.updateArtifact(a.id, agentId, { fileId: newFile, ownsFile: true });
+    expect(updated.file.id).toBe(newFile);
+    // the old owned file, referenced by nothing else, is gone
+    const oldRows = await db.select().from(files).where(eq(files.id, oldFile));
+    expect(oldRows).toHaveLength(0);
+  });
+
+  it('keeps the old file when it is still referenced by a message', async () => {
+    const oldFile = await sharedFile(agentId, 'attached.txt'); // attached to a channel message
+    const a = await ar.createArtifact(agentId, channelId, { fileId: oldFile, ownsFile: true });
+    const newFile = await uploadedFile(agentId);
+    await ar.updateArtifact(a.id, agentId, { fileId: newFile, ownsFile: true });
+    const oldRows = await db.select().from(files).where(eq(files.id, oldFile));
+    expect(oldRows).toHaveLength(1); // message reference protects it
+  });
+});
+
+describe('delete', () => {
+  it('reaps an owned file the artifact alone referenced', async () => {
+    const fileId = await uploadedFile(agentId);
+    const a = await ar.createArtifact(agentId, channelId, { fileId, ownsFile: true });
+    await ar.deleteArtifact(a.id, agentId);
+    await ar.deleteArtifact(a.id, agentId); // idempotent
+    const rows = await db.select().from(files).where(eq(files.id, fileId));
+    expect(rows).toHaveLength(0);
+    expect((await ar.listArtifacts(workspaceId, agentId)).some((x) => x.id === a.id)).toBe(false);
+  });
+
+  it('keeps a pinned (not owned) file — the message still references it', async () => {
+    const fileId = await sharedFile(aliceId);
+    const a = await ar.createArtifact(aliceId, channelId, { fileId }); // ownsFile=false
     await ar.deleteArtifact(a.id, aliceId);
-    await ar.deleteArtifact(a.id, aliceId); // idempotent
     const rows = await db.select().from(files).where(eq(files.id, fileId));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.deletedAt).toBeNull();
-    const listed = await ar.listArtifacts(workspaceId, aliceId);
-    expect(listed.some((x) => x.id === a.id)).toBe(false);
   });
 
-  it("won't delete someone else's artifact", async () => {
-    const fileId = await uploadedFile(aliceId);
-    const a = await ar.createArtifact(aliceId, fileId, undefined);
-    await expect(ar.deleteArtifact(a.id, bobId)).rejects.toThrow('artifact not found');
+  it('rejects a non-member', async () => {
+    const fileId = await sharedFile(aliceId);
+    const a = await ar.createArtifact(aliceId, channelId, { fileId });
+    await expect(ar.deleteArtifact(a.id, lonerId)).rejects.toThrow(/join the channel/);
   });
 });
 
-describe('shareArtifactWith (MCP create_artifact)', () => {
-  it('creates the artifact for exactly one recipient', async () => {
-    const fileId = await uploadedFile(agentId, 'report.txt');
-    const created = await ar.shareArtifactWith(aliceId, agentId, fileId, 'Weekly report');
-    expect(created.userId).toBe(aliceId);
-    expect(created.name).toBe('Weekly report');
-    // bob shares the channel but was not the recipient — his sidebar stays clean
-    const bobs = await ar.listArtifacts(workspaceId, bobId);
-    expect(bobs.some((a) => a.fileId === fileId)).toBe(false);
-  });
-
-  it('is idempotent — re-sharing returns the recipient\'s existing artifact', async () => {
-    const fileId = await uploadedFile(agentId);
-    const first = await ar.shareArtifactWith(aliceId, agentId, fileId, 'One');
-    const again = await ar.shareArtifactWith(aliceId, agentId, fileId, 'Two');
-    expect(again.id).toBe(first.id);
-    expect(again.name).toBe('One');
-  });
-
-  it('refuses a recipient the caller shares no channel with', async () => {
-    const loner = await registerHuman(`loner-${randomUUID().slice(0, 8)}@example.test`, 'Loner');
-    await db.insert(workspaceMembers).values({ workspaceId, userId: loner, role: 'member' });
-    const fileId = await uploadedFile(agentId);
-    await expect(ar.shareArtifactWith(loner, agentId, fileId, undefined)).rejects.toThrow(/share a channel/);
-  });
-
-  it('needs no conversation context — works from any shared channel', async () => {
-    // the caller never names a channel; membership alone authorizes delivery
-    const fileId = await uploadedFile(agentId, 'ambient.txt');
-    const created = await ar.shareArtifactWith(bobId, agentId, fileId, undefined);
-    expect(created.userId).toBe(bobId);
-  });
-
-  /** Regression: an agent's create_artifact upload is never attached to a
-   * message, so the generic file-access rule (uploader, or attached to a
-   * readable message) locked the recipient out of their own artifact — the
-   * panel fell back to the download card, and the download 404'd too. */
-  it('lets the recipient read the bytes of an artifact-only file', async () => {
+describe('file access via a channel artifact', () => {
+  /** An agent's owned artifact file is never attached to a message, so the
+   * generic file-access rule (uploader, or attached to a readable message)
+   * would lock other members out. The channel-artifact grant covers them. */
+  it('lets a channel member read the bytes of an artifact-only file', async () => {
     const fileId = await uploadedFile(agentId, 'plan.md');
-    await ar.shareArtifactWith(aliceId, agentId, fileId, 'Plan');
-    const dl = await fl.getFileDownload(fileId, aliceId);
+    await ar.createArtifact(agentId, channelId, { fileId, ownsFile: true });
+    const dl = await fl.getFileDownload(fileId, bobId); // bob is a member, not the uploader
     const bytes = 'content' in dl ? dl.content.data.toString('utf8') : '';
     expect(bytes).toBe('artifact bytes');
   });
 
-  it('does not leak an artifact-only file to someone without an artifact', async () => {
-    const fileId = await uploadedFile(agentId);
-    await ar.shareArtifactWith(aliceId, agentId, fileId, undefined); // alice only
+  it('does not leak a private-channel artifact file to a non-member', async () => {
+    // access via a *public* channel's artifact follows public-channel rules
+    // (any workspace member can read); privacy requires a private channel.
+    const fileId = await uploadedFile(aliceId);
+    await ar.createArtifact(aliceId, privateId, { fileId, ownsFile: true });
     await expect(fl.getFileDownload(fileId, bobId)).rejects.toThrow('file not found');
   });
 });
@@ -202,24 +240,21 @@ describe('orphan sweep exemption', () => {
   it('never reaps a file that an artifact references, even unattached', async () => {
     const keptId = await uploadedFile(aliceId);
     const reapedId = await uploadedFile(aliceId);
-    await ar.createArtifact(aliceId, keptId, undefined);
+    await ar.createArtifact(aliceId, channelId, { fileId: keptId, ownsFile: true });
     // age both past the TTL; neither is attached to a message
     const old = new Date(Date.now() - 48 * 3600_000);
     await db.update(files).set({ createdAt: old }).where(eq(files.id, keptId));
     await db.update(files).set({ createdAt: old }).where(eq(files.id, reapedId));
     await fl.sweepOrphanFiles();
-    const kept = await db.select().from(files).where(eq(files.id, keptId));
-    const reaped = await db.select().from(files).where(eq(files.id, reapedId));
-    expect(kept).toHaveLength(1);
-    expect(reaped).toHaveLength(0);
+    expect(await db.select().from(files).where(eq(files.id, keptId))).toHaveLength(1);
+    expect(await db.select().from(files).where(eq(files.id, reapedId))).toHaveLength(0);
   });
 
   it('cascades artifacts away when the file row is hard-deleted', async () => {
     const fileId = await uploadedFile(aliceId);
-    const a = await ar.createArtifact(aliceId, fileId, undefined);
+    const a = await ar.createArtifact(aliceId, channelId, { fileId, ownsFile: true });
     await db.delete(artifacts).where(eq(artifacts.id, a.id)); // release the sweep exemption
     await db.delete(files).where(eq(files.id, fileId));
-    const rows = await db.select().from(artifacts).where(eq(artifacts.id, a.id));
-    expect(rows).toHaveLength(0);
+    expect(await db.select().from(artifacts).where(eq(artifacts.id, a.id))).toHaveLength(0);
   });
 });

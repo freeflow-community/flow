@@ -3,6 +3,9 @@ import SwiftUI
 
 struct ThreadPanelView: View {
     let rootId: String
+    /// When embedded in the tabbed side panel (phase 13) the container owns the
+    /// header/tab strip and background, so we drop our own chrome.
+    var embedded: Bool = false
     @EnvironmentObject private var app: AppState
 
     @StateObject private var thread = DBObserved<[Message]>(initial: [])
@@ -23,23 +26,25 @@ struct ThreadPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Thread").font(.headline)
-                if let root {
-                    Text("#\(root.channelId.suffix(4))").hidden() // keep layout stable
+            if !embedded {
+                HStack {
+                    Text("Thread").font(.headline)
+                    if let root {
+                        Text("#\(root.channelId.suffix(4))").hidden() // keep layout stable
+                    }
+                    Spacer()
+                    Button {
+                        app.openThread(nil)
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Close thread")
                 }
-                Spacer()
-                Button {
-                    app.openThread(nil)
-                } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(.borderless)
-                .help("Close thread")
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                Divider()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            Divider()
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -102,11 +107,14 @@ struct ThreadPanelView: View {
             }
         }
         // Leading-edge shadow so the panel reads as floating over the chat.
-        .background(
-            Rectangle()
-                .fill(.background.secondary)
-                .shadow(color: MC.ink.opacity(0.12), radius: 8, x: -5, y: 0)
-        )
+        // Embedded, the side-panel container owns the background/shadow.
+        .background {
+            if !embedded {
+                Rectangle()
+                    .fill(.background.secondary)
+                    .shadow(color: MC.ink.opacity(0.12), radius: 8, x: -5, y: 0)
+            }
+        }
         .task(id: rootId) {
             thread.start(db: app.db, reset: []) { db in
                 try Message

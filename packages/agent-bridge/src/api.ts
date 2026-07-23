@@ -148,10 +148,25 @@ export class FlowApi {
     return (await res.json()) as UserDTO;
   }
 
-  /** Phase 9: put an artifact bookmark of `fileId` in one person's sidebar.
-   * The caller must share a channel with them and be able to read the file. */
-  shareArtifactWith(userId: string, fileId: string, name?: string): Promise<ArtifactDTO> {
-    return this.req('POST', '/v1/artifacts/share', { userId, fileId, ...(name ? { name } : {}) });
+  /** Phase 13: pin `fileId` as a shared artifact in a channel. The caller must
+   * be a member of the channel and able to read the file. `ownsFile` marks an
+   * artifact whose file was uploaded for it (agent-generated). */
+  createArtifact(channelId: string, fileId: string, name?: string, ownsFile?: boolean): Promise<ArtifactDTO> {
+    return this.req('POST', '/v1/artifacts', {
+      channelId,
+      fileId,
+      ...(name ? { name } : {}),
+      ...(ownsFile ? { ownsFile } : {}),
+    });
+  }
+
+  /** Phase 13: rename and/or re-point an artifact at a new file (the "update"
+   * path). At least one of name/fileId must be provided. */
+  updateArtifact(
+    artifactId: string,
+    patch: { name?: string; fileId?: string; ownsFile?: boolean },
+  ): Promise<ArtifactDTO> {
+    return this.req('PATCH', `/v1/artifacts/${artifactId}`, patch);
   }
 
   async uploadFile(workspaceId: string, filename: string, mimeType: string, data: Buffer): Promise<FileDTO> {

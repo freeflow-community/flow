@@ -118,6 +118,14 @@ export default function Sidebar() {
   const all = channels.data ?? [];
   const joined = all.filter((c) => c.isMember && c.kind === 'standard');
   const dms = all.filter((c) => c.isMember && c.kind !== 'standard');
+  // Phase 13: artifacts nest under their channel. Group the (newest-first) list
+  // by channelId so each channel row can render its pinned artifacts beneath it.
+  const artifactsByChannel = new Map<string, ArtifactDTO[]>();
+  for (const a of artifacts.data ?? []) {
+    const list = artifactsByChannel.get(a.channelId);
+    if (list) list.push(a);
+    else artifactsByChannel.set(a.channelId, [a]);
+  }
   const browsable = all.filter((c) => !c.isMember && !c.isPrivate && c.kind === 'standard');
   // Agents are always reachable under Direct Messages: workspace agents with
   // no existing 1:1 DM get a virtual row; clicking creates/opens the DM.
@@ -196,14 +204,14 @@ export default function Sidebar() {
 
       <div className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm">
         <ActivityRow
-          active={sel.channelId === ACTIVITY_VIEW_ID && !sel.artifactId}
+          active={sel.channelId === ACTIVITY_VIEW_ID}
           unread={live.notificationUnread}
           onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
         />
 
         {isAdmin && sel.adminPanelOpen && (
           <AdminRow
-            active={sel.channelId === ADMIN_VIEW_ID && !sel.artifactId}
+            active={sel.channelId === ADMIN_VIEW_ID}
             onOpen={() => sel.selectChannel(ADMIN_VIEW_ID)}
             onClose={() => sel.closeAdminPanel()}
           />
@@ -214,7 +222,12 @@ export default function Sidebar() {
           action={{ label: '+', testid: 'sidebar-create-channel', onClick: () => setShowCreateChannel(true) }}
         />
         {joined.map((c) => (
-          <ChannelRow key={c.id} channel={c} label={c.name ?? ''} onMenu={() => setMenuChannel(c)} />
+          <div key={c.id}>
+            <ChannelRow channel={c} label={c.name ?? ''} onMenu={() => setMenuChannel(c)} />
+            {(artifactsByChannel.get(c.id) ?? []).map((a) => (
+              <ArtifactRow key={a.id} artifact={a} />
+            ))}
+          </div>
         ))}
 
         <SectionHeader label="Direct messages" />
@@ -223,23 +236,27 @@ export default function Sidebar() {
           const otherId = (c.memberIds ?? []).find((id) => id !== auth.user.id);
           const status = otherId ? memberMap[otherId] : undefined;
           return (
-            <ChannelRow
-              key={c.id}
-              channel={c}
-              testid={`sidebar-dm-${title}`}
-              label={dmTitle(c, displayNames, auth.user.id)}
-              statusEmoji={c.kind === 'dm' ? status?.statusEmoji : ''}
-              statusTitle={c.kind === 'dm' ? status?.statusText : ''}
-              leading={
-                c.kind === 'dm' ? (
-                  // self-DM: you're online by definition (this client is connected)
-                  <PresenceDot online={otherId ? !!live.presence[otherId] : true} />
-                ) : (
-                  <span className="text-xs text-white/60">👥</span>
-                )
-              }
-              onMenu={() => setMenuChannel(c)}
-            />
+            <div key={c.id}>
+              <ChannelRow
+                channel={c}
+                testid={`sidebar-dm-${title}`}
+                label={dmTitle(c, displayNames, auth.user.id)}
+                statusEmoji={c.kind === 'dm' ? status?.statusEmoji : ''}
+                statusTitle={c.kind === 'dm' ? status?.statusText : ''}
+                leading={
+                  c.kind === 'dm' ? (
+                    // self-DM: you're online by definition (this client is connected)
+                    <PresenceDot online={otherId ? !!live.presence[otherId] : true} />
+                  ) : (
+                    <span className="text-xs text-white/60">👥</span>
+                  )
+                }
+                onMenu={() => setMenuChannel(c)}
+              />
+              {(artifactsByChannel.get(c.id) ?? []).map((a) => (
+                <ArtifactRow key={a.id} artifact={a} />
+              ))}
+            </div>
           );
         })}
         {agentRows.map((a) => (
@@ -256,15 +273,6 @@ export default function Sidebar() {
             </span>
           </button>
         ))}
-
-        {(artifacts.data ?? []).length > 0 && (
-          <>
-            <SectionHeader label="Artifacts" />
-            {(artifacts.data ?? []).map((a) => (
-              <ArtifactRow key={a.id} artifact={a} />
-            ))}
-          </>
-        )}
 
         {browsable.length > 0 && (
           <>
@@ -416,32 +424,29 @@ function AdminRow({
   );
 }
 
-/** An artifact tab row (phase 9): selectable like a channel; hover ✕ removes
- * the bookmark (never the underlying file — operator ruling). */
+/** An artifact row (phase 13): nested under its channel; selectable opens the
+ * side panel; hover ✕ DELETES the shared artifact (and its own file, if the
+ * artifact owns it — server-side). */
 function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
   const sel = useSelection();
   const qc = useQueryClient();
   const active = sel.artifactId === artifact.id;
   return (
-    <div
-      className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
-        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
-      }`}
-    >
+    // No white pill for the active artifact — it would stack under the active
+    // channel's pill (double-highlight). Selection reads as bold white text.
+    <div className="group ml-3 flex items-center gap-[9px] rounded-lg px-2 py-[5px] hover:bg-white/10">
       <button
         data-testid={`sidebar-artifact-${artifact.name}`}
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={() => sel.selectArtifact(artifact.id)}
       >
-        <span className={active ? 'opacity-70' : 'text-white/60'}>{fileGlyph(artifact.file)}</span>
-        <span className={`truncate ${active ? 'font-[650]' : 'text-white/82'}`}>{artifact.name}</span>
+        <span className={active ? 'text-white' : 'text-white/60'}>{fileGlyph(artifact.file)}</span>
+        <span className={`truncate ${active ? 'font-bold text-white' : 'text-white/82'}`}>{artifact.name}</span>
       </button>
       <button
         data-testid={`sidebar-artifact-remove-${artifact.name}`}
         title="Remove artifact"
-        className={`hidden rounded px-1 text-xs group-hover:block ${
-          active ? 'text-accent-deep/60 hover:text-accent-deep' : 'text-white/55 hover:text-white'
-        }`}
+        className="hidden rounded px-1 text-xs text-white/55 hover:text-white group-hover:block"
         onClick={(e) => {
           e.stopPropagation();
           void api('DELETE', `/v1/artifacts/${artifact.id}`).then(() => {
@@ -506,8 +511,9 @@ function ChannelRow({
   onMenu: () => void;
 }) {
   const sel = useSelection();
-  // an open artifact panel takes the highlight (channelId stays put behind it)
-  const active = sel.channelId === channel.id && !sel.artifactId;
+  // The channel stays selected (and highlighted) even with an artifact tab open
+  // in the side panel — the conversation is still shown behind it (phase 13).
+  const active = sel.channelId === channel.id;
   const unread = channel.unreadCount > 0;
   return (
     <div

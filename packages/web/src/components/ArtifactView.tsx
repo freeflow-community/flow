@@ -1,6 +1,9 @@
-// Artifact panel (phase 9): full-pane viewer for a bookmarked file. Renders
-// images, video, text, PDF, and HTML (sandboxed iframe); anything else gets a
-// download card. The underlying file stays access-checked server-side.
+// Artifact body (phase 13): the artifact tab's content inside the tabbed side
+// panel (see SidePanel). A compact toolbar (rename + size + download) sits above
+// the viewer, which renders images, video, text, PDF, and HTML (sandboxed
+// iframe); anything else gets a download card. The panel chrome (width, resizer,
+// tab strip, close) lives in SidePanel. The underlying file stays
+// access-checked server-side.
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO } from '@flow/shared';
@@ -9,28 +12,26 @@ import { bytesLabel } from '../lib/format';
 import { isHtmlFile, isImageFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { useSelection } from '../state';
 import { useArtifacts } from '../hooks';
-import { MobileMenuButton } from './MobileMenuButton';
 
-export default function ArtifactView({ artifactId }: { artifactId: string }) {
+export default function ArtifactBody({ artifactId }: { artifactId: string }) {
   const sel = useSelection();
   const qc = useQueryClient();
   const artifacts = useArtifacts(sel.workspaceId);
   const artifact = (artifacts.data ?? []).find((a) => a.id === artifactId);
 
-  // The artifact vanished (removed on another device / event raced the list):
-  // fall back to the channel behind it.
+  // The artifact vanished (deleted here or on another device / event raced the
+  // list): clear the active-artifact tab.
   useEffect(() => {
     if (artifacts.data && !artifact) sel.selectArtifact(null);
   }, [artifacts.data, artifact, sel]);
 
   if (!artifact) {
-    return <div className="flex min-w-0 flex-1 items-center justify-center text-faint">Loading…</div>;
+    return <div className="flex min-h-0 flex-1 items-center justify-center text-faint">Loading…</div>;
   }
   return (
-    <div className="flex min-w-0 flex-1 flex-col" data-testid={`artifact-view-${artifact.name}`}>
-      <ArtifactHeader
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid={`artifact-body-${artifact.name}`}>
+      <ArtifactToolbar
         artifact={artifact}
-        onClose={() => sel.selectArtifact(null)}
         onRenamed={() => void qc.invalidateQueries({ queryKey: ['artifacts', artifact.workspaceId] })}
       />
       <ArtifactContent key={artifact.fileId} file={artifact.file} />
@@ -38,17 +39,11 @@ export default function ArtifactView({ artifactId }: { artifactId: string }) {
   );
 }
 
-function ArtifactHeader({
-  artifact,
-  onClose,
-  onRenamed,
-}: {
-  artifact: ArtifactDTO;
-  onClose: () => void;
-  onRenamed: () => void;
-}) {
+function ArtifactToolbar({ artifact, onRenamed }: { artifact: ArtifactDTO; onRenamed: () => void }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(artifact.name);
+  // keep the field in sync when the artifact is renamed elsewhere
+  useEffect(() => setName(artifact.name), [artifact.name]);
   const save = async () => {
     const next = name.trim();
     setEditing(false);
@@ -67,11 +62,10 @@ function ArtifactHeader({
     a.click();
   };
   return (
-    <div className="flex h-[60px] shrink-0 items-center gap-2 border-b border-hairline px-[22px] max-md:px-3">
-      <MobileMenuButton />
+    <div className="flex h-9 shrink-0 items-center gap-2 border-b border-hairline px-4">
       {editing ? (
         <input
-          className="min-w-0 flex-1 rounded border border-hairline2 bg-white px-2 py-1 text-[15px] font-bold"
+          className="min-w-0 flex-1 rounded border border-hairline2 bg-white px-2 py-0.5 text-[13px] font-semibold"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
@@ -84,7 +78,7 @@ function ArtifactHeader({
       ) : (
         <button
           data-testid="artifact-title"
-          className="min-w-0 flex-1 truncate text-left text-[15px] font-bold hover:underline"
+          className="min-w-0 flex-1 truncate text-left text-[13px] font-semibold text-muted hover:text-ink hover:underline"
           title="Rename"
           onClick={() => setEditing(true)}
         >
@@ -99,14 +93,6 @@ function ArtifactHeader({
         onClick={() => void download()}
       >
         ⤓
-      </button>
-      <button
-        data-testid="artifact-close"
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-sm text-faint hover:bg-daypill hover:text-ink"
-        title="Close"
-        onClick={onClose}
-      >
-        ✕
       </button>
     </div>
   );

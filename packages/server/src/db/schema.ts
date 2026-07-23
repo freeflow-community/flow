@@ -231,21 +231,29 @@ export const messageFiles = pgTable(
   (t) => [primaryKey({ columns: [t.messageId, t.fileId] }), index('message_files_file_idx').on(t.fileId)],
 );
 
-/** Phase 9: personal artifact bookmarks — one row per (user, file); the file
- * row itself is never touched by artifact removal (operator ruling). */
+/** Phase 13: per-channel shared artifacts (superseding phase-9 per-user
+ * bookmarks). Everyone in the channel sees the same artifacts; privacy comes
+ * from using a private channel. The backing file is mutable — an agent
+ * "updates" an artifact by re-pointing it at a freshly uploaded file. owns_file
+ * marks artifacts whose file was uploaded for them (agent-generated), so
+ * deleting the artifact can reap the file (guarded). */
 export const artifacts = pgTable(
   'artifacts',
   {
     id: uuid('id').primaryKey(),
-    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
     fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
+    ownsFile: boolean('owns_file').notNull().default(false),
     name: text('name').notNull(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('artifacts_user_file_unique').on(t.userId, t.fileId),
-    index('artifacts_user_ws_idx').on(t.userId, t.workspaceId, t.createdAt.desc()),
+    index('artifacts_channel_idx').on(t.channelId, t.createdAt.desc()),
+    // pins of a shared file are idempotent per channel; owned artifacts are always distinct
+    uniqueIndex('artifacts_channel_file_pin').on(t.channelId, t.fileId).where(sql`owns_file = false`),
   ],
 );
 

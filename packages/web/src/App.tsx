@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
+import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
 import { api, getToken, setToken } from './lib/api';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
@@ -153,13 +153,31 @@ export default function App() {
             setEditingMessageId(null);
             setFocusMessageId(null);
           },
+          // Open/activate an artifact tab in the side panel. The thread tab (if
+          // any) stays open — they're tabs in the same panel (phase 13).
           selectArtifact: (id) => {
             setArtifactId(id);
-            setThreadRootId(null);
             setEditingMessageId(null);
             setFocusMessageId(null);
+            // select the artifact's channel so the conversation shows behind it
+            if (id) {
+              const cached = qc.getQueryData<{ artifacts: ArtifactDTO[] }>(['artifacts', workspaceId]);
+              const a = cached?.artifacts.find((x) => x.id === id);
+              if (a) setChannelId(a.channelId);
+            }
           },
-          openThread: setThreadRootId,
+          // Open a thread and make its tab the visible one (artifacts stay as tabs).
+          openThread: (id) => {
+            setThreadRootId(id);
+            if (id) setArtifactId(null);
+          },
+          // Switch the side panel to the Thread tab (thread stays open).
+          showThread: () => setArtifactId(null),
+          // Close the whole side panel.
+          closeSidePanel: () => {
+            setThreadRootId(null);
+            setArtifactId(null);
+          },
           setEditingMessage: setEditingMessageId,
           jumpToMessage: (channelId, messageId, threadRootId) => {
             setArtifactId(null);

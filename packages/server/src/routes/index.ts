@@ -27,7 +27,6 @@ import {
   CreateAppBody,
   CreateArtifactBody,
   UpdateArtifactBody,
-  ShareArtifactBody,
   AgentLoginBody,
   ApproveAgentRequestBody,
   RegisterAgentBody,
@@ -590,10 +589,14 @@ export function registerRoutes(app: FastifyInstance): void {
     return fl.getStreamUrl(id, req.user.id);
   });
 
-  // ---- artifacts (phase 9: personal per-user file bookmarks) ----
+  // ---- artifacts (phase 13: per-channel shared objects) ----
   app.post('/v1/artifacts', { preHandler: requireAuth }, async (req, reply) => {
     const body = parse(CreateArtifactBody, req.body);
-    const dto = await ar.createArtifact(req.user.id, body.fileId, body.name);
+    const dto = await ar.createArtifact(req.user.id, body.channelId, {
+      fileId: body.fileId,
+      name: body.name,
+      ownsFile: body.ownsFile,
+    });
     return reply.status(201).send(dto);
   });
 
@@ -602,25 +605,17 @@ export function registerRoutes(app: FastifyInstance): void {
     return { artifacts: await ar.listArtifacts(id, req.user.id) };
   });
 
+  // rename and/or re-point at a new file (the agent "update" path)
   app.patch('/v1/artifacts/:id', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(UpdateArtifactBody, req.body);
-    return ar.renameArtifact(id, req.user.id, body.name);
+    return ar.updateArtifact(id, req.user.id, body);
   });
 
   app.delete('/v1/artifacts/:id', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     await ar.deleteArtifact(id, req.user.id);
     return { ok: true };
-  });
-
-  // Put an artifact in one other person's sidebar (the flow MCP's
-  // create_artifact tool). One recipient, not a channel fan-out — operator
-  // correction 2026-07-21. Caller must share a channel with the recipient.
-  app.post('/v1/artifacts/share', { preHandler: requireAuth }, async (req, reply) => {
-    const body = parse(ShareArtifactBody, req.body);
-    const dto = await ar.shareArtifactWith(body.userId, req.user.id, body.fileId, body.name);
-    return reply.status(201).send(dto);
   });
 
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {

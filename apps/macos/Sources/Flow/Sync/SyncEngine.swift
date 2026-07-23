@@ -737,11 +737,11 @@ actor SyncEngine {
         }
     }
 
-    // MARK: - Artifacts (phase 9)
+    // MARK: - Artifacts (phase 13: per-channel shared)
 
-    /// Fetches my artifact bookmarks for a workspace and publishes them to
-    /// AppState. No GRDB cache: the list is small and personal, so it gets
-    /// the same fetch-on-demand treatment as notifications.
+    /// Fetches the visible artifacts for a workspace (those in channels I'm a
+    /// member of) and publishes them to AppState. No GRDB cache: the list is
+    /// small, so it gets the same fetch-on-demand treatment as notifications.
     func refreshArtifacts(workspaceId: String) async {
         guard let resp: ArtifactsResponse = try? await api.get(
             "/v1/workspaces/\(workspaceId)/artifacts"
@@ -749,12 +749,12 @@ actor SyncEngine {
         await appState?.setArtifacts(resp.artifacts)
     }
 
-    /// Bookmarks a file as a personal artifact (idempotent per user+file,
-    /// server-enforced) and refreshes the sidebar list.
-    func createArtifact(fileId: String, name: String? = nil) async throws -> Artifact {
+    /// Pins a file as a shared artifact in a channel (idempotent per
+    /// channel+file for pins, server-enforced) and refreshes the sidebar list.
+    func createArtifact(channelId: String, fileId: String, name: String? = nil) async throws -> Artifact {
         let artifact: Artifact = try await api.post(
             "/v1/artifacts",
-            body: CreateArtifactBody(fileId: fileId, name: name)
+            body: CreateArtifactBody(channelId: channelId, fileId: fileId, name: name)
         )
         await refreshArtifacts(workspaceId: artifact.workspaceId)
         return artifact
@@ -763,12 +763,13 @@ actor SyncEngine {
     func renameArtifact(id: String, name: String) async throws {
         let artifact: Artifact = try await api.patch(
             "/v1/artifacts/\(id)",
-            body: RenameArtifactBody(name: name)
+            body: UpdateArtifactBody(name: name)
         )
         await refreshArtifacts(workspaceId: artifact.workspaceId)
     }
 
-    /// Removes the bookmark — never the underlying file.
+    /// Deletes the shared artifact. The server reaps the backing file too if the
+    /// artifact owned it (guarded).
     func deleteArtifact(_ artifact: Artifact) async throws {
         let _: OkResponse = try await api.delete("/v1/artifacts/\(artifact.id)")
         await appState?.artifactBecameUnavailable(artifact.id)
@@ -1108,8 +1109,8 @@ actor SyncEngine {
             await saveWorkspacePreservingRole(ws)
 
         case .artifact(let a, let deleted):
-            // Personal bookmarks (phase 9): keep the sidebar list fresh; a
-            // deletion of the open artifact falls back to the channel behind it.
+            // Per-channel shared artifacts (phase 13): keep the sidebar list
+            // fresh; a deletion of the open artifact closes the side panel.
             if deleted {
                 await appState?.artifactBecameUnavailable(a.id)
             }

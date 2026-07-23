@@ -18,9 +18,9 @@ export type EventType =
   | 'reaction.added'
   | 'reaction.removed'
   | 'notification.created' // per-user notify subject (phase 2 §4)
-  | 'artifact.created' // per-user notify subject (phase 9 — artifacts are personal)
-  | 'artifact.updated' // per-user notify subject: rename
-  | 'artifact.deleted' // per-user notify subject
+  | 'artifact.created' // per-channel subject (phase 13 — artifacts are shared per channel)
+  | 'artifact.updated' // per-channel subject: rename or new backing file
+  | 'artifact.deleted' // per-channel subject
   | 'agent.pairing' // per-user notify subject: an agent asked this user to sponsor it (AGENT_MEMBERS.md)
   | 'user.updated' // meta subject of every workspace the user belongs to
   | 'workspace.updated' // meta subject; workspace-level changes (e.g. sidebar color)

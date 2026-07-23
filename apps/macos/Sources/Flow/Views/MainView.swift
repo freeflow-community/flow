@@ -17,16 +17,17 @@ struct MainView: View {
         min(Self.maxSidebarWidth, max(Self.minSidebarWidth, sidebarWidth))
     }
 
-    // Phase 5 item 6: thread panel width, same local-preference treatment.
-    @AppStorage("threadWidth" + Profile.suffix) private var threadWidth: Double = 340
-    @State private var threadDragStartWidth: Double?
+    // Phase 13: tabbed side panel width (hosts the thread + artifacts), same
+    // local-preference treatment as the sidebar.
+    @AppStorage("sidePanelWidth" + Profile.suffix) private var sidePanelWidth: Double = 480
+    @State private var sidePanelDragStartWidth: Double?
 
-    private static let minThreadWidth: Double = 280
-    private static let maxThreadWidth: Double = 560
-    private static let defaultThreadWidth: Double = 340
+    private static let minSidePanelWidth: Double = 320
+    private static let maxSidePanelWidth: Double = 720
+    private static let defaultSidePanelWidth: Double = 480
 
-    private var clampedThreadWidth: Double {
-        min(Self.maxThreadWidth, max(Self.minThreadWidth, threadWidth))
+    private var clampedSidePanelWidth: Double {
+        min(Self.maxSidePanelWidth, max(Self.minSidePanelWidth, sidePanelWidth))
     }
 
     var body: some View {
@@ -74,27 +75,27 @@ struct MainView: View {
             .accessibilityValue("\(Int(clampedSidebarWidth)) points")
     }
 
-    /// Drag strip on the chat/thread boundary (phase 5 item 6): dragging left
+    /// Drag strip on the chat/side-panel boundary (phase 13): dragging left
     /// widens the panel; double-tap resets. Renders the hairline the old
     /// Divider provided.
-    private var threadResizer: some View {
+    private var sidePanelResizer: some View {
         Rectangle()
             .fill(MC.base)
             .frame(width: 5)
             .overlay(Rectangle().fill(MC.hairline).frame(width: 1))
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) { threadWidth = Self.defaultThreadWidth }
+            .onTapGesture(count: 2) { sidePanelWidth = Self.defaultSidePanelWidth }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let base = threadDragStartWidth ?? clampedThreadWidth
-                        if threadDragStartWidth == nil { threadDragStartWidth = base }
-                        threadWidth = min(
-                            Self.maxThreadWidth,
-                            max(Self.minThreadWidth, base - value.translation.width)
+                        let base = sidePanelDragStartWidth ?? clampedSidePanelWidth
+                        if sidePanelDragStartWidth == nil { sidePanelDragStartWidth = base }
+                        sidePanelWidth = min(
+                            Self.maxSidePanelWidth,
+                            max(Self.minSidePanelWidth, base - value.translation.width)
                         )
                     }
-                    .onEnded { _ in threadDragStartWidth = nil }
+                    .onEnded { _ in sidePanelDragStartWidth = nil }
             )
             .onHover { inside in
                 if inside {
@@ -104,9 +105,9 @@ struct MainView: View {
                 }
             }
             .accessibilityElement()
-            .accessibilityIdentifier("thread.resizer")
-            .accessibilityLabel("Resize thread panel")
-            .accessibilityValue("\(Int(clampedThreadWidth)) points")
+            .accessibilityIdentifier("sidePanel.resizer")
+            .accessibilityLabel("Resize side panel")
+            .accessibilityValue("\(Int(clampedSidePanelWidth)) points")
     }
 
     @ViewBuilder
@@ -115,20 +116,15 @@ struct MainView: View {
             // Activity feed (phase 12) — the virtual channel that replaced the
             // bell. Covers the content pane; the channel stays put behind it.
             ActivityFeedView()
-        } else if let artifactId = app.selectedArtifactId {
-            // Artifact panel (phase 9) covers the channel content; the channel
-            // selection stays put behind it, so Close returns to it.
-            ArtifactPanelView(artifactId: artifactId)
-                .id(artifactId)
         } else if let channelId = app.selectedChannelId {
             HStack(spacing: 0) {
                 ChannelView(channelId: channelId)
                     .frame(maxWidth: .infinity)
-                if let rootId = app.openThreadRootId {
-                    threadResizer
-                    ThreadPanelView(rootId: rootId)
-                        .frame(width: clampedThreadWidth)
-                        .id(rootId)
+                // Tabbed side panel: Thread + the channel's artifacts (phase 13).
+                if app.openThreadRootId != nil || app.selectedArtifactId != nil {
+                    sidePanelResizer
+                    SidePanelView()
+                        .frame(width: clampedSidePanelWidth)
                 }
             }
         } else {

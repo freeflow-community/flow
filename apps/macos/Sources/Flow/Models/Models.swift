@@ -347,10 +347,11 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
 struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     let id: String
     let workspaceId: String
-    let userId: String // owner — artifacts are personal
+    let channelId: String // the channel this artifact belongs to (shared with all members)
     let fileId: String
     var name: String
     let createdAt: String
+    let updatedAt: String
     let file: FileAttachment
 }
 
@@ -507,12 +508,18 @@ struct PatchMeBody: Encodable, Sendable {
 }
 struct MarkNotificationsReadBody: Encodable, Sendable { let upToId: String }
 struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String }
-/// POST /v1/artifacts — nil name = server derives it from the filename.
+/// POST /v1/artifacts — pin a file as a shared artifact in a channel. nil name
+/// = server derives it from the filename.
 struct CreateArtifactBody: Encodable, Sendable {
+    let channelId: String
     let fileId: String
     let name: String?
 }
-struct RenameArtifactBody: Encodable, Sendable { let name: String }
+/// PATCH /v1/artifacts/:id — rename and/or re-point at a new file.
+struct UpdateArtifactBody: Encodable, Sendable {
+    var name: String?
+    var fileId: String?
+}
 
 // MARK: - WS events
 

@@ -12,8 +12,7 @@ import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
 import ActivityView from './ActivityView';
-import ArtifactView from './ArtifactView';
-import ThreadPanel from './ThreadPanel';
+import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
 import { MobileMenuButton } from './MobileMenuButton';
 import AgentPairingPrompt from './AgentPairingPrompt';
@@ -199,8 +198,8 @@ export default function Main() {
       case 'artifact.created':
       case 'artifact.updated':
       case 'artifact.deleted': {
-        // personal artifact bookmarks (phase 9): keep the sidebar list fresh;
-        // a deletion of the open artifact falls back to the channel behind it
+        // per-channel shared artifacts (phase 13): keep the sidebar list fresh;
+        // a deletion of the open artifact closes the side panel
         void qc.invalidateQueries({ queryKey: ['artifacts', event.workspaceId] });
         const a = event.data as ArtifactDTO;
         if (event.type === 'artifact.deleted' && cur.artifactId === a.id) cur.selectArtifact(null);
@@ -291,18 +290,15 @@ export default function Main() {
             />
           )}
           <div className="flex min-h-0 min-w-0 flex-1">
-            {sel.artifactId ? (
-              <ArtifactView key={sel.artifactId} artifactId={sel.artifactId} />
-            ) : sel.channelId === ADMIN_VIEW_ID ? (
+            {sel.channelId === ADMIN_VIEW_ID ? (
               <AdminView />
             ) : sel.channelId === ACTIVITY_VIEW_ID ? (
               <ActivityView />
             ) : sel.channelId ? (
               <>
                 <ChannelView key={sel.channelId} channelId={sel.channelId} />
-                {sel.threadRootId && (
-                  <ThreadPanel key={sel.threadRootId} rootId={sel.threadRootId} />
-                )}
+                {/* tabbed side panel: Thread + the channel's artifacts (phase 13) */}
+                {(sel.threadRootId || sel.artifactId) && <SidePanel />}
               </>
             ) : (
               <div className="flex min-w-0 flex-1 flex-col">
