@@ -78,8 +78,8 @@ export class FlowSocket {
     setTimeout(() => this.connect(), delay);
   }
 
-  sendTyping(channelId: string): void {
-    this.send({ op: 'typing', channelId });
+  sendTyping(channelId: string, threadRootId?: string): void {
+    this.send({ op: 'typing', channelId, ...(threadRootId ? { threadRootId } : {}) });
   }
 
   private send(frame: ClientFrame): void {
