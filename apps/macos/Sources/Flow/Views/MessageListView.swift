@@ -393,16 +393,36 @@ struct MessageRow: View {
         }
     }
 
+    /// One-tap quick reactions shown first in the hover menu — same three
+    /// glyphs and order as the web client's `QUICK_REACTIONS`.
+    private static let quickReactions = ["👍", "👀", "🙌"]
+
     /// Web-parity hover menu card: white pill with hairline border, one
-    /// borderless icon button per action (design 3a tokens).
+    /// borderless icon button per action (design 3a tokens). Buttons use the
+    /// same emoji glyphs as the web client so the two menus read identically:
+    /// three one-tap reactions, a hairline divider, then 🙂 / 💬 / 📋 / save /
+    /// edit / delete gated by the same conditions.
     private var hoverMenu: some View {
         HStack(spacing: 2) {
-            Button {
+            ForEach(Self.quickReactions, id: \.self) { emoji in
+                MenuIconButton(help: "React \(emoji)") {
+                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                } label: {
+                    Text(emoji)
+                }
+                .accessibilityIdentifier("msg.quickReact.\(emoji)")
+            }
+
+            Rectangle()
+                .fill(MC.hairline)
+                .frame(width: 1, height: 22)
+                .padding(.horizontal, 2)
+
+            MenuIconButton(help: "Add reaction") {
                 showReactionPicker = true
             } label: {
-                Image(systemName: "face.smiling")
+                Text("🙂")
             }
-            .help("Add reaction")
             .accessibilityIdentifier("msg.addReaction")
             .popover(isPresented: $showReactionPicker) {
                 EmojiPickerView { emoji in
@@ -410,54 +430,90 @@ struct MessageRow: View {
                     Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
                 }
             }
+
             if showThreadAffordances {
-                Button {
+                MenuIconButton(help: "Reply in thread") {
                     onOpenThread(message.threadRootId ?? message.id)
                 } label: {
-                    Image(systemName: "bubble.left.and.bubble.right")
+                    Text("💬")
                 }
-                .help("Reply in thread")
                 .accessibilityIdentifier("msg.replyInThread")
             }
-            if !message.files.isEmpty {
-                Button(action: saveAsArtifact) {
-                    Image(systemName: "arrow.up.right.square")
+
+            if !message.body.isEmpty {
+                MenuIconButton(help: "Copy text") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message.body, forType: .string)
+                } label: {
+                    Text("📋")
                 }
-                .help("Save as artifact")
+                .accessibilityIdentifier("msg.copy")
+            }
+
+            if !message.files.isEmpty {
+                MenuIconButton(help: "Save as artifact", action: saveAsArtifact) {
+                    // Web draws this one as an inline SVG (box + leaving arrow);
+                    // the matching SF Symbol keeps the same open-external read.
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 15))
+                        .foregroundStyle(MC.inkSoft)
+                }
                 .accessibilityIdentifier("msg.saveArtifact")
             }
+
             if isMine {
-                Button {
+                MenuIconButton(help: "Edit") {
                     onEdit(message)
                 } label: {
-                    Image(systemName: "pencil")
+                    Text("✏️")
                 }
-                .help("Edit")
                 .accessibilityIdentifier("msg.edit")
-                Button {
+                MenuIconButton(help: "Delete") {
                     showDeleteConfirm = true
                 } label: {
-                    Image(systemName: "trash")
+                    Text("🗑")
                 }
-                .help("Delete")
                 .accessibilityIdentifier("msg.delete")
             }
         }
-        .buttonStyle(.borderless)
-        .font(.system(size: 12))
-        .foregroundStyle(MC.inkSoft)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(.white)
                 .shadow(color: MC.ink.opacity(0.08), radius: 2, y: 1)
         )
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MC.hairline, lineWidth: 1))
         // The pill sits outside the row's tracked area, so it carries its own
         // hover: landing on it cancels the pending hide and keeps the menu up.
         .contentShape(Rectangle())
         .onHover { setHovering($0) }
+    }
+
+    /// One borderless glyph button in the hover pill. Mirrors the web buttons'
+    /// `rounded-md px-1.5 py-1 … hover:bg-daypill`: a rounded daypill highlight
+    /// appears under the glyph on hover.
+    private struct MenuIconButton<Label: View>: View {
+        let help: String
+        let action: () -> Void
+        @ViewBuilder let label: () -> Label
+        @State private var hovering = false
+
+        var body: some View {
+            Button(action: action) {
+                label()
+                    .font(.system(size: 15))
+                    .frame(width: 26, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(hovering ? MC.daypill : .clear)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(help)
+            .onHover { hovering = $0 }
+        }
     }
 
     /// Bookmarks the message's attached file(s) as personal artifacts
