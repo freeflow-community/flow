@@ -25,8 +25,8 @@ export class ProgressReporter {
 
   start(): void {
     if (this.mode === 'silent') return;
-    this.socket.sendTyping(this.channelId);
-    this.typingTimer = setInterval(() => this.socket.sendTyping(this.channelId), TYPING_INTERVAL_MS);
+    this.socket.sendTyping(this.channelId, this.threadRootId);
+    this.typingTimer = setInterval(() => this.socket.sendTyping(this.channelId, this.threadRootId), TYPING_INTERVAL_MS);
     this.typingTimer.unref();
   }
 

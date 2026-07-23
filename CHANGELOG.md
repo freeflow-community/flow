@@ -113,6 +113,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-23 — Fix: agent "thinking…" indicator scoped to its thread
+- **When an agent answers a thread reply, its "thinking…" typing indicator now
+  shows in that thread's composer, not above the main channel composer.** The
+  bridge's `ProgressReporter` already knew the `threadRootId` (it posts the
+  status message into the thread), but the typing frames dropped it, so clients
+  keyed the indicator to the channel composer (`typingKey(channelId)`) instead
+  of the thread (`typingKey(channelId, threadRootId)`). `FlowSocket.sendTyping`
+  now forwards the optional `threadRootId`; server + web already supported it.
+  Regression test in `test/progress.test.ts`. `[bridge]`
+
 ### 2026-07-22 — Optimistic send: a failed message stays put with Retry
 - **A send that fails no longer discards the message.** Both clients already
   inserted the optimistic row before the POST; the change is the failure path.
