@@ -9,6 +9,7 @@ import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers,
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
+import { FeaturesModal } from './FeaturesModal';
 import StatusFooter from './StatusPicker';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
@@ -45,6 +46,7 @@ export default function Sidebar() {
   const [showColor, setShowColor] = useState(false);
   const [showApps, setShowApps] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
+  const [showFeatures, setShowFeatures] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
@@ -180,9 +182,14 @@ export default function Sidebar() {
               All Workspaces
             </MenuItem>
             <hr className="my-1 border-hairline3" />
-            <div data-testid="build-number" className="px-3 py-1 text-xs text-ink/40">
+            <button
+              data-testid="build-number"
+              className="block w-full px-3 py-1 text-left text-xs text-ink/40 italic hover:bg-accent/10"
+              title="What's new"
+              onClick={() => { setWsMenuOpen(false); setShowFeatures(true); }}
+            >
               Build {__BUILD__}
-            </div>
+            </button>
           </div>
         )}
       </div>
@@ -318,6 +325,7 @@ export default function Sidebar() {
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
+      {showFeatures && <FeaturesModal onClose={() => setShowFeatures(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
     </aside>
   );

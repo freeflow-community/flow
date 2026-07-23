@@ -21,3 +21,5 @@ agent.json
 .mcp.json
 # generated at predev/prebuild from skills/flow-agent-member/SKILL.md
 packages/web/public/flow-agent-member-SKILL.md
+# generated at predev/prebuild from repo-root FEATURES.md
+packages/web/public/FEATURES.md
