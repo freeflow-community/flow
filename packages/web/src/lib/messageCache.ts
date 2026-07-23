@@ -6,8 +6,10 @@
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import type { MessageDTO, MessagePage } from '@flow/shared';
 
-/** Client-only marker on optimistic rows awaiting the server echo. */
-export type LocalMessage = MessageDTO & { pending?: boolean };
+/** Client-only markers on an optimistic row: `pending` while the POST is in
+ * flight, `failed` once it errors out (the row stays put with a Retry
+ * affordance instead of vanishing). A retry flips it back to pending. */
+export type LocalMessage = MessageDTO & { pending?: boolean; failed?: boolean };
 
 /** ['messages', channelId] — infinite query; pages newest-first and messages
  * newest-first within a page (flattenMessages un-reverses both). */
@@ -182,17 +184,19 @@ export function removeMessageFromCache(qc: QueryClient, msg: MessageDTO): void {
   );
 }
 
-/** Failed send: drop the optimistic row (the composer surfaces the error).
- * A failed reply also un-bumps the root rollup it optimistically incremented
- * and frees its dedupe key so a retry can bump again. */
-export function removePendingMessage(qc: QueryClient, channelId: string, clientMsgId: string, threadRootId?: string): void {
+/** Failed send: keep the optimistic row in place but flip it from `pending`
+ * to `failed`, so the message stays visible with a Retry affordance instead
+ * of vanishing. A failed reply un-bumps the root rollup it optimistically
+ * incremented and frees its dedupe key, so a retry re-bumps exactly once. */
+export function markSendFailed(qc: QueryClient, channelId: string, clientMsgId: string, threadRootId?: string): void {
   const id = pendingId(clientMsgId);
+  const fail = (m: MessageDTO): LocalMessage => ({ ...(m as LocalMessage), pending: false, failed: true });
   if (threadRootId) {
     qc.setQueryData<ThreadData>(['thread', threadRootId], (old) =>
       old
         ? {
             ...old,
-            messages: old.messages.filter((m) => m.id !== id),
+            messages: old.messages.map((m) => (m.id === id ? fail(m) : m)),
             root: { ...old.root, replyCount: Math.max(0, old.root.replyCount - 1) },
           }
         : old,
@@ -211,6 +215,24 @@ export function removePendingMessage(qc: QueryClient, channelId: string, clientM
         : old,
     );
     bumpedReplies.delete(clientMsgId);
+    return;
+  }
+  qc.setQueryData<MessagesData>(['messages', channelId], (old) =>
+    old
+      ? { ...old, pages: old.pages.map((p) => ({ ...p, messages: p.messages.map((m) => (m.id === id ? fail(m) : m)) })) }
+      : old,
+  );
+}
+
+/** Discard a failed row entirely (the "×" next to Retry). A failed reply has
+ * already un-bumped its rollup in {@link markSendFailed}, so this only removes
+ * the row. */
+export function removePendingMessage(qc: QueryClient, channelId: string, clientMsgId: string, threadRootId?: string): void {
+  const id = pendingId(clientMsgId);
+  if (threadRootId) {
+    qc.setQueryData<ThreadData>(['thread', threadRootId], (old) =>
+      old ? { ...old, messages: old.messages.filter((m) => m.id !== id) } : old,
+    );
     return;
   }
   qc.setQueryData<MessagesData>(['messages', channelId], (old) =>

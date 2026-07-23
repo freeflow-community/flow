@@ -193,16 +193,15 @@ export default function Composer({
       setMissingMentions(missing);
     }
     setAddedNotice(null);
-    send.mutate(
-      {
-        body,
-        ...(threadRootId ? { threadRootId } : {}),
-        fileIds: attachments.map((f) => f.id),
-        mentions,
-        files: attachments, // full DTOs so the optimistic row renders previews
-      },
-      { onError: (err) => setError(err instanceof Error ? err.message : 'send failed') },
-    );
+    // A send failure no longer surfaces here — the optimistic row stays put
+    // and shows its own "Failed to send · Retry" affordance in the stream.
+    send.mutate({
+      body,
+      ...(threadRootId ? { threadRootId } : {}),
+      fileIds: attachments.map((f) => f.id),
+      mentions,
+      files: attachments, // full DTOs so the optimistic row renders previews
+    });
     setDraft('');
     setAttachments([]);
     setError(null);

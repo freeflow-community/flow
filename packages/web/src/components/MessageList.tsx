@@ -5,7 +5,7 @@ import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { useAuth, useSelection } from '../state';
-import { useToggleReaction } from '../hooks';
+import { useSendMessage, useToggleReaction } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
@@ -273,6 +273,9 @@ function MessageRow({
   const member = membersById[message.userId];
   // Optimistic row awaiting the server echo: dimmed, actions suppressed.
   const pending = (message as LocalMessage).pending === true;
+  // Optimistic row whose POST errored out: kept in place with Retry/discard.
+  const failed = (message as LocalMessage).failed === true;
+  const send = useSendMessage(message.channelId);
 
   useEffect(() => {
     if (editing) setEditText(message.body);
@@ -364,6 +367,31 @@ function MessageRow({
             {message.files.map((f) => (
               <Attachment key={f.id} file={f} />
             ))}
+            {failed && (
+              <div
+                data-testid={`send-failed-${(message as LocalMessage).clientMsgId}`}
+                className="mt-0.5 flex items-center gap-2 text-xs text-red-600"
+              >
+                <span>Failed to send.</span>
+                <button
+                  type="button"
+                  className="font-semibold underline hover:no-underline"
+                  onClick={() => send.retry((message as LocalMessage).clientMsgId)}
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  className="text-muted hover:text-ink"
+                  title="Discard"
+                  onClick={() =>
+                    send.discard((message as LocalMessage).clientMsgId, message.threadRootId ?? undefined)
+                  }
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {/* Phase 11: link previews sit below the body/attachments and above
                 reactions. Only the author gets the remove affordance (§10). */}
             {message.unfurls.map((u) => (
@@ -429,7 +457,7 @@ function MessageRow({
         )}
       </div>
 
-      {!message.deletedAt && !editing && !pending && (
+      {!message.deletedAt && !editing && !pending && !failed && (
         <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
           {QUICK_REACTIONS.map((emoji) => {
             const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;

@@ -280,13 +280,16 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var unfurls: [Unfurl]
     /// Local-only: true for optimistic rows not yet confirmed by the server.
     var pending: Bool
+    /// Local-only: true once an optimistic row's POST errored out. The row
+    /// stays visible (not pending) with a Retry affordance; a retry clears it.
+    var failed: Bool
 
     var isDeleted: Bool { deletedAt != nil }
 
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
         case createdAt, editedAt, deletedAt, replyCount, lastReplyAt
-        case replyParticipantUserIds, reactions, files, unfurls, pending
+        case replyParticipantUserIds, reactions, files, unfurls, pending, failed
     }
 
     init(
@@ -295,7 +298,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         deletedAt: String?, replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
-        unfurls: [Unfurl] = [], pending: Bool
+        unfurls: [Unfurl] = [], pending: Bool, failed: Bool = false
     ) {
         self.id = id
         self.channelId = channelId
@@ -313,6 +316,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.files = files
         self.unfurls = unfurls
         self.pending = pending
+        self.failed = failed
     }
 
     init(from decoder: Decoder) throws {
@@ -333,6 +337,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         files = try c.decodeIfPresent([FileAttachment].self, forKey: .files) ?? []
         unfurls = try c.decodeIfPresent([Unfurl].self, forKey: .unfurls) ?? []
         pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        failed = try c.decodeIfPresent(Bool.self, forKey: .failed) ?? false
     }
 }
 
