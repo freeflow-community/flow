@@ -19,6 +19,7 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var statusEmoji: String? // "" / nil = no status
     var statusText: String?
     var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
+    var sponsorId: String? // agents only: the human member who sponsored them
     var createdAt: String?
 
     /// Display-only name: agents carry the 🤖 badge (mention resolution uses

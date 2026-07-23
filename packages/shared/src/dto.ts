@@ -10,6 +10,10 @@ export interface UserDTO {
   statusText: string; // '' = no status
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
+  /** Agents only: the human member who sponsored (approved) the agent. null for
+   * humans and unsponsored agents. Mirrors WorkspaceMemberDTO.sponsorId so a
+   * profile card fetched via /v1/users/:id can show the sponsor without the roster. */
+  sponsorId: string | null;
   /** Per-user notification prefs (phase 10). Missing key = on. */
   notificationPrefs: NotificationPrefs;
   /** While true, all notification alerts are suppressed (status-driven DND). */
