@@ -9,9 +9,10 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
-- iOS: no build tag in the UI — web + macOS show the build's short commit SHA at
-  the foot of the workspace menu. iOS has no workspace dropdown to hang it on;
-  needs a home for it (an About/settings row) plus the plist/env plumbing.
+- iOS: no build tag or "What's new" notes in the UI — web + macOS show the
+  build's short commit SHA at the foot of the workspace menu, and clicking it
+  opens a FEATURES.md lightbox. iOS has no workspace dropdown to hang either on;
+  needs a home for them (an About/settings row) plus the plist/env plumbing.
 - iOS: optimistic-send failures aren't recoverable — web + macOS keep a failed
   message in the stream with a Retry/Discard affordance (retry re-POSTs with the
   original `clientMsgId`); iOS still needs the `failed` flag on its message row,
@@ -115,6 +116,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-23 — "What's new" from the Build label
+- **Clicking the `Build …` label at the foot of the workspace menu opens a
+  "What's new" lightbox** that renders `FEATURES.md`. `[web]` `[macos]`
+- Web serves `FEATURES.md` as a static asset (copied into `web/public` by the
+  predev/prebuild step alongside the agent skill) and renders it with the shared
+  block-markdown renderer (`renderBlocks`), folding soft-wrapped source lines
+  first. macOS bundles `FEATURES.md` into the `.app` (`make-app.sh` →
+  `Bundle.main`, with a `#filePath` repo fallback for dev runs) and renders it
+  in a sheet via a small headings/bullets renderer (the message `MarkdownBlocks`
+  path has no heading/list support). `[web]` `[macos]`
 
 ### 2026-07-23 — Fix: agent "thinking…" indicator scoped to its thread
 - **When an agent answers a thread reply, its "thinking…" typing indicator now

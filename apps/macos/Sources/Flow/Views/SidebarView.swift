@@ -26,6 +26,7 @@ struct SidebarView: View {
     @State private var showAcceptInvite = false
     @State private var showNewDM = false
     @State private var showColorPicker = false
+    @State private var showFeatures = false
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
     @State private var ensuredSelfDmWs: String?
@@ -199,6 +200,7 @@ struct SidebarView: View {
                 WorkspaceColorSheet(workspace: ws)
             }
         }
+        .sheet(isPresented: $showFeatures) { FeaturesView() }
         .sheet(item: $addMemberChannel) { channel in
             AddMemberSheet(channel: channel, members: members.value)
         }
@@ -591,10 +593,11 @@ struct SidebarView: View {
             Divider()
             Button("All Workspaces") { app.selectWorkspace(nil) }
             Divider()
-            // Build tag (web parity): a disabled row at the menu's foot. Bare
-            // Text in a Menu renders as a non-interactive, dimmed item.
-            Text(BuildInfo.label)
-                .accessibilityIdentifier("sidebar.buildNumber")
+            // Build tag (web parity): clicking it opens the "What's new" sheet.
+            Button { showFeatures = true } label: {
+                Text(BuildInfo.label).italic()
+            }
+            .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
             HStack(spacing: 4) {
                 Text(currentWorkspace?.name ?? "Workspace")
