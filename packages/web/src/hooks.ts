@@ -22,6 +22,7 @@ import type {
 import { api } from './lib/api';
 import {
   applyMessageEvent,
+  markSendFailed,
   pendingId,
   removePendingMessage,
   type LocalMessage,
@@ -183,12 +184,37 @@ interface SendInput {
 }
 type SendVars = SendInput & { clientMsgId: string };
 
+/** The exact outgoing vars for each in-flight/failed send, keyed by
+ * clientMsgId, so Retry can replay the identical POST (mentions included —
+ * those aren't recoverable from the stored wire body). Cleared on success or
+ * discard; a session-scoped map (the optimistic cache is memory-only too). */
+const outgoingSends = new Map<string, SendVars>();
+
 /** Local-first send (macOS parity): a pending row lands in the cache before
  * the POST leaves; the response (or the WS echo, whichever wins) reconciles
- * it via clientMsgId; a failure removes it and the composer shows the error. */
+ * it via clientMsgId. A failure flips the row to `failed` (kept in place with
+ * a Retry affordance) rather than dropping it. */
 export function useSendMessage(channelId: string) {
   const qc = useQueryClient();
   const auth = useAuth();
+  const optimisticRow = (vars: SendVars): LocalMessage => ({
+    id: pendingId(vars.clientMsgId),
+    channelId,
+    userId: auth.user.id,
+    threadRootId: vars.threadRootId ?? null,
+    clientMsgId: vars.clientMsgId,
+    body: vars.body,
+    createdAt: new Date().toISOString(),
+    editedAt: null,
+    deletedAt: null,
+    replyCount: 0,
+    lastReplyAt: null,
+    replyParticipantUserIds: [],
+    reactions: [],
+    unfurls: [], // cards arrive from the server, never optimistically
+    files: vars.files ?? [],
+    pending: true,
+  });
   const mutation = useMutation({
     mutationFn: (vars: SendVars) =>
       api<MessageDTO>('POST', `/v1/channels/${channelId}/messages`, {
@@ -199,33 +225,31 @@ export function useSendMessage(channelId: string) {
         ...(vars.mentions?.length ? { mentions: vars.mentions } : {}),
       }),
     onMutate: (vars) => {
-      const optimistic: LocalMessage = {
-        id: pendingId(vars.clientMsgId),
-        channelId,
-        userId: auth.user.id,
-        threadRootId: vars.threadRootId ?? null,
-        clientMsgId: vars.clientMsgId,
-        body: vars.body,
-        createdAt: new Date().toISOString(),
-        editedAt: null,
-        deletedAt: null,
-        replyCount: 0,
-        lastReplyAt: null,
-        replyParticipantUserIds: [],
-        reactions: [],
-        unfurls: [], // cards arrive from the server, never optimistically
-        files: vars.files ?? [],
-        pending: true,
-      };
-      applyMessageEvent(qc, optimistic, true);
+      outgoingSends.set(vars.clientMsgId, vars);
+      // Replaces the failed row in place on a retry (sameRow matches clientMsgId).
+      applyMessageEvent(qc, optimisticRow(vars), true);
     },
-    onSuccess: (msg) => applyMessageEvent(qc, msg, true),
-    onError: (_err, vars) => removePendingMessage(qc, channelId, vars.clientMsgId, vars.threadRootId),
+    onSuccess: (msg, vars) => {
+      outgoingSends.delete(vars.clientMsgId);
+      applyMessageEvent(qc, msg, true);
+    },
+    onError: (_err, vars) => markSendFailed(qc, channelId, vars.clientMsgId, vars.threadRootId),
   });
   return {
     ...mutation,
     mutate: (input: SendInput, opts?: Parameters<typeof mutation.mutate>[1]) =>
       mutation.mutate({ ...input, clientMsgId: crypto.randomUUID() }, opts),
+    /** Re-POST a failed message with its original clientMsgId (idempotent
+     * server-side). Flips the row back to pending and re-bumps the rollup. */
+    retry: (clientMsgId: string, opts?: Parameters<typeof mutation.mutate>[1]) => {
+      const vars = outgoingSends.get(clientMsgId);
+      if (vars) mutation.mutate(vars, opts);
+    },
+    /** Drop a failed message and forget its vars (the "×" beside Retry). */
+    discard: (clientMsgId: string, threadRootId?: string) => {
+      outgoingSends.delete(clientMsgId);
+      removePendingMessage(qc, channelId, clientMsgId, threadRootId);
+    },
   };
 }
 

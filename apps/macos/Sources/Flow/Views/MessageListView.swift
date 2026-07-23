@@ -285,6 +285,10 @@ struct MessageRow: View {
                         )
                     }
 
+                    if message.failed {
+                        sendFailedFooter
+                    }
+
                     if !message.reactions.isEmpty {
                         reactionChips
                     }
@@ -348,7 +352,7 @@ struct MessageRow: View {
         // down (operator-reported bug at the item-6 checkpoint).
         .overlay(alignment: .topTrailing) {
             if hovering || showReactionPicker || showDeleteConfirm,
-               !message.isDeleted, !message.pending {
+               !message.isDeleted, !message.pending, !message.failed {
                 hoverMenu
                     .padding(.trailing, 22)
             }
@@ -364,7 +368,7 @@ struct MessageRow: View {
             Text("This can't be undone.")
         }
         .contextMenu {
-            if !message.isDeleted, !message.pending {
+            if !message.isDeleted, !message.pending, !message.failed {
                 ForEach(Array(EmojiCatalog.quickReactions.prefix(6)), id: \.self) { emoji in
                     Button(emoji) {
                         Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
@@ -372,7 +376,12 @@ struct MessageRow: View {
                 }
                 Divider()
             }
-            if showThreadAffordances {
+            if message.failed {
+                Button("Retry Send") { Task { await app.engine.retrySend(message) } }
+                Button("Discard", role: .destructive) { Task { await app.engine.discardFailed(message) } }
+                Divider()
+            }
+            if showThreadAffordances, !message.failed {
                 Button("Reply in Thread") {
                     onOpenThread(message.threadRootId ?? message.id)
                 }
@@ -611,6 +620,25 @@ struct MessageRow: View {
         if message.pending {
             ProgressView().controlSize(.mini)
         }
+    }
+
+    /// Failed-send affordance: the message stays put with an error label and a
+    /// Retry button (Discard drops it). Re-sends reuse the original clientMsgId,
+    /// so the server dedupes if the first POST actually landed.
+    private var sendFailedFooter: some View {
+        HStack(spacing: 8) {
+            Label("Failed to send", systemImage: "exclamationmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(MC.danger)
+            Button("Retry") { Task { await app.engine.retrySend(message) } }
+                .buttonStyle(.link)
+                .font(.caption.weight(.semibold))
+            Button("Discard") { Task { await app.engine.discardFailed(message) } }
+                .buttonStyle(.link)
+                .font(.caption)
+                .foregroundStyle(MC.muted)
+        }
+        .padding(.top, 1)
     }
 
     private var reactionChips: some View {

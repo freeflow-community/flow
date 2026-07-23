@@ -4,8 +4,10 @@ import type { MessageDTO, MessagePage } from '@flow/shared';
 import {
   applyMessageEvent,
   applyTopLevel,
+  markSendFailed,
   pendingId,
   removePendingMessage,
+  type LocalMessage,
   type MessagesData,
   type ThreadData,
 } from './messageCache';
@@ -120,17 +122,20 @@ describe('applyMessageEvent', () => {
   });
 });
 
-describe('removePendingMessage', () => {
-  it('drops a failed top-level send', () => {
+describe('markSendFailed', () => {
+  it('keeps a failed top-level row in place, flagged failed (not pending)', () => {
     const qc = new QueryClient();
     qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([msg()])));
-    const optimistic = msg({ id: pendingId('cm-fail'), clientMsgId: 'cm-fail' });
+    const optimistic: LocalMessage = { ...msg({ id: pendingId('cm-fail'), clientMsgId: 'cm-fail' }), pending: true };
     applyMessageEvent(qc, optimistic, true);
-    removePendingMessage(qc, 'chan-1', 'cm-fail');
-    expect(channelCache(qc).some((m) => m.id === pendingId('cm-fail'))).toBe(false);
+    markSendFailed(qc, 'chan-1', 'cm-fail');
+    const row = channelCache(qc).find((m) => m.id === pendingId('cm-fail')) as LocalMessage | undefined;
+    expect(row).toBeDefined();
+    expect(row!.failed).toBe(true);
+    expect(row!.pending).toBe(false);
   });
 
-  it('a failed reply un-bumps the root and a retry can bump again', () => {
+  it('a failed reply un-bumps the root (keeping the row) and a retry re-bumps', () => {
     const qc = new QueryClient();
     const root = msg({ id: 'root-2' });
     qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
@@ -142,12 +147,41 @@ describe('removePendingMessage', () => {
       threadRootId: 'root-2',
     });
     applyMessageEvent(qc, optimistic, true);
-    removePendingMessage(qc, 'chan-1', 'cm-refail', 'root-2');
+    markSendFailed(qc, 'chan-1', 'cm-refail', 'root-2');
     expect(qc.getQueryData<ThreadData>(['thread', 'root-2'])!.root.replyCount).toBe(0);
     expect(channelCache(qc).find((m) => m.id === 'root-2')!.replyCount).toBe(0);
+    // the failed reply is still in the thread, flagged failed
+    const reply = qc
+      .getQueryData<ThreadData>(['thread', 'root-2'])!
+      .messages.find((m) => m.id === pendingId('cm-refail')) as LocalMessage | undefined;
+    expect(reply?.failed).toBe(true);
 
-    // retry with the same clientMsgId bumps again (dedupe key was freed)
+    // retry with the same clientMsgId re-bumps (dedupe key was freed)
     applyMessageEvent(qc, optimistic, true);
     expect(channelCache(qc).find((m) => m.id === 'root-2')!.replyCount).toBe(1);
+  });
+});
+
+describe('removePendingMessage', () => {
+  it('drops a discarded top-level row', () => {
+    const qc = new QueryClient();
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([msg()])));
+    const optimistic = msg({ id: pendingId('cm-fail'), clientMsgId: 'cm-fail' });
+    applyMessageEvent(qc, optimistic, true);
+    removePendingMessage(qc, 'chan-1', 'cm-fail');
+    expect(channelCache(qc).some((m) => m.id === pendingId('cm-fail'))).toBe(false);
+  });
+
+  it('drops a discarded reply without touching the (already un-bumped) rollup', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-3', replyCount: 0 });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', 'root-3'], { root, messages: [], hasMore: false });
+    const optimistic = msg({ id: pendingId('cm-d'), clientMsgId: 'cm-d', threadRootId: 'root-3' });
+    applyMessageEvent(qc, optimistic, true);
+    markSendFailed(qc, 'chan-1', 'cm-d', 'root-3'); // rollup back to 0
+    removePendingMessage(qc, 'chan-1', 'cm-d', 'root-3');
+    expect(qc.getQueryData<ThreadData>(['thread', 'root-3'])!.messages).toHaveLength(0);
+    expect(channelCache(qc).find((m) => m.id === 'root-3')!.replyCount).toBe(0);
   });
 });

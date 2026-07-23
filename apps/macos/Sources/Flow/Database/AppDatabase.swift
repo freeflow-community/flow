@@ -171,6 +171,13 @@ struct AppDatabase: Sendable {
                 t.add(column: "sponsorId", .text)
             }
         }
+        // Optimistic-send failure: a send whose POST errored keeps its row and
+        // flags it `failed` (Retry affordance) instead of spinning forever.
+        migrator.registerMigration("v9") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "failed", .boolean).notNull().defaults(to: false)
+            }
+        }
         try migrator.migrate(writer)
     }
 

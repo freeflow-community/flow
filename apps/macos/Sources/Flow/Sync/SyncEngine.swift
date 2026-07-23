@@ -451,26 +451,84 @@ actor SyncEngine {
                 try Self.bumpThreadRollup(db, rootId: root, replyAt: now, authorId: uid)
             }
         }
-        do {
-            let server: Message = try await api.post(
-                "/v1/channels/\(channelId)/messages",
-                body: SendMessageBody(
-                    clientMsgId: clientMsgId,
-                    body: wireBody,
-                    threadRootId: threadRootId,
-                    fileIds: attachments.isEmpty ? nil : attachments.map(\.id),
-                    mentions: mentions.isEmpty ? nil : mentions
-                )
-            )
-            _ = await applyServerMessage(server)
-        } catch {
-            await appState?.showError("Couldn't send message: \(error.localizedDescription)")
-            return []
-        }
+        // A send failure no longer aborts with a toast: `deliver` flags the row
+        // `failed` (kept in place with a Retry affordance) and returns false.
+        guard await deliver(local, mentions: mentions) else { return [] }
         // Web-parity: after a successful send, flag mentioned users who aren't
         // in this channel — they won't see the mention (an agent never even
         // processes it) until added.
         return await channelMentionMisses(channelId: channelId, mentionIds: mentions)
+    }
+
+    /// POST an already-inserted optimistic row and reconcile it. On network or
+    /// server failure the row is flagged `failed` (kept in place with a Retry
+    /// affordance) rather than left spinning as pending. Returns whether the
+    /// send was accepted by the server.
+    @discardableResult
+    private func deliver(_ local: Message, mentions: [String]) async -> Bool {
+        do {
+            let server: Message = try await api.post(
+                "/v1/channels/\(local.channelId)/messages",
+                body: SendMessageBody(
+                    clientMsgId: local.clientMsgId,
+                    body: local.body,
+                    threadRootId: local.threadRootId,
+                    fileIds: local.files.isEmpty ? nil : local.files.map(\.id),
+                    mentions: mentions.isEmpty ? nil : mentions
+                )
+            )
+            _ = await applyServerMessage(server)
+            return true
+        } catch {
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE message SET pending = 0, failed = 1 WHERE clientMsgId = ?",
+                    arguments: [local.clientMsgId]
+                )
+                // A failed reply un-bumps the root rollup it optimistically
+                // incremented, so counts reflect only confirmed replies.
+                if let root = local.threadRootId { try Self.unbumpThreadRollup(db, rootId: root) }
+            }
+            return false
+        }
+    }
+
+    /// Re-send a previously failed message with its original clientMsgId (the
+    /// server is idempotent on it). Flips the row back to pending, re-bumps the
+    /// thread rollup, then re-POSTs. Mentions are recovered from the stored
+    /// wire body so a retry still notifies mentioned users.
+    func retrySend(_ message: Message) async {
+        try? await db.writer.write { db in
+            try db.execute(
+                sql: "UPDATE message SET failed = 0, pending = 1 WHERE id = ?",
+                arguments: [message.id]
+            )
+            if let root = message.threadRootId {
+                try Self.bumpThreadRollup(db, rootId: root, replyAt: message.createdAt, authorId: message.userId)
+            }
+        }
+        var reloaded = message
+        reloaded.failed = false
+        reloaded.pending = true
+        await deliver(reloaded, mentions: Self.mentionIds(in: message.body))
+    }
+
+    /// Discard a failed (never-sent) optimistic row: just drop it locally —
+    /// there's no server row to delete. Its rollup was already un-bumped when
+    /// the send failed, so this only removes the row.
+    func discardFailed(_ message: Message) async {
+        try? await db.writer.write { db in
+            try Message.filter(key: message.id).deleteAll(db)
+        }
+    }
+
+    /// Extract `<@userId>` mention targets from a wire-format body (group
+    /// tokens like `<!channel>` are recomputed from the body server-side).
+    private static func mentionIds(in body: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: "<@([^>]+)>") else { return [] }
+        let ns = body as NSString
+        return re.matches(in: body, range: NSRange(location: 0, length: ns.length))
+            .map { ns.substring(with: $0.range(at: 1)) }
     }
 
     /// Mentioned userIds that aren't members of `channelId` (standard channels
@@ -1125,6 +1183,20 @@ actor SyncEngine {
         if root.replyParticipantUserIds.count < 4, !root.replyParticipantUserIds.contains(authorId) {
             root.replyParticipantUserIds.append(authorId)
         }
+        try root.save(db)
+    }
+
+    /// Reverse a `bumpThreadRollup` when an optimistic reply fails: decrement
+    /// replyCount and recompute lastReplyAt from the remaining non-failed
+    /// replies. Participants recompute on the next thread fetch (like purge).
+    private static func unbumpThreadRollup(_ db: Database, rootId: String) throws {
+        guard var root = try Message.filter(key: rootId).fetchOne(db) else { return }
+        root.replyCount = max(0, root.replyCount - 1)
+        root.lastReplyAt = try String.fetchOne(
+            db,
+            sql: "SELECT max(createdAt) FROM message WHERE threadRootId = ? AND failed = 0",
+            arguments: [rootId]
+        )
         try root.save(db)
     }
 

@@ -9,6 +9,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- iOS: optimistic-send failures aren't recoverable — web + macOS keep a failed
+  message in the stream with a Retry/Discard affordance (retry re-POSTs with the
+  original `clientMsgId`); iOS still needs the `failed` flag on its message row,
+  the un-bump/re-bump rollup handling, and the retry UI. Server is already
+  idempotent on `(channelId, clientMsgId)`, so it's a client-only port.
 - iOS: a thread-reply Activity notification lands in the originating channel
   but does not open the thread or scroll to the reply (web + macOS open the
   thread and flash the reply). iOS threads are a locally-owned pushed screen
@@ -107,6 +112,30 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-22 — Optimistic send: a failed message stays put with Retry
+- **A send that fails no longer discards the message.** Both clients already
+  inserted the optimistic row before the POST; the change is the failure path.
+  On error the row now stays in the stream flagged `failed` — dimming clears
+  and a "Failed to send · Retry / Discard" affordance appears — instead of
+  vanishing (web) or spinning as pending forever (macOS). `[web]` `[macos]`
+- Retry re-POSTs with the **original `clientMsgId`**, which the server is
+  idempotent on `(channelId, clientMsgId)`, so a retry is safe even if the
+  first POST actually landed. Retry flips the row back to pending and re-bumps
+  the thread rollup; a failed reply un-bumps the root's reply count so it
+  reflects only confirmed replies (re-bumped on a successful retry). `[web]`
+  `[macos]`
+- Web: `markSendFailed` (new) replaces `removePendingMessage` on the error
+  path; `useSendMessage` keeps the outgoing vars keyed by `clientMsgId` so
+  Retry replays the identical POST (mentions included — not recoverable from
+  the stored wire body). `MessageRow` renders the affordance and suppresses the
+  hover menu on failed rows. `[web]`
+- macOS: new `failed` column (migration `v9`) + `Message.failed`; `SyncEngine`
+  gains `deliver`/`retrySend`/`discardFailed` and an `unbumpThreadRollup`;
+  retry recovers `<@id>` mentions from the wire body. `MessageRow` shows the
+  footer + a Retry/Discard context menu; added an `MC.danger` token. `[macos]`
+- Verified: web `vitest` (24 pass, incl. new `markSendFailed` cache tests) +
+  `tsc --noEmit`; macOS `swift build` clean. `[qa]`
 
 ### 2026-07-22 — macOS: message hover menu matches the web version
 - **The macOS message hover pill now reads identically to the web one.** Added

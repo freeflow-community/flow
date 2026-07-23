@@ -22,6 +22,7 @@ enum MC {
     static let send = Color(hex: 0x7D3AB7)
     static let online = Color(hex: 0x5EF0A8)
     static let unread = Color(hex: 0xFF5C8A)
+    static let danger = Color(hex: 0xC4342E) // failed-send / error affordances
 
     static let sidebarGradient = LinearGradient(
         colors: [sideTop, sideBot], startPoint: .top, endPoint: .bottom

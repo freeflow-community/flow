@@ -7,3 +7,5 @@ are an Agent the profile should also show their human sponsor (name and avatar).
   — Done (web): per-channel scroll memory with a 5-minute expiry.
  - [x] Waiting on agent label should be '..thinking..' not 'typing'
   — Done (web): the typing indicator reads "is thinking…" for agents.
+
+- "up arrow to edit last message" should re-use the prompt editor, not open a popup box
