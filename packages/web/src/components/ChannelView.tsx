@@ -68,10 +68,11 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const shown = headerIds.slice(0, 3);
   const extra = headerIds.length - shown.length;
 
-  // Main-composer typing only — thread typing shows in its own panel.
-  const typingNames = Object.entries(live.typing[typingKey(channelId)] ?? {})
+  // Main-composer typing only — thread typing shows in its own panel. An agent
+  // at work "thinks" rather than "types" (ui_nits), so carry the isAgent flag.
+  const typers = Object.entries(live.typing[typingKey(channelId)] ?? {})
     .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
-    .map(([uid]) => names[uid] ?? 'Someone');
+    .map(([uid]) => ({ name: names[uid] ?? 'Someone', isAgent: memberMap[uid]?.isAgent ?? false }));
 
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-base">
@@ -119,12 +120,12 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         </div>
       </header>
 
-      {/* key: fresh list per channel — resets the bottom-pin state and
-          re-runs the open-scroll, so opening a channel always lands at the
-          bottom (a reused instance carried the previous channel's scroll
-          state once caches went warm). */}
+      {/* key: fresh list per channel so the mount effect re-runs — it restores
+          this channel's remembered scroll position (or lands at the bottom when
+          there's none / it's stale), keyed by channelId in scrollMemory. */}
       <MessageList
         key={channelId}
+        scrollKey={channelId}
         messages={messages}
         names={names}
         membersById={memberMap}
@@ -136,8 +137,12 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       />
 
       <div className="h-5 px-[22px] text-xs text-muted" data-testid="typing-indicator-slot">
-        {typingNames.length === 1 && <span data-testid="typing-indicator">{typingNames[0]} is typing…</span>}
-        {typingNames.length > 1 && <span data-testid="typing-indicator">Several people are typing…</span>}
+        {typers.length === 1 && (
+          <span data-testid="typing-indicator">
+            {typers[0]!.name} is {typers[0]!.isAgent ? 'thinking' : 'typing'}…
+          </span>
+        )}
+        {typers.length > 1 && <span data-testid="typing-indicator">Several people are typing…</span>}
       </div>
 
       {channel?.archivedAt ? (

@@ -4,8 +4,8 @@ import { SIDEBAR_COLORS } from '@flow/shared';
 import type { ChannelDTO, InviteDTO, NotificationPrefs, UserDTO } from '@flow/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useChannelMembers, useMembers, useWorkspaces } from '../hooks';
-import { AuthImg } from './Avatar';
+import { useChannelMembers, useMemberMap, useMembers, useWorkspaces } from '../hooks';
+import { AuthImg, Avatar } from './Avatar';
 
 export function Modal({
   children,
@@ -546,8 +546,14 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
+  const memberMap = useMemberMap(sel.workspaceId);
   const [user, setUser] = useState<UserDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Agents carry a human sponsor; the id lives on the workspace roster, not the
+  // /v1/users payload, so resolve name + avatar from the member map (ui_nits).
+  const sponsorId = user?.isAgent ? memberMap[userId]?.sponsorId ?? null : null;
+  const sponsor = sponsorId ? memberMap[sponsorId] : undefined;
 
   useEffect(() => {
     void api<UserDTO>('GET', `/v1/users/${userId}`)
@@ -593,6 +599,22 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
           {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
           <p className="text-sm text-muted select-all">{user.email}</p>
           <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>
+          {sponsor && (
+            <div
+              data-testid="user-card-sponsor"
+              className="mt-1 flex items-center gap-2 rounded-lg bg-daypill px-3 py-1.5"
+            >
+              <span className="text-xs text-muted">Sponsored by</span>
+              <Avatar
+                userId={sponsor.userId}
+                name={sponsor.displayName}
+                avatarUrl={sponsor.avatarUrl}
+                size={20}
+                radius={6}
+              />
+              <span className="text-sm font-semibold">{sponsor.displayName}</span>
+            </div>
+          )}
           <div className="mt-2 flex gap-2">
             {userId !== auth.user.id && (
               <button data-testid="user-card-message"

@@ -60,6 +60,19 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - iOS: no inline video preview/playback card — video attachments render as a
   name+size chip that opens in QuickLook (which does play them); web/macOS
   render inline players with an expand affordance.
+- iOS: typing indicator says "is typing…" even for agents; web + macOS show
+  "is thinking…" for an agent at work (History 2026-07-22). The string lives in
+  `ComposerView.swift`; the shared `AppState.agentIds` set is already populated
+  on iOS (it reuses the macOS core) — it's a view-only switch.
+- iOS: no member-profile popup at all — tapping another user's avatar does
+  nothing (web + macOS open a profile card; macOS also shows an agent's
+  "Sponsored by" row). Needs a new `MemberProfileSheet` on iOS plus avatar taps
+  wired through `MessageListView`. `UserDTO.sponsorId` (shared) already carries
+  the data.
+- iOS: no per-channel scroll-position memory across channel switches (web +
+  macOS added a 5-minute-expiry memory 2026-07-22). The shared
+  `MessageScrollMemory` store is available to iOS; only the SwiftUI wiring in
+  iOS `MessageListView` is missing.
 
 ### Deliberate divergences (ruled)
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
@@ -129,8 +142,51 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   always-present list row, and a sentinel nav route on the existing
   `NavigationStack`. This closes the iOS notifications-view gap. `[ios]`
 - Verified: `pnpm build` (web, tsc + vite), `swift build` (macOS), and an
-  iphonesimulator `xcodebuild` (iOS) all pass. Live click-through not yet run.
-  `[qa]`
+  iphonesimulator `xcodebuild` (iOS) all pass; web Activity + jump-to-message
+  confirmed live against the local dev server. `[qa]`
+
+### 2026-07-22 — macOS: profile-on-avatar sponsor, scroll memory, agent "thinking"
+- Closes the three macOS parity gaps opened by the web nits earlier today.
+  iOS follows in a later pass (the shared data model below is already in place
+  for it). `[macos]`
+- **Tapping a message sender's avatar opens their profile card** (channels and
+  threads), via a new `onOpenProfile` callback threaded through `MessageListView`
+  → `MessageRow`. macOS already had the card; it was only reachable from the
+  header before. `[macos]`
+- **Agent profile cards show a "Sponsored by" row** with the sponsor's avatar
+  and name. This needed a data path: `UserDTO` gained a `sponsorId` field
+  (`toUserDTO` fills it from `sponsorUserId` for agents), the Swift `User` model
+  + a `user.sponsorId` DB migration (v8) carry it, and the card resolves the
+  sponsor with a second `fetchUser`. `[server]` `[macos]`
+- **Agents "think" in the typing indicator** — `TypingIndicatorView` now says
+  "<name> is thinking…" for an agent, driven by a new shared
+  `AppState.agentIds` set (derived alongside the avatar map in `SyncEngine`).
+  `[macos]`
+- **Per-channel scroll-position memory** — a shared, process-lifetime
+  `MessageScrollMemory` store remembers the top-visible message id per channel
+  (5-minute expiry); `MessageListView` re-anchors there on return via
+  `.scrollPosition`, else lands at the bottom. Threads keep their always-newest
+  behavior. `[macos]`
+- Verified with `swift build` (clean). The `UserDTO.sponsorId` addition is
+  backward-compatible and typechecks across server + web. `[macos]` `[server]`
+
+### 2026-07-22 — Web: profile-on-avatar, scroll memory, agent "thinking" label
+- **Clicking a message sender's avatar opens their profile card.** The card
+  (name, email, avatar, local time) already existed but was only reachable from
+  the DM/channel header; message-row avatars are now buttons that open it, in
+  channels and threads alike. `[web]`
+- **Agent profile cards show their human sponsor.** For an agent, the card now
+  renders a "Sponsored by <name>" row with the sponsor's avatar, resolved from
+  the workspace roster's `sponsorId` (no server change — the id was already on
+  the member DTO). `[web]`
+- **Per-channel scroll position is remembered across channel switches.** Scroll
+  back in #A, hop to #B and return, and you land where you left off instead of
+  snapped to the bottom. Memory is module-level (survives the per-channel
+  remount) and expires after 5 minutes — return later and you snap to the
+  bottom, the freshest place. A new message only pulls you down while you're
+  already pinned at the bottom. `[web]`
+- **An agent at work now reads "is thinking…" not "is typing…"** in the typing
+  indicator, matching how the bridge describes itself. Humans still "type". `[web]`
 
 ### 2026-07-22 — agent-bridge: startup version check against npm
 - **New: the bridge checks npm on startup and warns when it's stale.** Nothing

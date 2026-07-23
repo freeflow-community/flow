@@ -9,6 +9,7 @@ struct ThreadPanelView: View {
     @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
     @StateObject private var workspaceId = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
+    @State private var profileUserId: String?
     /// The reply currently flashing after a jump-to-message (phase 12).
     @State private var flashId: String?
 
@@ -55,7 +56,8 @@ struct ThreadPanelView: View {
                                 onEdit: { editingMessage = $0 },
                                 onDelete: { msg in
                                     Task { await app.engine.deleteMessage(id: msg.id) }
-                                }
+                                },
+                                onOpenProfile: { profileUserId = $0 }
                             )
                             .id(message.id)
                             if message.id == rootId {
@@ -127,6 +129,12 @@ struct ThreadPanelView: View {
         }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
+        }
+        .sheet(item: Binding(
+            get: { profileUserId.map { ProfileTarget(userId: $0) } },
+            set: { profileUserId = $0?.userId }
+        )) { target in
+            MemberProfileSheet(userId: target.userId)
         }
     }
 

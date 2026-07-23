@@ -40,6 +40,7 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
     statusEmoji: u.statusEmoji,
     statusText: u.statusText,
     isAgent: u.isAgent,
+    sponsorId: u.isAgent ? u.sponsorUserId : null,
     notificationPrefs: u.notificationPrefs,
     statusSuppressAlerts: u.statusSuppressAlerts,
     createdAt: u.createdAt.toISOString(),
