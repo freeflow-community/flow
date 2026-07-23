@@ -9,6 +9,14 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- macOS: clicking an OS notification banner does not navigate to the message —
+  web now focuses the tab and jumps to the triggering message on banner click
+  (2026-07-23), but the native app's `Banners.show` fires a
+  `UNUserNotificationCenter` request with no `UNUserNotificationCenterDelegate`,
+  so `didReceive` is never handled and a click just activates the app. Needs a
+  delegate that routes the notification `id` to the same jump `AppState` already
+  does for Activity-row taps. (iOS has no push notifications yet — closes with
+  the APNs work.)
 - iOS: no build tag or "What's new" notes in the UI — web + macOS show the
   build's short commit SHA at the foot of the workspace menu, and clicking it
   opens a FEATURES.md lightbox. iOS has no workspace dropdown to hang either on;
@@ -117,6 +125,29 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-23 — Web notification banners are now clickable
+- Clicking a browser (OS) notification banner from the web client now focuses
+  the tab and jumps straight to the triggering message — selecting the right
+  workspace/channel, opening the thread for a reply, flashing the message, and
+  marking the notification read — the same navigation the in-app Activity list
+  already does. Previously the banner had no `onclick`, so clicking it did
+  nothing beyond the browser default. `[web]`
+
+### 2026-07-23 — Artifacts: agent-created ones auto-open for the requester
+- When an agent creates an artifact through the Flow MCP, it now **opens
+  automatically** in the side panel for whoever is viewing that channel — the
+  person who asked the agent to make it — instead of only appearing in the
+  sidebar. Gated so it never yanks focus unexpectedly: only on the live
+  `artifact.created` event (not `updated`), only when the artifact is
+  agent-generated (`ownsFile` — a human "Pin as artifact" does not auto-open),
+  and only for a client whose active channel is the artifact's channel. In an
+  agent DM that targets exactly the one human; in a shared channel it pops for
+  everyone currently viewing (there is no per-requester signal server-side).
+  `[server]` `[web]` `[macos]`
+- `ArtifactDTO` now carries `ownsFile` so clients can tell an agent-generated
+  artifact from a human pin. macOS `artifact.*` events now distinguish
+  created/updated/deleted (was created==updated). `[server]` `[web]` `[macos]`
 
 ### 2026-07-23 — Phase 13: side-panel, per-channel artifacts
 - **Artifacts are now per-channel shared objects, not personal bookmarks.**

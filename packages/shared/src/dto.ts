@@ -139,6 +139,11 @@ export interface ArtifactDTO {
   channelId: string; // the channel this artifact belongs to (shared with all members)
   fileId: string;
   name: string; // display name, defaults to the file name
+  /** True when the artifact owns its backing file — i.e. an agent generated the
+   * content via the Flow MCP (uploaded a fresh blob) rather than a human pinning
+   * an existing message file. Clients use this to auto-open agent-created
+   * artifacts for the requester (a human pin does not steal focus). */
+  ownsFile: boolean;
   createdAt: string;
   updatedAt: string; // bumped when the name or backing file changes
   /** The underlying file, hydrated so clients can render without a second fetch. */

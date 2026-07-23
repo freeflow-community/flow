@@ -1108,14 +1108,20 @@ actor SyncEngine {
         case .workspaceUpdated(let ws):
             await saveWorkspacePreservingRole(ws)
 
-        case .artifact(let a, let deleted):
+        case .artifact(let a, let change):
             // Per-channel shared artifacts (phase 13): keep the sidebar list
             // fresh; a deletion of the open artifact closes the side panel.
-            if deleted {
+            if change == .deleted {
                 await appState?.artifactBecameUnavailable(a.id)
             }
             if event.workspaceId == activeWorkspaceId {
                 await refreshArtifacts(workspaceId: event.workspaceId)
+                // Auto-open an agent-created artifact for whoever is viewing its
+                // channel — the user who asked the agent to make it. Gated on
+                // ownsFile (agent-generated) so a human pin never steals focus.
+                if change == .created {
+                    await appState?.maybeAutoOpenArtifact(a)
+                }
             }
 
         case .userUpdated(let u):

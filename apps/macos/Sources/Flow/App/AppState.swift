@@ -279,6 +279,16 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Auto-open an agent-created artifact for the user viewing its channel —
+    /// the person who asked the agent to make it. Gated on `ownsFile` (the
+    /// content was agent-generated, not a human pin) and on the artifact's
+    /// channel being the active one, so it only pops for someone in that
+    /// conversation and a human "Pin as artifact" never steals focus.
+    func maybeAutoOpenArtifact(_ a: Artifact) {
+        guard a.ownsFile, a.channelId == selectedChannelId else { return }
+        selectArtifact(a.id)
+    }
+
     /// Artifacts pinned in a given channel (for the sidebar's nested rows).
     func artifacts(inChannel channelId: String) -> [Artifact] {
         artifacts.filter { $0.channelId == channelId }

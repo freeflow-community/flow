@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, Event, MessageDTO, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
-import { getToken } from '../lib/api';
+import { api, getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
@@ -203,6 +203,22 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['artifacts', event.workspaceId] });
         const a = event.data as ArtifactDTO;
         if (event.type === 'artifact.deleted' && cur.artifactId === a.id) cur.selectArtifact(null);
+        // Auto-open an agent-created artifact for whoever is looking at its
+        // channel — the user who asked the agent to make it. Gated on ownsFile
+        // (agent-generated content) so a human "Pin as artifact" never steals
+        // focus, and on the active channel so it only pops for someone in that
+        // conversation. Updates don't re-open (they'd yank focus mid-view).
+        if (event.type === 'artifact.created' && a.ownsFile && a.channelId === cur.channelId) {
+          // Seed the list cache with the DTO *before* selecting: the invalidate
+          // above refetches async, and ArtifactBody self-closes if the selected
+          // id isn't in the (still-stale) list — so without this the panel would
+          // pop open and immediately close. The refetch reconciles a moment later.
+          qc.setQueryData<{ artifacts: ArtifactDTO[] }>(['artifacts', event.workspaceId], (old) => {
+            const list = old?.artifacts ?? [];
+            return list.some((x) => x.id === a.id) ? old! : { artifacts: [a, ...list] };
+          });
+          cur.selectArtifact(a.id);
+        }
         break;
       }
       case 'notification.created': {
@@ -228,12 +244,24 @@ export default function Main() {
     const title =
       n.kind === 1 ? `${sender} (DM)` : n.kind === 2 ? `${sender} replied in a thread` : `${sender} mentioned you`;
     try {
-      new Notification(title, {
+      const banner = new Notification(title, {
         body: plainBody(n.message.body, namesRef.current),
         tag: n.id,
         // presentation pref: persist until dismissed (browser permitting)
         requireInteraction: authRef.current.user.notificationPrefs.persistentBanners === true,
       });
+      // Clicking the OS banner should focus this tab and jump straight to the
+      // triggering message — same navigation the in-app Activity list does.
+      banner.onclick = () => {
+        window.focus();
+        banner.close();
+        const s = selRef.current;
+        if (s.workspaceId !== n.workspaceId) s.selectWorkspace(n.workspaceId);
+        s.jumpToMessage(n.channelId, n.messageId, n.message.threadRootId);
+        void api('POST', '/v1/me/notifications/read', { upToId: n.id }).then(() =>
+          qc.invalidateQueries({ queryKey: ['notifications'] }),
+        );
+      };
     } catch {
       /* banner is best-effort */
     }

@@ -5,6 +5,10 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **Click a notification banner to jump right to the message.** On the web,
+  clicking a desktop notification now brings the tab to the front and takes you
+  straight to the message that triggered it — opening the thread if it was a
+  reply and marking the notification read. (Native Mac app coming next.)
 - **Artifacts are now shared per channel.** Pin a file (or a document an agent
   makes for you) as an artifact and it shows up for everyone in that channel,
   tucked under the channel’s name in the sidebar. Want it private? Pin it in a
@@ -16,7 +20,9 @@ For the full technical changelog see `CHANGELOG.md`.
   ✕; delete an artifact for everyone with the ✕ on its sidebar row.
 - **Agents can create and update artifacts.** An agent can pin a document to the
   channel and later revise it in place — everyone viewing it sees the new
-  version.
+  version. When you ask an agent to make one, it now **opens for you
+  automatically** in the side panel, so you don't have to go find it in the
+  sidebar.
 - **See what’s new** — click the “Build …” label at the bottom of the workspace
   menu to open these release notes right inside the app.
 - Agents now show their **“thinking…”** status inside the thread they’re
