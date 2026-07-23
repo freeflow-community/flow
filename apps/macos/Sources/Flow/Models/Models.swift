@@ -350,6 +350,10 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     let channelId: String // the channel this artifact belongs to (shared with all members)
     let fileId: String
     var name: String
+    /// True when the artifact owns its backing file — an agent generated the
+    /// content via the Flow MCP rather than a human pinning a message file.
+    /// Drives auto-opening agent-created artifacts for the requester.
+    let ownsFile: Bool
     let createdAt: String
     let updatedAt: String
     let file: FileAttachment
@@ -570,9 +574,14 @@ enum EventPayload: Sendable {
     case notification(NotificationItem)
     case userUpdated(User)
     case workspaceUpdated(Workspace)
-    case artifact(Artifact, deleted: Bool)
+    case artifact(Artifact, change: ArtifactChange)
     case unknown
 }
+
+/// Lifecycle of an artifact.* event. `created` is distinguished from `updated`
+/// so the client can auto-open a freshly agent-created artifact without an
+/// in-place content update yanking focus back to the panel.
+enum ArtifactChange: Sendable { case created, updated, deleted }
 
 struct EventDTO: Decodable, Sendable {
     let type: String
@@ -616,10 +625,12 @@ struct EventDTO: Decodable, Sendable {
             payload = .userUpdated(try c.decode(User.self, forKey: .data))
         case "workspace.updated":
             payload = .workspaceUpdated(try c.decode(Workspace.self, forKey: .data))
-        case "artifact.created", "artifact.updated":
-            payload = .artifact(try c.decode(Artifact.self, forKey: .data), deleted: false)
+        case "artifact.created":
+            payload = .artifact(try c.decode(Artifact.self, forKey: .data), change: .created)
+        case "artifact.updated":
+            payload = .artifact(try c.decode(Artifact.self, forKey: .data), change: .updated)
         case "artifact.deleted":
-            payload = .artifact(try c.decode(Artifact.self, forKey: .data), deleted: true)
+            payload = .artifact(try c.decode(Artifact.self, forKey: .data), change: .deleted)
         default:
             payload = .unknown
         }

@@ -29,6 +29,7 @@ function toArtifactDTO(a: ArtifactRow, f: FileRow): ArtifactDTO {
     channelId: a.channelId,
     fileId: a.fileId,
     name: a.name,
+    ownsFile: a.ownsFile,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
     file: toFileDTO(f),
