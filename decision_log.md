@@ -666,3 +666,37 @@ Implementation judgment calls (also pending review):
   people it already shares a channel with), and it drops the requirement for
   conversation context — fixing the gap where an agent with no
   `FLOW_CHANNEL_ID` could not create an artifact at all.
+
+## 2026-07-22 — Phase 12 (#Activity feed) design ruling
+
+- **#Activity is a virtual, per-user channel, not a real one.** It has no DB
+  row, no membership, and required no server change or migration — it renders
+  the existing per-user `/v1/me/notifications` feed (the same data the removed
+  bell used) as an in-place channel view. A real shared channel was rejected:
+  the alerted-message set is inherently personal (each user's mentions/DMs/
+  thread-replies), which a workspace-shared channel can't represent, and
+  copying messages into it would duplicate content and leak cross-channel
+  visibility.
+- **The bell is fully removed on the clients that had it** (web + macOS); the
+  unread badge moves onto the Activity sidebar row. Opening Activity marks read
+  up to the newest row (channel semantics), reusing the existing single
+  `upToId` read cursor — not per-message read state.
+- **Ships on all three clients in-phase** (not logged as a parity gap): iOS,
+  which never had a bell, gets the feature net-new — the shared model/engine/
+  socket layer already carried notifications, so only iOS UI was added.
+
+## 2026-07-22 — Phase 12 follow-up: Activity jump-to-message
+
+- **Tapping an Activity row jumps to the exact message, not just the channel**
+  (operator request during phase 12 review). The old bell — and the initial
+  Activity implementation — only opened the channel, which read as a no-op when
+  the target was the channel you were already in. Now the client scrolls to and
+  briefly flashes the triggering message.
+- **Targets beyond the loaded page are reached by paging** older history until
+  the message is in the list, then giving up (releasing the target) once the
+  channel's history is exhausted (e.g. a hard-purged message). A soft-deleted
+  message still renders its tombstone, so it's found and flashed.
+- **iOS ships top-level jumps only, by decision** — thread replies live in a
+  separate pushed screen there, so a thread-reply row lands in the channel
+  without opening the thread. Logged as a Parity gap rather than blocking the
+  phase.

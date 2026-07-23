@@ -4,7 +4,6 @@ import SwiftUI
 
 struct MainView: View {
     @EnvironmentObject private var app: AppState
-    @State private var showNotifications = false
 
     // Ruling 5: sidebar width is a local per-device preference, clamped on use.
     @AppStorage("sidebarWidth" + Profile.suffix) private var sidebarWidth: Double = 240
@@ -39,31 +38,6 @@ struct MainView: View {
             detail
                 .frame(maxWidth: .infinity)
                 .background(MC.base)
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showNotifications = true
-                } label: {
-                    Image(systemName: app.notificationUnread > 0 ? "bell.badge.fill" : "bell")
-                        .overlay(alignment: .topTrailing) {
-                            if app.notificationUnread > 0 {
-                                Text("\(min(app.notificationUnread, 99))")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .padding(2)
-                                    .background(Circle().fill(MC.unread))
-                                    .foregroundStyle(.white)
-                                    .offset(x: 6, y: -6)
-                            }
-                        }
-                }
-                .help("Notifications")
-                .accessibilityIdentifier("toolbar.notifications")
-                .accessibilityValue("\(app.notificationUnread) unread")
-                .popover(isPresented: $showNotifications) {
-                    NotificationsPopover()
-                }
-            }
         }
     }
 
@@ -137,7 +111,11 @@ struct MainView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let artifactId = app.selectedArtifactId {
+        if app.showActivity {
+            // Activity feed (phase 12) — the virtual channel that replaced the
+            // bell. Covers the content pane; the channel stays put behind it.
+            ActivityFeedView()
+        } else if let artifactId = app.selectedArtifactId {
             // Artifact panel (phase 9) covers the channel content; the channel
             // selection stays put behind it, so Close returns to it.
             ArtifactPanelView(artifactId: artifactId)

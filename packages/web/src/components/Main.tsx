@@ -6,15 +6,15 @@ import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
-import { ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
 import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
+import ActivityView from './ActivityView';
 import ArtifactView from './ArtifactView';
 import ThreadPanel from './ThreadPanel';
 import { OpenInAppBanner } from './OpenInApp';
-import NotificationsBell from './NotificationsBell';
 import { MobileMenuButton } from './MobileMenuButton';
 import AgentPairingPrompt from './AgentPairingPrompt';
 
@@ -295,6 +295,8 @@ export default function Main() {
               <ArtifactView key={sel.artifactId} artifactId={sel.artifactId} />
             ) : sel.channelId === ADMIN_VIEW_ID ? (
               <AdminView />
+            ) : sel.channelId === ACTIVITY_VIEW_ID ? (
+              <ActivityView />
             ) : sel.channelId ? (
               <>
                 <ChannelView key={sel.channelId} channelId={sel.channelId} />
@@ -306,9 +308,6 @@ export default function Main() {
               <div className="flex min-w-0 flex-1 flex-col">
                 <div className="flex h-[60px] items-center justify-between border-b border-hairline px-[22px]">
                   <MobileMenuButton />
-                  <div className="ml-auto">
-                    <NotificationsBell />
-                  </div>
                 </div>
                 <div className="flex flex-1 items-center justify-center text-faint">
                   Select a channel

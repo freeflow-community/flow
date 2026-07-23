@@ -48,6 +48,7 @@ export default function App() {
   const [artifactId, setArtifactId] = useState<string | null>(null);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
   // Admin panel pinned into the sidebar (per-device, admins only at render).
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(
     () => localStorage.getItem(ADMIN_PANEL_KEY) === '1',
@@ -133,6 +134,7 @@ export default function App() {
           artifactId,
           threadRootId,
           editingMessageId,
+          focusMessageId,
           adminPanelOpen,
           selectWorkspace: (id) => {
             setWorkspaceId(id);
@@ -142,20 +144,31 @@ export default function App() {
             setArtifactId(null);
             setThreadRootId(null);
             setEditingMessageId(null);
+            setFocusMessageId(null);
           },
           selectChannel: (id) => {
             setChannelId(id);
             setArtifactId(null);
             setThreadRootId(null);
             setEditingMessageId(null);
+            setFocusMessageId(null);
           },
           selectArtifact: (id) => {
             setArtifactId(id);
             setThreadRootId(null);
             setEditingMessageId(null);
+            setFocusMessageId(null);
           },
           openThread: setThreadRootId,
           setEditingMessage: setEditingMessageId,
+          jumpToMessage: (channelId, messageId, threadRootId) => {
+            setArtifactId(null);
+            setChannelId(channelId);
+            setThreadRootId(threadRootId ?? null);
+            setEditingMessageId(null);
+            setFocusMessageId(messageId);
+          },
+          clearFocusMessage: () => setFocusMessageId(null),
           openAdminPanel: () => {
             setAdminPanelOpen(true);
             localStorage.setItem(ADMIN_PANEL_KEY, '1');

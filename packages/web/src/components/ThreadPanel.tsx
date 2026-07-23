@@ -89,6 +89,8 @@ export default function ThreadPanel({ rootId }: { rootId: string }) {
         hasMore={false}
         onLoadOlder={() => {}}
         showThreadAffordances={false}
+        focusMessageId={sel.focusMessageId}
+        onFocused={() => sel.clearFocusMessage()}
       />
       <div className="h-5 px-4 text-xs text-muted" data-testid="thread-typing-indicator-slot">
         {typingNames.length === 1 && (

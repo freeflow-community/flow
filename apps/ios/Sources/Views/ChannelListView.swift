@@ -29,6 +29,9 @@ struct ChannelListView: View {
 
     var body: some View {
         List {
+            Section {
+                activityRow
+            }
             if !standard.isEmpty {
                 Section("Channels") {
                     ForEach(standard) { ch in row(ch, title: "# \(ch.name ?? "channel")") }
@@ -137,6 +140,29 @@ struct ChannelListView: View {
                 app.showError(error.localizedDescription)
             }
         }
+    }
+
+    /// The always-present Activity feed entry (phase 12) — a virtual route (no
+    /// real channel) carrying the notification unread badge. Pushes the feed
+    /// onto the stack `MainView` owns.
+    @ViewBuilder
+    private var activityRow: some View {
+        NavigationLink(value: MainView.activityRoute) {
+            HStack {
+                Image(systemName: app.notificationUnread > 0 ? "bell.badge" : "bell")
+                    .foregroundStyle(MC.accentSoft)
+                    .frame(width: 22)
+                Text("Activity").foregroundStyle(MC.ink)
+                Spacer()
+                if app.notificationUnread > 0 {
+                    Text("\(min(app.notificationUnread, 99))")
+                        .font(.caption2.bold()).foregroundStyle(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(MC.unread))
+                }
+            }
+        }
+        .accessibilityIdentifier("sidebar.activity")
     }
 
     @ViewBuilder

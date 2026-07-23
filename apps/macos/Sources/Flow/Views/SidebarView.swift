@@ -67,6 +67,8 @@ struct SidebarView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
+                    activityRow
+
                     sectionHeader("Channels") {
                         Button {
                             showCreateChannel = true
@@ -235,6 +237,40 @@ struct SidebarView: View {
 
     private func rowBackground(_ active: Bool) -> some View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
+    }
+
+    /// The always-present Activity feed row (phase 12) — a virtual, client-only
+    /// entry (no real channel). Carries the notification unread badge that used
+    /// to live on the toolbar bell.
+    private var activityRow: some View {
+        let active = app.showActivity
+        let unread = app.notificationUnread
+        return Button {
+            app.showActivityFeed()
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: unread > 0 ? "bell.badge" : "bell")
+                    .font(.system(size: 13))
+                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.6))
+                    .frame(width: 14)
+                Text("Activity")
+                    .font(.system(size: 14, weight: active || unread > 0 ? .semibold : .regular))
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(unread > 0 ? 1 : 0.82))
+                Spacer(minLength: 0)
+                if unread > 0 {
+                    unreadBadge(min(unread, 99))
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.activity")
+        .accessibilityValue(unread > 0 ? "\(unread) unread" : "read")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     private func channelRow(_ channel: Channel) -> some View {

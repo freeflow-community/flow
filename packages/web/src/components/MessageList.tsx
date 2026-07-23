@@ -19,6 +19,8 @@ export default function MessageList({
   hasMore,
   onLoadOlder,
   showThreadAffordances,
+  focusMessageId = null,
+  onFocused,
 }: {
   messages: MessageDTO[];
   names: Record<string, string>;
@@ -26,16 +28,44 @@ export default function MessageList({
   hasMore: boolean;
   onLoadOlder: () => void;
   showThreadAffordances: boolean;
+  /** Jump-to-message target (phase 12): scroll it into view + flash it once
+   * it's rendered, then call onFocused. */
+  focusMessageId?: string | null;
+  onFocused?: () => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true); // at (or near) the bottom, so growth should keep us there
   const lastTopRef = useRef(0);
+  // A pending jump suppresses the bottom-pin so it doesn't yank us off the
+  // target message we're scrolling to.
+  const focusRef = useRef<string | null>(focusMessageId);
+  focusRef.current = focusMessageId;
   const lastId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
+    if (focusRef.current) return; // a jump owns the scroll position
     bottomRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [lastId]);
+
+  // Jump-to-message: once the target row is in the DOM (it may take a few
+  // older-history pages to arrive), center it and flash it, then release.
+  useEffect(() => {
+    if (!focusMessageId) return;
+    const el = scrollerRef.current?.querySelector(
+      `[data-testid="message-${CSS.escape(focusMessageId)}"]`,
+    );
+    if (!el) return; // not loaded yet — re-runs when `messages` grows
+    pinnedRef.current = false; // stop the bottom-pin from fighting the scroll
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('mc-flash');
+    const t = window.setTimeout(() => {
+      el.classList.remove('mc-flash');
+      onFocused?.();
+    }, 2000);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusMessageId, messages]);
 
   // Attachments (images, text previews) finish loading after the initial
   // scroll and grow the content, leaving a freshly opened channel short of

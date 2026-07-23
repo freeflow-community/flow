@@ -34,6 +34,15 @@ final class AppState: ObservableObject {
     /// artifact panel; the selected channel stays put behind it so closing
     /// the artifact returns to it.
     @Published var selectedArtifactId: String?
+    /// Activity feed (phase 12) — the always-present virtual "channel" that
+    /// replaced the notifications bell. When true the content pane shows
+    /// <ActivityFeedView>; the selected channel stays put behind it (like an
+    /// artifact) so picking a channel returns to a normal conversation.
+    @Published var showActivity: Bool = false
+    /// Jump-to-message target (phase 12): a message id the channel/thread view
+    /// should scroll to and flash after navigation (set when a notification is
+    /// tapped in the Activity feed). Cleared once reached (or given up on).
+    @Published var focusMessageId: String?
     /// My artifact bookmarks for the active workspace (phase 9), newest first.
     @Published private(set) var artifacts: [Artifact] = []
     @Published private(set) var connection: Connection = .connecting
@@ -91,6 +100,8 @@ final class AppState: ObservableObject {
         selectedChannelId = nil
         openThreadRootId = nil
         selectedArtifactId = nil
+        showActivity = false
+        focusMessageId = nil
         artifacts = []
         presence = [:]
         typing = [:]
@@ -167,7 +178,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Bell-menu navigation: jump to a notification's channel (and thread).
+    /// Activity-feed navigation: jump to a notification's channel (and thread),
+    /// then scroll to + flash the triggering message. `focusMessageId` is set
+    /// last, since selectChannel clears it for ordinary channel switches.
     func openNotification(_ n: NotificationItem) {
         if selectedWorkspaceId != n.workspaceId {
             selectWorkspace(n.workspaceId)
@@ -176,6 +189,7 @@ final class AppState: ObservableObject {
         if let root = n.message.threadRootId {
             openThread(root)
         }
+        focusMessageId = n.messageId
     }
 
     /// Who's typing in one composer. `threadRootId` nil = the channel's main
@@ -196,6 +210,7 @@ final class AppState: ObservableObject {
         selectedChannelId = nil
         openThreadRootId = nil
         selectedArtifactId = nil
+        showActivity = false
         artifacts = []
         // Active workspace survives relaunch (phase 3.5 fixes).
         if let id {
@@ -217,9 +232,10 @@ final class AppState: ObservableObject {
     }
 
     func selectChannel(_ id: String?) {
-        // Selecting a channel always closes an open artifact panel — even
-        // when it's the same channel that's already behind the panel.
+        // Selecting a channel always closes an open artifact panel or the
+        // activity feed — even when it's the same channel that's behind them.
         selectedArtifactId = nil
+        showActivity = false
         guard id != selectedChannelId else { return }
         selectedChannelId = id
         openThreadRootId = nil
@@ -230,7 +246,15 @@ final class AppState: ObservableObject {
     /// untouched: the panel covers the channel content and closing returns
     /// to it.
     func selectArtifact(_ id: String?) {
+        if id != nil { showActivity = false }
         selectedArtifactId = id
+    }
+
+    /// Show the Activity feed (phase 12). Like opening an artifact it covers the
+    /// content pane while the channel selection stays put behind it.
+    func showActivityFeed() {
+        selectedArtifactId = nil
+        showActivity = true
     }
 
     func openThread(_ rootId: String?) {

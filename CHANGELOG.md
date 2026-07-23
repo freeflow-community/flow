@@ -9,6 +9,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- iOS: a thread-reply Activity notification lands in the originating channel
+  but does not open the thread or scroll to the reply (web + macOS open the
+  thread and flash the reply). iOS threads are a locally-owned pushed screen
+  (`ChannelScreen`'s `$threadRoute`), not driven by `AppState`, so the channel
+  push carries neither the thread route nor the in-thread jump target — the
+  Activity row deliberately sets `focusMessageId` only for top-level messages
+  there. Needs the thread route + focus threaded through. Phase 12.
 - Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
   per-workspace switch/allowlist) is missing on *every* client — API-only.
 - macOS: phase 10 notification settings — no Notifications section in the
@@ -87,6 +94,43 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-22 — Phase 12: #Activity feed replaces the notifications bell
+- **New: an always-present "Activity" entry at the top of the channel list,
+  and the notifications bell is gone.** Activity surfaces exactly the alerted
+  messages the bell's dropdown showed — mentions, DMs, thread replies, and
+  notify-all activity — but as a full, in-place feed instead of a transient
+  popover. `[web]` `[macos]` `[ios]`
+- **Activity is a virtual, per-user "channel", not a real one** — no DB row, no
+  migration, no server change. It renders the same `/v1/me/notifications` feed
+  the bell used (already deduped one-row-per-message, precedence-ordered, and
+  carrying the decrypted message preview + read state). Each user sees only
+  their own activity, which a shared channel couldn't do. Server + its
+  `notifications.test.ts` are untouched. `[web]` `[macos]` `[ios]`
+- Opening Activity marks everything up to the newest row read (channel
+  semantics) and clears the unread badge, which moved off the bell onto the
+  Activity row. `[web]` `[macos]`
+- **Jump-to-message (beyond bell parity): tapping a row scrolls to the exact
+  triggering message and flashes it**, paging older history in first when the
+  message sits beyond the last loaded page (the old bell only opened the
+  channel). Shared `focusMessageId` selection state drives the channel's main
+  list (with paging) and the thread view (loaded whole); a brief tinted
+  highlight fades out. All three clients; on iOS it covers top-level messages
+  (thread replies land in the channel — see Parity). `[web]` `[macos]` `[ios]`
+- Web: removed `NotificationsBell` and its three top-bar mounts; added
+  `ActivityView` + a pinned `ActivityRow` sidebar entry (sentinel
+  `ACTIVITY_VIEW_ID`, same virtual-row pattern as the admin panel). `[web]`
+- macOS: removed the toolbar bell + `NotificationsPopover`; added
+  `ActivityFeedView` + a pinned sidebar `activityRow`, routed via a new
+  `AppState.showActivity` flag (covers the content pane like an artifact
+  panel). `[macos]`
+- iOS: **net-new** (iOS never had a bell). The shared model/engine/socket
+  already carried notifications; added only the UI — `ActivityFeedView`, an
+  always-present list row, and a sentinel nav route on the existing
+  `NavigationStack`. This closes the iOS notifications-view gap. `[ios]`
+- Verified: `pnpm build` (web, tsc + vite), `swift build` (macOS), and an
+  iphonesimulator `xcodebuild` (iOS) all pass. Live click-through not yet run.
+  `[qa]`
 
 ### 2026-07-22 — agent-bridge: startup version check against npm
 - **New: the bridge checks npm on startup and warns when it's stale.** Nothing

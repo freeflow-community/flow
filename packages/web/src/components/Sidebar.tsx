@@ -4,7 +4,7 @@ import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { fileGlyph } from '../lib/fileKind';
-import { ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
@@ -184,6 +184,12 @@ export default function Sidebar() {
       </div>
 
       <div className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm">
+        <ActivityRow
+          active={sel.channelId === ACTIVITY_VIEW_ID && !sel.artifactId}
+          unread={live.notificationUnread}
+          onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
+        />
+
         {isAdmin && sel.adminPanelOpen && (
           <AdminRow
             active={sel.channelId === ADMIN_VIEW_ID && !sel.artifactId}
@@ -310,6 +316,46 @@ export default function Sidebar() {
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
     </aside>
+  );
+}
+
+/**
+ * The Activity feed's pinned sidebar row (phase 12) — an always-present,
+ * virtual client-only entry (no real channel). Selectable like a channel;
+ * carries the notification unread badge that used to live on the bell.
+ */
+function ActivityRow({
+  active,
+  unread,
+  onOpen,
+}: {
+  active: boolean;
+  unread: number;
+  onOpen: () => void;
+}) {
+  return (
+    <div
+      className={`mt-1 flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
+        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+      }`}
+    >
+      <button
+        data-testid="sidebar-activity"
+        data-unread={unread}
+        className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
+        onClick={onOpen}
+      >
+        <span className={active ? 'opacity-70' : 'text-white/60'}>🔔</span>
+        <span className={`truncate ${active ? 'font-[650]' : unread > 0 ? 'font-[650] text-white' : 'text-white/82'}`}>
+          Activity
+        </span>
+        {unread > 0 && (
+          <span className="ml-auto rounded-[9px] bg-unread px-[7px] py-px text-[11px] font-bold text-white">
+            {Math.min(unread, 99)}
+          </span>
+        )}
+      </button>
+    </div>
   );
 }
 
