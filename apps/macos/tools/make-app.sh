@@ -14,22 +14,10 @@ cd "$(dirname "$0")/.."
 CONF=${1:-debug}
 SERVER_URL=${FLOW_SERVER_URL:-https://app.flowtoo.org}
 
-# Readable build tag `MMDD.N`: HEAD commit's month-day plus a per-day index
-# (commits that landed that calendar day), e.g. 0722.27. Increments on every
-# release, resets to .1 each new day. `BUILD_NUMBER`/`BUILD_SHA` env vars
-# override for CI; `dev` outside a checkout. Surfaced at the bottom of the
-# workspace menu (see BuildInfo.swift).
-if [ -z "${BUILD_NUMBER:-}" ]; then
-  BUILD_DATE=$(git show -s --format=%cd --date=format:%Y-%m-%d HEAD 2>/dev/null || true)
-  if [ -n "$BUILD_DATE" ]; then
-    MMDD=$(printf '%s' "$BUILD_DATE" | sed 's/^....-//; s/-//')
-    IDX=$(git rev-list --count HEAD --since="$BUILD_DATE 00:00:00" --until="$BUILD_DATE 23:59:59" 2>/dev/null || echo 0)
-    BUILD_NUMBER="${MMDD}.${IDX}"
-  else
-    BUILD_NUMBER="dev"
-  fi
-fi
-BUILD_SHA=${BUILD_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo "")}
+# Build tag = the short commit SHA of this build. `BUILD_SHA` env var overrides
+# for CI; `dev` outside a checkout. Surfaced at the bottom of the workspace menu
+# (see BuildInfo.swift).
+BUILD_SHA=${BUILD_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}
 
 swift build -c "$CONF"
 
@@ -55,8 +43,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>FlowServerURL</key><string>${SERVER_URL}</string>
-    <key>FlowBuild</key><string>${BUILD_NUMBER}</string>
-    <key>FlowBuildSHA</key><string>${BUILD_SHA}</string>
+    <key>FlowBuild</key><string>${BUILD_SHA}</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>CFBundleURLTypes</key>

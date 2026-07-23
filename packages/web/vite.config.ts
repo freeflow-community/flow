@@ -3,34 +3,22 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-// Readable build tag `MMDD.N`: month-day of the HEAD commit plus a per-day
-// index (how many commits landed that calendar day), e.g. `0722.27`. Derived
-// from git so it needs no manual bookkeeping and increments on every release;
-// `BUILD_NUMBER`/`BUILD_SHA` env vars override it for CI where .git may be
-// absent. Falls back to `dev` outside a checkout. Injected via `define` and
-// read as the `__BUILD__` / `__BUILD_SHA__` globals (see src/vite-env.d.ts).
-function gitBuildNumber(): string {
-  if (process.env.BUILD_NUMBER) return process.env.BUILD_NUMBER;
-  try {
-    const date = execSync('git show -s --format=%cd --date=format:%Y-%m-%d HEAD').toString().trim();
-    const mmdd = date.slice(5).replace('-', ''); // 2026-07-22 -> 0722
-    const idx = execSync(
-      `git rev-list --count HEAD --since="${date} 00:00:00" --until="${date} 23:59:59"`,
-    )
-      .toString()
-      .trim();
-    return `${mmdd}.${idx}`;
-  } catch {
-    return 'dev';
-  }
-}
-
-function gitBuildSha(): string {
+// Build tag = the short commit SHA of the deployed build, shown at the foot of
+// the workspace menu (read as the `__BUILD__` global; see src/vite-env.d.ts).
+// Resolution order, so every environment shows the real commit:
+//   1. `BUILD_SHA` env — explicit override (CI).
+//   2. local git (`git rev-parse --short HEAD`) — dev machines / any checkout.
+//   3. `RAILWAY_GIT_COMMIT_SHA` — Railway's Railpack build has no `.git`, so the
+//      git call throws; Railway injects the deploy's commit SHA as a build-time
+//      env var (shortened to 7 chars).
+//   4. `dev` — no git and no env (bare `vite build` outside a checkout).
+function buildSha(): string {
   if (process.env.BUILD_SHA) return process.env.BUILD_SHA;
   try {
     return execSync('git rev-parse --short HEAD').toString().trim();
   } catch {
-    return '';
+    const sha = process.env.RAILWAY_GIT_COMMIT_SHA;
+    return sha ? sha.slice(0, 7) : 'dev';
   }
 }
 
@@ -39,8 +27,7 @@ function gitBuildSha(): string {
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   define: {
-    __BUILD__: JSON.stringify(gitBuildNumber()),
-    __BUILD_SHA__: JSON.stringify(gitBuildSha()),
+    __BUILD__: JSON.stringify(buildSha()),
   },
   server: {
     port: 5173,
