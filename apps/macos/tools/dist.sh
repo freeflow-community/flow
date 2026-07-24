@@ -23,6 +23,25 @@ cd "$(dirname "$0")/.."
 
 fail() { echo "dist.sh: $*" >&2; exit 1; }
 
+# Submit a container (.zip or .dmg) to Apple, block on the verdict, and abort
+# with the log on anything but Accepted. Used for both the app (zipped) and the
+# final DMG.
+notarize() {
+  local container="$1" json id status
+  echo "==> Submitting $(basename "$container") to Apple notary service (waits for verdict)"
+  json=$(xcrun notarytool submit "$container" \
+    --keychain-profile "$FLOW_NOTARY_PROFILE" \
+    --wait --output-format json) || { echo "$json" >&2; fail "notarytool submit failed"; }
+  echo "$json"
+  id=$(printf '%s' "$json" | /usr/bin/plutil -extract id raw - 2>/dev/null || true)
+  status=$(printf '%s' "$json" | /usr/bin/plutil -extract status raw - 2>/dev/null || true)
+  if [ "$status" != "Accepted" ]; then
+    echo "==> Notarization did not succeed (status: ${status:-unknown}); fetching log" >&2
+    [ -n "$id" ] && xcrun notarytool log "$id" --keychain-profile "$FLOW_NOTARY_PROFILE" >&2 || true
+    fail "notarization rejected — see the log above (docs/specs/phase14.md §4 on entitlements)"
+  fi
+}
+
 # --- Preflight: env + identity must be present before we build anything -------
 [ -n "${FLOW_SIGN_IDENTITY:-}" ] || fail \
   "FLOW_SIGN_IDENTITY is unset. Set it to your Developer ID Application identity.
@@ -63,30 +82,11 @@ echo "==> Packaging zip for notarization"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-# --- 5. Notarize, blocking on the verdict -------------------------------------
-echo "==> Submitting to Apple notary service (waits for verdict)"
-SUBMIT_JSON=$(xcrun notarytool submit "$ZIP" \
-  --keychain-profile "$FLOW_NOTARY_PROFILE" \
-  --wait --output-format json) || {
-    echo "$SUBMIT_JSON" >&2
-    fail "notarytool submit failed"
-  }
-echo "$SUBMIT_JSON"
-
-SUBMISSION_ID=$(printf '%s' "$SUBMIT_JSON" | /usr/bin/plutil -extract id raw - 2>/dev/null || true)
-STATUS=$(printf '%s' "$SUBMIT_JSON" | /usr/bin/plutil -extract status raw - 2>/dev/null || true)
-
-if [ "$STATUS" != "Accepted" ]; then
-  echo "==> Notarization did not succeed (status: ${STATUS:-unknown}); fetching log" >&2
-  if [ -n "$SUBMISSION_ID" ]; then
-    xcrun notarytool log "$SUBMISSION_ID" \
-      --keychain-profile "$FLOW_NOTARY_PROFILE" >&2 || true
-  fi
-  fail "notarization rejected — see the log above (docs/specs/phase14.md §4 on entitlements)"
-fi
+# --- 5. Notarize the app, blocking on the verdict -----------------------------
+notarize "$ZIP"
 
 # --- 6. Staple the ticket so the app validates offline ------------------------
-echo "==> Stapling notarization ticket"
+echo "==> Stapling notarization ticket to the app"
 xcrun stapler staple "$APP"
 
 # --- 7. Package the DMG for hand-off ------------------------------------------
@@ -94,10 +94,20 @@ echo "==> Building DMG"
 rm -f "$DMG"
 hdiutil create -volname Flow -srcfolder "$APP" -ov -format UDZO "$DMG"
 
-# --- 8. Final gate check — what a fresh Mac will assess -----------------------
+# --- 8. Notarize + staple the DMG itself --------------------------------------
+# The app inside is already stapled; notarizing and stapling the distributed
+# .dmg removes the "downloaded from the Internet" check at mount time too, so
+# even mounting works offline (Apple's recommended practice: notarize the final
+# artifact). Requires a second notary round-trip.
+notarize "$DMG"
+echo "==> Stapling notarization ticket to the DMG"
+xcrun stapler staple "$DMG"
+
+# --- 9. Final gate check — what a fresh Mac will assess -----------------------
 echo "==> Gatekeeper assessment"
 spctl --assess --type execute --verbose "$APP"   # expect: accepted, source=Notarized Developer ID
 xcrun stapler validate "$APP"
+xcrun stapler validate "$DMG"
 
 rm -f "$ZIP"
 echo

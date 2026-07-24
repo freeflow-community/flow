@@ -125,6 +125,33 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-23 — Downloadable macOS app + "not installed" fallback
+- The signed-out page now links to **Download the Mac app**. New public server
+  route `GET /download/mac` 302s to a short-lived presigned URL for the
+  notarized DMG stored in R2 at key `downloads/Flow.dmg` (falls back to proxying
+  bytes on the local disk driver; `404 not_found` until the object exists). No
+  auth — it's the logged-out surface. `[server]` `[web]`
+- The "Open the app" CTAs (workspace-chooser button + signed-in banner) now
+  detect when the native app **isn't installed** and offer a download link
+  instead of failing silently. Setting `location.href = flow://…` never rejects
+  when no scheme handler exists, so the old `.catch()` never fired; the new
+  heuristic watches for the page backgrounding (blur/visibilitychange) after the
+  scheme is triggered and, if it doesn't within 1.5s, surfaces "Download for
+  Mac". `[web]`
+- Ops: `apps/macos/tools/publish-dmg.sh [--build]` builds (via dist.sh) and/or
+  uploads the DMG to R2 at `downloads/Flow.dmg` — reads `CLOUDFLARE_*` from
+  `.env`, maps them to the `AWS_*` names the AWS CLI reads (it ignores
+  `CLOUDFLARE_*`, so a bare `aws s3 cp` grabs a stray AWS key → "length 20,
+  should be 32"), and opts out of the CLI v2 checksums R2 rejects. Overwriting
+  the key ships a new build with no code deploy. docs/ops/DEPLOYMENT.md § macOS
+  app download. `[qa]`
+- Ops: `dist.sh` now also notarizes and staples the **`.dmg` itself** (not just
+  the app inside it), so mounting a downloaded DMG is offline-clean with no
+  "downloaded from the Internet" prompt — Apple's recommended practice of
+  notarizing the final artifact. Adds one notary round-trip; the submit+verdict
+  logic is factored into a `notarize()` helper shared by the app zip and the
+  DMG. `[qa]`
+
 ### 2026-07-23 — iOS: channel list is now a slide-in drawer (web mobile parity)
 - The iOS channel list moves from a drill-down `List` (tap a channel → push a
   screen; tap "‹ Back" to change channels) to the web client's **mobile drawer**

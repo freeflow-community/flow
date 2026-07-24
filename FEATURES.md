@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **Get the Mac app right from the sign-in page.** There's now a **Download the
+  Mac app** link on the logged-out screen — grab the desktop app, drag it to
+  Applications, and open it (no scary security warnings; it's signed and
+  notarized). And if you click "Open the app" but don't have it installed yet,
+  Flow now notices and offers you the download instead of just doing nothing.
 - **iPhone: your channels now slide in over the conversation.** The Flow app on
   iPhone gets the same channel menu as the mobile web app — tap the ☰ button in
   the top-left and the workspace rail and channel list slide in from the side,
