@@ -90,6 +90,34 @@ Neon console/MCP (project `weathered-mountain-27798470`). Migrations are
 additive `.sql` files in `packages/server/src/db/migrations/` — they apply at
 boot, so shipping a migration is just deploying.
 
+## macOS app download
+
+The signed-out web page (and the "app not installed?" fallback on the signed-in
+CTAs) link to `GET /download/mac`, which 302s to a short-lived presigned URL for
+the DMG stored in R2 at key **`downloads/Flow.dmg`**. Publishing a new build is
+one command, no code deploy:
+
+```sh
+# Build the notarized DMG and upload it to R2 in one shot.
+apps/macos/tools/publish-dmg.sh --build
+
+# Or, if you already ran dist.sh, just upload the current DMG:
+apps/macos/tools/publish-dmg.sh
+```
+
+`publish-dmg.sh` reads the R2 creds from repo-root `.env` (the same
+`CLOUDFLARE_*` vars the server uses), maps them onto the `AWS_*` names the AWS
+CLI actually reads — the CLI ignores `CLOUDFLARE_*`, so a bare `aws s3 cp` picks
+up whatever stray AWS key is in your shell and fails with *"access key has
+length 20, should be 32"* — and opts out of the CLI v2 default checksums that R2
+rejects. `--build` first runs `dist.sh` (needs the Developer ID cert +
+`flow-notary` notarytool profile; one-time setup in docs/specs/phase14.md §2).
+
+Overwriting the key ships the new build immediately — the route always presigns
+the current object. Until the key exists the route returns `404 not_found`
+(the page's download link just fails to fetch, no crash). The bucket's existing
+CORS policy already covers this (same-origin redirect from app.flowtoo.org).
+
 ## DNS / domain
 
 Two records in the Cloudflare `flowtoo.org` zone, both required:

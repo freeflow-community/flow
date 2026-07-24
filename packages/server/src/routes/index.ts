@@ -38,9 +38,13 @@ import {
   UpdateWorkspaceBody,
   type UserDTO,
 } from '@flow/shared';
-import { ApiError, badRequest, unauthorized } from '../lib/errors.js';
+import { ApiError, badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { rateAllow } from '../lib/rateLimit.js';
 import { parseByteRange } from '../lib/httpRange.js';
+import { blobStore } from '../storage/index.js';
+
+/** Blob-store key the notarized macOS DMG is uploaded to (see /download/mac). */
+const DOWNLOAD_MAC_KEY = 'downloads/Flow.dmg';
 import * as auth from '../services/auth.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
@@ -103,6 +107,27 @@ export function registerRoutes(app: FastifyInstance): void {
   });
 
   app.get('/healthz', async () => ({ ok: true }));
+
+  // Public macOS app download (operator feature): 302 to a short-lived signed
+  // URL for the notarized DMG in blob storage. No auth — it's linked from the
+  // signed-out page. The DMG is uploaded out-of-band to key `downloads/Flow.dmg`
+  // (see docs/ops/DEPLOYMENT.md § macOS download); 404s until it exists.
+  app.get('/download/mac', async (_req, reply) => {
+    const store = blobStore();
+    const signed = await store.presignGet(DOWNLOAD_MAC_KEY, {
+      filename: 'Flow.dmg',
+      contentType: 'application/x-apple-diskimage',
+    });
+    if (signed) return reply.redirect(signed, 302);
+    // Local driver can't presign: proxy the bytes if the object exists, else 404.
+    const head = await store.head(DOWNLOAD_MAC_KEY);
+    if (!head) throw notFound('no macOS build available');
+    const data = await store.get(DOWNLOAD_MAC_KEY);
+    return reply
+      .header('content-type', 'application/x-apple-diskimage')
+      .header('content-disposition', "attachment; filename*=UTF-8''Flow.dmg")
+      .send(data);
+  });
 
   // ---- auth ----------------------------------------------------
   app.post('/v1/auth/register', async (req, reply) => {

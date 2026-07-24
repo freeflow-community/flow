@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AuthResponse, RegisterPendingResponse } from '@flow/shared';
 import { api } from '../lib/api';
+import { MAC_DOWNLOAD_URL } from './OpenInApp';
 
 type Mode =
   | 'signin'
@@ -359,6 +360,13 @@ export default function AuthScreen({
         )}
         {body}
       </div>
+      <a
+        data-testid="download-mac-app"
+        href={MAC_DOWNLOAD_URL}
+        className="text-sm font-semibold text-accent-soft hover:underline"
+      >
+        Download the Mac app ↓
+      </a>
       <a
         data-testid="download-agent-skill"
         href="/flow-agent-member-SKILL.md"
