@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
-import type { ArtifactDTO, ChannelDTO } from '@flow/shared';
+import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { fileGlyph } from '../lib/fileKind';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
@@ -119,16 +119,7 @@ export default function Sidebar() {
   };
   const all = channels.data ?? [];
   const joined = all.filter((c) => c.isMember && c.kind === 'standard');
-  // Direct messages sort alphabetically by their display title (ui_nits).
-  const dms = all
-    .filter((c) => c.isMember && c.kind !== 'standard')
-    .sort((a, b) =>
-      dmTitle(a, displayNames, auth.user.id).localeCompare(
-        dmTitle(b, displayNames, auth.user.id),
-        undefined,
-        { sensitivity: 'base' },
-      ),
-    );
+  const dms = all.filter((c) => c.isMember && c.kind !== 'standard');
   // The self-DM ("<you> (you)") is a personal scratchpad — it never carries an
   // unread badge (ui_nits): you can't have unread messages from yourself.
   const isSelfDm = (c: ChannelDTO) =>
@@ -146,6 +137,28 @@ export default function Sidebar() {
   // no existing 1:1 DM get a virtual row; clicking creates/opens the DM.
   const dmPartnerIds = new Set(dms.flatMap((c) => (c.kind === 'dm' ? c.memberIds ?? [] : [])));
   const agentRows = Object.values(memberMap).filter((m) => m.isAgent && !dmPartnerIds.has(m.userId));
+  // The Direct messages list is ONE alphabetically-sorted list (ui_nits) that
+  // interleaves real DM channels with virtual agent rows (agents with no
+  // existing 1:1 DM). Sorting the two lists separately left agent rows stranded
+  // at the bottom, out of order — so merge them, then sort by display title.
+  // The self-DM ("<you> (you)") is always pinned last: it's a personal
+  // scratchpad, not a conversation, so it sinks below everyone else.
+  type DmItem =
+    | { kind: 'channel'; title: string; self: boolean; channel: ChannelDTO }
+    | { kind: 'agent'; title: string; self: false; member: WorkspaceMemberDTO };
+  const dmItems: DmItem[] = [
+    ...dms.map((c): DmItem => ({
+      kind: 'channel',
+      title: dmTitle(c, displayNames, auth.user.id),
+      self: isSelfDm(c),
+      channel: c,
+    })),
+    ...agentRows.map((m): DmItem => ({ kind: 'agent', title: m.displayName, self: false, member: m })),
+  ].sort((a, b) =>
+    a.self !== b.self
+      ? Number(a.self) - Number(b.self)
+      : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
+  );
 
   return (
     <aside
@@ -246,7 +259,25 @@ export default function Sidebar() {
         ))}
 
         <SectionHeader label="Direct messages" />
-        {dms.map((c) => {
+        {dmItems.map((item) => {
+          if (item.kind === 'agent') {
+            const a = item.member;
+            return (
+              <button
+                key={`agent-${a.userId}`}
+                data-testid={`sidebar-agent-${a.displayName}`}
+                title="Start a direct message"
+                className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
+                onClick={() => void openDm(a.userId)}
+              >
+                <PresenceDot online={!!live.presence[a.userId]} />
+                <span className="truncate">
+                  {a.displayName} <span title="AI agent">🤖</span>
+                </span>
+              </button>
+            );
+          }
+          const c = item.channel;
           const title = dmTitle(c, names, auth.user.id);
           const otherId = (c.memberIds ?? []).find((id) => id !== auth.user.id);
           const status = otherId ? memberMap[otherId] : undefined;
@@ -275,20 +306,6 @@ export default function Sidebar() {
             </div>
           );
         })}
-        {agentRows.map((a) => (
-          <button
-            key={a.userId}
-            data-testid={`sidebar-agent-${a.displayName}`}
-            title="Start a direct message"
-            className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
-            onClick={() => void openDm(a.userId)}
-          >
-            <PresenceDot online={!!live.presence[a.userId]} />
-            <span className="truncate">
-              {a.displayName} <span title="AI agent">🤖</span>
-            </span>
-          </button>
-        ))}
 
         {browsable.length > 0 && (
           <>
