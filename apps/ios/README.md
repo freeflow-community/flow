@@ -40,7 +40,7 @@ xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
 
 There's no release script yet — do it from Xcode for now. Prerequisites, all
 one-time: an **Apple Developer Program** membership on the team that owns
-`org.flowtoo.ios`; an **app record** for that bundle id in App Store Connect
+`org.flowtoo.app`; an **app record** for that bundle id in App Store Connect
 (Apps → +); and your **Team ID** (Xcode → Settings → Accounts, or
 developer.apple.com → Membership). You do *not* need to create a distribution
 certificate by hand — automatic signing provisions it.
@@ -52,12 +52,17 @@ certificate by hand — automatic signing provisions it.
    open FlowiOS.xcodeproj
    ```
 2. **Bump the build number first.** App Store Connect rejects a re-used build
-   number for the same version. `project.yml` sets `MARKETING_VERSION: 0.1.0`
-   and `CURRENT_PROJECT_VERSION: 1` — increment `CURRENT_PROJECT_VERSION` (and
-   re-run `xcodegen generate`) for every upload.
-3. Target → **Signing & Capabilities** → tick **Automatically manage signing**
-   and select your **Team**. (`project.yml` intentionally sets no
-   `DEVELOPMENT_TEAM`, so this is required.)
+   number for the same version. Version + build come from `project.yml`
+   (`MARKETING_VERSION: 2.0`, `CURRENT_PROJECT_VERSION: 1`), which the
+   generated `Info.plist` references as `$(MARKETING_VERSION)` /
+   `$(CURRENT_PROJECT_VERSION)` — so edit them **in `project.yml`, not the Xcode
+   GUI** (GUI edits are wiped on the next `xcodegen generate`, and a literal in
+   the plist would silently pin every archive to its value). Increment
+   `CURRENT_PROJECT_VERSION` and re-run `xcodegen generate` for every upload.
+3. Signing is already wired: `project.yml` sets `DEVELOPMENT_TEAM` (BizTrip AI
+   Inc., `76NSMTH84G`) with automatic signing, so the team survives
+   `xcodegen generate`. Just confirm **Signing & Capabilities** shows that team
+   with no errors (you must be signed into an Xcode account that belongs to it).
 4. Set the run destination to **Any iOS Device (arm64)** — not a simulator;
    archiving needs a device SDK.
 5. **Product ▸ Archive.** When it finishes, the Organizer opens.
