@@ -151,6 +151,14 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   notarizing the final artifact. Adds one notary round-trip; the submit+verdict
   logic is factored into a `notarize()` helper shared by the app zip and the
   DMG. `[qa]`
+- Ops: the DMG now opens as a **drag-to-install window** — Flow icon on the
+  left, an Applications alias on the right, and an arrow between them over a
+  branded background. Built headlessly with `dmgbuild` (writes the window
+  `.DS_Store` directly, no Finder/AppleScript) replacing the plain `hdiutil`
+  step; the background is generated from `tools/make-dmg-bg.swift`
+  (`Resources/dmg-background.png` + `@2x` for a crisp HiDPI TIFF), layout in
+  `tools/dmg-settings.py`. One-time: `pip3 install --user --break-system-packages
+  dmgbuild`. `[qa]`
 
 ### 2026-07-23 — iOS: channel list is now a slide-in drawer (web mobile parity)
 - The iOS channel list moves from a drill-down `List` (tap a channel → push a

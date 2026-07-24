@@ -89,10 +89,25 @@ notarize "$ZIP"
 echo "==> Stapling notarization ticket to the app"
 xcrun stapler staple "$APP"
 
-# --- 7. Package the DMG for hand-off ------------------------------------------
-echo "==> Building DMG"
+# --- 7. Package the styled DMG (drag-to-Applications window) -------------------
+# dmgbuild writes the install-window layout — the arrow background and the
+# /Applications symlink — straight into the DMG's .DS_Store, headless (no Finder
+# / AppleScript). Layout in tools/dmg-settings.py; the background is
+# Resources/dmg-background.png, regenerated from tools/make-dmg-bg.swift if absent.
+echo "==> Building styled DMG"
+BG="Resources/dmg-background.png"
+[ -f "$BG" ] || swift tools/make-dmg-bg.swift "$BG"
+python3 -c "import dmgbuild" 2>/dev/null || fail \
+  "dmgbuild not installed. Install it:
+  pip3 install --user --break-system-packages dmgbuild   (or: pipx install dmgbuild)
+It builds the drag-to-Applications install window headlessly."
 rm -f "$DMG"
-hdiutil create -volname Flow -srcfolder "$APP" -ov -format UDZO "$DMG"
+python3 - "$APP" "$DMG" "$BG" <<'PY'
+import sys, dmgbuild
+app, dmg, bg = sys.argv[1], sys.argv[2], sys.argv[3]
+dmgbuild.build_dmg(dmg, "Flow", settings_file="tools/dmg-settings.py",
+                   defines={"app": app, "background": bg})
+PY
 
 # --- 8. Notarize + staple the DMG itself --------------------------------------
 # The app inside is already stapled; notarizing and stapling the distributed

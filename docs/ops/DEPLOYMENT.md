@@ -111,7 +111,14 @@ CLI actually reads — the CLI ignores `CLOUDFLARE_*`, so a bare `aws s3 cp` pic
 up whatever stray AWS key is in your shell and fails with *"access key has
 length 20, should be 32"* — and opts out of the CLI v2 default checksums that R2
 rejects. `--build` first runs `dist.sh` (needs the Developer ID cert +
-`flow-notary` notarytool profile; one-time setup in docs/specs/phase14.md §2).
+`flow-notary` notarytool profile; one-time setup in docs/specs/phase14.md §2 —
+plus `pip3 install --user --break-system-packages dmgbuild` for the styled
+drag-to-Applications install window).
+
+The DMG opens as a drag-to-install window (Flow → Applications, with an arrow).
+That layout is built by `dmgbuild` from `tools/dmg-settings.py` and the
+background in `Resources/dmg-background.png` (+`@2x`), regenerated from
+`tools/make-dmg-bg.swift` if missing.
 
 Overwriting the key ships the new build immediately — the route always presigns
 the current object. Until the key exists the route returns `404 not_found`
