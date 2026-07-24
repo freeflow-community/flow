@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
-import type { UnfurlDTO } from '@flow/shared';
+import type { ArtifactDTO, UnfurlDTO } from '@flow/shared';
 import { api } from '../lib/api';
+import { useSelection } from '../state';
 import { AuthImg } from './Avatar';
 
 /**
@@ -14,15 +15,27 @@ import { AuthImg } from './Avatar';
 export function UnfurlCard({
   unfurl,
   messageId,
+  channelId,
+  workspaceId,
   canRemove,
 }: {
   unfurl: UnfurlDTO;
   messageId: string;
+  channelId: string;
+  workspaceId: string | null;
   canRemove: boolean;
 }) {
   const qc = useQueryClient();
+  const sel = useSelection();
   const target = unfurl.canonicalUrl ?? unfurl.url;
   const host = hostOf(target);
+
+  // Pin this link as a co-browsing artifact in the channel and open it.
+  const pin = async () => {
+    const a = await api<ArtifactDTO>('POST', '/v1/artifacts', { channelId, url: target });
+    await qc.invalidateQueries({ queryKey: ['artifacts', workspaceId] });
+    sel.selectArtifact(a.id);
+  };
 
   const remove = async () => {
     await api('DELETE', `/v1/messages/${messageId}/unfurls/${unfurl.urlHash}`);
@@ -102,17 +115,28 @@ export function UnfurlCard({
         )}
       </div>
 
-      {canRemove && (
+      <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/unfurl:opacity-100">
         <button
-          data-testid="unfurl-remove"
-          title="Remove this preview"
-          aria-label="Remove this preview"
-          className="h-5 shrink-0 self-start rounded px-1 text-xs text-faint opacity-0 group-hover/unfurl:opacity-100 hover:bg-daypill hover:text-ink"
-          onClick={() => void remove()}
+          data-testid="unfurl-pin"
+          title="Pin as artifact"
+          aria-label="Pin as artifact"
+          className="h-5 shrink-0 rounded px-1 text-xs text-faint hover:bg-daypill hover:text-ink"
+          onClick={() => void pin()}
         >
-          ✕
+          📌
         </button>
-      )}
+        {canRemove && (
+          <button
+            data-testid="unfurl-remove"
+            title="Remove this preview"
+            aria-label="Remove this preview"
+            className="h-5 shrink-0 rounded px-1 text-xs text-faint hover:bg-daypill hover:text-ink"
+            onClick={() => void remove()}
+          >
+            ✕
+          </button>
+        )}
+      </div>
     </div>
   );
 }

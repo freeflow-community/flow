@@ -1,7 +1,7 @@
 // Inline markdown rendering (agent replies): assertions on static HTML output.
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { renderBlocks, renderBody } from './format';
+import { InlineLinkContext, renderBlocks, renderBody } from './format';
 
 const html = (body: string) => renderToStaticMarkup(<>{renderBlocks(body, {}, undefined)}</>);
 
@@ -30,6 +30,20 @@ describe('inline markdown', () => {
     expect(html('[docs](https://example.com/a)')).toContain('href="https://example.com/a"');
     expect(html('[docs](https://example.com/a)')).toContain('>docs</a>');
     expect(html('see https://example.com/path.')).toContain('href="https://example.com/path"');
+  });
+
+  it('offers a "Pin as artifact" affordance on links when a handler is in context', () => {
+    // With a pin handler in context, every inline link gains the 📌 button;
+    // without one (the default), links render bare.
+    const withPin = renderToStaticMarkup(
+      <InlineLinkContext.Provider value={{ onPinLink: () => {} }}>
+        {renderBlocks('see https://example.com/x', {}, undefined)}
+      </InlineLinkContext.Provider>,
+    );
+    expect(withPin).toContain('data-testid="inline-link-pin"');
+    expect(withPin).toContain('href="https://example.com/x"');
+    // Default context (no handler): a plain anchor, no pin button.
+    expect(html('see https://example.com/x')).not.toContain('inline-link-pin');
   });
 
   it('never formats inside fenced code blocks', () => {

@@ -131,6 +131,65 @@ describe('createArtifact', () => {
   });
 });
 
+describe('link artifacts (link artifacts — co-browsing)', () => {
+  it('pins a link, defaulting the name to the host and carrying no file', async () => {
+    const a = await ar.createArtifact(aliceId, channelId, { url: 'https://example.com/docs' });
+    expect(a.kind).toBe('link');
+    expect(a.url).toBe('https://example.com/docs');
+    expect(a.file).toBeNull();
+    expect(a.fileId).toBeNull();
+    expect(a.name).toBe('example.com');
+  });
+
+  it('is idempotent per (channel, url)', async () => {
+    const first = await ar.createArtifact(aliceId, channelId, { url: 'https://dup.example/one' });
+    const again = await ar.createArtifact(bobId, channelId, { url: 'https://dup.example/one' });
+    expect(again.id).toBe(first.id);
+  });
+
+  it('rejects a non-http(s) url', async () => {
+    await expect(ar.createArtifact(aliceId, channelId, { url: 'ftp://nope.example' })).rejects.toThrow(/http/);
+  });
+
+  it('requires exactly one of fileId or url', async () => {
+    await expect(ar.createArtifact(aliceId, channelId, {})).rejects.toThrow(/one of/);
+  });
+
+  it('lists link artifacts for every channel member', async () => {
+    const a = await ar.createArtifact(aliceId, channelId, { url: 'https://seen.example' });
+    const bobs = await ar.listArtifacts(workspaceId, bobId);
+    expect(bobs.some((x) => x.id === a.id && x.kind === 'link')).toBe(true);
+  });
+
+  it('re-points the url (the co-browse write) and bumps updatedAt', async () => {
+    const a = await ar.createArtifact(aliceId, channelId, { url: 'https://co.example/a' });
+    const moved = await ar.updateArtifact(a.id, bobId, { url: 'https://co.example/b' }); // any member can drive
+    expect(moved.url).toBe('https://co.example/b');
+    expect(moved.kind).toBe('link');
+    expect(new Date(moved.updatedAt).getTime()).toBeGreaterThanOrEqual(new Date(a.createdAt).getTime());
+  });
+
+  it('will not attach a file to a link artifact, nor a url to a file artifact', async () => {
+    const link = await ar.createArtifact(aliceId, channelId, { url: 'https://mix.example' });
+    const badFile = await uploadedFile(aliceId);
+    await expect(ar.updateArtifact(link.id, aliceId, { fileId: badFile })).rejects.toThrow(/link artifact/);
+    const fileId = await sharedFile(aliceId);
+    const file = await ar.createArtifact(aliceId, channelId, { fileId });
+    await expect(ar.updateArtifact(file.id, aliceId, { url: 'https://x.example' })).rejects.toThrow(/file artifact/);
+  });
+
+  it('deletes a link artifact (no file to reap)', async () => {
+    const a = await ar.createArtifact(aliceId, channelId, { url: 'https://gone.example' });
+    await ar.deleteArtifact(a.id, aliceId);
+    await ar.deleteArtifact(a.id, aliceId); // idempotent
+    expect((await ar.listArtifacts(workspaceId, aliceId)).some((x) => x.id === a.id)).toBe(false);
+  });
+
+  it('rejects a non-member pinning a link', async () => {
+    await expect(ar.createArtifact(lonerId, channelId, { url: 'https://nope.example' })).rejects.toThrow(/join the channel/);
+  });
+});
+
 describe('list — per-channel visibility', () => {
   it('shows an artifact to every member of the channel', async () => {
     const fileId = await sharedFile(aliceId);

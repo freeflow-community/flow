@@ -281,7 +281,8 @@ struct MessageRow: View {
                                     await app.engine.deleteUnfurl(
                                         messageId: message.id, urlHash: unfurl.urlHash)
                                 }
-                            }
+                            },
+                            onPin: { pinLinkAsArtifact(unfurl.target) }
                         )
                     }
 
@@ -541,6 +542,20 @@ struct MessageRow: View {
                 if let last { app.selectArtifact(last.id) }
             } catch {
                 app.showError("Couldn't pin artifact: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Pins a link from chat as a shared co-browsing artifact in this channel
+    /// (link artifacts) and opens its mini-browser in the side panel.
+    private func pinLinkAsArtifact(_ url: String) {
+        let channelId = message.channelId
+        Task {
+            do {
+                let artifact = try await app.engine.createLinkArtifact(channelId: channelId, url: url)
+                app.selectArtifact(artifact.id)
+            } catch {
+                app.showError("Couldn't pin link: \(error.localizedDescription)")
             }
         }
     }

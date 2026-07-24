@@ -243,7 +243,11 @@ export const artifacts = pgTable(
     id: uuid('id').primaryKey(),
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
-    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
+    // 'file' rows carry fileId (url null); 'link' rows carry url (fileId null) —
+    // enforced by the artifacts_kind_shape CHECK in migration 0020.
+    kind: text('kind').notNull().default('file'),
+    fileId: uuid('file_id').references(() => files.id, { onDelete: 'cascade' }),
+    url: text('url'),
     ownsFile: boolean('owns_file').notNull().default(false),
     name: text('name').notNull(),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
@@ -254,6 +258,8 @@ export const artifacts = pgTable(
     index('artifacts_channel_idx').on(t.channelId, t.createdAt.desc()),
     // pins of a shared file are idempotent per channel; owned artifacts are always distinct
     uniqueIndex('artifacts_channel_file_pin').on(t.channelId, t.fileId).where(sql`owns_file = false`),
+    // link pins are idempotent per channel too (the url is mutable via co-browsing)
+    uniqueIndex('artifacts_channel_link_pin').on(t.channelId, t.url).where(sql`kind = 'link'`),
   ],
 );
 

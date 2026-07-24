@@ -957,7 +957,7 @@ private struct ArtifactSidebarRow: View {
                 app.selectArtifact(artifact.id)
             } label: {
                 HStack(spacing: 9) {
-                    Text(artifact.file.artifactGlyph)
+                    Text(artifact.glyph)
                         .font(.system(size: 12))
                         .opacity(active ? 1 : 0.85)
                         .frame(width: 14)

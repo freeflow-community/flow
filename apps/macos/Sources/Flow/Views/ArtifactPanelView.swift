@@ -22,12 +22,22 @@ struct ArtifactPanelView: View {
     var body: some View {
         Group {
             if let artifact {
-                VStack(spacing: 0) {
-                    ArtifactToolbarView(artifact: artifact)
-                    Rectangle().fill(MC.hairline).frame(height: 1)
-                    ArtifactContentView(file: artifact.file)
+                if artifact.isLink {
+                    // Co-browsing mini-browser (link artifacts) — its own URL-bar chrome
+                    // replaces the file toolbar.
+                    LinkArtifactView(artifact: artifact)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .id(artifact.fileId)
+                } else if let file = artifact.file {
+                    VStack(spacing: 0) {
+                        ArtifactToolbarView(artifact: artifact, file: file)
+                        Rectangle().fill(MC.hairline).frame(height: 1)
+                        ArtifactContentView(file: file)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .id(artifact.fileId)
+                    }
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
                 ProgressView()
@@ -48,6 +58,7 @@ struct ArtifactPanelView: View {
 /// size, and Download. Closing/switching is handled by the side panel's tabs.
 private struct ArtifactToolbarView: View {
     let artifact: Artifact
+    let file: FileAttachment
     @EnvironmentObject private var app: AppState
     @State private var editing = false
     @State private var draft = ""
@@ -82,7 +93,7 @@ private struct ArtifactToolbarView: View {
             }
             if busy { ProgressView().controlSize(.mini) }
             Spacer()
-            Text(artifact.file.sizeLabel)
+            Text(file.sizeLabel)
                 .font(.caption)
                 .foregroundStyle(MC.faint)
             Button(action: download) {
@@ -117,10 +128,10 @@ private struct ArtifactToolbarView: View {
         Task {
             defer { busy = false }
             do {
-                let dest = try await app.engine.saveToDownloads(artifact.file)
+                let dest = try await app.engine.saveToDownloads(file)
                 NSWorkspace.shared.activateFileViewerSelecting([dest])
             } catch {
-                app.showError("Couldn't download \(artifact.file.name): \(error.localizedDescription)")
+                app.showError("Couldn't download \(file.name): \(error.localizedDescription)")
             }
         }
     }
@@ -293,6 +304,129 @@ private struct SandboxedHTMLView: NSViewRepresentable {
     func updateNSView(_ view: WKWebView, context: Context) {
         // Content is static per artifact: the panel is re-created per file
         // (`.id(artifact.fileId)` upstream), so nothing to update in place.
+    }
+}
+
+// MARK: - Link artifact (co-browsing mini-browser, link artifacts)
+
+/// A shared mini-browser: an editable URL bar above a live WKWebView of the
+/// pinned page. Full fidelity (unlike the web iframe): a top-level web view has
+/// no X-Frame-Options restriction, and the navigation delegate lets the URL bar
+/// follow in-page clicks. Any navigation — typing a URL or clicking a link —
+/// PATCHes the artifact, so the server re-points it and every member's viewer
+/// follows (co-browse). Remote changes to `artifact.url` load here in turn.
+struct LinkArtifactView: View {
+    let artifact: Artifact
+    @EnvironmentObject private var app: AppState
+    @State private var draft: String = ""
+
+    private var url: String { artifact.url ?? "" }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                TextField("Address", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onSubmit { navigate(to: draft) }
+                    .accessibilityIdentifier("artifact.link.urlField")
+                if let u = URL(string: url) {
+                    Button {
+                        NSWorkspace.shared.open(u)
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open in default browser")
+                    .accessibilityIdentifier("artifact.link.openExternal")
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            Rectangle().fill(MC.hairline).frame(height: 1)
+            CoBrowserWebView(url: url) { navigated in
+                // A navigation inside the web view (link click or form) — broadcast
+                // it so everyone follows. Typing in the bar goes through navigate().
+                broadcast(navigated)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear { draft = url }
+        // Follow the shared url when it changes remotely (or via our own echo).
+        .onChange(of: url) { _, now in draft = now }
+        .accessibilityIdentifier("artifact.link.\(artifact.name)")
+    }
+
+    /// Normalize a URL-bar entry (add a scheme to a bare host) and broadcast it.
+    private func navigate(to raw: String) {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return }
+        let withScheme = s.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) != nil
+            ? s : "https://\(s)"
+        guard URL(string: withScheme) != nil else { draft = url; return }
+        broadcast(withScheme)
+    }
+
+    private func broadcast(_ next: String) {
+        guard next != url else { return }
+        Task {
+            do {
+                try await app.engine.setArtifactURL(id: artifact.id, url: next)
+            } catch {
+                draft = url
+                app.showError("Couldn't change the page: \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+/// WKWebView bridge that both renders the shared url and reports navigations
+/// back. It loads a new url only when it differs from what's already shown, so
+/// our own committed navigations (which echo back through `url`) never reload.
+private struct CoBrowserWebView: NSViewRepresentable {
+    let url: String
+    let onNavigate: (String) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onNavigate: onNavigate) }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let view = WKWebView(frame: .zero)
+        view.navigationDelegate = context.coordinator
+        context.coordinator.webView = view
+        if let u = URL(string: url) {
+            context.coordinator.lastLoaded = url
+            view.load(URLRequest(url: u))
+        }
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.onNavigate = onNavigate
+        guard let u = URL(string: url) else { return }
+        // Load only genuine remote changes: skip when the view already shows this
+        // url or we just loaded/committed it (prevents feedback loops).
+        let current = view.url?.absoluteString
+        if current != url && context.coordinator.lastLoaded != url {
+            context.coordinator.lastLoaded = url
+            view.load(URLRequest(url: u))
+        }
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var onNavigate: (String) -> Void
+        weak var webView: WKWebView?
+        var lastLoaded: String?
+
+        init(onNavigate: @escaping (String) -> Void) { self.onNavigate = onNavigate }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard let s = webView.url?.absoluteString else { return }
+            // Ignore the programmatic load we issued for the current shared url;
+            // report only user-driven navigations (link clicks, form submits).
+            if s == lastLoaded { return }
+            lastLoaded = s
+            onNavigate(s)
+        }
     }
 }
 

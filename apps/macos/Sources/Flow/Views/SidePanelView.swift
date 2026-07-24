@@ -50,7 +50,7 @@ struct SidePanelView: View {
                     }
                     ForEach(channelArtifacts) { artifact in
                         PanelTab(
-                            icon: artifact.file.artifactGlyph,
+                            icon: artifact.glyph,
                             label: artifact.name,
                             active: app.selectedArtifactId == artifact.id,
                             onSelect: { app.selectArtifact(artifact.id) },

@@ -315,24 +315,39 @@ export type UpdateAppBody = z.infer<typeof UpdateAppBody>;
  * the channel can pin. Name defaults to the file name. `ownsFile` marks an
  * artifact whose file was uploaded for it (agent-generated) so deleting the
  * artifact can reap the file. */
-export const CreateArtifactBody = z.object({
-  channelId: z.string().uuid(),
-  fileId: z.string().uuid(),
-  name: z.string().min(1).max(255).optional(),
-  ownsFile: z.boolean().optional(),
-});
+/** Pin a file (`fileId`) OR a link (`url`) — exactly one. A link artifact opens
+ * in the co-browsing mini-browser; only http(s) URLs are accepted. */
+export const CreateArtifactBody = z
+  .object({
+    channelId: z.string().uuid(),
+    fileId: z.string().uuid().optional(),
+    url: z.string().url().max(2048).optional(),
+    name: z.string().min(1).max(255).optional(),
+    ownsFile: z.boolean().optional(),
+  })
+  .refine((b) => (b.fileId === undefined) !== (b.url === undefined), {
+    message: 'provide exactly one of fileId or url',
+  })
+  .refine((b) => b.url === undefined || /^https?:\/\//i.test(b.url), {
+    message: 'url must be http(s)',
+  });
 export type CreateArtifactBody = z.infer<typeof CreateArtifactBody>;
 
-/** PATCH /v1/artifacts/:id — rename and/or re-point at a new file (the agent
- * "update" path). At least one field required. */
+/** PATCH /v1/artifacts/:id — rename, re-point a file artifact at a new file (the
+ * agent "update" path), or re-point a link artifact at a new url (the co-browse
+ * navigation path). At least one field required. */
 export const UpdateArtifactBody = z
   .object({
     name: z.string().min(1).max(255).optional(),
     fileId: z.string().uuid().optional(),
+    url: z.string().url().max(2048).optional(),
     ownsFile: z.boolean().optional(),
   })
-  .refine((b) => b.name !== undefined || b.fileId !== undefined, {
-    message: 'provide a name and/or a fileId',
+  .refine((b) => b.name !== undefined || b.fileId !== undefined || b.url !== undefined, {
+    message: 'provide a name, fileId, and/or url',
+  })
+  .refine((b) => b.url === undefined || /^https?:\/\//i.test(b.url), {
+    message: 'url must be http(s)',
   });
 export type UpdateArtifactBody = z.infer<typeof UpdateArtifactBody>;
 
