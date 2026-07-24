@@ -1,0 +1,116 @@
+// Native "Continue with Google" handoff page (phase16 §9, option 1).
+//
+// The Mac and iPhone apps have no Google SDK: their button opens the system
+// browser at `/?native=google`, which lands here. We run Google Identity
+// Services exactly as the normal auth screen does, then mint a one-time
+// app-link code and bounce to `flow://signin?code=…` — the same handoff the
+// "Open the desktop app" button has always used, so the app needs no new
+// crypto and no new deep link. A raw session token never rides in the URL.
+//
+// Arriving already signed in on the web skips straight to the handoff: the
+// point of the trip is the code, not the sign-in.
+import { useCallback, useEffect, useState } from 'react';
+import type { GoogleAuthResponse } from '@flow/shared';
+import { setToken } from '../lib/api';
+import { GoogleButton } from './AuthScreen';
+import { MAC_DOWNLOAD_URL, openInApp } from './OpenInApp';
+
+type Phase = 'choose' | 'handing-off' | 'sent' | 'no-app' | 'error';
+
+export default function NativeSignIn({ signedIn }: { signedIn: boolean }) {
+  const [phase, setPhase] = useState<Phase>(signedIn ? 'handing-off' : 'choose');
+  const [error, setError] = useState<string | null>(null);
+
+  const handOff = useCallback(() => {
+    setPhase('handing-off');
+    setError(null);
+    void openInApp(() => setPhase('no-app')).then(
+      () => setPhase((p) => (p === 'handing-off' ? 'sent' : p)),
+      (err: unknown) => {
+        setError(err instanceof Error ? err.message : 'could not reach Flow');
+        setPhase('error');
+      },
+    );
+  }, []);
+
+  // Already signed in here: no need to ask Google anything.
+  useEffect(() => {
+    if (signedIn) handOff();
+  }, [signedIn, handOff]);
+
+  const onGoogle = useCallback(
+    (resp: GoogleAuthResponse) => {
+      // Keep the web session too — it's legitimately theirs, and it makes a
+      // second trip through this page a one-tap affair.
+      setToken(resp.token);
+      handOff();
+    },
+    [handOff],
+  );
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 bg-base">
+      <div className="w-80 rounded-xl border border-hairline bg-white p-6 text-center shadow-sm">
+        <h1 className="mb-1 text-center text-2xl font-bold text-ink">Flow</h1>
+        {phase === 'choose' && (
+          <>
+            <p className="mb-1 text-sm text-muted">
+              Sign in with Google, and we&rsquo;ll send you back to the Flow app.
+            </p>
+            <GoogleButton onSignedIn={onGoogle} showDivider={false} />
+          </>
+        )}
+        {phase === 'handing-off' && <p className="text-sm text-muted">Signing you in…</p>}
+        {phase === 'sent' && (
+          <>
+            <p className="mb-3 text-sm text-muted">
+              You&rsquo;re signed in — Flow should be opening now.
+            </p>
+            <button
+              data-testid="native-retry"
+              className="w-full rounded bg-accent py-2 text-sm font-semibold text-white hover:bg-accent-deep"
+              onClick={handOff}
+            >
+              Open the Flow app ↗
+            </button>
+            <p className="mt-2 text-xs text-faint">You can close this tab once Flow opens.</p>
+          </>
+        )}
+        {phase === 'no-app' && (
+          <>
+            <p className="mb-3 text-sm text-muted">
+              You&rsquo;re signed in, but Flow didn&rsquo;t open — is it installed?
+            </p>
+            <a
+              data-testid="native-download"
+              href={MAC_DOWNLOAD_URL}
+              className="text-sm font-semibold text-accent-soft hover:underline"
+            >
+              Download for Mac ↓
+            </a>
+            <button
+              className="mt-3 block w-full rounded border border-hairline2 py-2 text-sm font-semibold text-ink hover:bg-base"
+              onClick={handOff}
+            >
+              Try again
+            </button>
+          </>
+        )}
+        {phase === 'error' && (
+          <>
+            <p className="mb-3 text-sm text-red-600">{error}</p>
+            <button
+              className="w-full rounded border border-hairline2 py-2 text-sm font-semibold text-ink hover:bg-base"
+              onClick={handOff}
+            >
+              Try again
+            </button>
+          </>
+        )}
+      </div>
+      <a href="/" className="text-sm text-muted hover:text-ink hover:underline">
+        Use Flow in this browser instead
+      </a>
+    </div>
+  );
+}

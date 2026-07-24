@@ -15,6 +15,7 @@ import {
   AppLinkExchangeBody,
   CompleteSignupBody,
   ForgotPasswordBody,
+  GoogleAuthBody,
   LoginBody,
   ResetPasswordBody,
   SigninLinkBody,
@@ -44,7 +45,9 @@ import { blobStore } from '../storage/index.js';
 
 /** Blob-store key the notarized macOS DMG is uploaded to (see /download/mac). */
 const DOWNLOAD_MAC_KEY = 'downloads/Flow.dmg';
+import { config } from '../config.js';
 import * as auth from '../services/auth.js';
+import * as google from '../services/oauthGoogle.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
 import * as msg from '../services/messages.js';
@@ -105,6 +108,14 @@ export function registerRoutes(app: FastifyInstance): void {
   });
 
   app.get('/healthz', async () => ({ ok: true }));
+
+  // Public bootstrap payload: which auth options this deployment offers, so the
+  // signed-out client knows without a failed round-trip. A Google OAuth *web*
+  // client id is public by design — it ships in the page that calls Google.
+  app.get('/v1/config', async () => ({
+    google: config.googleEnabled,
+    googleClientId: config.googleClientId ?? null,
+  }));
 
   // Public macOS app download (operator feature): 302 to a short-lived signed
   // URL for the notarized DMG in blob storage. No auth — it's linked from the
@@ -174,6 +185,18 @@ export function registerRoutes(app: FastifyInstance): void {
     return auth.consumeSigninLink(body.token, req.headers['user-agent']);
   });
 
+  // Google Sign-In (phase 16). Open, like login — the ID token IS the proof.
+  // Sign-in and registration are one operation; the response also names any
+  // workspaces the user's email domain auto-enrolled them into.
+  app.post('/v1/auth/google', async (req, reply) => {
+    if (!rateAllow(`google-auth:${req.ip}`, 30, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
+    }
+    const body = parse(GoogleAuthBody, req.body);
+    const res = await google.signInWithGoogle(body.idToken, req.headers['user-agent']);
+    return reply.status(201).send(res);
+  });
+
   app.post('/v1/auth/logout', { preHandler: requireAuth }, async (req) => {
     await auth.logout(req.bearerToken);
     return { ok: true };
@@ -191,6 +214,12 @@ export function registerRoutes(app: FastifyInstance): void {
 
   // ---- me ------------------------------------------------------
   app.get('/v1/me', { preHandler: requireAuth }, async (req) => req.user);
+
+  // Linked external identities (phase 16) — the client offers the workspace
+  // domain toggle only to someone who actually signed in with Google.
+  app.get('/v1/me/identities', { preHandler: requireAuth }, async (req) => ({
+    identities: await google.listIdentities(req.user.id),
+  }));
 
   app.patch('/v1/me', { preHandler: requireAuth }, async (req) => {
     const body = parse(PatchMeBody, req.body);
@@ -249,7 +278,7 @@ export function registerRoutes(app: FastifyInstance): void {
   // ---- workspaces ----------------------------------------------
   app.post('/v1/workspaces', { preHandler: requireAuth }, async (req, reply) => {
     const body = parse(CreateWorkspaceBody, req.body);
-    const dto = await ws.createWorkspace(req.user.id, body.name, body.slug);
+    const dto = await ws.createWorkspace(req.user.id, body.name, body.slug, body.googleSelfRegisterDomain);
     return reply.status(201).send(dto);
   });
 

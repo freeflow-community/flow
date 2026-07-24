@@ -4,6 +4,7 @@ import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/sha
 import { api, getToken, setToken } from './lib/api';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
+import NativeSignIn from './components/NativeSignIn';
 import WorkspaceChooser from './components/WorkspaceChooser';
 import Main from './components/Main';
 
@@ -11,11 +12,13 @@ const ACTIVE_WS_KEY = 'flow.activeWorkspace';
 const ADMIN_PANEL_KEY = 'flow.adminPanelOpen';
 export const PENDING_INVITE_KEY = 'flow.pendingInvite';
 
-/** Pull ?signup= / ?reset= / ?signin= (emailed links) off the URL before rendering. */
+/** Pull ?signup= / ?reset= / ?signin= (emailed links) and ?native= (the native
+ * Google handoff, phase16 §9) off the URL before rendering. */
 function consumeEmailLinkParams(): {
   signupToken: string | null;
   resetToken: string | null;
   signinToken: string | null;
+  nativeHandoff: boolean;
 } {
   // /invite/<token> (emailed invite link): stash in localStorage so it
   // survives the full register→confirm-email→sign-in round trip, then accept
@@ -29,21 +32,26 @@ function consumeEmailLinkParams(): {
   const signupToken = params.get('signup');
   const resetToken = params.get('reset');
   const signinToken = params.get('signin');
+  // Kept in the URL, unlike the one-shot tokens: a reload of the handoff page
+  // should still be the handoff page, not the ordinary app.
+  const nativeHandoff = params.get('native') === 'google';
   if (signupToken || resetToken || signinToken) {
     history.replaceState(null, '', location.pathname);
   }
-  return { signupToken, resetToken, signinToken };
+  return { signupToken, resetToken, signinToken, nativeHandoff };
 }
 
 export default function App() {
   const qc = useQueryClient();
   const [user, setUser] = useState<UserDTO | null>(null);
   const [booting, setBooting] = useState(true);
-  const [{ signupToken, resetToken, signinToken }] = useState(consumeEmailLinkParams);
+  const [{ signupToken, resetToken, signinToken, nativeHandoff }] = useState(consumeEmailLinkParams);
   // Active workspace survives reloads/restarts (phase 3.5 fixes).
   const [workspaceId, setWorkspaceId] = useState<string | null>(
     () => localStorage.getItem(ACTIVE_WS_KEY),
   );
+  // Transient one-line banner (currently only the Google domain auto-join).
+  const [notice, setNotice] = useState<string | null>(null);
   const [channelId, setChannelId] = useState<string | null>(null);
   const [artifactId, setArtifactId] = useState<string | null>(null);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
@@ -92,10 +100,31 @@ export default function App() {
     })();
   }, [user, qc]);
 
-  const signIn = useCallback((resp: AuthResponse) => {
+  // Google sign-in can enroll the user into workspaces that opened their doors
+  // to their email domain (phase16 §4). Land them in one instead of the empty
+  // create-workspace screen, and say what happened — nobody expects to arrive
+  // already a member. A pending invite still wins: its effect runs after this.
+  const signIn = useCallback((resp: AuthResponse & { autoJoined?: WorkspaceDTO[] }) => {
     setToken(resp.token);
     setUser(resp.user);
+    const joined = resp.autoJoined ?? [];
+    if (joined.length > 0) {
+      const first = joined[0]!;
+      localStorage.setItem(ACTIVE_WS_KEY, first.id);
+      setWorkspaceId(first.id);
+      setNotice(
+        joined.length === 1
+          ? `You've joined ${first.name} — everyone on your email domain is welcome there.`
+          : `You've joined ${joined.length} workspaces on your email domain.`,
+      );
+    }
   }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   const signOut = useCallback(() => {
     void api('POST', '/v1/auth/logout').catch(() => {});
@@ -112,6 +141,14 @@ export default function App() {
 
   if (booting) {
     return <div className="flex h-full items-center justify-center text-faint">Loading…</div>;
+  }
+
+  // The native apps' Google button lands here (phase16 §9): sign in, mint a
+  // one-time code, bounce back to flow://signin. Deliberately checked before
+  // the signed-in branch — arriving with a live web session just skips ahead
+  // to the handoff rather than dropping into the workspace.
+  if (nativeHandoff) {
+    return <NativeSignIn signedIn={!!user} />;
   }
 
   if (!user) {
@@ -202,6 +239,15 @@ export default function App() {
           },
         }}
       >
+        {notice && (
+          <div
+            data-testid="app-notice"
+            className="fixed inset-x-0 top-3 z-50 mx-auto w-fit max-w-[calc(100vw-2rem)] rounded-full bg-accent px-4 py-2 text-center text-sm font-semibold text-white shadow-lg"
+            onClick={() => setNotice(null)}
+          >
+            {notice}
+          </div>
+        )}
         {workspaceId ? <Main /> : <WorkspaceChooser />}
       </SelectionContext.Provider>
     </AuthContext.Provider>

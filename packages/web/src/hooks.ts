@@ -6,6 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { emailDomain, isSelfRegisterableDomain } from '@flow/shared';
 import type {
   AgentInviteDTO,
   AppDTO,
@@ -15,6 +16,7 @@ import type {
   MessageDTO,
   MessagePage,
   NotificationPage,
+  OAuthIdentityDTO,
   UserDTO,
   WorkspaceDTO,
   WorkspaceMemberDTO,
@@ -35,6 +37,29 @@ export function useWorkspaces() {
     queryFn: () => api<{ workspaces: WorkspaceDTO[] }>('GET', '/v1/me/workspaces'),
     select: (d) => d.workspaces,
   });
+}
+
+/**
+ * External identities linked to me (phase16 §5a). Only a user who actually
+ * signed in with Google may open a workspace to their email domain, so the
+ * toggle is offered off the back of this.
+ */
+export function useIdentities() {
+  return useQuery({
+    queryKey: ['identities'],
+    queryFn: () => api<{ identities: OAuthIdentityDTO[] }>('GET', '/v1/me/identities'),
+    select: (d) => d.identities,
+    staleTime: Infinity,
+  });
+}
+
+/** The email domain this user may open a workspace to, or null when they have
+ * no Google identity or it's a consumer domain (phase16 §5a denylist). */
+export function useSelfRegisterDomain(): string | null {
+  const identities = useIdentities();
+  const google = (identities.data ?? []).find((i) => i.provider === 'google');
+  const domain = google ? emailDomain(google.email) : null;
+  return domain && isSelfRegisterableDomain(domain) ? domain : null;
 }
 
 export function useChannels(workspaceId: string | null) {

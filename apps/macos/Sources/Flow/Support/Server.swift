@@ -32,6 +32,17 @@ enum Server {
 
     static var isDefaultLocal: Bool { baseURL == defaultLocal }
 
+    /// Native "Continue with Google" (phase16 §9): we have no Google SDK, so
+    /// the button opens this page in the system browser. It runs Google
+    /// Identity Services, signs in, mints a one-time app-link code and bounces
+    /// back to `flow://signin?code=…` — the handoff the app already speaks.
+    static var nativeGoogleSignInURL: URL {
+        var c = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        c.path = "/"
+        c.queryItems = [URLQueryItem(name: "native", value: "google")]
+        return c.url!
+    }
+
     /// Appended to storage identifiers (cache dir, Keychain slot, UserDefaults
     /// keys) so each server gets isolated state — sessions and caches must
     /// never leak between local dev and production. Empty for the default

@@ -1,5 +1,13 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { SIDEBAR_COLOR_IDS, type InviteDTO, type MemberRole, type WorkspaceDTO, type WorkspaceMemberDTO } from '@flow/shared';
+import {
+  SIDEBAR_COLOR_IDS,
+  emailDomain,
+  isSelfRegisterableDomain,
+  type InviteDTO,
+  type MemberRole,
+  type WorkspaceDTO,
+  type WorkspaceMemberDTO,
+} from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
@@ -9,20 +17,58 @@ import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
 import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents } from './memberRemoval.js';
 
-const { workspaces, workspaceMembers, invites, channels, channelMembers, users, sessions, emailTokens, appLinkCodes } =
-  schema;
+const {
+  workspaces,
+  workspaceMembers,
+  invites,
+  channels,
+  channelMembers,
+  users,
+  sessions,
+  emailTokens,
+  appLinkCodes,
+  oauthIdentities,
+} = schema;
 
-function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberRole): WorkspaceDTO {
+export function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberRole): WorkspaceDTO {
   const dto: WorkspaceDTO = {
     id: w.id,
     slug: w.slug,
     name: w.name,
     sidebarColor: w.sidebarColor,
+    googleSelfRegisterDomain: w.googleSelfRegisterDomain,
     createdBy: w.createdBy,
     createdAt: w.createdAt.toISOString(),
   };
   if (role) dto.role = role;
   return dto;
+}
+
+/**
+ * Guard for the Google domain self-register toggle (phase16 §5a/§7).
+ *
+ * Trust anchor: the setter's *own* verified Google email domain. We do not
+ * prove they control the DNS domain — enabling `acme.com` requires holding a
+ * Google account Google says is verified on `acme.com`. On top of that:
+ * consumer domains are denied outright, and (unless FLOW_GOOGLE_REQUIRE_HD=0)
+ * the account must be a Google Workspace account on that domain, so a personal
+ * Gmail that merely spells a corporate address can't open the doors.
+ */
+async function assertMaySelfRegisterDomain(userId: string, domain: string): Promise<void> {
+  if (!isSelfRegisterableDomain(domain)) {
+    throw badRequest('domain_not_allowed', `${domain} cannot be opened to self-registration`);
+  }
+  const rows = await db
+    .select()
+    .from(oauthIdentities)
+    .where(and(eq(oauthIdentities.userId, userId), eq(oauthIdentities.provider, 'google')));
+  const match = rows.find((r) => emailDomain(r.email) === domain);
+  if (!match) {
+    throw forbidden(`you can only open a workspace to your own Google email domain`);
+  }
+  if (config.googleRequireHostedDomain && (match.hostedDomain ?? '').toLowerCase() !== domain) {
+    throw forbidden(`${domain} must be a Google Workspace domain on your account`);
+  }
 }
 
 /**
@@ -37,6 +83,8 @@ export async function updateWorkspace(
     // phase 11 §10 — null allowlist clears it back to "all domains allowed"
     unfurlEnabled?: boolean | undefined;
     unfurlDomainAllowlist?: string[] | null | undefined;
+    // phase 16 §5a — null turns domain self-registration off
+    googleSelfRegisterDomain?: string | null | undefined;
   },
 ): Promise<WorkspaceDTO> {
   const m = await requireMembership(workspaceId, actorId);
@@ -45,6 +93,7 @@ export async function updateWorkspace(
     sidebarColor: string;
     unfurlEnabled: boolean;
     unfurlDomainAllowlist: string[] | null;
+    googleSelfRegisterDomain: string | null;
   }> = {};
   if (patch.sidebarColor !== undefined) {
     if (!SIDEBAR_COLOR_IDS.includes(patch.sidebarColor)) {
@@ -57,6 +106,15 @@ export async function updateWorkspace(
     set.unfurlDomainAllowlist = patch.unfurlDomainAllowlist === null
       ? null
       : patch.unfurlDomainAllowlist.map((d) => d.trim().toLowerCase()).filter(Boolean);
+  }
+  if (patch.googleSelfRegisterDomain !== undefined) {
+    if (patch.googleSelfRegisterDomain === null) {
+      set.googleSelfRegisterDomain = null;
+    } else {
+      const domain = patch.googleSelfRegisterDomain.trim().toLowerCase();
+      await assertMaySelfRegisterDomain(actorId, domain);
+      set.googleSelfRegisterDomain = domain;
+    }
   }
   const updated = await db
     .update(workspaces)
@@ -85,17 +143,29 @@ export async function requireMembership(workspaceId: string, userId: string) {
   return m;
 }
 
-/** Create workspace: creator becomes owner, #general auto-created (spec §4). */
-export async function createWorkspace(userId: string, name: string, slug: string): Promise<WorkspaceDTO> {
+/** Create workspace: creator becomes owner, #general auto-created (spec §4).
+ * `googleSelfRegisterDomain` (phase16 §5a) is offered at creation only to a
+ * creator who signed in with Google, and validated the same way as the later
+ * PATCH — the client never gets to name a domain that isn't its own. */
+export async function createWorkspace(
+  userId: string,
+  name: string,
+  slug: string,
+  googleSelfRegisterDomain?: string | null,
+): Promise<WorkspaceDTO> {
   // Role guard (AGENTS_DESIGN.md): agents are always plain members — creating
   // a workspace is the only path to owner/admin, so it is closed to them.
   const creator = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   if (creator[0]?.isAgent) throw forbidden('agents cannot create workspaces');
+  const domain = googleSelfRegisterDomain ? googleSelfRegisterDomain.trim().toLowerCase() : null;
+  if (domain) await assertMaySelfRegisterDomain(userId, domain);
   const wsId = newId();
   const chanId = newId();
   try {
     await db.transaction(async (tx) => {
-      await tx.insert(workspaces).values({ id: wsId, slug, name, createdBy: userId });
+      await tx
+        .insert(workspaces)
+        .values({ id: wsId, slug, name, createdBy: userId, googleSelfRegisterDomain: domain });
       await tx.insert(workspaceMembers).values({ workspaceId: wsId, userId, role: 'owner' });
       await tx.insert(channels).values({
         id: chanId,
@@ -348,24 +418,49 @@ export async function acceptInvite(userId: string, token: string): Promise<Works
 
   await db.transaction(async (tx) => {
     await tx.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, inv.id));
-    await tx
-      .insert(workspaceMembers)
-      .values({ workspaceId: inv.workspaceId, userId })
-      .onConflictDoNothing();
-    const general = await tx
-      .select()
-      .from(channels)
-      .where(and(eq(channels.workspaceId, inv.workspaceId), eq(channels.name, 'general')))
-      .limit(1);
-    if (general[0]) {
-      await tx.insert(channelMembers).values({ channelId: general[0].id, userId }).onConflictDoNothing();
-    }
+    await enrollInWorkspace(tx, inv.workspaceId, userId);
   });
 
+  await announceJoin(inv.workspaceId, userId);
+  const ws = await db.select().from(workspaces).where(eq(workspaces.id, inv.workspaceId)).limit(1);
+  return toWorkspaceDTO(ws[0]!, 'member');
+}
+
+/**
+ * The join primitive shared by every path into a workspace that isn't
+ * "create it" (invite accept, phase16 domain self-registration): the member row
+ * plus #general membership, inside the caller's transaction. Returns false when
+ * the user was already a member, so callers can skip announcing a no-op join.
+ */
+export async function enrollInWorkspace(
+  tx: Tx,
+  workspaceId: string,
+  userId: string,
+  role: MemberRole = 'member',
+): Promise<boolean> {
+  const inserted = await tx
+    .insert(workspaceMembers)
+    .values({ workspaceId, userId, role })
+    .onConflictDoNothing()
+    .returning({ userId: workspaceMembers.userId });
+  const general = await tx
+    .select()
+    .from(channels)
+    .where(and(eq(channels.workspaceId, workspaceId), eq(channels.name, 'general')))
+    .limit(1);
+  if (general[0]) {
+    await tx.insert(channelMembers).values({ channelId: general[0].id, userId }).onConflictDoNothing();
+  }
+  return inserted.length > 0;
+}
+
+/** Broadcast a completed join: the roster event for everyone, plus the
+ * per-user nudge that lets the joiner's live sockets subscribe. */
+export async function announceJoin(workspaceId: string, userId: string, role: MemberRole = 'member'): Promise<void> {
   const u = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  publishEvent(subjectMeta(inv.workspaceId), {
+  publishEvent(subjectMeta(workspaceId), {
     type: 'member.joined',
-    workspaceId: inv.workspaceId,
+    workspaceId,
     ts: new Date().toISOString(),
     data: {
       userId,
@@ -373,14 +468,11 @@ export async function acceptInvite(userId: string, token: string): Promise<Works
       email: u[0]?.email ?? '',
       avatarUrl: u[0]?.avatarUrl ?? null,
       isAgent: u[0]?.isAgent ?? false,
-      role: 'member',
+      role,
       joinedAt: new Date().toISOString(),
     },
   });
-
-  const ws = await db.select().from(workspaces).where(eq(workspaces.id, inv.workspaceId)).limit(1);
-  publishWorkspaceJoined(inv.workspaceId, userId);
-  return toWorkspaceDTO(ws[0]!, 'member');
+  publishWorkspaceJoined(workspaceId, userId);
 }
 
 /** Tell the joining user's live sockets so the gateway can subscribe them (they authed before joining). */

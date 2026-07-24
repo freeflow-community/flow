@@ -58,12 +58,66 @@ export const AppLinkExchangeBody = z.object({
 });
 export type AppLinkExchangeBody = z.infer<typeof AppLinkExchangeBody>;
 
+/** POST /v1/auth/google — a Google ID token (a signed JWT from Google Identity
+ * Services). Sign-in and registration are the same operation with Google. */
+export const GoogleAuthBody = z.object({
+  idToken: z.string().min(1).max(4096),
+});
+export type GoogleAuthBody = z.infer<typeof GoogleAuthBody>;
+
+/**
+ * Domains that may never be opened up by the workspace self-register toggle
+ * (phase16 §5a/§7): "anyone with a gmail" is the whole internet. This list is
+ * mandatory — without it the toggle is an open-registration hole.
+ */
+export const CONSUMER_EMAIL_DOMAINS: readonly string[] = [
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'ymail.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'gmx.com',
+  'mail.com',
+  'zoho.com',
+  'yandex.com',
+  'qq.com',
+  '163.com',
+];
+
+/** Lowercased domain part of an email address, or null if it has no `@`. */
+export function emailDomain(email: string): string | null {
+  const at = email.lastIndexOf('@');
+  if (at < 0 || at === email.length - 1) return null;
+  return email.slice(at + 1).toLowerCase();
+}
+
+/** A domain that may be used for Google domain self-registration. */
+export function isSelfRegisterableDomain(domain: string): boolean {
+  const d = domain.trim().toLowerCase();
+  return d.length > 0 && d.includes('.') && !CONSUMER_EMAIL_DOMAINS.includes(d);
+}
+
 // ---- workspaces ------------------------------------------------
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+
+/** An email domain the workspace opens to Google self-registration (phase16 §5a).
+ * Clients only ever offer the creator's *own* verified domain — it is not
+ * free-text — and the server re-checks that plus the consumer denylist. */
+const SelfRegisterDomain = z.string().min(3).max(253).toLowerCase();
 
 export const CreateWorkspaceBody = z.object({
   name: z.string().min(1).max(80),
   slug: z.string().regex(SLUG_RE, 'slug must be lowercase alphanumeric with dashes, 3-40 chars'),
+  googleSelfRegisterDomain: SelfRegisterDomain.nullable().optional(),
 });
 export type CreateWorkspaceBody = z.infer<typeof CreateWorkspaceBody>;
 
@@ -80,12 +134,16 @@ export const UpdateWorkspaceBody = z
     // (null clears it back to "allow all domains").
     unfurlEnabled: z.boolean().optional(),
     unfurlDomainAllowlist: z.array(z.string().min(1).max(253)).max(200).nullable().optional(),
+    // phase 16 §5a: open the workspace to everyone on an email domain who signs
+    // in with Google. null turns it off.
+    googleSelfRegisterDomain: SelfRegisterDomain.nullable().optional(),
   })
   .refine(
     (b) =>
       b.sidebarColor !== undefined ||
       b.unfurlEnabled !== undefined ||
-      b.unfurlDomainAllowlist !== undefined,
+      b.unfurlDomainAllowlist !== undefined ||
+      b.googleSelfRegisterDomain !== undefined,
     'nothing to update',
   );
 export type UpdateWorkspaceBody = z.infer<typeof UpdateWorkspaceBody>;

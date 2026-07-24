@@ -9,6 +9,10 @@ struct AuthView: View {
     @State private var displayName = ""
     @State private var busy = false
     @State private var error: String?
+    /// Whether this server offers Google sign-in (GET /v1/config). Nil until
+    /// the check answers; a failure resolves to false, so the button simply
+    /// doesn't appear rather than appearing and failing.
+    @State private var googleEnabled = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -70,6 +74,27 @@ struct AuthView: View {
             .keyboardShortcut(.defaultAction)
             .accessibilityIdentifier("auth.submit")
 
+            // Google sign-in (phase16 §9): the Mac app carries no Google SDK,
+            // so this opens the browser at the Flow handoff page, which signs
+            // in and bounces back via flow://signin?code=… — the same handoff
+            // "Open the desktop app" uses in the other direction.
+            if googleEnabled {
+                Divider().frame(width: 280)
+                Button {
+                    NSWorkspace.shared.open(Server.nativeGoogleSignInURL)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "globe")
+                        Text("Continue with Google")
+                    }
+                    .frame(width: 200)
+                }
+                .accessibilityIdentifier("auth.google")
+                Text("Opens your browser, then returns you here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if !Server.isDefaultLocal {
                 Button("New to Flow? Create your account on the web") {
                     NSWorkspace.shared.open(Server.baseURL)
@@ -83,6 +108,9 @@ struct AuthView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            googleEnabled = (try? await app.engine.publicConfig())?.google ?? false
+        }
     }
 
     private var formValid: Bool {

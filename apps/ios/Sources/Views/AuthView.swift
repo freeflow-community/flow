@@ -5,11 +5,15 @@ import SwiftUI
 /// into the app). Mirrors the macOS auth screen's server-aware behavior.
 struct AuthView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.openURL) private var openURL
 
     @State private var email = ""
     @State private var password = ""
     @State private var busy = false
     @State private var error: String?
+    /// Whether this server offers Google sign-in (GET /v1/config). A failed
+    /// check leaves it false, so the button is absent rather than broken.
+    @State private var googleEnabled = false
     /// True after a sign-in link was requested — swaps the form for a neutral
     /// "check your email" confirmation.
     @State private var linkSent = false
@@ -42,6 +46,32 @@ struct AuthView: View {
         }
         .padding()
         .background(MC.base.ignoresSafeArea())
+        .task {
+            googleEnabled = (try? await app.engine.publicConfig())?.google ?? false
+        }
+    }
+
+    /// Google sign-in (phase16 §9): iOS carries no Google SDK, so this opens
+    /// Safari at the Flow handoff page, which signs in and returns via
+    /// flow://signin?code=… — the deep link the app already handles.
+    private var googleButton: some View {
+        VStack(spacing: 6) {
+            Divider().frame(maxWidth: 320)
+            Button {
+                openURL(Server.nativeGoogleSignInURL)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "globe")
+                    Text("Continue with Google").bold()
+                }
+                .frame(maxWidth: 320).frame(height: 22).padding(.vertical, 8)
+            }
+            .buttonStyle(.bordered)
+            .tint(MC.accent)
+            .disabled(busy)
+            Text("Opens Safari, then brings you back to Flow.")
+                .font(.caption).foregroundStyle(MC.muted)
+        }
     }
 
     private var signInForm: some View {
@@ -82,6 +112,8 @@ struct AuthView: View {
             .font(.callout)
             .tint(MC.accent)
             .disabled(busy || !emailValid)
+
+            if googleEnabled { googleButton }
         }
     }
 

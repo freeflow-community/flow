@@ -62,6 +62,31 @@ export const config = {
   get unfurlRespectRobots(): boolean {
     return process.env.FLOW_UNFURL_RESPECT_ROBOTS === '1';
   },
+  // ---- Google Sign-In (phase 16) -------------------------------
+  /** OAuth 2.0 **Web** client id — also the `aud` we require on ID tokens. One
+   * client serves web today and is what native will target (phase16 §9). */
+  get googleClientId(): string | undefined {
+    return process.env.GOOGLE_CLIENT_ID || undefined;
+  },
+  /** Only needed if we ever adopt the auth-code flow (phase16 §8). Unused by
+   * the ID-token flow — kept so adding it later isn't a redesign. */
+  get googleClientSecret(): string | undefined {
+    return process.env.GOOGLE_CLIENT_SECRET || undefined;
+  },
+  /** Google sign-in is available. When false the endpoint 503s and clients hide the button. */
+  get googleEnabled(): boolean {
+    return !!process.env.GOOGLE_CLIENT_ID;
+  },
+  /**
+   * Phase 16 §7 `hd` hardening: require the setter's Google account to be a
+   * Workspace account on the domain before they can open a workspace to it.
+   * This blocks a personal Gmail that merely *spells* a corporate address.
+   * Set FLOW_GOOGLE_REQUIRE_HD=0 for orgs on a custom domain without Google
+   * Workspace (the consumer denylist still applies either way).
+   */
+  get googleRequireHostedDomain(): boolean {
+    return process.env.FLOW_GOOGLE_REQUIRE_HD !== '0';
+  },
   verifyTokenTtlHours: 48,
   resetTokenTtlMinutes: 60,
   signinTokenTtlMinutes: 15, // passwordless sign-in link — short-lived by design

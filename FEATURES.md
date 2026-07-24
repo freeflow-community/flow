@@ -5,6 +5,20 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-24
 
+- **Sign in with Google — on the web, Mac and iPhone.** There's now a
+  **Continue with Google** button on the sign-in screen everywhere: one click and
+  you're in, no password to pick and no confirmation email to wait for. If you
+  already have a Flow account with the same address, Google just gets added to
+  it; you don't end up with two accounts. On the Mac and iPhone the button pops
+  open your browser to finish with Google, then hands you straight back to the
+  app — so you sign in with whichever Google account you're already using there.
+- **Open your workspace to your whole company.** When you create a workspace
+  after signing in with Google, you can tick *"Let anyone with an @yourcompany
+  email join this workspace automatically"* — and colleagues who sign in with
+  their work Google account land straight in, no invite needed. You can turn it
+  on or off later from **Invite People**. It's offered for company domains only,
+  never for personal ones like gmail.com.
+
 - **Your Direct Messages list is now properly alphabetical everywhere.** On the
   Mac and iPhone apps the list wasn't sorted at all, and on the web agents you
   hadn't messaged yet got stuck at the bottom. Now everyone — people and agents

@@ -454,6 +454,13 @@ struct AuthResponse: Decodable, Sendable {
     let user: User
 }
 
+/// GET /v1/config — the public bootstrap payload (phase 16). Tells the
+/// signed-out screen which auth options this deployment offers. `googleClientId`
+/// is only of use to a browser; native just needs the boolean.
+struct PublicConfig: Decodable, Sendable {
+    let google: Bool
+}
+
 struct MemberDTO: Decodable, Sendable {
     let userId: String
     let displayName: String

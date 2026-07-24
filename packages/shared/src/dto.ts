@@ -45,6 +45,9 @@ export interface WorkspaceDTO {
   createdBy: string;
   createdAt: string;
   sidebarColor: string; // preset id from SIDEBAR_COLORS (phase 3.5)
+  /** Phase 16 §5a: when set, any Google user with a *verified* email on this
+   * domain self-enrols on sign-in — no invite. null = off (the default). */
+  googleSelfRegisterDomain: string | null;
   role?: MemberRole; // present on "my workspaces"
 }
 
@@ -257,6 +260,37 @@ export interface NotificationPage {
 export interface AuthResponse {
   token: string;
   user: UserDTO;
+}
+
+/**
+ * Response of POST /v1/auth/google. A normal session plus the workspaces the
+ * sign-in auto-enrolled the user into via domain self-registration (phase16
+ * §4) — the client uses it to route straight in instead of showing the empty
+ * create-workspace screen.
+ */
+export interface GoogleAuthResponse extends AuthResponse {
+  autoJoined: WorkspaceDTO[];
+}
+
+/** GET /v1/config — the small public bootstrap payload the signed-out web app
+ * reads so it knows which auth options to render. No secrets: a Google OAuth
+ * client id is public by design (it ships in the page that calls Google). */
+export interface PublicConfigDTO {
+  /** Google sign-in is configured server-side. */
+  google: boolean;
+  /** OAuth 2.0 Web client id for Google Identity Services; null when disabled. */
+  googleClientId: string | null;
+}
+
+/** GET /v1/me/identities — external identities linked to the signed-in user.
+ * Drives the "offer the domain toggle" decision on the client (phase16 §5a). */
+export interface OAuthIdentityDTO {
+  provider: 'google';
+  /** The verified email Google asserted at the last sign-in. */
+  email: string;
+  /** Google Workspace hosted domain, when the account has one. */
+  hostedDomain: string | null;
+  linkedAt: string;
 }
 
 /** Registration that must be completed by clicking the emailed verify link. */

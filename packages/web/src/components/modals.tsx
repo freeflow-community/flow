@@ -4,7 +4,7 @@ import { SIDEBAR_COLORS } from '@flow/shared';
 import type { ChannelDTO, InviteDTO, NotificationPrefs, UserDTO } from '@flow/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useChannelMembers, useMemberMap, useMembers, useWorkspaces } from '../hooks';
+import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { AuthImg, Avatar } from './Avatar';
 
 export function Modal({
@@ -129,6 +129,51 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
   );
 }
 
+/**
+ * Google domain self-registration (phase16 §5a), offered in the invite dialog
+ * because "let everyone at acme.com in" is the same job as inviting them one
+ * by one. Only shown to an owner/admin who signed in with Google on a
+ * non-consumer domain; the server re-checks all of that.
+ */
+function SelfRegisterToggle({ workspaceId }: { workspaceId: string }) {
+  const qc = useQueryClient();
+  const workspaces = useWorkspaces();
+  const domain = useSelfRegisterDomain();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  if (!ws || !domain) return null;
+  const on = ws.googleSelfRegisterDomain === domain;
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api('PATCH', `/v1/workspaces/${workspaceId}`, { googleSelfRegisterDomain: next ? domain : null });
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-hairline pt-3">
+      <label data-testid="invite-self-register" className="flex items-start gap-2 text-sm text-ink-soft">
+        <input type="checkbox" className="mt-0.5" checked={on} disabled={busy}
+          onChange={(e) => void toggle(e.target.checked)} />
+        <span>
+          Let anyone with an <span className="font-semibold text-ink">@{domain}</span> email join automatically when
+          they sign in with Google — no invite needed.
+        </span>
+      </label>
+      {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
 export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const [email, setEmail] = useState('');
   const [invite, setInvite] = useState<InviteDTO | null>(null);
@@ -170,6 +215,7 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
               className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
               disabled={!email.includes('@')} onClick={() => void create()}>Send Invite</button>
           </div>
+          <SelfRegisterToggle workspaceId={workspaceId} />
         </>
       )}
     </Modal>
