@@ -184,6 +184,67 @@ struct FileAttachment: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+// File-kind classification (glyphs, inline-preview eligibility). Lives in the
+// shared model layer because both the macOS previews and the artifact sidebar
+// glyph (Artifact.glyph, below) — and the iOS target, which excludes the macOS
+// Views — depend on it. Pure Foundation, no AppKit.
+extension FileAttachment {
+    static let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "webm"]
+
+    var isVideo: Bool {
+        mimeType.hasPrefix("video/")
+            || Self.videoExtensions.contains((name as NSString).pathExtension.lowercased())
+    }
+
+    /// AVFoundation has no VP8/VP9/webm support — those stay a file chip on
+    /// macOS (deliberate divergence: web plays webm inline; see CHANGELOG Parity).
+    var isPlayableVideo: Bool {
+        guard isVideo else { return false }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return mimeType != "video/webm" && ext != "webm"
+    }
+
+    /// ASCII-ish formats that get an inline monospace preview.
+    var isTextPreviewable: Bool {
+        if isImage { return false }
+        if mimeType.hasPrefix("text/") { return true }
+        if [
+            "application/json", "application/javascript", "application/xml",
+            "application/x-sh", "application/x-yaml",
+        ].contains(mimeType) { return true }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return Self.textExtensions.contains(ext)
+    }
+
+    static let textExtensions: Set<String> = [
+        "txt", "md", "markdown", "log", "json", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+        "py", "rb", "go", "rs", "java", "c", "cc", "cpp", "h", "hpp", "m", "swift", "kt",
+        "sh", "bash", "zsh", "fish", "yaml", "yml", "toml", "ini", "cfg", "conf", "xml",
+        "html", "htm", "css", "scss", "less", "sql", "csv", "tsv", "env", "gitignore",
+    ]
+
+    var isPDF: Bool {
+        mimeType == "application/pdf" || name.lowercased().hasSuffix(".pdf")
+    }
+
+    /// HTML renders sandboxed in the artifact panel (phase 9); in chat it
+    /// still previews as text.
+    var isHTML: Bool {
+        mimeType == "text/html"
+            || ["html", "htm"].contains((name as NSString).pathExtension.lowercased())
+    }
+
+    /// Sidebar glyph for an artifact row (phase 9) — mirrors web fileKind.ts.
+    var artifactGlyph: String {
+        if mimeType.hasPrefix("image/") { return "🖼️" }
+        if isVideo { return "🎬" }
+        if isPDF { return "📕" }
+        if isHTML { return "🌐" }
+        if isTextPreviewable { return "📝" }
+        return "📄"
+    }
+}
+
 struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "channel"
 
@@ -278,6 +339,10 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var files: [FileAttachment]
     /// Phase 11 link preview cards, in first-in-message order.
     var unfurls: [Unfurl]
+    /// Non-nil marks a channel event line (join/leave) rather than a user
+    /// message; `body` is the pre-rendered sentence. Rendered as a centered
+    /// muted notice with no avatar/header (ui_nits).
+    var systemKind: String?
     /// Local-only: true for optimistic rows not yet confirmed by the server.
     var pending: Bool
     /// Local-only: true once an optimistic row's POST errored out. The row
@@ -289,7 +354,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
         case createdAt, editedAt, deletedAt, replyCount, lastReplyAt
-        case replyParticipantUserIds, reactions, files, unfurls, pending, failed
+        case replyParticipantUserIds, reactions, files, unfurls, systemKind, pending, failed
     }
 
     init(
@@ -298,7 +363,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         deletedAt: String?, replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
-        unfurls: [Unfurl] = [], pending: Bool, failed: Bool = false
+        unfurls: [Unfurl] = [], systemKind: String? = nil, pending: Bool, failed: Bool = false
     ) {
         self.id = id
         self.channelId = channelId
@@ -315,6 +380,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.reactions = reactions
         self.files = files
         self.unfurls = unfurls
+        self.systemKind = systemKind
         self.pending = pending
         self.failed = failed
     }
@@ -336,6 +402,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         reactions = try c.decodeIfPresent([ReactionAgg].self, forKey: .reactions) ?? []
         files = try c.decodeIfPresent([FileAttachment].self, forKey: .files) ?? []
         unfurls = try c.decodeIfPresent([Unfurl].self, forKey: .unfurls) ?? []
+        systemKind = try c.decodeIfPresent(String.self, forKey: .systemKind)
         pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false
         failed = try c.decodeIfPresent(Bool.self, forKey: .failed) ?? false
     }

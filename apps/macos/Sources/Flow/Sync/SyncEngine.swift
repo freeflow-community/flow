@@ -1022,7 +1022,9 @@ actor SyncEngine {
                 await appState?.typingStopped(
                     channelId: m.channelId, threadRootId: m.threadRootId, userId: m.userId)
             }
-            if event.type == "message.created", isNew, m.userId != currentUser?.id {
+            // System lines (join/leave) never affect unread — mirror the server,
+            // which excludes them from its counts (ui_nits).
+            if event.type == "message.created", isNew, m.userId != currentUser?.id, m.systemKind == nil {
                 if m.channelId == activeChannelId {
                     await markRead(channelId: m.channelId, lastReadMsgId: m.id)
                 } else {
