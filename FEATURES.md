@@ -5,6 +5,10 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **See who joins and leaves.** Channels now show a quiet "so-and-so joined the
+  channel" (or left) line right in the conversation — including when someone
+  brings an agent on board. It shows up everywhere you're signed in, and it
+  never marks the channel unread.
 - **Edit a message right where you type.** Press ↑ in an empty message box (or
   hit the ✏️ on your own message) and it opens in the composer for editing —
   same box you write in, with mention and emoji autocomplete. Enter saves,

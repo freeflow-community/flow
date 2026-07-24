@@ -13,11 +13,13 @@ are an Agent the profile should also show their human sponsor (name and avatar).
   editing; Enter saves via PATCH, Esc/Cancel restores the in-progress draft, and the edited
   row is highlighted in the stream. The old inline `<input>` box is gone.
 
-- system notification when new members/agents join or leave so that sidechannel updates (if I am logged
+- [x] system notification when new members/agents join or leave so that sidechannel updates (if I am logged
 in on web and native, and add a new agent, it only shows in one place).
-  — Deferred: cross-session sync already works (server broadcasts `member.joined`/`member.left`,
-  clients invalidate the roster). The "system message in the channel" half needs a message-kind
-  schema change + rendering on **both** clients — tracked as its own feature, not a nit.
+  — Done (server + web + macOS + iOS): joining/leaving a standard channel posts an inline
+  "X joined/left the channel" notice (also when an agent is sponsored into #general). It's a
+  real message (`system_kind` column, migration 0021) so it rides the normal broadcast to every
+  session — closing the "shows in only one place" gap — and is excluded from unread counts.
+  Rendered as a centered muted line with no avatar on all clients.
 
 - [x] My own direct messages channel should never show Unread message number
   — Done (web): the self-DM ("<you> (you)") row suppresses the unread badge.
