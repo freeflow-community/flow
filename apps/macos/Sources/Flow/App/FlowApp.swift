@@ -16,7 +16,15 @@ struct FlowApp: App {
                 // tapped banner can jump to its message (and flush any tap that
                 // arrived before the UI was ready, e.g. a cold launch).
                 .onAppear { appDelegate.attach(app) }
+                // Claim flow:// deep links for the window that is already open.
+                // Without this, a URL arriving at a running app makes SwiftUI
+                // spawn a *second* window to service it — which the Google
+                // sign-in handoff hit every time, since you press that button
+                // from inside a running app (RootView.onOpenURL then fires in
+                // the new window, so the sign-in worked but you got a duplicate).
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
+        .handlesExternalEvents(matching: ["*"])
     }
 }
 
