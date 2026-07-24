@@ -48,7 +48,25 @@ struct SidebarView: View {
     }
 
     private var dmChannels: [Channel] {
-        channels.value.filter { $0.isMember && $0.isDM }
+        // Direct messages sort alphabetically by display title, case-insensitive
+        // (ui_nits — matches web). The channels query orders by `name`, which is
+        // null for DMs, so sort here by the resolved member-name title instead.
+        // The self-DM ("<you> (you)") is a scratchpad, not a conversation — it's
+        // always pinned to the bottom regardless of name.
+        let me = app.currentUser?.id
+        let names = userNames.value
+        func isSelf(_ c: Channel) -> Bool {
+            c.kind == "dm" && (c.memberIds ?? []).allSatisfy { $0 == me }
+        }
+        return channels.value
+            .filter { $0.isMember && $0.isDM }
+            .sorted {
+                if isSelf($0) != isSelf($1) { return !isSelf($0) }
+                return $0.displayTitle(userNames: names, currentUserId: me)
+                    .localizedCaseInsensitiveCompare(
+                        $1.displayTitle(userNames: names, currentUserId: me)
+                    ) == .orderedAscending
+            }
     }
 
     private var browsableChannels: [Channel] {

@@ -25,4 +25,14 @@ in on web and native, and add a new agent, it only shows in one place).
   — Done (web): the self-DM ("<you> (you)") row suppresses the unread badge.
 
 - [x] Direct Message channels must be sorted alphabetically
-  — Done (web): the Direct messages list sorts by display title (case-insensitive).
+  — Done (web, macOS, iOS): the Direct messages list sorts by display title
+  (case-insensitive).
+  Fix (2026-07-24): the web first pass sorted only real DM channels; the virtual
+  agent rows (agents with no existing 1:1 DM) were a separate list appended
+  below, so they landed out of order at the bottom. Web now merges both into a
+  single list sorted by display title before rendering. macOS + iOS were never
+  sorting DMs at all (the channels query orders by `name`, null for DMs) — both
+  native sidebars now sort DM channels by resolved display title.
+  Refinement (2026-07-24): the self-DM ("<you> (you)") is pinned to the bottom
+  of the list on all three clients — it's a scratchpad, not a conversation, so
+  it sorts last regardless of name.

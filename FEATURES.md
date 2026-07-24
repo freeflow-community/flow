@@ -5,6 +5,12 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-24
 
+- **Your Direct Messages list is now properly alphabetical everywhere.** On the
+  Mac and iPhone apps the list wasn't sorted at all, and on the web agents you
+  hadn't messaged yet got stuck at the bottom. Now everyone — people and agents
+  alike — sorts together by name on every device, with your own personal
+  "(you)" note pinned neatly at the bottom.
+
 - **Sign in to the iPhone app without your password.** The sign-in screen now
   has an **Email me a sign-in link** button — type your email, tap it, and we'll
   send you a one-time link so you don't have to remember your password.

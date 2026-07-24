@@ -101,9 +101,9 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   moved editing into the prompt editor (↑ and ✏️ load the body into the composer,
   Enter saves, Esc restores the draft; 2026-07-23 ui_nits). Both clients already
   have the PATCH plumbing; only the composer-reuse UX needs porting.
-- macOS + iOS: the self-DM row still shows an unread badge, and the Direct
-  Messages list is not sorted alphabetically — web fixed both 2026-07-23
-  (ui_nits). Client-only sidebar tweaks.
+- macOS + iOS: the self-DM row still shows an unread badge — web fixed this
+  2026-07-23 (ui_nits). Client-only sidebar tweak. (DM alphabetical sorting was
+  closed on both clients 2026-07-24.)
 - macOS/iOS: no **Invite your Agent** CTA (phase 15) — the web sidebar gained a
   button + dialog that mints a one-time invite code (`npx flow-agent-bridge
   <code>`) above the profile footer. Native clients can't yet generate a code,
@@ -156,6 +156,20 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-24 — Fix: alphabetical Direct messages list across all clients (ui_nits)
+- `[web]` The Direct messages list is alphabetical again for everyone. The
+  earlier sort only ordered real DM channels; the virtual agent rows (agents
+  with no existing 1:1 DM) were a separate list rendered *below* them, so they
+  always piled up at the bottom out of order. Now DM channels and agent rows are
+  merged into one list sorted by display title before rendering.
+- `[macos]` `[ios]` The DM list was never sorted (the channels query orders by
+  `name`, which is null for DMs). Both native sidebars now sort DM channels by
+  resolved display title, case-insensitive — matching web. (Native has no
+  virtual agent rows, so there's nothing extra to merge.)
+- `[web]` `[macos]` `[ios]` The self-DM ("<you> (you)") is now pinned to the
+  bottom of the Direct messages list on all clients — it's a personal scratchpad,
+  not a conversation, so it sinks below everyone else regardless of name.
 
 ### 2026-07-24 — iOS: passwordless "Email me a sign-in link" on the sign-in screen
 - `[ios]` The sign-in screen gains an **Email me a sign-in link** button beside
