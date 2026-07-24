@@ -1,6 +1,13 @@
-import { useEffect, useState } from 'react';
-import type { AuthResponse, RegisterPendingResponse } from '@flow/shared';
+import { useEffect, useRef, useState } from 'react';
+import type {
+  AuthResponse,
+  GoogleAuthResponse,
+  PublicConfigDTO,
+  RegisterPendingResponse,
+  WorkspaceDTO,
+} from '@flow/shared';
 import { api } from '../lib/api';
+import { loadGoogleIdentity, publicConfig } from '../lib/google';
 import { MAC_DOWNLOAD_URL } from './OpenInApp';
 
 type Mode =
@@ -18,13 +25,92 @@ const inputCls = 'mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm'
 const submitCls =
   'w-full rounded bg-accent py-2 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-50';
 
+/**
+ * "Continue with Google" (phase16 §5). Sign-in and register are the same act
+ * with Google, so this is one button shared by both panels. It renders nothing
+ * until /v1/config says Google is configured — with GOOGLE_CLIENT_ID unset the
+ * deployment shows no Google affordance at all.
+ */
+export function GoogleButton({
+  onSignedIn,
+  showDivider,
+}: {
+  onSignedIn: (r: GoogleAuthResponse) => void;
+  showDivider: boolean;
+}) {
+  const slot = useRef<HTMLDivElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [config, setConfig] = useState<PublicConfigDTO | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void publicConfig().then((cfg) => { if (alive) setConfig(cfg); });
+    return () => { alive = false; };
+  }, []);
+
+  const clientId = config?.google ? config.googleClientId : null;
+
+  // Split from the config fetch on purpose: this effect only runs once
+  // `clientId` is set, which means the render that mounted `slot` has already
+  // committed — so GIS always has a live element to draw into.
+  useEffect(() => {
+    if (!clientId) return;
+    let alive = true;
+    void (async () => {
+      let gsi;
+      try {
+        gsi = await loadGoogleIdentity();
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : 'could not load Google');
+        return;
+      }
+      if (!alive || !slot.current) return;
+      gsi.accounts.id.initialize({
+        client_id: clientId,
+        callback: ({ credential }) => {
+          void (async () => {
+            try {
+              onSignedIn(await api<GoogleAuthResponse>('POST', '/v1/auth/google', { idToken: credential }));
+            } catch (err) {
+              if (alive) setError(err instanceof Error ? err.message : 'Google sign-in failed');
+            }
+          })();
+        },
+      });
+      gsi.accounts.id.renderButton(slot.current, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'continue_with',
+        width: 288, // matches the 18rem card body
+      });
+    })();
+    return () => { alive = false; };
+  }, [clientId, onSignedIn]);
+
+  if (!clientId) return null;
+  return (
+    <div data-testid="auth-google">
+      {showDivider && (
+        <div className="my-3 flex items-center gap-2 text-xs text-faint">
+          <span className="h-px flex-1 bg-hairline2" />
+          or
+          <span className="h-px flex-1 bg-hairline2" />
+        </div>
+      )}
+      <div ref={slot} className="mb-2 flex justify-center" />
+      {error && <p className="mt-2 text-center text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
 export default function AuthScreen({
   onSignedIn,
   signupToken,
   resetToken,
   signinToken,
 }: {
-  onSignedIn: (r: AuthResponse) => void;
+  onSignedIn: (r: AuthResponse & { autoJoined?: WorkspaceDTO[] }) => void;
   signupToken?: string | null;
   resetToken?: string | null;
   signinToken?: string | null;
@@ -327,13 +413,16 @@ export default function AuthScreen({
         >
           {isRegister ? 'Send me a link' : 'Sign In'}
         </button>
-        {!isRegister && (
+        {isRegister ? (
+          <GoogleButton onSignedIn={onSignedIn} showDivider />
+        ) : (
           <>
             <div className="my-3 flex items-center gap-2 text-xs text-faint">
               <span className="h-px flex-1 bg-hairline2" />
               or
               <span className="h-px flex-1 bg-hairline2" />
             </div>
+            <GoogleButton onSignedIn={onSignedIn} showDivider={false} />
             <button
               type="button"
               data-testid="auth-signin-link-btn"

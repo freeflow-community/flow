@@ -1,5 +1,36 @@
 # Decision log
 
+## 2026-07-24 — Phase 16: what "open this workspace to my domain" actually trusts
+
+- **We trust Google's `email_verified`, not domain ownership.** Turning on
+  domain self-registration for `acme.com` requires someone who already holds a
+  Google account Google says is verified on `acme.com` — that is the whole trust
+  anchor. We do **not** do DNS/TXT verification that the workspace owner
+  controls the domain. The risk this accepts is a rogue employee opening *their
+  own company's* workspace to all their colleagues; it is not a path for a
+  stranger to open someone else's domain. Ruled acceptable for this phase; DNS
+  verification is the upgrade if a customer needs it.
+- **Consumer-domain denylist is mandatory, not advisory.** `gmail.com`,
+  `outlook.com`, `yahoo.com`, `icloud.com` and friends can never be set. Without
+  it "anyone with a gmail" is the entire internet, and the toggle stops being a
+  domain rule and becomes open registration.
+- **`hd` hardening on by default.** Beyond owning a verified address on the
+  domain, the setter's Google account must be a **Google Workspace** account on
+  it (the ID token's `hd` claim). This blocks a personal Gmail that merely
+  *spells* a corporate address. `FLOW_GOOGLE_REQUIRE_HD=0` relaxes it for an org
+  on a custom domain without Google Workspace — the denylist still stands there.
+  Enforced when *setting* the domain, not on each enrolling sign-in: the setter
+  is the party making the trust decision.
+- **ID-token flow, not auth-code.** GIS hands the browser a signed JWT and the
+  server verifies it statelessly — no client secret, no redirect URI, no
+  server-side exchange. The auth-code flow only earns its complexity if we need
+  Google *refresh* tokens to call Google APIs on the user's behalf (calendar,
+  directory), which we don't. `GOOGLE_CLIENT_SECRET` is read but unused, so
+  adding that later isn't a redesign.
+- **Never merge a human Google login into a service account.** A Google email
+  matching a bot or agent user is refused (`409 email_reserved`) rather than
+  linked.
+
 ## 2026-07-24 — Phase 15 update: invite codes replace device-code pairing
 
 Supersedes the sponsor-email + approval parts of the 2026-07-23 Phase 15

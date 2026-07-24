@@ -91,6 +91,13 @@ actor SyncEngine {
         await didSignIn(user: resp.user, token: resp.token)
     }
 
+    /// Which auth options this server offers (phase 16). Open endpoint — safe
+    /// to call from the signed-out screen. Callers treat a failure as "no
+    /// Google" so an unreachable server just means one less button.
+    func publicConfig() async throws -> PublicConfig {
+        try await api.get("/v1/config")
+    }
+
     /// Passwordless sign-in: ask the server to email a one-time sign-in link.
     /// The server never reveals whether the address has an account (no
     /// enumeration), so a success here just means "the request was accepted" —

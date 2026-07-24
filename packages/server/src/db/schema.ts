@@ -85,6 +85,24 @@ export const sessions = pgTable('sessions', {
   clientInfo: text('client_info'),
 });
 
+/**
+ * Phase 16: an external IdP identity linked to a Flow user. `providerSubject`
+ * (Google's `sub`) is the durable key; `email` is refreshed on each sign-in and
+ * used for display/audit and for the email→user fallback match.
+ */
+export const oauthIdentities = pgTable(
+  'oauth_identities',
+  {
+    provider: text('provider').notNull(),
+    providerSubject: text('provider_subject').notNull(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    email: citext('email').notNull(),
+    hostedDomain: citext('hosted_domain'), // Google `hd` — Workspace accounts only
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.provider, t.providerSubject] }), index('oauth_identities_user_idx').on(t.userId)],
+);
+
 /** One-time web-to-app auth handoff codes (flow://signin deep link). */
 export const appLinkCodes = pgTable('app_link_codes', {
   codeHash: bytea('code_hash').primaryKey(),
@@ -102,6 +120,9 @@ export const workspaces = pgTable('workspaces', {
   // deployments (null = allow all domains).
   unfurlEnabled: boolean('unfurl_enabled').notNull().default(true),
   unfurlDomainAllowlist: text('unfurl_domain_allowlist').array(),
+  // Phase 16 §5a: null = off; otherwise the email domain whose verified Google
+  // users self-enroll on sign-in.
+  googleSelfRegisterDomain: citext('google_self_register_domain'),
   createdBy: uuid('created_by').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

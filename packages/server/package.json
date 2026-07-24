@@ -20,6 +20,7 @@
     "argon2": "^0.41.1",
     "drizzle-orm": "^0.36.4",
     "fastify": "^5.1.0",
+    "google-auth-library": "^10.9.1",
     "nats": "^2.29.2",
     "postgres": "^3.4.5",
     "sharp": "^0.35.3",

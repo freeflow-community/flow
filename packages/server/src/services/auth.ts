@@ -47,7 +47,10 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
   };
 }
 
-async function issueSession(userId: string, clientInfo?: string): Promise<string> {
+/** Mint a bearer session token (sliding 30-day expiry). Every sign-in path —
+ * password, emailed link, app handoff, Google (phase 16) — ends here, so they
+ * all yield the same session type. */
+export async function issueSession(userId: string, clientInfo?: string): Promise<string> {
   const token = newToken();
   const expiresAt = new Date(Date.now() + config.sessionTtlDays * 86400_000);
   await db.insert(sessions).values({

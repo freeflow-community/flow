@@ -124,6 +124,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   `POST /v1/auth/signin-link/consume`.
 
 ### Deliberate divergences (ruled)
+- Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
+  SDK: the native button opens the system browser at `/?native=google`, which
+  runs Google Identity Services, calls `POST /v1/auth/google`, mints a one-time
+  app-link code and returns via `flow://signin?code=…`. Web runs GIS in-page.
+  Same server endpoint, same session, no Google SDK or new OAuth client on
+  native — and it reuses the handoff the "Open the desktop app" button has used
+  since phase 3. A fully in-app flow (`ASWebAuthenticationSession` / Google
+  Sign-In SDK posting the ID token directly) would need an iOS/macOS OAuth
+  client id added to the accepted `aud` set; worth doing only if the browser
+  round-trip proves unpopular.
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
   (their custom Text rows aren't natively selectable); web omits it because
   browser text selection + Cmd/Ctrl-C already copies message text.
@@ -156,6 +166,67 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-24 — Phase 16: Sign in with Google + domain self-registration
+- `[server]` `POST /v1/auth/google` takes a Google **ID token** (the GIS
+  ID-token flow — no client secret, no redirect URI, no server-side exchange)
+  and verifies it with `google-auth-library` against Google's rotating JWKS,
+  checking issuer, `aud` and expiry. A verified payload resolves to a Flow user
+  by `(provider, sub)` first, then by verified email, else creates one — so an
+  existing password account with the same address is **linked**, never
+  duplicated, and a later Google email change still lands on the same user.
+  A Google-first account has a real verified email and an unusable
+  `!google:…` password sentinel (the same trick bots and agents use).
+  An unverified Google email is refused (`403 email_unverified`), as is an
+  address that belongs to a bot or agent (`409 email_reserved`). The response
+  is a normal session, so logout, sliding expiry and revocation are unchanged.
+- `[server]` New `oauth_identities` table (migration `0023`) — provider-agnostic,
+  keyed on `(provider, provider_subject)`, storing the verified email and Google
+  hosted domain, both refreshed on every sign-in. Workspaces gain
+  `google_self_register_domain`: when set, any Google user with a verified email
+  on that domain self-enrolls on sign-in (member row + `#general` +
+  `member.joined`) with no invite. The join primitive is now shared with invite
+  accept as `enrollInWorkspace()`. Set/cleared via `POST /v1/workspaces` or
+  `PATCH /v1/workspaces/:id`, owner/admin only, and only for the setter's *own*
+  verified Google email domain; consumer domains (`gmail.com`, `outlook.com`, …)
+  are denied outright, and by default the account must be a Google Workspace
+  account on that domain (`FLOW_GOOGLE_REQUIRE_HD=0` to relax — see
+  decision_log 2026-07-24). Google's `picture` seeds the avatar only when the
+  user has none, fetched through the normal avatar pipeline rather than stored
+  as a foreign URL.
+- `[server]` New public `GET /v1/config` (`{ google, googleClientId }`) so the
+  signed-out client knows which auth options exist, and
+  `GET /v1/me/identities` so the client knows whether to offer the domain
+  toggle. With `GOOGLE_CLIENT_ID` unset, `/v1/auth/google` returns
+  `503 google_disabled` and nothing else changes.
+- `[web]` A **Continue with Google** button on both the Sign In and Register
+  panels — with Google the two are one operation — rendered only when the
+  server says Google is configured. A pending emailed invite is still accepted
+  after a Google sign-in, exactly as after an email registration. When the
+  sign-in auto-enrolled the user into workspaces on their domain, the app lands
+  them in one and says so instead of showing the empty create-workspace screen.
+- `[web]` Create Workspace offers **"Let anyone with an @acme.com email join
+  this workspace automatically"** to a creator who signed in with Google on a
+  non-consumer domain — their own domain only, never free text. The same toggle
+  lives in the Invite People dialog for an existing workspace.
+- `[macos]` `[ios]` **Continue with Google** on the sign-in screen, shown only
+  when the server reports Google is configured (`GET /v1/config`; a failed check
+  hides it rather than offering a button that can't work). Neither app carries a
+  Google SDK: the button opens the system browser at the new `/?native=google`
+  handoff page, which runs GIS, signs in, mints a one-time app-link code and
+  returns via `flow://signin?code=…` — the deep link both apps have handled
+  since phase 3, so there's no new native crypto and no second OAuth client.
+  Arriving at that page with a live web session skips the Google step and hands
+  off immediately.
+- `[web]` New `/?native=google` handoff page behind the above, with an "Open the
+  Flow app" retry and a Download-for-Mac fallback when the deep link doesn't
+  take. Unlike the emailed one-shot tokens the `native` param stays in the URL,
+  so reloading the page is still the handoff page.
+- Parity: Google sign-in is now on all three clients. The native route is a
+  deliberate divergence (browser handoff vs in-page GIS) — see Deliberate
+  divergences. The domain-self-registration *result* was never client-specific:
+  it keys off the account, so it fires on a native user's next sign-in whatever
+  they signed in with.
 
 ### 2026-07-24 — Fix: alphabetical Direct messages list across all clients (ui_nits)
 - `[web]` The Direct messages list is alphabetical again for everyone. The

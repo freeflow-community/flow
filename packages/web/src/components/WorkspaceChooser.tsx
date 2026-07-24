@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { WorkspaceDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useWorkspaces } from '../hooks';
+import { useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { OpenInAppButton } from './OpenInApp';
 
 export default function WorkspaceChooser() {
@@ -11,17 +11,25 @@ export default function WorkspaceChooser() {
   const sel = useSelection();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
+  // Non-null only for a Google-authenticated creator on a non-consumer domain
+  // (phase16 §5a) — we only ever offer *their* domain, never free text.
+  const selfRegisterDomain = useSelfRegisterDomain();
   const [showCreate, setShowCreate] = useState(false);
   const [showAccept, setShowAccept] = useState(false);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [openToDomain, setOpenToDomain] = useState(false);
   const [inviteToken, setInviteToken] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const create = async () => {
     setError(null);
     try {
-      const ws = await api<WorkspaceDTO>('POST', '/v1/workspaces', { name, slug });
+      const ws = await api<WorkspaceDTO>('POST', '/v1/workspaces', {
+        name,
+        slug,
+        ...(openToDomain && selfRegisterDomain ? { googleSelfRegisterDomain: selfRegisterDomain } : {}),
+      });
       await qc.invalidateQueries({ queryKey: ['workspaces'] });
       sel.selectWorkspace(ws.id);
     } catch (err) {
@@ -90,6 +98,16 @@ export default function WorkspaceChooser() {
             value={name} onChange={(e) => setName(e.target.value)} />
           <input className="rounded border border-hairline2 px-3 py-2 text-sm" placeholder="slug (lowercase-dashes)"
             value={slug} onChange={(e) => setSlug(e.target.value)} />
+          {selfRegisterDomain && (
+            <label data-testid="create-ws-self-register" className="flex items-start gap-2 text-sm text-ink-soft">
+              <input type="checkbox" className="mt-0.5" checked={openToDomain}
+                onChange={(e) => setOpenToDomain(e.target.checked)} />
+              <span>
+                Let anyone with an <span className="font-semibold text-ink">@{selfRegisterDomain}</span> email join
+                this workspace automatically
+              </span>
+            </label>
+          )}
           <button className="rounded bg-accent py-2 text-sm font-semibold text-white disabled:opacity-50"
             disabled={!name || !slug} onClick={create}>Create</button>
         </div>

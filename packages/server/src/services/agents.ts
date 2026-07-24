@@ -167,6 +167,7 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
       slug: wsRow.slug,
       name: wsRow.name,
       sidebarColor: wsRow.sidebarColor,
+      googleSelfRegisterDomain: wsRow.googleSelfRegisterDomain,
       createdBy: wsRow.createdBy,
       createdAt: wsRow.createdAt.toISOString(),
     },
