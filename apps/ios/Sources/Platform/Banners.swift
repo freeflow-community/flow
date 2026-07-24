@@ -25,7 +25,10 @@ enum Banners {
     }
 
     /// No local banners yet (push phase); in-app notification UI still works.
-    static func show(title: String, body: String, id: String) {}
+    /// Signature mirrors the macOS `Banners.show` the shared `SyncEngine` calls
+    /// (it passes the `NotificationItem` so the macOS banner tap can navigate to
+    /// the message); iOS ignores it until the push phase.
+    static func show(_ n: NotificationItem, title: String, body: String) {}
 
     /// App-icon badge with the unread notification count.
     @MainActor

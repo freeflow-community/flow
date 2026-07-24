@@ -83,6 +83,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   macOS added a 5-minute-expiry memory 2026-07-22). The shared
   `MessageScrollMemory` store is available to iOS; only the SwiftUI wiring in
   iOS `MessageListView` is missing.
+- iOS: the new channel drawer (2026-07-23) omits several sidebar affordances the
+  web + macOS sidebars carry — a "new DM" composer, the virtual agent rows under
+  Direct Messages (start a DM with a workspace agent that has no existing 1:1),
+  the workspace color picker, and the Invite People / Manage Users / Manage Apps
+  workspace-menu items. Channel context actions (mute/leave/archive, invite to
+  channel) are also not yet wired on iOS. The drawer's structure makes these
+  straightforward ports; none are backed on-device yet.
 
 ### Deliberate divergences (ruled)
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
@@ -117,6 +124,28 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-23 — iOS: channel list is now a slide-in drawer (web mobile parity)
+- The iOS channel list moves from a drill-down `List` (tap a channel → push a
+  screen; tap "‹ Back" to change channels) to the web client's **mobile drawer**
+  layout: the conversation fills the screen and the sidebar slides in over it
+  from the left — a 64px workspace rail plus the violet gradient
+  channel/DM/browse list — opened from a header hamburger and dismissed by the
+  backdrop or a selection. The visible pane is now driven by `AppState`
+  (`selectedChannelId` / `showActivity`), the same selection model macOS and web
+  use, instead of a `NavigationStack` of channel ids (threads still push onto the
+  content pane's own stack). New `SidebarDrawer.swift` ports the macOS
+  `SidebarView` rows (active-channel pill, unread badges, presence dots, section
+  headers) for touch; the profile/status footer and account/status sheet move
+  into the drawer footer where web + macOS keep them (the per-channel nav-bar
+  account button is retired). A rail "+" adds a workspace (create or accept an
+  invite) via the new iOS `AddWorkspaceSheet`. `[ios]`
+- Fix: the iOS build was broken on `main` — PR #38 changed the shared
+  `Banners.show` signature (it now takes the `NotificationItem` so the macOS
+  banner tap can navigate) but the iOS no-op stub still had the old
+  `show(title:body:id:)` signature. Synced the stub's signature. `[ios]`
+- QA: `FLOW_DEBUG_OPEN_DRAWER=1` opens the channel drawer on launch so the
+  simulator can be screenshot-verified without a tap tool (DEBUG-only). `[qa]`
 
 ### 2026-07-23 — Notification banners are now clickable (web + macOS)
 - Clicking a browser (OS) notification banner from the web client now focuses

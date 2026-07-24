@@ -75,14 +75,10 @@ struct ChannelScreen: View {
         .background(MC.base)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        // Same avatar affordance the web keeps in the sidebar footer: on a
-        // phone the sidebar isn't on screen inside a channel, so the account
-        // button rides the channel's nav bar too.
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                AccountToolbarButton()
-            }
-        }
+        // Account/status live in the drawer's profile footer now (web/macOS
+        // parity — the sidebar owns that affordance), reached from the header
+        // hamburger. The channel bar keeps just the title + that hamburger,
+        // which MainView supplies as the content pane's leading toolbar item.
         .task {
             app.selectChannel(channelId)
             users.start(db: app.db) { try User.fetchAll($0) }

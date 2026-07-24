@@ -5,6 +5,13 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **iPhone: your channels now slide in over the conversation.** The Flow app on
+  iPhone gets the same channel menu as the mobile web app — tap the ☰ button in
+  the top-left and the workspace rail and channel list slide in from the side,
+  right over your conversation, instead of taking you to a separate list screen.
+  Pick a channel and it slides away so you're back in the conversation. Your
+  profile and status live at the bottom of the menu, and a “+” on the workspace
+  rail lets you add or join another workspace.
 - **Click a notification banner to jump right to the message.** On both the web
   and the Mac app, clicking a desktop notification now brings Flow to the front
   and takes you straight to the message that triggered it — opening the thread
