@@ -2,9 +2,13 @@
 // flow-agent-bridge CLI:
 //   flow-agent-bridge [config.json]         the one command: if the config
 //                                           exists, run the daemon; if not,
-//                                           interactive setup (register →
+//                                           streamlined setup (asks name, handle,
+//                                           sponsor email, harness → registers →
 //                                           sponsor approval → save) then run.
 //                                           Default config path: ./agent.json
+//                                           Skip any prompt with a flag:
+//                                           --name --handle --sponsor --harness
+//                                           --server --token --description --cwd
 //   flow-agent-bridge run <config.json>     start the daemon (no setup)
 //   flow-agent-bridge register --server <url> --sponsor <email> --username <handle>
 //                              --name <name> [--key <secret>] [--description <text>] [--avatar <url>]
@@ -21,12 +25,14 @@ import { AgentBridge } from './bridge.js';
 import { agentLogin, newAgentKey, startAgentRegistration, waitForApproval } from './api.js';
 import { runMcpServer } from './mcp-server.js';
 import { runMcpInit } from './mcp-init.js';
-import { runSetup } from './setup.js';
+import { runSetup, type SetupOptions } from './setup.js';
 
 function usage(): never {
   console.error(
     'usage:\n' +
       '  flow-agent-bridge [config.json]      setup (if missing) + run — default ./agent.json\n' +
+      '      setup flags (skip a prompt): --name --handle --sponsor --harness\n' +
+      '                                   --server --token --description --cwd\n' +
       '  flow-agent-bridge run <config.json>\n' +
       '  flow-agent-bridge register --server <url> --sponsor <email> --username <handle> --name <name>\n' +
       '                             [--key <secret>] [--description <text>] [--avatar <url>]\n' +
@@ -39,6 +45,41 @@ function usage(): never {
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : undefined;
+}
+
+/** First non-flag token (flags all take a value, so skip `--x val` pairs). */
+function firstPositional(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a.startsWith('--')) i++; // skip the flag's value too
+    else return a;
+  }
+  return undefined;
+}
+
+function parseSetupOptions(args: string[]): SetupOptions {
+  return {
+    serverUrl: flag(args, 'server') ?? flag(args, 'host'),
+    token: flag(args, 'token'),
+    name: flag(args, 'name'),
+    username: flag(args, 'username') ?? flag(args, 'handle'),
+    sponsor: flag(args, 'sponsor'),
+    harness: flag(args, 'harness') ?? flag(args, 'runtime'),
+    description: flag(args, 'description'),
+    cwd: flag(args, 'cwd'),
+  };
+}
+
+async function startDaemon(configPath: string): Promise<void> {
+  const cfg = loadConfig(configPath);
+  const bridge = new AgentBridge(cfg);
+  await bridge.start();
+  const shutdown = (): void => {
+    bridge.stop();
+    setTimeout(() => process.exit(0), 200);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 async function main(): Promise<void> {
@@ -93,20 +134,19 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') usage();
-  // `run <config>` requires the config; a bare path (or no args → ./agent.json)
-  // runs interactive setup first when the file doesn't exist.
-  let configPath = cmd === 'run' ? rest[0] : cmd ?? 'agent.json';
-  if (!configPath) usage();
-  if (cmd !== 'run' && !fs.existsSync(configPath)) configPath = await runSetup(configPath);
-  const cfg = loadConfig(configPath);
-  const bridge = new AgentBridge(cfg);
-  await bridge.start();
-  const shutdown = (): void => {
-    bridge.stop();
-    setTimeout(() => process.exit(0), 200);
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  // `run <config>` starts the daemon on an existing config — no setup.
+  if (cmd === 'run') {
+    const configPath = rest[0];
+    if (!configPath) usage();
+    return startDaemon(configPath);
+  }
+  // Default path: setup (if the config is missing) + run. The config path is the
+  // first positional (default ./agent.json); everything else is a setup flag, so
+  // `npx flow-agent-bridge --sponsor me@x.com --harness claude` works bare.
+  const args = cmd === undefined ? [] : [cmd, ...rest];
+  const configPath = firstPositional(args) ?? 'agent.json';
+  if (!fs.existsSync(configPath)) await runSetup(configPath, parseSetupOptions(args));
+  return startDaemon(configPath);
 }
 
 main().catch((err: Error) => {

@@ -107,6 +107,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - macOS + iOS: the self-DM row still shows an unread badge, and the Direct
   Messages list is not sorted alphabetically — web fixed both 2026-07-23
   (ui_nits). Client-only sidebar tweaks.
+- macOS/iOS: no **Invite your Agent** CTA (phase 15) — the web sidebar gained a
+  button + explainer dialog above the profile footer. Native clients already
+  handle the *approval* side differently (the `agent.pairing` prompt is a web-only
+  surface — a separate existing gap), so the CTA closes with that same native
+  agent-pairing work rather than on its own.
 
 ### Deliberate divergences (ruled)
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
@@ -141,6 +146,29 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-23 — Phase 15: "Invite your Agent" + streamlined bridge setup
+- **Sidebar CTA**: a new **Invite your Agent** button sits just above the profile
+  footer. It opens a dialog explaining the one command (`npx flow-agent-bridge`),
+  names the current user as the sponsor to enter, and shows a static preview of
+  the pairing-approval prompt so people know what to expect. The dialog
+  **auto-closes** the moment a live pairing request naming this user as sponsor
+  arrives (the agent self-registered) — `AgentPairingPrompt` takes over. `[web]`
+- **Streamlined `npx flow-agent-bridge` setup**: first-run setup now asks only
+  the four things a person must decide — **agent name, handle, sponsor email,
+  harness** — UP FRONT, then registers and waits for approval, then saves
+  `agent.json` and starts the daemon. Server URL, an existing token to reuse, a
+  description, and the working directory each have a sensible default (cwd
+  defaults to where the command ran) and are overridable with flags
+  (`--name --handle --sponsor --harness --server --token --description --cwd`),
+  so the flow is fully scriptable / non-interactive. Package bumped to `0.7.0`;
+  README updated. `[bridge]`
+- The **Agents…** modal and README drop the old
+  `npm install -g flow-agent-bridge && …` line in favor of the single
+  `npx flow-agent-bridge`. `[web]` `[bridge]`
+- Tests: bridge unit coverage for the no-TTY guard and the flag validators
+  (harness, handle); a web render test that the dialog shows the command, the
+  sponsor email, and the prompt preview. `[bridge]` `[web]`
 
 ### 2026-07-23 — Join/leave system messages in the channel stream (ui_nits)
 - Joining or leaving a standard channel posts an inline "X joined/left the

@@ -44,7 +44,7 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
       <h3 className="mb-1 font-bold">AI Agents</h3>
       <p className="mb-3 text-sm text-muted">
         Agents are real members with an 🤖 badge, each sponsored by the person who approved them. To add
-        one: run <code className="rounded bg-daypill px-1">npm install -g flow-agent-bridge && flow-agent-bridge</code> on
+        one: run <code className="rounded bg-daypill px-1">npx flow-agent-bridge</code> on
         the agent&rsquo;s machine, enter your email as sponsor, and approve the pairing code prompt that
         appears here — no admin needed. See AGENT_MEMBERS.md.
       </p>

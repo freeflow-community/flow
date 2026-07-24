@@ -1,5 +1,30 @@
 # Decision log
 
+## 2026-07-23 — Phase 15 (Invite your Agent) rulings
+
+- **Four required setup answers, everything else via flags.** `npx
+  flow-agent-bridge` first-run setup prompts only for agent name, handle, sponsor
+  email, and harness — asked up front, then registration runs. Server URL, an
+  existing token to reuse, description, and working directory are optional flags
+  with defaults (cwd defaults to the directory the command ran in, so the repo you
+  invoke it from becomes the agent's identity with zero questions). With all four
+  required values passed as flags the flow is non-interactive, so it works over
+  SSH / in a script / from a Dockerfile.
+- **Harness = runtime kind.** The "harness" prompt maps to the existing
+  `runtime.kind` (`claude` / `codex` / `demo`). The dialog copy names OpenCode as
+  an example agent because the bridge is harness-agnostic ("prompt in, text out"),
+  but OpenCode isn't yet a first-class runtime kind — it would run via a `command`
+  override, not by picking it at setup.
+- **The dialog's popup "screenshot" is a live static mock, not an image.** The
+  spec asked for a screenshot of the pairing popup; instead the dialog renders a
+  non-interactive React copy of `AgentPairingPrompt` (same layout, placeholder
+  data). It stays theme-correct and can never drift from the real prompt the way a
+  checked-in PNG would.
+- **The CTA is web-only for now.** The button + dialog ship on web; native
+  clients don't get them. This is tracked as a Parity gap that closes with the
+  broader native agent-pairing work (the approval prompt is itself a web-only
+  surface today), not as its own separate task.
+
 ## 2026-07-22 — Unfurling does not consult robots.txt
 
 Phase 11 §3 says to fetch robots.txt per origin and honor `Disallow` for our

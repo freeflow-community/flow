@@ -9,6 +9,7 @@ import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers,
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
+import { InviteAgentModal } from './InviteAgentModal';
 import { FeaturesModal } from './FeaturesModal';
 import StatusFooter from './StatusPicker';
 
@@ -46,6 +47,7 @@ export default function Sidebar() {
   const [showColor, setShowColor] = useState(false);
   const [showApps, setShowApps] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
+  const [showInviteAgent, setShowInviteAgent] = useState(false);
   const [showFeatures, setShowFeatures] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
   const [width, setWidth] = useState(storedWidth);
@@ -311,6 +313,19 @@ export default function Sidebar() {
 
       </div>
 
+      {/* Invite your Agent (phase 15): pinned above the profile footer — a
+          slightly raised translucent CTA, noticeable without shouting. */}
+      <div className="px-3.5 pt-2 pb-1.5">
+        <button
+          data-testid="invite-agent-button"
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/35 bg-white/[0.18] px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-white/25"
+          onClick={() => setShowInviteAgent(true)}
+        >
+          <span aria-hidden>🤖</span>
+          Invite your Agent
+        </button>
+      </div>
+
       <StatusFooter />
 
       <div
@@ -347,6 +362,7 @@ export default function Sidebar() {
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
+      {showInviteAgent && <InviteAgentModal onClose={() => setShowInviteAgent(false)} />}
       {showFeatures && <FeaturesModal onClose={() => setShowFeatures(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
     </aside>

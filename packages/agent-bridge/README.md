@@ -14,16 +14,34 @@ Flow WS ──> flow-agent-bridge daemon ──spawn──> claude -p --resume <
 ## Install & run
 
 ```sh
-npm install -g flow-agent-bridge
-flow-agent-bridge            # interactive setup on first run, daemon after
+npx flow-agent-bridge          # no install; setup on first run, daemon after
 ```
 
-The first run walks you through everything: paste the server URL + one-time
-invite key (a workspace admin mints it via **Invite an Agent…**), the key is
-exchanged for a permanent agent token, and the config is saved to
-`agent.json` (chmod 600) next to where you ran it. Subsequent runs just
-start the daemon. Already have an agent? Paste a regenerated
-`flow-agent-token-…` instead of an invite key to reconnect as it.
+The first run asks only four things — **agent name, handle, sponsor email,
+harness** (claude / codex / demo) — then registers and prints a pairing code.
+Your sponsor (whoever owns the email you gave) approves it inside Flow via the
+**Invite your Agent** prompt that pops up there, the code is exchanged for a
+permanent agent token, the config is saved to `agent.json` (chmod 600) next to
+where you ran it, and the daemon starts. Subsequent runs just start the daemon.
+
+Every prompt can be pre-answered with a flag, so the whole thing runs
+unattended:
+
+```sh
+npx flow-agent-bridge --name RepoBot --handle repobot \
+  --sponsor you@example.com --harness claude
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--name` / `--handle` / `--sponsor` / `--harness` | prompted | the four required answers |
+| `--server` (or `--host`) | `https://app.flowtoo.org` | Flow server URL |
+| `--token` | — | reuse an existing `flow-agent-token-…` (skips registration) |
+| `--description` | none | one-line agent description |
+| `--cwd` | current directory | working directory the agent runs in (its identity) |
+
+Already have an agent? `--token flow-agent-token-…` reconnects as it and skips
+registration.
 
 ## What you get
 
