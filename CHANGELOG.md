@@ -142,6 +142,31 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-23 — Join/leave system messages in the channel stream (ui_nits)
+- Joining or leaving a standard channel posts an inline "X joined/left the
+  channel" notice, so membership changes are visible in the timeline and reach
+  every session (they ride the normal `message.created` broadcast — closing the
+  "add an agent, it only shows in one place" gap). `[server]` `[web]` `[macos]` `[ios]`
+- `[server]` New `messages.system_kind` column (migration `0021`) tags a row as a
+  channel event line vs a user message. `postSystemMessage()` inserts an
+  encrypted, pre-rendered sentence authored by the subject user; it makes no
+  notifications, no Slack-events outbox rows, and no unfurls, is best-effort
+  (never aborts the membership write), and only fires for standard channels.
+  Hooked into join / add / remove and the agent-sponsor path (agent joins
+  #general). System lines are excluded from unread counts. Test coverage in
+  `systemMessages.test.ts`.
+- `[web]` `[macos]` `[ios]` The message list renders a system line as a centered
+  muted notice (no avatar/header) and breaks author grouping around it.
+  `MessageDTO.systemKind` (shared) drives it; native adds `Message.systemKind`
+  (GRDB migration `v10`) and a SyncEngine guard so a system line never bumps the
+  local unread count.
+- `[macos]` `[ios]` Fixed a pre-existing iOS link break surfaced by this work:
+  the `FileAttachment` file-kind extension (isVideo / artifactGlyph / …) moved
+  from macOS-only `Views/FilePreviews.swift` into shared `Models.swift`, since
+  `Artifact.glyph` (shared) depends on it and the iOS target excludes the macOS
+  Views. Both apps build clean; no parity gap — system messages are at full
+  client parity.
+
 ### 2026-07-23 — UI nits: composer-based message edit, self-DM & DM-list polish
 - `[web]` Editing a message now **reuses the prompt editor** instead of the inline
   `<input>` box (ui_nits). ↑ in an empty composer, and the ✏️ hover action, both
