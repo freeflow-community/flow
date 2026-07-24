@@ -43,18 +43,22 @@ struct MessageListView: View {
                             if startsNewDay(at: index) {
                                 DayDividerView(iso: message.createdAt)
                             }
-                            MessageRow(
-                                message: message,
-                                userNames: userNames,
-                                userStatuses: userStatuses,
-                                currentUserId: currentUserId,
-                                showHeader: showsHeader(at: index),
-                                showThreadAffordances: showThreadAffordances,
-                                highlighted: message.id == flashId,
-                                onOpenThread: onOpenThread,
-                                onEdit: onEdit,
-                                onDelete: onDelete
-                            )
+                            if message.systemKind != nil {
+                                SystemLineView(text: message.body)
+                            } else {
+                                MessageRow(
+                                    message: message,
+                                    userNames: userNames,
+                                    userStatuses: userStatuses,
+                                    currentUserId: currentUserId,
+                                    showHeader: showsHeader(at: index),
+                                    showThreadAffordances: showThreadAffordances,
+                                    highlighted: message.id == flashId,
+                                    onOpenThread: onOpenThread,
+                                    onEdit: onEdit,
+                                    onDelete: onDelete
+                                )
+                            }
                         }
                         .id(message.id)
                     }
@@ -109,6 +113,8 @@ struct MessageListView: View {
         if startsNewDay(at: index) { return true }
         let prev = messages[index - 1]
         let cur = messages[index]
+        // A system line (join/leave) breaks a run — the next message re-shows its header.
+        if prev.systemKind != nil { return true }
         if prev.userId != cur.userId { return true }
         guard let prevDate = ISO8601.parse(prev.createdAt),
               let curDate = ISO8601.parse(cur.createdAt) else { return true }
@@ -146,6 +152,25 @@ struct DayDividerView: View {
         if Calendar.current.isDateInToday(date) { return "Today" }
         if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
         return date.formatted(.dateTime.month(.wide).day())
+    }
+}
+
+/// A channel event line (join/leave) — centered, muted, no avatar/header.
+/// The text is the pre-rendered sentence ("Alice joined the channel").
+struct SystemLineView: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer()
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(MC.faint)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
     }
 }
 
