@@ -167,6 +167,22 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-24 — Fix: the native Google handoff opened the app twice
+- `[web]` The `/?native=google` handoff auto-fires when the page loads with a
+  live web session, from an effect — and `StrictMode` deliberately double-invokes
+  effects in development. Each handoff mints a single-use app-link code and
+  navigates to `flow://`, so two of them opened the app twice and raced two
+  sign-ins in it (the second code exchange fails, but the app has already
+  logged out and back in once). Guarded with an in-flight latch, cleared when
+  the attempt settles so the retry button still works.
+- `[web]` Same cause on the Google button itself: GIS `renderButton` appends
+  rather than replaces, so a double-invoked effect stacked two buttons. The slot
+  is cleared before rendering.
+- No server or native change: `RootView.onOpenURL` is the only deep-link
+  delivery path, so nothing was handled twice on the app side. Note that
+  `onOpenURL` fires per open window, so a `flow://` link still reaches every
+  Flow window — not a regression, and untouched here.
+
 ### 2026-07-24 — Phase 16: Sign in with Google + domain self-registration
 - `[server]` `POST /v1/auth/google` takes a Google **ID token** (the GIS
   ID-token flow — no client secret, no redirect URI, no server-side exchange)

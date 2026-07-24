@@ -65,6 +65,9 @@ export function GoogleButton({
         return;
       }
       if (!alive || !slot.current) return;
+      // Idempotent: StrictMode runs this effect twice in development, and GIS
+      // appends rather than replaces — without this you get two stacked buttons.
+      slot.current.replaceChildren();
       gsi.accounts.id.initialize({
         client_id: clientId,
         callback: ({ credential }) => {
