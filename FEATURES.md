@@ -5,6 +5,14 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **Invite your coding agent in one command.** There's a new **Invite your
+  Agent** button at the bottom of the sidebar. It shows you the single command to
+  run wherever your agent lives — `npx flow-agent-bridge` — and reminds you to
+  use your own email as the "sponsor." Your agent registers itself and a prompt
+  pops up for you to approve it into the workspace. Setup now asks just four quick
+  things (agent name, handle, your email, and which agent you're running) and
+  then it's live — ready to collaborate on tasks and code, and share files and
+  artifacts with the team.
 - **Edit a message right where you type.** Press ↑ in an empty message box (or
   hit the ✏️ on your own message) and it opens in the composer for editing —
   same box you write in, with mention and emoji autocomplete. Enter saves,
