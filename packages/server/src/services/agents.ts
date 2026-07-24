@@ -1,144 +1,165 @@
-// First-class AI agents (AGENT_MEMBERS.md): on-demand registration with human
-// sponsors.
+// First-class AI agents (AGENT_MEMBERS.md): invite-code onboarding.
 //
 // Agents are real `users` rows (is_agent=true) and ordinary workspace members
 // (always role 'member'), so channels, DMs, threads, reactions, files, typing,
-// and presence work with zero special cases. Registration mirrors human
-// signup: the agent brings durable credentials (username + secret key) and
-// names a sponsor by email; the sponsor approves a matching pairing code
-// inside Flow. No admin invites, no pre-registration. The sponsor is recorded
-// on the agent's user row and is responsible for what the agent does.
+// and presence work with zero special cases. Onboarding: a human member
+// generates a one-time invite code inside Flow; the agent redeems it
+// (`npx flow-agent-bridge <code>`), bringing its durable credentials (username +
+// secret key), and joins immediately — no approval popup. The code carries the
+// sponsor + workspace; the sponsor is recorded on the agent's user row and is
+// responsible for what the agent does. The avatar is picked at random and the
+// sponsor can change it in-app afterwards.
 import { randomBytes, randomInt } from 'node:crypto';
-import { and, desc, eq, gt, isNull, lt, sql } from 'drizzle-orm';
-import type {
-  AgentLoginResponse,
-  AgentPairingRequestDTO,
-  AgentRegisterPollResponse,
-  AgentRegisterStartResponse,
-  RegisterAgentBody,
-} from '@flow/shared';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import type { AgentInviteDTO, AgentLoginResponse, AgentRedeemResponse, RedeemAgentInviteBody } from '@flow/shared';
 import { db, schema } from '../db/index.js';
+import { config } from '../config.js';
 import { newId } from '../lib/ids.js';
-import { hashToken, newToken, tokensEqual } from '../lib/tokens.js';
+import { hashToken, newToken } from '../lib/tokens.js';
 import { badRequest, forbidden, notFound, unauthorized } from '../lib/errors.js';
-import { publishEvent, subjectMeta, subjectUserNotify } from '../bus.js';
+import { publishEvent, subjectMeta } from '../bus.js';
 import { postSystemMessage } from './messages.js';
 import { requireMembership } from './workspaces.js';
 import { killAgentCredentials, removeMemberDeep } from './memberRemoval.js';
 import { hashSecret, toUserDTO, verifySecret } from './auth.js';
 import { setAvatar } from './users.js';
-import { readAgentAvatarPreset } from './agentAvatars.js';
+import { listAgentAvatarPresets, readAgentAvatarPreset } from './agentAvatars.js';
 
-const { agentPairingRequests, agentTokens, channels, channelMembers, users, workspaceMembers, workspaces } = schema;
+const { agentInvites, agentTokens, channels, channelMembers, users, workspaceMembers, workspaces } = schema;
 
-const PAIRING_TTL_MS = 10 * 60_000;
+const INVITE_TTL_MS = config.inviteTtlDays * 86400_000;
 
-// Pairing codes are read aloud / eyeballed across two screens: short, grouped,
-// and drawn from an alphabet without 0/O/1/I/L confusables.
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-function newPairingCode(): string {
-  const pick = (): string => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]!;
-  return `${pick()}${pick()}${pick()}-${pick()}${pick()}${pick()}`;
+// Invite codes are meant to be read aloud / retyped, so we keep them short and
+// unambiguous: `flow-` + two groups of 4 over an uppercase alphabet with no
+// 0/O/1/I confusables (~40 bits). Guessability is bounded instead by the
+// single-use + 7-day-expiry + rate-limited redeem endpoint.
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function newInviteCode(): string {
+  const group = (): string =>
+    Array.from({ length: 4 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]!).join('');
+  return `flow-${group()}-${group()}`;
 }
 
-type PairingRow = typeof agentPairingRequests.$inferSelect;
-
-function toPairingDTO(r: PairingRow): AgentPairingRequestDTO {
-  return {
-    id: r.id,
-    username: r.username,
-    name: r.name,
-    description: r.description,
-    code: r.code,
-    createdAt: r.createdAt.toISOString(),
-    expiresAt: r.expiresAt.toISOString(),
-  };
+/** A random preset avatar id (or null if none are bundled). */
+function pickRandomAvatarPreset(): string | null {
+  const ids = listAgentAvatarPresets();
+  return ids.length > 0 ? ids[randomInt(ids.length)]! : null;
 }
 
 /**
- * Open a pairing request (unauthenticated). Creates nothing but the pending
- * row; the sponsor's live sockets get an `agent.pairing` prompt. The response
- * is identical whether or not sponsorEmail matched an account — a miss just
- * expires unapproved (no account enumeration).
+ * Generate a one-time invite code for the sponsor's workspace (any member can
+ * sponsor — operator ruling; a permission knob can come later). The raw code is
+ * returned once; only its hash is stored.
  */
-export async function startAgentRegistration(input: RegisterAgentBody): Promise<AgentRegisterStartResponse> {
-  const username = input.username.toLowerCase();
-  const taken = await db.select({ one: sql`1` }).from(users).where(eq(users.agentUsername, username)).limit(1);
-  if (taken.length > 0) throw badRequest('username_taken', 'that agent username is already registered');
-  // opportunistic cleanup: expired pending requests are dead weight
-  await db
-    .delete(agentPairingRequests)
-    .where(and(lt(agentPairingRequests.expiresAt, sql`now()`), eq(agentPairingRequests.status, 'pending')));
-  const sponsor = (
-    await db
-      .select()
-      .from(users)
-      .where(
-        and(
-          eq(users.email, input.sponsorEmail),
-          isNull(users.deletedAt),
-          eq(users.isAgent, false),
-          eq(users.isBot, false),
-        ),
-      )
-      .limit(1)
-  )[0];
-  const id = newId();
-  const pollSecret = newToken();
-  const code = newPairingCode();
-  const expiresAt = new Date(Date.now() + PAIRING_TTL_MS);
-  await db.insert(agentPairingRequests).values({
-    id,
-    username,
-    keyHash: await hashSecret(input.key),
-    name: input.name.trim(),
-    description: input.description ?? null,
-    avatarUrl: input.avatarUrl ?? null,
-    sponsorUserId: sponsor?.id ?? null,
-    code,
-    pollSecretHash: hashToken(pollSecret),
+export async function createAgentInvite(workspaceId: string, sponsorId: string): Promise<AgentInviteDTO> {
+  await requireMembership(workspaceId, sponsorId);
+  const code = newInviteCode();
+  const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+  await db.insert(agentInvites).values({
+    id: newId(),
+    codeHash: hashToken(code),
+    workspaceId,
+    sponsorUserId: sponsorId,
     expiresAt,
   });
-  if (sponsor) {
-    const row = (await db.select().from(agentPairingRequests).where(eq(agentPairingRequests.id, id)).limit(1))[0]!;
-    publishEvent(subjectUserNotify(sponsor.id), {
-      type: 'agent.pairing',
-      workspaceId: '', // no workspace yet — the sponsor picks one at approval
-      ts: new Date().toISOString(),
-      data: toPairingDTO(row),
-    });
-  }
-  return { requestId: id, pollSecret, code, expiresAt: expiresAt.toISOString() };
+  return { code, command: `npx flow-agent-bridge ${code}`, expiresAt: expiresAt.toISOString() };
 }
 
 /**
- * The agent's poll (authenticated by the pollSecret). On the first poll after
- * approval the agent token is minted and delivered — exactly once; if that
- * response is lost, username+key login is the recovery path.
+ * Redeem a one-time invite code (unauthenticated — the code IS the auth). Creates
+ * the agent's user account (credentials from the request; sponsor + workspace
+ * from the invite), assigns a random preset avatar, joins the workspace +
+ * #general, and mints the agent token — all synchronously. No sponsor approval.
  */
-export async function pollAgentRegistration(requestId: string, pollSecret: string): Promise<AgentRegisterPollResponse> {
-  const row = (await db.select().from(agentPairingRequests).where(eq(agentPairingRequests.id, requestId)).limit(1))[0];
-  if (!row || !pollSecret || !tokensEqual(row.pollSecretHash, hashToken(pollSecret))) {
-    throw unauthorized('unknown pairing request');
+export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<AgentRedeemResponse> {
+  const username = input.username.toLowerCase();
+  const invite = (
+    await db.select().from(agentInvites).where(eq(agentInvites.codeHash, hashToken(input.code))).limit(1)
+  )[0];
+  if (!invite) throw notFound('invite not found');
+  if (invite.redeemedAt) throw badRequest('invite_used', 'this invite code has already been used');
+  if (invite.expiresAt < new Date()) {
+    throw badRequest('invite_expired', 'this invite code has expired — generate a new one in Flow');
   }
-  if (row.status === 'denied') return { status: 'denied' };
-  if (row.status === 'pending') {
-    return row.expiresAt < new Date() ? { status: 'expired' } : { status: 'pending' };
-  }
-  // approved — deliver the token exactly once (conditional update wins races)
-  if (!row.agentUserId || !row.workspaceId) return { status: 'approved' };
-  const claimed = await db
-    .update(agentPairingRequests)
-    .set({ tokenDeliveredAt: new Date() })
-    .where(and(eq(agentPairingRequests.id, requestId), isNull(agentPairingRequests.tokenDeliveredAt)))
-    .returning();
-  if (!claimed[0]) return { status: 'approved' };
+  const taken = await db.select({ one: sql`1` }).from(users).where(eq(users.agentUsername, username)).limit(1);
+  if (taken.length > 0) throw badRequest('username_taken', 'that agent username is already registered');
+
+  const userId = newId();
+  const keyHash = await hashSecret(input.key); // argon2 — do the heavy work before the transaction
   const agentToken = `flow-agent-token-${newToken()}`;
-  await db.insert(agentTokens).values({ id: newId(), tokenHash: hashToken(agentToken), userId: row.agentUserId });
-  const userRow = (await db.select().from(users).where(eq(users.id, row.agentUserId)).limit(1))[0]!;
-  const wsRow = (await db.select().from(workspaces).where(eq(workspaces.id, row.workspaceId)).limit(1))[0]!;
+  let generalChannel: { id: string; workspaceId: string; kind: string } | null = null;
+  await db.transaction(async (tx) => {
+    // claim the invite first (conditional update guards double-redeem races);
+    // agentUserId is stamped after the user row exists (FK)
+    const claimed = await tx
+      .update(agentInvites)
+      .set({ redeemedAt: new Date() })
+      .where(and(eq(agentInvites.id, invite.id), isNull(agentInvites.redeemedAt)))
+      .returning();
+    if (!claimed[0]) throw badRequest('invite_used', 'this invite code has already been used');
+    const takenTx = await tx.select({ one: sql`1` }).from(users).where(eq(users.agentUsername, username)).limit(1);
+    if (takenTx.length > 0) throw badRequest('username_taken', 'that agent username is already registered');
+    // Same recipe as app bot users: synthetic unique email, unusable password
+    // hash, emailVerifiedAt stamped (agents never do the email flow).
+    await tx.insert(users).values({
+      id: userId,
+      email: `agent-${userId}@agents.flow.local`,
+      passwordHash: `!agent:${randomBytes(24).toString('hex')}`,
+      displayName: input.name.trim(),
+      statusText: input.description?.slice(0, 80) ?? '',
+      isAgent: true,
+      emailVerifiedAt: new Date(),
+      sponsorUserId: invite.sponsorUserId,
+      agentUsername: username,
+      agentKeyHash: keyHash,
+    });
+    await tx.update(agentInvites).set({ agentUserId: userId }).where(eq(agentInvites.id, invite.id));
+    await tx.insert(workspaceMembers).values({ workspaceId: invite.workspaceId, userId, role: 'member' });
+    const general = await tx
+      .select()
+      .from(channels)
+      .where(and(eq(channels.workspaceId, invite.workspaceId), eq(channels.name, 'general')))
+      .limit(1);
+    if (general[0]) {
+      await tx.insert(channelMembers).values({ channelId: general[0].id, userId }).onConflictDoNothing();
+      generalChannel = { id: general[0].id, workspaceId: invite.workspaceId, kind: general[0].kind };
+    }
+    await tx.insert(agentTokens).values({ id: newId(), tokenHash: hashToken(agentToken), userId });
+  });
+  // Random preset avatar through the normal pipeline (square-crop → webp → R2)
+  // BEFORE announcing the join, so member.joined already carries the avatarUrl.
+  // Best-effort: a failure here shouldn't undo a successful join.
+  const preset = pickRandomAvatarPreset();
+  if (preset) {
+    try {
+      await setAvatar(userId, readAgentAvatarPreset(preset), 'image/png');
+    } catch (err) {
+      console.error(`agent avatar assignment failed for ${userId}: ${(err as Error).message}`);
+    }
+  }
+  const userRow = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0]!;
+  const wsRow = (await db.select().from(workspaces).where(eq(workspaces.id, invite.workspaceId)).limit(1))[0]!;
+  publishEvent(subjectMeta(invite.workspaceId), {
+    type: 'member.joined',
+    workspaceId: invite.workspaceId,
+    ts: new Date().toISOString(),
+    data: {
+      userId,
+      displayName: userRow.displayName,
+      email: userRow.email,
+      avatarUrl: userRow.avatarUrl,
+      statusEmoji: userRow.statusEmoji,
+      statusText: userRow.statusText,
+      isAgent: true,
+      sponsorId: invite.sponsorUserId,
+      role: 'member',
+      joinedAt: new Date().toISOString(),
+    },
+  });
+  // Announce the agent's arrival in #general with the same inline notice a human
+  // join posts (ui_nits). Best-effort inside postSystemMessage.
+  if (generalChannel) await postSystemMessage(generalChannel, userId, 'member_joined');
   return {
-    status: 'approved',
     agentToken,
     user: toUserDTO(userRow),
     workspace: {
@@ -150,126 +171,6 @@ export async function pollAgentRegistration(requestId: string, pollSecret: strin
       createdAt: wsRow.createdAt.toISOString(),
     },
   };
-}
-
-/** The sponsor's pending pairing requests (GET /v1/me/agent-requests). */
-export async function listPairingRequests(sponsorId: string): Promise<AgentPairingRequestDTO[]> {
-  const rows = await db
-    .select()
-    .from(agentPairingRequests)
-    .where(
-      and(
-        eq(agentPairingRequests.sponsorUserId, sponsorId),
-        eq(agentPairingRequests.status, 'pending'),
-        gt(agentPairingRequests.expiresAt, sql`now()`),
-      ),
-    )
-    .orderBy(desc(agentPairingRequests.createdAt));
-  return rows.map(toPairingDTO);
-}
-
-/**
- * Sponsor approval: creates the agent's user account (credentials + sponsor
- * from the pairing row), joins the chosen workspace + #general. Any member can
- * sponsor (operator ruling — a permission knob can come later). The token is
- * NOT minted here; the agent's next poll delivers it.
- */
-export async function approveAgentRequest(
-  requestId: string,
-  actorId: string,
-  workspaceId: string,
-  avatarPreset?: string,
-): Promise<void> {
-  await requireMembership(workspaceId, actorId);
-  if (avatarPreset) readAgentAvatarPreset(avatarPreset); // validate before creating anything
-  const row = (await db.select().from(agentPairingRequests).where(eq(agentPairingRequests.id, requestId)).limit(1))[0];
-  // sponsor mismatch reads as not-found: other users' requests are invisible
-  if (!row || row.sponsorUserId !== actorId) throw notFound('pairing request not found');
-  if (row.status !== 'pending') throw badRequest('not_pending', 'this pairing request is already resolved');
-  if (row.expiresAt < new Date()) throw badRequest('expired', 'this pairing request has expired — re-run register');
-  const userId = newId();
-  let generalChannel: { id: string; workspaceId: string; kind: string } | null = null;
-  await db.transaction(async (tx) => {
-    // claim first (conditional update guards double-approve races); the agent
-    // user row doesn't exist yet, so agentUserId is stamped after the insert
-    const claimed = await tx
-      .update(agentPairingRequests)
-      .set({ status: 'approved', workspaceId })
-      .where(and(eq(agentPairingRequests.id, requestId), eq(agentPairingRequests.status, 'pending')))
-      .returning();
-    if (!claimed[0]) throw badRequest('not_pending', 'this pairing request is already resolved');
-    const taken = await tx.select({ one: sql`1` }).from(users).where(eq(users.agentUsername, row.username)).limit(1);
-    if (taken.length > 0) throw badRequest('username_taken', 'that agent username is already registered');
-    // Same recipe as app bot users: synthetic unique email, unusable password
-    // hash, emailVerifiedAt stamped (agents never do the email flow).
-    await tx.insert(users).values({
-      id: userId,
-      email: `agent-${userId}@agents.flow.local`,
-      passwordHash: `!agent:${randomBytes(24).toString('hex')}`,
-      displayName: row.name,
-      avatarUrl: row.avatarUrl,
-      statusText: row.description?.slice(0, 80) ?? '',
-      isAgent: true,
-      emailVerifiedAt: new Date(),
-      sponsorUserId: actorId,
-      agentUsername: row.username,
-      agentKeyHash: row.keyHash,
-    });
-    await tx.update(agentPairingRequests).set({ agentUserId: userId }).where(eq(agentPairingRequests.id, requestId));
-    await tx.insert(workspaceMembers).values({ workspaceId, userId, role: 'member' });
-    const general = await tx
-      .select()
-      .from(channels)
-      .where(and(eq(channels.workspaceId, workspaceId), eq(channels.name, 'general')))
-      .limit(1);
-    if (general[0]) {
-      await tx.insert(channelMembers).values({ channelId: general[0].id, userId }).onConflictDoNothing();
-      generalChannel = { id: general[0].id, workspaceId, kind: general[0].kind };
-    }
-  });
-  // apply the sponsor's preset pick through the normal avatar pipeline
-  // (square-crop → webp → R2) before announcing the join, so the
-  // member.joined event already carries the final avatarUrl
-  if (avatarPreset) {
-    await setAvatar(userId, readAgentAvatarPreset(avatarPreset), 'image/png');
-  }
-  const userRow = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0]!;
-  publishEvent(subjectMeta(workspaceId), {
-    type: 'member.joined',
-    workspaceId,
-    ts: new Date().toISOString(),
-    data: {
-      userId,
-      displayName: userRow.displayName,
-      email: userRow.email,
-      avatarUrl: userRow.avatarUrl,
-      statusEmoji: userRow.statusEmoji,
-      statusText: userRow.statusText,
-      isAgent: true,
-      sponsorId: actorId,
-      role: 'member',
-      joinedAt: new Date().toISOString(),
-    },
-  });
-  // Announce the agent's arrival in #general with the same inline notice a human
-  // join posts (ui_nits). Best-effort inside postSystemMessage.
-  if (generalChannel) await postSystemMessage(generalChannel, userId, 'member_joined');
-}
-
-/** Sponsor denial: ends the pairing request immediately. */
-export async function denyAgentRequest(requestId: string, actorId: string): Promise<void> {
-  const updated = await db
-    .update(agentPairingRequests)
-    .set({ status: 'denied' })
-    .where(
-      and(
-        eq(agentPairingRequests.id, requestId),
-        eq(agentPairingRequests.sponsorUserId, actorId),
-        eq(agentPairingRequests.status, 'pending'),
-      ),
-    )
-    .returning();
-  if (!updated[0]) throw notFound('pairing request not found');
 }
 
 /**

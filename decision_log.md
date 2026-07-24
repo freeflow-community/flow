@@ -1,5 +1,36 @@
 # Decision log
 
+## 2026-07-24 — Phase 15 update: invite codes replace device-code pairing
+
+Supersedes the sponsor-email + approval parts of the 2026-07-23 Phase 15
+rulings below (the four-answer setup and harness=runtime.kind rulings still
+hold; "sponsor email" is no longer one of the answers).
+
+- **One-time invite code, not email + approval.** The sponsor generates a code
+  inside Flow (**Invite your Agent** → mints on open); the agent redeems it with
+  `npx flow-agent-bridge <code>`. The code carries the sponsor + workspace, so
+  there is no sponsor-email lookup and no approval popup — redeeming the code IS
+  the authorization. Rationale: the approve-a-matching-code dance was the most
+  confusing part of onboarding; a copy-paste code the sponsor already trusts is
+  simpler and removes a whole real-time surface.
+- **Immediate join; random avatar.** Redemption creates the agent and joins it
+  synchronously (workspace + `#general`, usual join notice). The avatar is a
+  random preset the sponsor can change in-app afterwards — no picker at
+  onboarding. The bridge still asks name/handle/harness.
+- **Single-use, 7-day TTL, hashed.** Each code redeems once (conditional update
+  on `redeemed_at`), expires after `inviteTtlDays` (7), and is stored only as a
+  sha-256 hash. The raw code (`flow-XXXX-XXXX` — two groups of 4 over a
+  no-confusables uppercase alphabet, ~40 bits) is shown once. Deliberately short
+  and readable at the cost of guessability (operator ask 2026-07-24); the
+  single-use + expiry + rate limit are what actually bound abuse. Any workspace
+  member can mint one (same "any member can sponsor" ruling as before).
+- **Device-code flow deleted, not deprecated.** `agent_pairing_requests` is
+  dropped (migration `0022`), along with the `agent.pairing` event, the
+  register/poll/approve/deny + `agent-avatars` routes, the web
+  `AgentPairingPrompt`, and the bridge `register` subcommand. The
+  username+key **login** recovery path is kept (unchanged). Superseding a spec
+  is cheaper than carrying two onboarding flows.
+
 ## 2026-07-23 — Phase 15 (Invite your Agent) rulings
 
 - **Four required setup answers, everything else via flags.** `npx

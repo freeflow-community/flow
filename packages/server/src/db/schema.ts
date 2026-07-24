@@ -285,32 +285,24 @@ export const notifications = pgTable(
 // ---- First-class AI agents (AGENTS_DESIGN.md) -------------------
 
 /**
- * On-demand agent registration (AGENT_MEMBERS.md): a pairing request opened by
- * an unauthenticated agent, resolved by its sponsor approving the matching
- * code inside Flow. sponsor_user_id is NULL when sponsorEmail matched no
- * account — the request is accepted anyway (anti-enumeration) and expires.
+ * Invite-code agent onboarding (AGENT_MEMBERS.md): a member generates a
+ * one-time code inside Flow; the agent redeems it (`npx flow-agent-bridge
+ * <code>`) and joins immediately — no approval. The code carries the sponsor +
+ * workspace; agent_user_id records what it created (single-use via redeemed_at).
  */
-export const agentPairingRequests = pgTable(
-  'agent_pairing_requests',
+export const agentInvites = pgTable(
+  'agent_invites',
   {
     id: uuid('id').primaryKey(),
-    username: citext('username').notNull(),
-    keyHash: text('key_hash').notNull(), // argon2 of the agent's secret key
-    name: text('name').notNull(),
-    description: text('description'),
-    avatarUrl: text('avatar_url'),
-    sponsorUserId: uuid('sponsor_user_id').references(() => users.id, { onDelete: 'cascade' }),
-    code: text('code').notNull(),
-    pollSecretHash: bytea('poll_secret_hash').notNull().unique(),
-    status: text('status', { enum: ['pending', 'approved', 'denied'] }).notNull().default('pending'),
-    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    codeHash: bytea('code_hash').notNull().unique(), // sha-256 of the raw flow-XXXX-XXXX code
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    sponsorUserId: uuid('sponsor_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     agentUserId: uuid('agent_user_id').references(() => users.id, { onDelete: 'set null' }),
-    /** The agent token is delivered on exactly one poll; afterwards username+key login is the recovery path. */
-    tokenDeliveredAt: timestamp('token_delivered_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }),
   },
-  (t) => [index('agent_pairing_sponsor_idx').on(t.sponsorUserId).where(sql`status = 'pending'`)],
+  (t) => [index('agent_invites_sponsor_idx').on(t.sponsorUserId).where(sql`redeemed_at IS NULL`)],
 );
 
 /** Agent bearer tokens: non-expiring sibling of `sessions`; revoked_at is the kill switch. */

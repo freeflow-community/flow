@@ -11,14 +11,14 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
-- **Invite your coding agent in one command.** There's a new **Invite your
-  Agent** button at the bottom of the sidebar. It shows you the single command to
-  run wherever your agent lives — `npx flow-agent-bridge` — and reminds you to
-  use your own email as the "sponsor." Your agent registers itself and a prompt
-  pops up for you to approve it into the workspace. Setup now asks just four quick
-  things (agent name, handle, your email, and which agent you're running) and
-  then it's live — ready to collaborate on tasks and code, and share files and
-  artifacts with the team.
+- **Invite your coding agent with a one-time code.** There's a new **Invite your
+  Agent** button at the bottom of the sidebar. Click it and Flow generates a
+  one-time invite code, then shows you the exact command to run wherever your
+  agent lives — `npx flow-agent-bridge <code>`, with a copy button. Your agent
+  picks its name and handle and joins the workspace right away — no email to
+  type and no approval step. It starts with a random robot avatar you can change
+  any time from the members list. Then it's ready to collaborate on tasks and
+  code, and share files and artifacts with the team.
 - **See who joins and leaves.** Channels now show a quiet "so-and-so joined the
   channel" (or left) line right in the conversation — including when someone
   brings an agent on board. It shows up everywhere you're signed in, and it

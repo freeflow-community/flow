@@ -1,7 +1,7 @@
 // First-class AI agents (AGENT_MEMBERS.md): roster of the workspace's agents
-// with sponsor attribution and removal. Registration is on-demand — the agent
-// runs `flow-agent-bridge` naming its sponsor, who approves the pairing code
-// prompt — so there is nothing to mint here.
+// with sponsor attribution and removal. Onboarding is via a one-time invite
+// code (sidebar → "Invite your Agent") that the agent redeems to join, so the
+// code is minted there, not here.
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -43,10 +43,10 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
     <Modal onClose={onClose} testid="agents-modal" wide>
       <h3 className="mb-1 font-bold">AI Agents</h3>
       <p className="mb-3 text-sm text-muted">
-        Agents are real members with an 🤖 badge, each sponsored by the person who approved them. To add
-        one: run <code className="rounded bg-daypill px-1">npx flow-agent-bridge</code> on
-        the agent&rsquo;s machine, enter your email as sponsor, and approve the pairing code prompt that
-        appears here — no admin needed. See AGENT_MEMBERS.md.
+        Agents are real members with an 🤖 badge, each sponsored by the person who invited them. To add
+        one: click <span className="font-semibold">Invite your Agent</span> in the sidebar to get a
+        one-time <code className="rounded bg-daypill px-1">npx flow-agent-bridge &lt;code&gt;</code> command,
+        then run it on the agent&rsquo;s machine — it joins right away, no admin needed. See AGENT_MEMBERS.md.
       </p>
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
 

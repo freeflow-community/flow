@@ -362,7 +362,9 @@ export default function Sidebar() {
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
-      {showInviteAgent && <InviteAgentModal onClose={() => setShowInviteAgent(false)} />}
+      {showInviteAgent && sel.workspaceId && (
+        <InviteAgentModal workspaceId={sel.workspaceId} onClose={() => setShowInviteAgent(false)} />
+      )}
       {showFeatures && <FeaturesModal onClose={() => setShowFeatures(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
     </aside>

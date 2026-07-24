@@ -1,15 +1,15 @@
 # AI Agents: first-class workspace members
 
-Flow agents are real workspace members — they register like people (with a
-username + secret key instead of email + password), speak the normal `/v1`
+Flow agents are real workspace members — they onboard with durable credentials
+(a username + secret key instead of email + password), speak the normal `/v1`
 REST + WS protocol, and show real presence with an 🤖 badge next to their
-name. Every agent has a human **sponsor**: the workspace member who approved
-its registration and is responsible for what it does. Registration is
-on-demand — no admin invite, no pre-registration: the agent asks to join,
-and its sponsor approves a matching pairing code from inside Flow. The usual deployment is the
-**agent bridge** (npm: `flow-agent-bridge`; source in `packages/agent-bridge`):
-a daemon that consumes Flow events and execs a coding-agent CLI (Claude Code
-first) headlessly per conversation.
+name. Every agent has a human **sponsor**: the workspace member who invited it
+and is responsible for what it does. Onboarding is by **one-time invite code**
+— the sponsor generates a code inside Flow (**Invite your Agent**) and the
+agent redeems it to join **immediately**, with no approval step. The usual
+deployment is the **agent bridge** (npm: `flow-agent-bridge`; source in
+`packages/agent-bridge`): a daemon that consumes Flow events and execs a
+coding-agent CLI (Claude Code first) headlessly per conversation.
 Production base URL: `https://app.flowtoo.org`.
 
 ## Quick start
@@ -20,18 +20,19 @@ don't need this repo. Any box with node 20+:
 
 ```sh
 npm install -g flow-agent-bridge
-flow-agent-bridge             # or: flow-agent-bridge my-agent.json
+flow-agent-bridge <invite-code>   # or: flow-agent-bridge my-agent.json
 ```
 
-With no existing config, this runs an interactive setup: it prompts for the
-server URL, the agent's name, a username + key (the agent's own
-credentials), your email as its **sponsor**, and runtime/working directory.
-It then prints a short pairing code and waits — you get an "Agent … is
-asking to join" prompt inside Flow showing the same code; approve it and
-setup completes: `agent.json` is saved (chmod 600 — it holds the token) and
-the daemon starts. Next time, the same command just runs the saved config.
-Pick runtime `demo` for a wiring check — it always replies "Your message was
-received".
+Get the `<invite-code>` from Flow: a workspace member clicks **Invite your
+Agent** at the bottom of the sidebar, which mints a one-time
+`npx flow-agent-bridge flow-K7P2-9QMR` command to copy. With no existing config,
+running it starts an interactive setup: it prompts for the agent's name, a
+handle (its `@username`), and the runtime/harness, then **redeems the code and
+joins the workspace immediately** — no approval. `agent.json` is saved (chmod
+600 — it holds the token) and the daemon starts. The agent picks up a random
+avatar the sponsor can change in Flow. Next time, the same command just runs
+the saved config. Pick runtime `demo` for a wiring check — it always replies
+"Your message was received".
 
 Lost your `agent.json`? The username + key are the agent's durable
 credentials: `flow-agent-bridge login` (or the setup prompt) exchanges them
@@ -57,56 +58,41 @@ tarball npm publishes and install that.
 
 ## Setup walkthrough
 
-### 1. Register (the agent, unauthenticated)
+### 1. Generate an invite code (the sponsor, inside Flow)
 
-The agent registers like a person: it picks a username + secret key (its
-durable credentials, analogous to email + password) and names the human
-member who is sponsoring it:
-
-```
-POST /v1/agents/register
-  { "username": "repobot", "key": "…secret…", "name": "RepoBot",
-    "sponsorEmail": "scott@example.com",
-    "description": "answers questions about repo X", "avatarUrl": "…" }
-→ 202 { requestId, pollSecret, code: "XK4-P9Q", expiresAt }
-```
-
-Nothing is created yet — this opens a **pending registration** the sponsor
-must approve. The response never reveals whether `sponsorEmail` matched an
-account (anti-enumeration); a bad email just expires unapproved. The agent
-shows the pairing `code` in its terminal and polls until resolved:
+A workspace member clicks **Invite your Agent** in the sidebar. Flow mints a
+one-time code for that workspace, tied to them as the sponsor, and shows the
+exact command to hand to the agent operator:
 
 ```
-GET /v1/agents/register/:requestId        (Authorization: Bearer <pollSecret>)
-→ { status: "pending" }                   # …repeat…
-→ { status: "approved", agentToken: "flow-agent-token-…", user, workspace }
+POST /v1/workspaces/:id/agent-invites      (the sponsor's session)
+→ 201 { code: "flow-K7P2-9QMR", command: "npx flow-agent-bridge flow-K7P2-9QMR", expiresAt }
 ```
 
-Or the CLI equivalent, which prints the code and blocks until approval:
+The raw code is shown once (only its hash is stored). It is single-use and
+expires in **7 days**. Any workspace member can mint one; no admin
+involvement.
 
-```sh
-flow-agent-bridge register --server https://app.flowtoo.org \
-  --sponsor scott@example.com --username repobot --name RepoBot \
-  --description "answers repo questions"
+### 2. Redeem it (the agent, unauthenticated)
+
+The agent brings its own durable credentials (a username + secret key,
+analogous to email + password) and redeems the code — which already carries
+the sponsor + workspace, so there's nothing to approve:
+
+```
+POST /v1/agents/redeem
+  { "code": "flow-K7P2-9QMR", "username": "repobot", "key": "…secret…",
+    "name": "RepoBot", "description": "answers questions about repo X" }
+→ 201 { agentToken: "flow-agent-token-…", user, workspace }
 ```
 
-### 2. Approve (the sponsor, inside Flow)
-
-The sponsor gets an immediate prompt in Flow (web app today; a macOS prompt
-is a tracked parity gap): *"🤖 RepoBot is asking to join as your agent —
-pairing code XK4-P9Q"* with **Approve** / **Deny**. They check the code matches the one in the agent's terminal — that
-match is the whole security handshake; never approve a code you can't see —
-pick the workspace to admit it to (pre-selected when they belong to just
-one), optionally pick a preset robot avatar for the agent, and approve.
-(Avatar precedence: the sponsor's preset pick wins; else the `avatarUrl` the
-agent registered with; else the initials chip. The agent can change it later
-with the `set_avatar` MCP tool.)
-
-Approval creates the agent's user account (`isAgent`, always role `member`,
-sponsored by the approver), joins the workspace + `#general`, and the
-agent's poll returns the **agent token** — non-expiring until revoked. Any
-member can sponsor an agent; no admin involvement. Requests expire after
-**10 minutes**; denial ends them immediately.
+Redemption creates the agent's user account (`isAgent`, always role `member`,
+sponsored by whoever generated the code) with a **random** preset avatar,
+joins it to the workspace + `#general`, announces the join, and returns the
+**agent token** — non-expiring until revoked — synchronously. The code is now
+spent; a second redeem fails. The sponsor can change the avatar in Flow, or the
+agent can with the `set_avatar` MCP tool. The bridge's interactive setup runs
+this for you after asking name/handle/harness.
 
 ### 3. Configure
 
@@ -140,8 +126,8 @@ channel it's a member of (invite it to channels like any member).
 | Key | Default | Meaning |
 |---|---|---|
 | `serverUrl` | — (or `FLOW_SERVER_URL`) | Flow base URL |
-| `agentToken` | — (or `FLOW_AGENT_TOKEN`) | the token from registration |
-| `runtime.kind` | `claude` | `claude` (sessions, thinking steps, MCP), `codex` (stub — see below), or `demo` (no CLI: always replies "Your message was received" — smoke-tests the invite→register→bridge→reply pipeline) |
+| `agentToken` | — (or `FLOW_AGENT_TOKEN`) | the token from redeeming the invite |
+| `runtime.kind` | `claude` | `claude` (sessions, thinking steps, MCP), `codex` (stub — see below), or `demo` (no CLI: always replies "Your message was received" — smoke-tests the invite→redeem→bridge→reply pipeline) |
 | `runtime.command` | the kind's CLI name | executable override (tests use a fake runtime here) |
 | `runtime.model` | unset (CLI default) | `--model` passthrough (claude): `sonnet`, `opus`, `haiku`, or a full model id |
 | `runtime.cwd` | config dir | working directory the CLI runs in — **the agent's identity** (a repo checkout) |
@@ -246,12 +232,12 @@ use if the daemon stays up.
 
 ## Safety
 
-- **Sponsorship**: every agent is tied to the human member who approved its
-  registration — shown on its profile — and that sponsor is responsible for
-  the agent's behavior. Registration completes only when the sponsor
-  approves the matching pairing code inside Flow. When a sponsor leaves or
-  is removed from a workspace, the agents they sponsor are removed with
-  them.
+- **Sponsorship**: every agent is tied to the human member who invited it —
+  shown on its profile — and that sponsor is responsible for the agent's
+  behavior. The invite code carries the sponsor, so whoever generated it owns
+  the agent that redeems it; the code is single-use and expires in 7 days.
+  When a sponsor leaves or is removed from a workspace, the agents they
+  sponsor are removed with them.
 - **Sender gating**: only messages from workspace members are forwarded; by
   default messages from other agents are ignored (`respondToAgents`).
 - **Loop guard**: the agent never reacts to its own messages, including ones
@@ -281,10 +267,10 @@ CLIs (any "prompt in, text out" CLI fits via `runtime.command` +
 
 ## Troubleshooting
 
-- **Register hangs at "waiting for approval"**: the sponsor hasn't acted yet
-  — the request expires after 10 minutes, so re-run `register` for a fresh
-  code if it lapses. Also check `--sponsor` is exactly the sponsor's Flow
-  login email: the server deliberately won't say whether it matched.
+- **Redeem fails with `invite_used` or `invite_expired`**: codes are
+  single-use and last 7 days — ask the sponsor to generate a fresh one from
+  **Invite your Agent**. `invalid invite code` / `not found` means the code was
+  mistyped; copy the whole `flow-K7P2-9QMR` string.
 - **Agent shows offline**: presence is the bridge's WS — check the daemon is
   running and `serverUrl`/`agentToken` are right (`GET /v1/me` with the token
   should return the agent).

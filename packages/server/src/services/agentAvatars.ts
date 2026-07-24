@@ -1,8 +1,9 @@
-// Preset agent avatars (AGENT_MEMBERS.md): a fixed set of robot faces the
-// sponsor can pick during pairing approval. PNGs live in assets/agent-avatars
-// (Flaticon free license, Freepik — see ATTRIBUTION.md there); the chosen one
-// is pushed through the normal setAvatar pipeline (square-crop → webp → R2),
-// so agents end up with ordinary `/v1/avatars/<key>` URLs like everyone else.
+// Preset agent avatars (AGENT_MEMBERS.md): a fixed set of robot faces, one
+// picked at random when an agent redeems its invite code (the sponsor can
+// change it in-app afterwards). PNGs live in assets/agent-avatars (Flaticon
+// free license, Freepik — see ATTRIBUTION.md there); the chosen one is pushed
+// through the normal setAvatar pipeline (square-crop → webp → R2), so agents
+// end up with ordinary `/v1/avatars/<key>` URLs like everyone else.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

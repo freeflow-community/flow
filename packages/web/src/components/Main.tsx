@@ -15,7 +15,6 @@ import ActivityView from './ActivityView';
 import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
 import { MobileMenuButton } from './MobileMenuButton';
-import AgentPairingPrompt from './AgentPairingPrompt';
 
 export default function Main() {
   const auth = useAuth();
@@ -191,10 +190,6 @@ export default function Main() {
       case 'workspace.updated':
         void qc.invalidateQueries({ queryKey: ['workspaces'] });
         break;
-      case 'agent.pairing':
-        // an agent named this user as its sponsor — surface the approval prompt
-        void qc.invalidateQueries({ queryKey: ['agentRequests'] });
-        break;
       case 'artifact.created':
       case 'artifact.updated':
       case 'artifact.deleted': {
@@ -303,7 +298,6 @@ export default function Main() {
      <MobileNavContext.Provider value={mobileNav}>
       <div className="flex h-full flex-col bg-base text-ink">
         <OpenInAppBanner />
-        <AgentPairingPrompt />
         <div className="relative flex min-h-0 flex-1">
           {/* Rail + sidebar. Desktop: inline flex columns. Mobile (<md): a
               fixed slide-in drawer over the content, toggled by the header

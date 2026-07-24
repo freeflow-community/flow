@@ -7,7 +7,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import type {
-  AgentPairingRequestDTO,
+  AgentInviteDTO,
   AppDTO,
   ArtifactDTO,
   ChannelDTO,
@@ -82,14 +82,11 @@ export function useMemberMap(workspaceId: string | null): Record<string, Workspa
   return map;
 }
 
-/** Pending agent pairing requests naming me as sponsor (AGENT_MEMBERS.md).
- * WS `agent.pairing` events invalidate this; the interval catches expiry. */
-export function useAgentRequests() {
-  return useQuery({
-    queryKey: ['agentRequests'],
-    queryFn: () => api<{ requests: AgentPairingRequestDTO[] }>('GET', '/v1/me/agent-requests'),
-    select: (d) => d.requests,
-    refetchInterval: 60_000,
+/** Mint a one-time agent invite code for a workspace (AGENT_MEMBERS.md):
+ * the sponsor hands it to their agent, which redeems it and joins immediately. */
+export function useCreateAgentInvite(workspaceId: string | null) {
+  return useMutation({
+    mutationFn: () => api<AgentInviteDTO>('POST', `/v1/workspaces/${workspaceId}/agent-invites`),
   });
 }
 
