@@ -36,3 +36,6 @@ in on web and native, and add a new agent, it only shows in one place).
   Refinement (2026-07-24): the self-DM ("<you> (you)") is pinned to the bottom
   of the list on all three clients — it's a scratchpad, not a conversation, so
   it sorts last regardless of name.
+
+- On natice macos app, the "hit" area to grab and size the Thread panel is too narrow and hard to grab
+
