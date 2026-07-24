@@ -1,8 +1,10 @@
 // Streamlined setup (phase 15): the flag-driven, no-TTY paths that fail before
-// any network call. The full happy path needs a live server (registration +
-// approval), so it isn't unit-tested here.
+// any network call. The full happy path needs a live server (invite redemption),
+// so it isn't unit-tested here.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runSetup } from '../src/setup.js';
+
+const CODE = 'flow-AAAA-BBBB';
 
 describe('runSetup', () => {
   beforeEach(() => {
@@ -17,12 +19,23 @@ describe('runSetup', () => {
     await expect(runSetup('/tmp/does-not-exist.json', {})).rejects.toThrow(/not a TTY/);
   });
 
+  it('rejects an invalid invite code before touching the network', async () => {
+    await expect(
+      runSetup('/tmp/does-not-exist.json', {
+        invite: 'not-a-code',
+        name: 'RepoBot',
+        username: 'repobot',
+        harness: 'claude',
+      }),
+    ).rejects.toThrow(/invalid value for Invite code/);
+  });
+
   it('rejects an invalid harness flag before touching the network', async () => {
     await expect(
       runSetup('/tmp/does-not-exist.json', {
+        invite: CODE,
         name: 'RepoBot',
         username: 'repobot',
-        sponsor: 'you@example.com',
         harness: 'bogus',
       }),
     ).rejects.toThrow(/invalid value for Agent harness/);
@@ -31,9 +44,9 @@ describe('runSetup', () => {
   it('rejects an invalid handle flag before touching the network', async () => {
     await expect(
       runSetup('/tmp/does-not-exist.json', {
+        invite: CODE,
         name: 'RepoBot',
         username: 'x', // too short for the handle regex
-        sponsor: 'you@example.com',
         harness: 'claude',
       }),
     ).rejects.toThrow(/invalid value for Handle/);

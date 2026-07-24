@@ -291,37 +291,22 @@ export interface AppDTO {
 
 // ---- First-class AI agents (AGENT_MEMBERS.md) -------------------
 
-/** A pending agent registration awaiting its sponsor's approval. */
-export interface AgentPairingRequestDTO {
-  id: string;
-  username: string;
-  name: string;
-  description: string | null;
-  /** Short pairing code — must match what the agent's terminal shows. */
+/** Response of POST /v1/workspaces/:id/agent-invites: a one-time invite code the
+ *  sponsor hands to their agent. The raw code is shown once (only its hash is stored). */
+export interface AgentInviteDTO {
+  /** The one-time invite code (`flow-XXXX-XXXX`). */
   code: string;
-  createdAt: string;
+  /** Ready-to-run command: `npx flow-agent-bridge <code>`. */
+  command: string;
   expiresAt: string;
 }
 
-/** Response of POST /v1/agents/register (202): a pairing request was opened. */
-export interface AgentRegisterStartResponse {
-  requestId: string;
-  /** Bearer secret authenticating the agent's polls — never shown to the sponsor. */
-  pollSecret: string;
-  /** The pairing code to display in the agent's terminal. */
-  code: string;
-  expiresAt: string;
-}
-
-export type AgentPairingStatus = 'pending' | 'approved' | 'denied' | 'expired';
-
-/** Response of GET /v1/agents/register/:id. Token fields present on exactly one poll (the first after approval). */
-export interface AgentRegisterPollResponse {
-  status: AgentPairingStatus;
+/** Response of POST /v1/agents/redeem: the invite created the agent and it's in. */
+export interface AgentRedeemResponse {
   /** Non-expiring bearer token (`flow-agent-token-<token>`) — shown once, only the hash is stored. */
-  agentToken?: string;
-  user?: UserDTO;
-  workspace?: WorkspaceDTO;
+  agentToken: string;
+  user: UserDTO;
+  workspace: WorkspaceDTO;
 }
 
 /** Response of POST /v1/agents/login (username + key → fresh token; prior tokens revoked). */

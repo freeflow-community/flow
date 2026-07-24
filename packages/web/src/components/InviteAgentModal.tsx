@@ -1,28 +1,27 @@
-// "Invite your Agent" call-to-action (phase 15): explains the one-command flow
-// for bringing a coding agent into the workspace. It auto-closes the moment a
-// pairing request naming this user as sponsor arrives — that's the agent
-// self-registering, and AgentPairingPrompt takes over from here.
+// "Invite your Agent" call-to-action (phase 15): generates a one-time invite
+// code for this workspace and shows the exact command to run. The agent redeems
+// the code and joins immediately — no sponsor approval, no matching popup. The
+// code carries the sponsor (you) + workspace; a fresh code is minted each time
+// the dialog opens, and each code is single-use.
 import { useEffect, useState } from 'react';
-import { useAgentRequests } from '../hooks';
-import { useAuth } from '../state';
+import { useCreateAgentInvite } from '../hooks';
 import { Modal } from './modals';
 
-const COMMAND = 'npx flow-agent-bridge';
-
-export function InviteAgentModal({ onClose }: { onClose: () => void }) {
-  const auth = useAuth();
-  const requests = useAgentRequests();
+export function InviteAgentModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const createInvite = useCreateAgentInvite(workspaceId);
   const [copied, setCopied] = useState(false);
 
-  // Auto-close when the agent self-registers: a live pairing request means the
-  // approval prompt is about to appear, and the spec says this dialog steps aside.
-  const hasLiveRequest = (requests.data ?? []).some((r) => Date.parse(r.expiresAt) > Date.now());
+  // Mint a code as soon as the dialog opens. `mutate` is stable across renders,
+  // so this runs exactly once per open.
+  const { mutate } = createInvite;
   useEffect(() => {
-    if (hasLiveRequest) onClose();
-  }, [hasLiveRequest, onClose]);
+    mutate();
+  }, [mutate]);
 
+  const command = createInvite.data?.command ?? '';
   const copy = () => {
-    void navigator.clipboard?.writeText(COMMAND).then(() => {
+    if (!command) return;
+    void navigator.clipboard?.writeText(command).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
@@ -36,31 +35,32 @@ export function InviteAgentModal({ onClose }: { onClose: () => void }) {
       </p>
 
       <p className="mb-1.5 text-sm text-ink-soft">Wherever you run your coding agent, just run:</p>
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-2 flex items-center gap-2">
         <code
           data-testid="invite-agent-command"
-          className="flex-1 rounded-lg bg-daypill px-3 py-2 font-mono text-sm select-all"
+          className="min-h-[2.5rem] flex-1 rounded-lg bg-daypill px-3 py-2 font-mono text-sm break-all select-all"
         >
-          {COMMAND}
+          {createInvite.isPending && 'Generating your invite code…'}
+          {createInvite.isError && 'Could not generate an invite code — close and try again.'}
+          {command}
         </code>
         <button
           data-testid="invite-agent-copy"
-          className="shrink-0 rounded-lg border border-hairline2 px-3 py-2 text-sm font-semibold text-ink-soft hover:bg-accent/10"
+          disabled={!command}
+          className="shrink-0 rounded-lg border border-hairline2 px-3 py-2 text-sm font-semibold text-ink-soft hover:bg-accent/10 disabled:opacity-40"
           onClick={copy}
         >
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
 
-      <p className="mb-3 text-sm text-ink-soft">
-        Set your email — <span className="font-semibold text-ink">{auth.user.email}</span> — as the{' '}
-        <span className="font-semibold text-ink">sponsor</span>. Your agent self-registers and you&rsquo;ll see a
-        prompt like this to add it to the workspace:
+      <p className="mb-4 text-sm text-ink-soft">
+        This is a <span className="font-semibold text-ink">one-time invite code</span> tied to you as the sponsor.
+        Your agent picks its name and handle, then joins right away — no approval needed. Pick its avatar any time from
+        the members list.
       </p>
 
-      <PairingPreview />
-
-      <p className="mt-4 text-sm text-ink-soft">
+      <p className="text-sm text-ink-soft">
         Collaborate with agents on tasks and code, share files and artifacts, and bring them onto the team.
       </p>
 
@@ -70,34 +70,9 @@ export function InviteAgentModal({ onClose }: { onClose: () => void }) {
           className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white"
           onClick={onClose}
         >
-          Got it
+          Done
         </button>
       </div>
     </Modal>
-  );
-}
-
-/** A static, non-interactive mock of AgentPairingPrompt so sponsors know what to
- * look for. Mirrors that component's layout without any live data or actions. */
-function PairingPreview() {
-  return (
-    <div
-      data-testid="invite-agent-preview"
-      aria-hidden
-      className="pointer-events-none select-none rounded-xl border border-hairline2 bg-base p-4 shadow-lg"
-    >
-      <p className="mb-1 text-sm font-bold">🤖 RepoBot is asking to join as your agent</p>
-      <p className="mb-2 text-xs text-muted">
-        Username <span className="font-mono">repobot</span>. You will be the sponsor, responsible for what it does.
-        Only approve if the code below matches the one in the agent&rsquo;s terminal.
-      </p>
-      <div className="mb-3 flex justify-center">
-        <code className="rounded-lg bg-daypill px-4 py-2 text-xl font-bold tracking-widest">7Q4K2</code>
-      </div>
-      <div className="flex justify-end gap-2">
-        <span className="rounded px-3 py-1.5 text-sm font-semibold text-red-600">Deny</span>
-        <span className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white">Approve</span>
-      </div>
-    </div>
   );
 }

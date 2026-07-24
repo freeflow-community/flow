@@ -49,9 +49,6 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   clicks broadcast on macOS (navigation delegate) but not web. Typing a URL
   syncs everyone on both. Inherent to iframes; revisit only if we add a
   server-side page proxy.
-- macOS/iOS: no agent pairing prompt — sponsors must approve agent
-  registrations in the web app (the `agent.pairing` WS event is safely ignored
-  by the native clients; roster `sponsorId` likewise unused there yet).
 - macOS/iOS: video playback downloads the whole file before playing (streamed
   to disk, not RAM); web streams in place via the presigned URL. Matters at
   the new 500 MB scale — native fix is AVPlayer on the `/v1/files/:id/url`
@@ -108,10 +105,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   Messages list is not sorted alphabetically — web fixed both 2026-07-23
   (ui_nits). Client-only sidebar tweaks.
 - macOS/iOS: no **Invite your Agent** CTA (phase 15) — the web sidebar gained a
-  button + explainer dialog above the profile footer. Native clients already
-  handle the *approval* side differently (the `agent.pairing` prompt is a web-only
-  surface — a separate existing gap), so the CTA closes with that same native
-  agent-pairing work rather than on its own.
+  button + dialog that mints a one-time invite code (`npx flow-agent-bridge
+  <code>`) above the profile footer. Native clients can't yet generate a code,
+  so onboarding an agent from a phone/desktop still means grabbing the code from
+  the web app. Closes when each client ports the `POST
+  /v1/workspaces/:id/agent-invites` call + the display dialog. No approval
+  surface is needed any more (redemption is immediate).
 
 - macOS: no passwordless "Email me a sign-in link" button — web + iOS have it
   (iOS added 2026-07-24). The shared `SyncEngine.sendSigninLink` is already there,
@@ -168,6 +167,33 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 - Known limitation: the emailed link is a web URL (`app.flowtoo.org/?signin=…`),
   so tapping it on the phone signs you in **on the web**, not the native app —
   fully-native tap-to-open needs Universal Links (see Parity › Gaps to close).
+
+### 2026-07-24 — Phase 15 update: one-time agent invite codes (device-code pairing retired)
+- **Invite codes replace sponsor-approval pairing.** The **Invite your Agent**
+  dialog is now operable: opening it mints a **one-time invite code** for the
+  current workspace (sponsor = you) and shows the exact command,
+  `npx flow-agent-bridge <code>`, with a copy button. No email to type, no
+  approval popup. `[web]`
+- **Immediate join, random avatar.** `POST /v1/agents/redeem` trades the code
+  (which carries the sponsor + workspace) plus the agent's durable credentials
+  for a token synchronously: the agent user is created, assigned a **random**
+  preset avatar (the sponsor can change it in-app afterwards), joined to the
+  workspace + `#general`, and announced with the usual join notice — all in one
+  request. Codes are single-use and expire in 7 days. `POST
+  /v1/workspaces/:id/agent-invites` mints them (any member). `[server]`
+- **Removed**: the device-code flow end to end — `agent_pairing_requests`
+  (dropped in migration `0022`), the `agent.pairing` WS event, the register/poll/
+  approve/deny routes and the `/v1/agent-avatars` picker, the web
+  `AgentPairingPrompt` approval popup and `useAgentRequests` hook, and the
+  bridge `register` subcommand. `[server]` `[web]` `[bridge]`
+- **Bridge**: `npx flow-agent-bridge <invite-code>` redeems and runs in one go;
+  setup prompts for the code (if not passed) then name/handle/harness and joins
+  immediately — no wait. Flags: `--invite --name --handle --harness --server
+  --token --description --cwd`. Package bumped to `0.8.0`; README updated.
+  `[bridge]`
+- Tests: server invite mint/redeem/single-use/expiry/unknown-code/taken-username
+  coverage; bridge invite-code validator; web render test that the dialog shows
+  the generated command. `[server]` `[bridge]` `[web]`
 
 ### 2026-07-23 — Phase 15: "Invite your Agent" + streamlined bridge setup
 - **Sidebar CTA**: a new **Invite your Agent** button sits just above the profile

@@ -279,28 +279,27 @@ export type CreateAppBody = z.infer<typeof CreateAppBody>;
 /** Agent usernames: lowercase handle, 3-32 chars, letter/digit first. */
 export const AGENT_USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 
-export const RegisterAgentBody = z.object({
+/** Agent invite codes: `flow-XXXX-XXXX` over a no-confusables uppercase alphabet
+ *  (generated in Flow, redeemed once). Short + readable by design. */
+export const AGENT_INVITE_CODE_RE = /^flow-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
+
+/** POST /v1/agents/redeem — the bridge trades a one-time invite code (which
+ *  carries the sponsor + workspace) plus its durable credentials for a token.
+ *  No sponsor approval: redeeming the code IS the authorization. */
+export const RedeemAgentInviteBody = z.object({
+  code: z.string().regex(AGENT_INVITE_CODE_RE, 'invalid invite code'),
   username: z.string().toLowerCase().regex(AGENT_USERNAME_RE, 'username: 3-32 lowercase letters, digits, . _ -'),
   key: z.string().min(16).max(128),
   name: z.string().min(1).max(80),
-  sponsorEmail: z.string().email().max(255),
   description: z.string().max(200).optional(),
-  avatarUrl: z.string().url().max(500).optional(),
 });
-export type RegisterAgentBody = z.infer<typeof RegisterAgentBody>;
+export type RedeemAgentInviteBody = z.infer<typeof RedeemAgentInviteBody>;
 
 export const AgentLoginBody = z.object({
   username: z.string().toLowerCase().regex(AGENT_USERNAME_RE),
   key: z.string().min(16).max(128),
 });
 export type AgentLoginBody = z.infer<typeof AgentLoginBody>;
-
-export const ApproveAgentRequestBody = z.object({
-  workspaceId: z.string().uuid(),
-  /** Preset avatar id (e.g. "robot-03") the sponsor picked; omitted = keep the agent's own avatarUrl (or none). */
-  avatar: z.string().regex(/^robot-\d{2}$/).optional(),
-});
-export type ApproveAgentRequestBody = z.infer<typeof ApproveAgentRequestBody>;
 
 export const UpdateAppBody = z
   .object({

@@ -2,8 +2,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type {
   AgentLoginResponse,
-  AgentRegisterPollResponse,
-  AgentRegisterStartResponse,
+  AgentRedeemResponse,
   ArtifactDTO,
   ChannelDTO,
   FileDTO,
@@ -182,66 +181,37 @@ export class FlowApi {
   }
 }
 
-// ---- On-demand registration (AGENT_MEMBERS.md) ------------------
-// The agent registers like a person: username + secret key + a human sponsor
-// (by email). The server opens a pairing request; the sponsor approves the
-// matching code inside Flow while the agent polls.
+// ---- Invite-code onboarding (AGENT_MEMBERS.md) ------------------
+// A human member generates a one-time invite code inside Flow; the agent
+// redeems it with its durable credentials (username + secret key) and joins
+// immediately — no sponsor approval. The code carries the sponsor + workspace.
 
 /** A fresh agent secret key (the agent's password-equivalent, shown/stored once). */
 export function newAgentKey(): string {
   return `flow-agent-key-${randomBytes(24).toString('base64url')}`;
 }
 
-export interface RegisterInput {
+export interface RedeemInput {
+  code: string;
   username: string;
   key: string;
   name: string;
-  sponsorEmail: string;
   description?: string;
-  avatarUrl?: string;
 }
 
-/** Unauthenticated: open a pairing request → pairing code + poll credentials. */
-export async function startAgentRegistration(
-  serverUrl: string,
-  input: RegisterInput,
-): Promise<AgentRegisterStartResponse> {
-  const res = await fetch(`${serverUrl.replace(/\/+$/, '')}/v1/agents/register`, {
+/**
+ * Redeem a one-time invite code (the code IS the auth). Returns the agent token
+ * synchronously — don't lose it (recovery: `flow-agent-bridge login` with the
+ * username + key).
+ */
+export async function redeemAgentInvite(serverUrl: string, input: RedeemInput): Promise<AgentRedeemResponse> {
+  const res = await fetch(`${serverUrl.replace(/\/+$/, '')}/v1/agents/redeem`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
   if (!res.ok) await parseError(res);
-  return (await res.json()) as AgentRegisterStartResponse;
-}
-
-export async function pollAgentRegistration(
-  serverUrl: string,
-  requestId: string,
-  pollSecret: string,
-): Promise<AgentRegisterPollResponse> {
-  const res = await fetch(`${serverUrl.replace(/\/+$/, '')}/v1/agents/register/${requestId}`, {
-    headers: { authorization: `Bearer ${pollSecret}` },
-  });
-  if (!res.ok) await parseError(res);
-  return (await res.json()) as AgentRegisterPollResponse;
-}
-
-/**
- * Poll until the sponsor resolves the request (approve/deny) or it expires.
- * The approved response carries the agent token exactly once — don't lose it
- * (recovery: `flow-agent-bridge login` with the username + key).
- */
-export async function waitForApproval(
-  serverUrl: string,
-  start: AgentRegisterStartResponse,
-): Promise<AgentRegisterPollResponse> {
-  for (;;) {
-    const res = await pollAgentRegistration(serverUrl, start.requestId, start.pollSecret);
-    if (res.status !== 'pending') return res;
-    if (Date.now() > Date.parse(start.expiresAt)) return { status: 'expired' };
-    await new Promise((r) => setTimeout(r, 2000));
-  }
+  return (await res.json()) as AgentRedeemResponse;
 }
 
 /** Unauthenticated: username + key → fresh agent token (revokes prior tokens). */

@@ -28,8 +28,7 @@ import {
   CreateArtifactBody,
   UpdateArtifactBody,
   AgentLoginBody,
-  ApproveAgentRequestBody,
-  RegisterAgentBody,
+  RedeemAgentInviteBody,
   SendMessageBody,
   SetMemberRoleBody,
   SetNotifyLevelBody,
@@ -57,7 +56,6 @@ import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
 import * as ar from '../services/artifacts.js';
-import { listAgentAvatarPresets, readAgentAvatarPreset } from '../services/agentAvatars.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -315,24 +313,23 @@ export function registerRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
-  // ---- First-class AI agents (AGENT_MEMBERS.md): on-demand registration ----
-  // Unauthenticated: open a pairing request. Rate-limited — this triggers a
-  // user-visible approval prompt for the sponsor.
-  app.post('/v1/agents/register', async (req, reply) => {
-    if (!rateAllow(`agent-reg:${req.ip}`, 10, 10 * 60_000)) {
-      throw new ApiError(429, 'rate_limited', 'too many registration attempts — try again later');
-    }
-    const body = parse(RegisterAgentBody, req.body);
-    const res = await ag.startAgentRegistration(body);
-    return reply.status(202).send(res); // pollSecret — shown once
+  // ---- First-class AI agents (AGENT_MEMBERS.md): invite-code onboarding ----
+  // Sponsor side: mint a one-time invite code for a workspace they belong to.
+  app.post('/v1/workspaces/:id/agent-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const dto = await ag.createAgentInvite(id, req.user.id);
+    return reply.status(201).send(dto); // raw code — shown once
   });
 
-  // The agent's poll, authenticated by the pollSecret as a bearer token.
-  app.get('/v1/agents/register/:id', async (req) => {
-    const { id } = req.params as { id: string };
-    const header = req.headers.authorization;
-    const pollSecret = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
-    return ag.pollAgentRegistration(id, pollSecret);
+  // Agent side: redeem the code (the code IS the auth). Creates the agent and
+  // joins it immediately; returns the token synchronously. Rate-limited.
+  app.post('/v1/agents/redeem', async (req, reply) => {
+    if (!rateAllow(`agent-redeem:${req.ip}`, 20, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
+    }
+    const body = parse(RedeemAgentInviteBody, req.body);
+    const res = await ag.redeemAgentInvite(body);
+    return reply.status(201).send(res); // raw token — shown once
   });
 
   // Unauthenticated: username + key → fresh token (revokes prior tokens).
@@ -343,37 +340,6 @@ export function registerRoutes(app: FastifyInstance): void {
     const body = parse(AgentLoginBody, req.body);
     const res = await ag.agentLogin(body.username, body.key);
     return reply.status(201).send(res); // raw token — shown once
-  });
-
-  // Sponsor side: pending pairing requests + approve/deny.
-  app.get('/v1/me/agent-requests', { preHandler: requireAuth }, async (req) => {
-    return { requests: await ag.listPairingRequests(req.user.id) };
-  });
-
-  app.post('/v1/agent-requests/:id/approve', { preHandler: requireAuth }, async (req) => {
-    const { id } = req.params as { id: string };
-    const body = parse(ApproveAgentRequestBody, req.body);
-    await ag.approveAgentRequest(id, req.user.id, body.workspaceId, body.avatar);
-    return { ok: true };
-  });
-
-  // Preset agent avatars for the approval prompt's picker (fixed set, cacheable).
-  app.get('/v1/agent-avatars', { preHandler: requireAuth }, async () => ({
-    avatars: listAgentAvatarPresets().map((id) => ({ id, url: `/v1/agent-avatars/${id}` })),
-  }));
-
-  app.get('/v1/agent-avatars/:id', { preHandler: requireAuth }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    return reply
-      .header('content-type', 'image/png')
-      .header('cache-control', 'private, max-age=86400')
-      .send(readAgentAvatarPreset(id));
-  });
-
-  app.post('/v1/agent-requests/:id/deny', { preHandler: requireAuth }, async (req) => {
-    const { id } = req.params as { id: string };
-    await ag.denyAgentRequest(id, req.user.id);
-    return { ok: true };
   });
 
   app.delete('/v1/workspaces/:id/agents/:userId', { preHandler: requireAuth }, async (req) => {

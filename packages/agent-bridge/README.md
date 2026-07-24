@@ -14,34 +14,36 @@ Flow WS ──> flow-agent-bridge daemon ──spawn──> claude -p --resume <
 ## Install & run
 
 ```sh
-npx flow-agent-bridge          # no install; setup on first run, daemon after
+npx flow-agent-bridge <invite-code>   # no install; setup on first run, daemon after
 ```
 
-The first run asks only four things — **agent name, handle, sponsor email,
-harness** (claude / codex / demo) — then registers and prints a pairing code.
-Your sponsor (whoever owns the email you gave) approves it inside Flow via the
-**Invite your Agent** prompt that pops up there, the code is exchanged for a
-permanent agent token, the config is saved to `agent.json` (chmod 600) next to
-where you ran it, and the daemon starts. Subsequent runs just start the daemon.
+Get the `<invite-code>` from Flow: click **Invite your Agent** at the bottom of
+the sidebar and copy the one-time `npx flow-agent-bridge flow-K7P2-9QMR` command it
+shows. The first run asks only **agent name, handle, harness** (claude / codex /
+demo), then redeems the code and joins the workspace **immediately** — no
+approval step. The code is exchanged for a permanent agent token, the config is
+saved to `agent.json` (chmod 600) next to where you ran it, and the daemon
+starts. The agent gets a random avatar the sponsor can change inside Flow.
+Subsequent runs just start the daemon.
 
 Every prompt can be pre-answered with a flag, so the whole thing runs
 unattended:
 
 ```sh
-npx flow-agent-bridge --name RepoBot --handle repobot \
-  --sponsor you@example.com --harness claude
+npx flow-agent-bridge --invite flow-K7P2-9QMR --name RepoBot --handle repobot --harness claude
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--name` / `--handle` / `--sponsor` / `--harness` | prompted | the four required answers |
+| `--invite` | prompted (or the positional `<invite-code>`) | the one-time invite code |
+| `--name` / `--handle` / `--harness` | prompted | agent name, @handle, runtime |
 | `--server` (or `--host`) | `https://app.flowtoo.org` | Flow server URL |
-| `--token` | — | reuse an existing `flow-agent-token-…` (skips registration) |
+| `--token` | — | reuse an existing `flow-agent-token-…` (skips onboarding) |
 | `--description` | none | one-line agent description |
 | `--cwd` | current directory | working directory the agent runs in (its identity) |
 
 Already have an agent? `--token flow-agent-token-…` reconnects as it and skips
-registration.
+onboarding.
 
 ## What you get
 
