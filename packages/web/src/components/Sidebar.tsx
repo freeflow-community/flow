@@ -117,7 +117,20 @@ export default function Sidebar() {
   };
   const all = channels.data ?? [];
   const joined = all.filter((c) => c.isMember && c.kind === 'standard');
-  const dms = all.filter((c) => c.isMember && c.kind !== 'standard');
+  // Direct messages sort alphabetically by their display title (ui_nits).
+  const dms = all
+    .filter((c) => c.isMember && c.kind !== 'standard')
+    .sort((a, b) =>
+      dmTitle(a, displayNames, auth.user.id).localeCompare(
+        dmTitle(b, displayNames, auth.user.id),
+        undefined,
+        { sensitivity: 'base' },
+      ),
+    );
+  // The self-DM ("<you> (you)") is a personal scratchpad — it never carries an
+  // unread badge (ui_nits): you can't have unread messages from yourself.
+  const isSelfDm = (c: ChannelDTO) =>
+    c.kind === 'dm' && (c.memberIds ?? []).every((id) => id === auth.user.id);
   // Phase 13: artifacts nest under their channel. Group the (newest-first) list
   // by channelId so each channel row can render its pinned artifacts beneath it.
   const artifactsByChannel = new Map<string, ArtifactDTO[]>();
@@ -240,6 +253,7 @@ export default function Sidebar() {
               <ChannelRow
                 channel={c}
                 testid={`sidebar-dm-${title}`}
+                hideUnread={isSelfDm(c)}
                 label={dmTitle(c, displayNames, auth.user.id)}
                 statusEmoji={c.kind === 'dm' ? status?.statusEmoji : ''}
                 statusTitle={c.kind === 'dm' ? status?.statusText : ''}
@@ -500,6 +514,7 @@ function ChannelRow({
   statusEmoji,
   statusTitle,
   testid,
+  hideUnread,
   onMenu,
 }: {
   channel: ChannelDTO;
@@ -508,13 +523,14 @@ function ChannelRow({
   statusEmoji?: string;
   statusTitle?: string;
   testid?: string;
+  hideUnread?: boolean;
   onMenu: () => void;
 }) {
   const sel = useSelection();
   // The channel stays selected (and highlighted) even with an artifact tab open
   // in the side panel — the conversation is still shown behind it (phase 13).
   const active = sel.channelId === channel.id;
-  const unread = channel.unreadCount > 0;
+  const unread = channel.unreadCount > 0 && !hideUnread;
   return (
     <div
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${

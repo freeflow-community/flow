@@ -5,6 +5,12 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **Edit a message right where you type.** Press ↑ in an empty message box (or
+  hit the ✏️ on your own message) and it opens in the composer for editing —
+  same box you write in, with mention and emoji autocomplete. Enter saves,
+  Esc cancels and hands you back whatever you were drafting.
+- **Tidier Direct Messages.** Your DMs are now listed in alphabetical order, and
+  your personal "note to self" chat no longer shows an unread badge.
 - **Pin any link and browse it together.** Every link shared in a channel now
   has a 📌 **Pin as artifact** button — on the preview card and on plain links in
   a message. Pinning opens a little built-in browser in the side panel with the

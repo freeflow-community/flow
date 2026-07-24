@@ -100,6 +100,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   workspace-menu items. Channel context actions (mute/leave/archive, invite to
   channel) are also not yet wired on iOS. The drawer's structure makes these
   straightforward ports; none are backed on-device yet.
+- macOS + iOS: message editing still uses an inline/dedicated edit field — web
+  moved editing into the prompt editor (↑ and ✏️ load the body into the composer,
+  Enter saves, Esc restores the draft; 2026-07-23 ui_nits). Both clients already
+  have the PATCH plumbing; only the composer-reuse UX needs porting.
+- macOS + iOS: the self-DM row still shows an unread badge, and the Direct
+  Messages list is not sorted alphabetically — web fixed both 2026-07-23
+  (ui_nits). Client-only sidebar tweaks.
 
 ### Deliberate divergences (ruled)
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
@@ -134,6 +141,19 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-23 — UI nits: composer-based message edit, self-DM & DM-list polish
+- `[web]` Editing a message now **reuses the prompt editor** instead of the inline
+  `<input>` box (ui_nits). ↑ in an empty composer, and the ✏️ hover action, both
+  load the message body into the composer; Enter saves via `PATCH /v1/messages/:id`,
+  Esc/Cancel restores the in-progress draft, and the row being edited is highlighted
+  in the stream. Works in both the channel and thread composers.
+- `[web]` The **self-DM** ("<you> (you)") row no longer shows an unread badge — you
+  can't have unread messages from yourself (ui_nits).
+- `[web]` **Direct messages sort alphabetically** by display title, case-insensitive
+  (ui_nits).
+- Parity: these three are web-only UI nits. macOS/iOS carry the pre-existing inline
+  edit and unsorted DM list — see Parity › Gaps to close.
 
 ### 2026-07-23 — Link artifacts: pin a link as a co-browsing artifact
 - Artifacts gain a second **kind**: `link` (a pinned URL) alongside the existing
