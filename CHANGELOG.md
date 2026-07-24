@@ -9,14 +9,6 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
-- macOS: clicking an OS notification banner does not navigate to the message —
-  web now focuses the tab and jumps to the triggering message on banner click
-  (2026-07-23), but the native app's `Banners.show` fires a
-  `UNUserNotificationCenter` request with no `UNUserNotificationCenterDelegate`,
-  so `didReceive` is never handled and a click just activates the app. Needs a
-  delegate that routes the notification `id` to the same jump `AppState` already
-  does for Activity-row taps. (iOS has no push notifications yet — closes with
-  the APNs work.)
 - iOS: no build tag or "What's new" notes in the UI — web + macOS show the
   build's short commit SHA at the foot of the workspace menu, and clicking it
   opens a FEATURES.md lightbox. iOS has no workspace dropdown to hang either on;
@@ -126,13 +118,23 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
-### 2026-07-23 — Web notification banners are now clickable
+### 2026-07-23 — Notification banners are now clickable (web + macOS)
 - Clicking a browser (OS) notification banner from the web client now focuses
   the tab and jumps straight to the triggering message — selecting the right
   workspace/channel, opening the thread for a reply, flashing the message, and
   marking the notification read — the same navigation the in-app Activity list
   already does. Previously the banner had no `onclick`, so clicking it did
   nothing beyond the browser default. `[web]`
+- The native macOS app now does the same: `AppDelegate` becomes the
+  `UNUserNotificationCenterDelegate`, `Banners.show` carries the
+  workspace/channel/message/thread ids in the banner's `userInfo`, and a tap
+  activates the app and calls `AppState.openNotification(...)` — the same jump
+  Activity-row taps use. A tap that arrives before the UI is wired up (cold
+  launch) is buffered and replayed once `AppState` attaches. The delegate's
+  `willPresent` also lets banners show while Flow is frontmost (SyncEngine
+  already suppresses them for the channel you're viewing, so it's never noise).
+  Previously the app registered no delegate, so a tap just activated the app
+  and foreground banners were silently dropped. `[macos]`
 
 ### 2026-07-23 — Artifacts: agent-created ones auto-open for the requester
 - When an agent creates an artifact through the Flow MCP, it now **opens

@@ -18,13 +18,23 @@ enum Banners {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    static func show(title: String, body: String, id: String) {
+    /// Post a banner for `n`. The navigation fields ride along in `userInfo` so
+    /// tapping the banner can jump to the message (see `AppDelegate`'s
+    /// notification-center delegate).
+    static func show(_ n: NotificationItem, title: String, body: String) {
         guard available else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        var userInfo: [AnyHashable: Any] = [
+            "workspaceId": n.workspaceId,
+            "channelId": n.channelId,
+            "messageId": n.messageId,
+        ]
+        if let root = n.message.threadRootId { userInfo["threadRootId"] = root }
+        content.userInfo = userInfo
+        let request = UNNotificationRequest(identifier: n.id, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
 

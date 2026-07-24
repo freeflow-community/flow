@@ -1102,7 +1102,7 @@ actor SyncEngine {
                 case 2: "\(senderName ?? "Someone") replied in a thread"
                 default: "\(senderName ?? "Someone") mentioned you"
                 }
-                Banners.show(title: title, body: MentionRendering.plainText(n.message.body), id: n.id)
+                Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body))
             }
 
         case .workspaceUpdated(let ws):
