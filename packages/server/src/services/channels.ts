@@ -5,6 +5,7 @@ import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { isUniqueViolation, requireMembership } from './workspaces.js';
 import { enqueueChannelEvent, enqueueMemberEvent } from './appEvents.js';
+import { postSystemMessage } from './messages.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
 const { channels, channelMembers, messages, workspaceMembers } = schema;
@@ -210,9 +211,11 @@ export async function listChannels(workspaceId: string, userId: string): Promise
   for (const r of visible) {
     let unreadCount = 0;
     if (r.isMember) {
+      // System lines (join/leave) never contribute to unread — they're courtesy
+      // notices, not messages you need to catch up on.
       const cond = r.lastReadMsgId
-        ? and(eq(messages.channelId, r.c.id), isNull(messages.threadRootId), isNull(messages.deletedAt), gt(messages.id, r.lastReadMsgId))
-        : and(eq(messages.channelId, r.c.id), isNull(messages.threadRootId), isNull(messages.deletedAt));
+        ? and(eq(messages.channelId, r.c.id), isNull(messages.threadRootId), isNull(messages.deletedAt), isNull(messages.systemKind), gt(messages.id, r.lastReadMsgId))
+        : and(eq(messages.channelId, r.c.id), isNull(messages.threadRootId), isNull(messages.deletedAt), isNull(messages.systemKind));
       const cnt = await db.select({ n: sql<number>`count(*)::int` }).from(messages).where(cond);
       unreadCount = cnt[0]?.n ?? 0;
     }
@@ -275,6 +278,7 @@ export async function joinChannel(channelId: string, userId: string): Promise<Ch
       ts: new Date().toISOString(),
       data: { userId, channelId, workspaceId: chan.workspaceId },
     });
+    await postSystemMessage(chan, userId, 'member_joined');
   }
   return toChannelDTO(chan, { isMember: true });
 }
@@ -313,6 +317,7 @@ export async function addMember(channelId: string, actorId: string, targetUserId
       ts: new Date().toISOString(),
       data: { userId: targetUserId, channelId, workspaceId: chan.workspaceId },
     });
+    await postSystemMessage(chan, targetUserId, 'member_joined');
   }
 }
 
@@ -349,6 +354,7 @@ export async function removeMember(channelId: string, actorId: string, targetUse
       ts: new Date().toISOString(),
       data: { userId: targetUserId, channelId, workspaceId: chan.workspaceId },
     });
+    await postSystemMessage(chan, targetUserId, 'member_left');
   }
 }
 

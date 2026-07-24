@@ -186,6 +186,9 @@ export const messages = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     replyCount: integer('reply_count').notNull().default(0),
     lastReplyAt: timestamp('last_reply_at', { withTimezone: true }),
+    // Non-null marks a channel event line (join/leave); null = a user message.
+    // Excluded from unread counts and never notifies.
+    systemKind: text('system_kind'),
   },
   (t) => [
     uniqueIndex().on(t.channelId, t.clientMsgId),

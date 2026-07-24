@@ -178,6 +178,14 @@ struct AppDatabase: Sendable {
                 t.add(column: "failed", .boolean).notNull().defaults(to: false)
             }
         }
+        // Join/leave system messages (ui_nits): a non-null system_kind tags a row
+        // as a channel event line ("Alice joined the channel"). NULL = a normal
+        // message. Cached rows predate it and read as NULL until refetched.
+        migrator.registerMigration("v10") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "systemKind", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

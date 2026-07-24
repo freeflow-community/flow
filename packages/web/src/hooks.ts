@@ -207,6 +207,7 @@ export function useSendMessage(channelId: string) {
     createdAt: new Date().toISOString(),
     editedAt: null,
     deletedAt: null,
+    systemKind: null,
     replyCount: 0,
     lastReplyAt: null,
     replyParticipantUserIds: [],

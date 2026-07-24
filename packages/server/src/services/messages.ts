@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
-import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO, UnfurlDTO } from '@flow/shared';
+import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO, SystemMessageKind, UnfurlDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
@@ -35,6 +35,7 @@ export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
     createdAt: row.createdAt.toISOString(),
     editedAt: row.editedAt?.toISOString() ?? null,
     deletedAt: row.deletedAt?.toISOString() ?? null,
+    systemKind: (row.systemKind as MessageDTO['systemKind']) ?? null,
     replyCount: row.replyCount,
     lastReplyAt: row.lastReplyAt?.toISOString() ?? null,
     replyParticipantUserIds: extras?.replyParticipants ?? [],
@@ -205,6 +206,71 @@ export async function sendMessage(
   // §1: never blocks the send path — cards arrive later via message.updated.
   void scheduleForMessage(dto);
   return dto;
+}
+
+const SYSTEM_PREDICATE: Record<SystemMessageKind, string> = {
+  member_joined: 'joined the channel',
+  member_left: 'left the channel',
+};
+
+/**
+ * Post an inline channel-event line ("Alice joined the channel") — a normal
+ * `messages` row authored by the subject user, tagged with `systemKind` so
+ * clients render it as a centered muted notice. Unlike sendMessage it creates
+ * no notifications, no Slack-events outbox rows, and no unfurls, and it never
+ * throws into the caller's path: membership writes must not fail because the
+ * courtesy notice couldn't be posted. Only standard channels get these.
+ *
+ * The body is the pre-rendered sentence so every client (and scroll-back
+ * history) reads correctly without a live member lookup; the name reflects the
+ * user at the moment of the event, which is what we want.
+ */
+export async function postSystemMessage(
+  chan: { id: string; workspaceId: string; kind: string },
+  subjectUserId: string,
+  kind: SystemMessageKind,
+): Promise<void> {
+  if (chan.kind !== 'standard') return;
+  try {
+    const who = await db
+      .select({ displayName: schema.users.displayName })
+      .from(schema.users)
+      .where(eq(schema.users.id, subjectUserId))
+      .limit(1);
+    const name = who[0]?.displayName ?? 'Someone';
+    const body = `${name} ${SYSTEM_PREDICATE[kind]}`;
+    const id = newId();
+    const now = new Date();
+    const enc = encryptBody(body);
+    const inserted = await db
+      .insert(messages)
+      .values({
+        id,
+        channelId: chan.id,
+        userId: subjectUserId,
+        threadRootId: null,
+        clientMsgId: newId(),
+        body: enc.body,
+        bodyNonce: enc.bodyNonce,
+        encKeyId: enc.encKeyId,
+        encScheme: enc.encScheme,
+        createdAt: now,
+        systemKind: kind,
+      })
+      .returning();
+    const row = inserted[0];
+    if (!row) return;
+    publishEvent(subjectMsg(chan.workspaceId, chan.id), {
+      type: 'message.created',
+      workspaceId: chan.workspaceId,
+      channelId: chan.id,
+      ts: now.toISOString(),
+      data: toMessageDTO(row),
+    });
+  } catch (err) {
+    // Best-effort: a failed courtesy line must not abort the join/leave.
+    console.error('postSystemMessage failed', { channelId: chan.id, kind, err });
+  }
 }
 
 /** Single hydrated message; used by the unfurl worker to republish. */
