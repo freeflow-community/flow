@@ -189,14 +189,26 @@ final class AppState: ObservableObject {
     /// then scroll to + flash the triggering message. `focusMessageId` is set
     /// last, since selectChannel clears it for ordinary channel switches.
     func openNotification(_ n: NotificationItem) {
-        if selectedWorkspaceId != n.workspaceId {
-            selectWorkspace(n.workspaceId)
+        openNotification(
+            workspaceId: n.workspaceId,
+            channelId: n.channelId,
+            messageId: n.messageId,
+            threadRootId: n.message.threadRootId
+        )
+    }
+
+    /// Same jump as `openNotification(_:)` but from the flat fields carried in a
+    /// tapped OS banner's `userInfo` — the notification-center callback has no
+    /// `NotificationItem` to hand (see `AppDelegate`).
+    func openNotification(workspaceId: String, channelId: String, messageId: String, threadRootId: String?) {
+        if selectedWorkspaceId != workspaceId {
+            selectWorkspace(workspaceId)
         }
-        selectChannel(n.channelId)
-        if let root = n.message.threadRootId {
-            openThread(root)
+        selectChannel(channelId)
+        if let threadRootId {
+            openThread(threadRootId)
         }
-        focusMessageId = n.messageId
+        focusMessageId = messageId
     }
 
     /// Who's typing in one composer. `threadRootId` nil = the channel's main

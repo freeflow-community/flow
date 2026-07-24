@@ -5,10 +5,10 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
-- **Click a notification banner to jump right to the message.** On the web,
-  clicking a desktop notification now brings the tab to the front and takes you
-  straight to the message that triggered it — opening the thread if it was a
-  reply and marking the notification read. (Native Mac app coming next.)
+- **Click a notification banner to jump right to the message.** On both the web
+  and the Mac app, clicking a desktop notification now brings Flow to the front
+  and takes you straight to the message that triggered it — opening the thread
+  if it was a reply and (on web) marking the notification read.
 - **Artifacts are now shared per channel.** Pin a file (or a document an agent
   makes for you) as an artifact and it shows up for everyone in that channel,
   tucked under the channel’s name in the sidebar. Want it private? Pin it in a
