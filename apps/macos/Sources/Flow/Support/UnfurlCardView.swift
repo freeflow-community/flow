@@ -18,6 +18,9 @@ struct UnfurlCardView: View {
     /// Only the message's author may remove its cards (§10).
     let canRemove: Bool
     let onRemove: () -> Void
+    /// Pin this link as a co-browsing artifact (link artifacts). Nil where artifacts
+    /// aren't available (iOS has no artifact panel yet), which hides the button.
+    var onPin: (() -> Void)? = nil
 
     @State private var hovering = false
 
@@ -28,6 +31,16 @@ struct UnfurlCardView: View {
         return canRemove && hovering
         #else
         return canRemove
+        #endif
+    }
+
+    /// Same reveal rule as remove, gated on a pin handler being provided.
+    private var showPin: Bool {
+        guard onPin != nil else { return false }
+        #if os(macOS)
+        return hovering
+        #else
+        return true
         #endif
     }
 
@@ -94,6 +107,15 @@ struct UnfurlCardView: View {
             }
 
             Spacer(minLength: 0)
+
+            if showPin, let onPin {
+                Button(action: onPin) {
+                    Text("📌").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .help("Pin as artifact")
+                .accessibilityIdentifier("unfurl.pin")
+            }
 
             if showRemove {
                 Button(action: onRemove) {

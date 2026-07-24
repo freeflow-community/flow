@@ -203,6 +203,14 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['artifacts', event.workspaceId] });
         const a = event.data as ArtifactDTO;
         if (event.type === 'artifact.deleted' && cur.artifactId === a.id) cur.selectArtifact(null);
+        // Co-browsing: an updated link artifact's url must reach every viewer
+        // right away (the refetch above is async). Seed the new DTO into the
+        // list cache so an open mini-browser follows the navigation instantly.
+        if (event.type === 'artifact.updated') {
+          qc.setQueryData<{ artifacts: ArtifactDTO[] }>(['artifacts', event.workspaceId], (old) =>
+            old ? { artifacts: old.artifacts.map((x) => (x.id === a.id ? a : x)) } : old,
+          );
+        }
         // Auto-open an agent-created artifact for whoever is looking at its
         // channel — the user who asked the agent to make it. Gated on ownsFile
         // (agent-generated content) so a human "Pin as artifact" never steals

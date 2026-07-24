@@ -42,7 +42,8 @@ export function isHtmlFile(file: FileDTO): boolean {
 }
 
 /** Sidebar glyph for an artifact row. */
-export function fileGlyph(file: FileDTO): string {
+export function fileGlyph(file: FileDTO | null): string {
+  if (!file) return '🔗'; // link artifact (no backing file)
   if (isImageFile(file)) return '🖼️';
   if (isVideoFile(file)) return '🎬';
   if (file.mimeType === 'application/pdf') return '📕';

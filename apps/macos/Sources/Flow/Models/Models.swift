@@ -348,7 +348,13 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     let id: String
     let workspaceId: String
     let channelId: String // the channel this artifact belongs to (shared with all members)
-    let fileId: String
+    /// "file" — a pinned file; "link" — a pinned URL opened in the co-browsing
+    /// mini-browser (link artifacts). Discriminates which of file/url is set.
+    let kind: String
+    let fileId: String? // set when kind == "file"
+    /// The pinned URL when kind == "link". Mutable: any member changing it in the
+    /// mini-browser re-points the artifact and every viewer follows (co-browse).
+    let url: String?
     var name: String
     /// True when the artifact owns its backing file — an agent generated the
     /// content via the Flow MCP rather than a human pinning a message file.
@@ -356,7 +362,13 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     let ownsFile: Bool
     let createdAt: String
     let updatedAt: String
-    let file: FileAttachment
+    let file: FileAttachment? // null for link artifacts
+
+    var isLink: Bool { kind == "link" }
+
+    /// Sidebar/tab glyph: the backing file's kind glyph, or a link glyph for
+    /// link artifacts (which have no file).
+    var glyph: String { file?.artifactGlyph ?? "🔗" }
 }
 
 /// Workspace membership (local cache of GET /workspaces/:id/members).
@@ -516,13 +528,16 @@ struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String 
 /// = server derives it from the filename.
 struct CreateArtifactBody: Encodable, Sendable {
     let channelId: String
-    let fileId: String
-    let name: String?
+    var fileId: String?
+    var url: String? // pin a link instead of a file (link artifacts) — exactly one of fileId/url
+    var name: String?
 }
-/// PATCH /v1/artifacts/:id — rename and/or re-point at a new file.
+/// PATCH /v1/artifacts/:id — rename, re-point a file artifact at a new file, or
+/// re-point a link artifact at a new url (the co-browse navigation write).
 struct UpdateArtifactBody: Encodable, Sendable {
     var name: String?
     var fileId: String?
+    var url: String?
 }
 
 // MARK: - WS events

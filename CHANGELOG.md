@@ -38,7 +38,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - iOS: no Artifacts UI — no nested sidebar rows, artifact side panel, or
   pin-as-artifact action; the `artifact.*` WS events are safely ignored. Now
   the per-channel model (phase 13); server + web + macOS shipped together
-  2026-07-23.
+  2026-07-23. Link artifacts (co-browsing mini-browser) likewise skip
+  iOS — closes with the iOS artifacts port.
+- Link-artifact mini-browser: the web client renders link artifacts in a sandboxed
+  `<iframe>`, which has two browser limits the native macOS `WKWebView` doesn't:
+  (1) sites sending `X-Frame-Options`/CSP `frame-ancestors` can't be embedded
+  (web shows a best-effort "Open in new tab" fallback; macOS has no such block),
+  and (2) the URL bar can't follow cross-origin in-page navigation (same-origin
+  policy), so on web only URL-bar edits broadcast to co-browsers — in-page link
+  clicks broadcast on macOS (navigation delegate) but not web. Typing a URL
+  syncs everyone on both. Inherent to iframes; revisit only if we add a
+  server-side page proxy.
 - macOS/iOS: no agent pairing prompt — sponsors must approve agent
   registrations in the web app (the `agent.pairing` WS event is safely ignored
   by the native clients; roster `sponsorId` likewise unused there yet).
@@ -124,6 +134,33 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-23 — Link artifacts: pin a link as a co-browsing artifact
+- Artifacts gain a second **kind**: `link` (a pinned URL) alongside the existing
+  `file`. New migration `0020_artifact_links.sql` makes `file_id` nullable and
+  adds `kind` + `url` with a CHECK that a `file` row carries `file_id`/no `url`
+  and a `link` row carries `url`/no `file_id`; link pins are idempotent per
+  `(channel_id, url)`. `ArtifactDTO.file`/`fileId` are now nullable and `kind`
+  /`url` are added; `POST /v1/artifacts` accepts `{channelId, url}` and
+  `PATCH /v1/artifacts/:id` accepts `{url}` (the co-browse write). All joins on
+  `files` became LEFT joins so link artifacts survive listing. `[server]`
+- Any link in chat now offers **Pin as artifact** — a 📌 on the unfurl preview
+  card and on every bare inline link (revealed on hover). Pinning opens the link
+  in a **mini-browser** in the side panel: an editable URL bar above the page.
+  `[web]` `[macos]`
+- **Co-browsing**: changing the URL (typing in the bar on any platform, or
+  clicking an in-page link in the native macOS web view) re-points the shared
+  artifact via `artifact.updated`, so every channel member's mini-browser
+  follows in real time. Received updates apply without re-broadcasting (no echo
+  loop); the web client seeds the updated DTO into its cache so the follow is
+  instant. `[server]` `[web]` `[macos]`
+- macOS uses a native `WKWebView` (`LinkArtifactView`) — no framing limits, and
+  a navigation delegate keeps the URL bar in sync with in-page navigation. Web
+  uses a sandboxed `<iframe>` with a best-effort "this site can't be embedded —
+  Open in new tab" fallback. `[web]` `[macos]`
+- Tests: server unit coverage for link create/idempotency/url-shape/co-browse
+  update/kind-guard/delete; a web test that inline links expose the pin
+  affordance only when a channel provides the handler. `[server]` `[web]`
 
 ### 2026-07-23 — Downloadable macOS app + "not installed" fallback
 - The signed-out page now links to **Download the Mac app**. New public server

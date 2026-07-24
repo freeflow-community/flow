@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
-import { bytesLabel, displayTime, renderBlocks } from '../lib/format';
+import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { useAuth, useSelection } from '../state';
 import { useSendMessage, useToggleReaction } from '../hooks';
@@ -299,6 +299,13 @@ function MessageRow({
     if (last) sel.selectArtifact(last.id);
   };
 
+  // Pin a bare link from the message body as a co-browsing artifact and open it.
+  const pinUrl = async (url: string) => {
+    const a = await api<ArtifactDTO>('POST', '/v1/artifacts', { channelId: message.channelId, url });
+    await qc.invalidateQueries({ queryKey: ['artifacts', sel.workspaceId] });
+    sel.selectArtifact(a.id);
+  };
+
   return (
     <div
       data-testid={`message-${message.id}`}
@@ -360,7 +367,9 @@ function MessageRow({
           <>
             {message.body.trim() && (
               <div className="text-sm leading-normal break-words whitespace-pre-wrap">
-                {renderBlocks(message.body, names, auth.user.id)}
+                <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
+                  {renderBlocks(message.body, names, auth.user.id)}
+                </InlineLinkContext.Provider>
                 {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
               </div>
             )}
@@ -399,6 +408,8 @@ function MessageRow({
                 key={u.urlHash}
                 unfurl={u}
                 messageId={message.id}
+                channelId={message.channelId}
+                workspaceId={sel.workspaceId}
                 canRemove={message.userId === auth.user.id}
               />
             ))}

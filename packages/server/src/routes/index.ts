@@ -619,6 +619,7 @@ export function registerRoutes(app: FastifyInstance): void {
     const body = parse(CreateArtifactBody, req.body);
     const dto = await ar.createArtifact(req.user.id, body.channelId, {
       fileId: body.fileId,
+      url: body.url,
       name: body.name,
       ownsFile: body.ownsFile,
     });

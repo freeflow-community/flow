@@ -8,10 +8,45 @@
 // Block markdown extended to headings (#…######), unordered/ordered lists,
 // GFM pipe tables, and horizontal rules — all rendered at display time; the
 // wire format stays literal so other clients still show plain markdown.
-import { Fragment } from 'react';
+import { createContext, Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { WorkspaceMemberDTO } from '@flow/shared';
 import { expandShortcodes } from '@flow/shared';
+
+/** Lets a message row offer "Pin as artifact" on every inline link it renders,
+ * without threading a callback through the recursive renderer. Rendering sites
+ * that don't provide it (previews, etc.) just get plain links. */
+export const InlineLinkContext = createContext<{ onPinLink?: (url: string) => void }>({});
+
+/** A link in a message body: opens in a new tab, and — when a pin handler is in
+ * context — reveals a small 📌 on hover to pin the URL as a co-browsing artifact. */
+function InlineLink({ href, children }: { href: string; children: ReactNode }) {
+  const { onPinLink } = useContext(InlineLinkContext);
+  const a = (
+    <a href={href} target="_blank" rel="noreferrer noopener" className="text-accent-deep underline">
+      {children}
+    </a>
+  );
+  if (!onPinLink) return a;
+  return (
+    <span className="group/lnk relative inline-flex items-baseline">
+      {a}
+      <button
+        type="button"
+        data-testid="inline-link-pin"
+        title="Pin as artifact"
+        aria-label="Pin as artifact"
+        className="ml-0.5 rounded px-0.5 align-baseline text-[0.85em] leading-none opacity-0 group-hover/lnk:opacity-100 hover:bg-daypill"
+        onClick={(e) => {
+          e.preventDefault();
+          onPinLink(href);
+        }}
+      >
+        📌
+      </button>
+    </span>
+  );
+}
 
 const TOKEN_RE = /<@([0-9a-fA-F-]{36})>|<!(channel|here|everyone)>/g;
 
@@ -45,15 +80,15 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
       out.push(<s key={k}>{renderInline(m[5].slice(2, -2), k)}</s>);
     } else if (m[6] !== undefined && m[7] !== undefined) {
       out.push(
-        <a key={k} href={m[7]} target="_blank" rel="noreferrer noopener" className="text-accent-deep underline">
+        <InlineLink key={k} href={m[7]}>
           {m[6]}
-        </a>,
+        </InlineLink>,
       );
     } else if (m[8] !== undefined) {
       out.push(
-        <a key={k} href={m[8]} target="_blank" rel="noreferrer noopener" className="text-accent-deep underline">
+        <InlineLink key={k} href={m[8]}>
           {m[8]}
-        </a>,
+        </InlineLink>,
       );
     }
     last = m.index + m[0].length;

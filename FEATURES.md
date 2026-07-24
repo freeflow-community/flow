@@ -5,6 +5,15 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-23
 
+- **Pin any link and browse it together.** Every link shared in a channel now
+  has a 📌 **Pin as artifact** button — on the preview card and on plain links in
+  a message. Pinning opens a little built-in browser in the side panel with the
+  address at the top and the page below it. Type a different address to go
+  somewhere else, or just click around the page — and because the pin is shared,
+  everyone in the channel sees it move to the same page in real time. It's a
+  simple way to look at something together. (On the Mac app the mini-browser is
+  fully native; on the web a few sites won't allow being embedded, and Flow will
+  offer to open those in a new tab instead.)
 - **Get the Mac app right from the sign-in page.** There's now a **Download the
   Mac app** link on the logged-out screen — grab the desktop app, drag it to
   Applications, and open it (no scary security warnings; it's signed and

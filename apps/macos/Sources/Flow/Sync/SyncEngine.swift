@@ -760,10 +760,32 @@ actor SyncEngine {
         return artifact
     }
 
+    /// Pins a link as a shared co-browsing artifact in a channel (idempotent per
+    /// channel+url, server-enforced) and refreshes the sidebar list.
+    func createLinkArtifact(channelId: String, url: String, name: String? = nil) async throws -> Artifact {
+        let artifact: Artifact = try await api.post(
+            "/v1/artifacts",
+            body: CreateArtifactBody(channelId: channelId, url: url, name: name)
+        )
+        await refreshArtifacts(workspaceId: artifact.workspaceId)
+        return artifact
+    }
+
     func renameArtifact(id: String, name: String) async throws {
         let artifact: Artifact = try await api.patch(
             "/v1/artifacts/\(id)",
             body: UpdateArtifactBody(name: name)
+        )
+        await refreshArtifacts(workspaceId: artifact.workspaceId)
+    }
+
+    /// Re-points a link artifact at a new url — the co-browse navigation write.
+    /// The server publishes artifact.updated, so every viewer's mini-browser
+    /// follows; we still refresh locally so the initiator updates immediately.
+    func setArtifactURL(id: String, url: String) async throws {
+        let artifact: Artifact = try await api.patch(
+            "/v1/artifacts/\(id)",
+            body: UpdateArtifactBody(url: url)
         )
         await refreshArtifacts(workspaceId: artifact.workspaceId)
     }

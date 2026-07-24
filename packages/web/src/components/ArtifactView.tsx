@@ -28,15 +28,164 @@ export default function ArtifactBody({ artifactId }: { artifactId: string }) {
   if (!artifact) {
     return <div className="flex min-h-0 flex-1 items-center justify-center text-faint">Loading…</div>;
   }
+  // Link artifacts open in the co-browsing mini-browser (its own URL-bar chrome
+  // replaces the file toolbar); everything else is a pinned file.
+  if (artifact.kind === 'link') {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid={`artifact-body-${artifact.name}`}>
+        <LinkPane artifact={artifact} />
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid={`artifact-body-${artifact.name}`}>
       <ArtifactToolbar
         artifact={artifact}
         onRenamed={() => void qc.invalidateQueries({ queryKey: ['artifacts', artifact.workspaceId] })}
       />
-      <ArtifactContent key={artifact.fileId} file={artifact.file} />
+      {artifact.file && <ArtifactContent key={artifact.fileId} file={artifact.file} />}
     </div>
   );
+}
+
+/**
+ * The co-browsing mini-browser (link artifacts). An editable URL bar sits above an
+ * iframe of the pinned page. Editing the URL PATCHes the artifact, so the
+ * server re-points it and publishes artifact.updated — every channel member's
+ * pane follows (see Main.tsx's updated-event cache seed). The committed shared
+ * url is `artifact.url`; `draft` is the local text field, resynced whenever the
+ * shared url changes (yours follows the group when someone else navigates).
+ *
+ * Web limits (documented divergence from the native macOS viewer): (1) many
+ * sites refuse framing via X-Frame-Options / CSP frame-ancestors — we can't read
+ * cross-origin frame state, so a load that never paints is surfaced as a
+ * best-effort "can't embed" hint with Open-in-new-tab; (2) in-page clicks to
+ * another origin can't be observed, so only URL-bar edits broadcast.
+ */
+function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
+  const url = artifact.url ?? '';
+  const [draft, setDraft] = useState(url);
+  const [loaded, setLoaded] = useState(false);
+  const [maybeBlocked, setMaybeBlocked] = useState(false);
+
+  // Follow the shared url: when it changes (remote navigation or our own echo),
+  // resync the field and reset the load state so the block hint re-evaluates.
+  useEffect(() => {
+    setDraft(url);
+    setLoaded(false);
+    setMaybeBlocked(false);
+    if (!url) return;
+    const t = setTimeout(() => setMaybeBlocked(true), 4000);
+    return () => clearTimeout(t);
+  }, [url]);
+
+  const go = async (raw: string) => {
+    const next = normalizeUrl(raw);
+    if (!next || next === url) return;
+    // Optimistic: the PATCH echoes back an artifact.updated that reconciles the
+    // cache; we don't need to setDraft here (the url-effect will on echo).
+    try {
+      await api('PATCH', `/v1/artifacts/${artifact.id}`, { url: next });
+    } catch {
+      setDraft(url); // revert the field if the server rejected it
+    }
+  };
+
+  return (
+    <>
+      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-hairline px-2">
+        <input
+          data-testid="link-artifact-url"
+          className="min-w-0 flex-1 rounded border border-hairline2 bg-white px-2 py-0.5 font-mono text-xs"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void go(draft);
+            if (e.key === 'Escape') setDraft(url);
+          }}
+          spellCheck={false}
+          aria-label="Address"
+        />
+        <button
+          data-testid="link-artifact-go"
+          className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-accent-soft hover:bg-daypill"
+          title="Go"
+          onClick={() => void go(draft)}
+        >
+          Go
+        </button>
+        {url && (
+          <a
+            data-testid="link-artifact-open"
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-faint hover:bg-daypill hover:text-ink"
+            title="Open in new tab"
+          >
+            ↗
+          </a>
+        )}
+      </div>
+      <div className="relative min-h-0 flex-1 bg-white">
+        {url ? (
+          <iframe
+            key={url}
+            data-testid={`artifact-link-${artifact.name}`}
+            title={artifact.name}
+            src={url}
+            onLoad={() => { setLoaded(true); setMaybeBlocked(false); }}
+            // Permissive: this is cross-origin content in its own origin, so it
+            // can't reach our DOM/token — let it behave like a normal browser tab.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+            className="h-full w-full"
+          />
+        ) : (
+          <Centered>No URL</Centered>
+        )}
+        {maybeBlocked && !loaded && (
+          <div
+            data-testid="link-artifact-blocked"
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/95 p-6 text-center"
+          >
+            <p className="text-sm text-muted">
+              This page is taking a while — some sites don’t allow being embedded.
+            </p>
+            <div className="flex items-center gap-2">
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-[10px] border border-hairline bg-white px-4 py-2 text-sm font-medium hover:border-hairline2"
+              >
+                Open in new tab ↗
+              </a>
+              <button
+                className="rounded-[10px] px-3 py-2 text-sm text-muted hover:text-ink"
+                onClick={() => setMaybeBlocked(false)}
+              >
+                Keep waiting
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Add a scheme if the user typed a bare host; reject anything non-http(s). */
+function normalizeUrl(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
 }
 
 function ArtifactToolbar({ artifact, onRenamed }: { artifact: ArtifactDTO; onRenamed: () => void }) {
@@ -55,6 +204,7 @@ function ArtifactToolbar({ artifact, onRenamed }: { artifact: ArtifactDTO; onRen
     }
   };
   const download = async () => {
+    if (!artifact.file) return;
     const url = await blobUrl(`/v1/files/${artifact.file.id}`);
     const a = document.createElement('a');
     a.href = url;
@@ -85,7 +235,7 @@ function ArtifactToolbar({ artifact, onRenamed }: { artifact: ArtifactDTO; onRen
           {artifact.name}
         </button>
       )}
-      <span className="shrink-0 text-xs text-faint">{bytesLabel(artifact.file.sizeBytes)}</span>
+      {artifact.file && <span className="shrink-0 text-xs text-faint">{bytesLabel(artifact.file.sizeBytes)}</span>}
       <button
         data-testid="artifact-download"
         className="flex h-7 w-7 items-center justify-center rounded-lg text-sm text-faint hover:bg-daypill hover:text-ink"
