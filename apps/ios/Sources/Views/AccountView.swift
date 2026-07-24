@@ -11,47 +11,9 @@ extension AppState {
     }
 }
 
-/// iOS port of the web/macOS avatar-menu + status picker (design 3a's profile
-/// footer). On a phone there is no persistent sidebar, so the affordance lives
-/// in the nav bar's top-right corner: an avatar button (with the status emoji
-/// badge) that opens a sheet holding the profile summary, the canned status
-/// list, "My Profile…" and Sign Out.
-struct AccountToolbarButton: View {
-    @EnvironmentObject private var app: AppState
-    @State private var showAccount = false
-
-    private var statusEmoji: String { app.currentUser?.statusEmoji ?? "" }
-
-    var body: some View {
-        Button {
-            showAccount = true
-        } label: {
-            AvatarChip(
-                userId: app.currentUser?.id ?? "",
-                name: app.currentUser?.displayName ?? "?",
-                avatarPath: app.myAvatarPath,
-                size: 30,
-                radius: 9
-            )
-            .overlay(alignment: .bottomTrailing) {
-                if !statusEmoji.isEmpty {
-                    Text(statusEmoji)
-                        .font(.system(size: 10))
-                        .frame(width: 16, height: 16)
-                        .background(Circle().fill(MC.base))
-                        .overlay(Circle().strokeBorder(MC.hairline, lineWidth: 1))
-                        .offset(x: 5, y: 5)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("account.button")
-        .accessibilityLabel("Account")
-        .sheet(isPresented: $showAccount) { AccountSheet() }
-    }
-}
-
-/// The avatar button's sheet: who you are, your status, profile, sign out.
+/// The profile/status sheet (design 3a's profile footer): who you are, your
+/// status, "My Profile…" and Sign Out. Opened from the drawer's status footer
+/// (`SidebarDrawer`), the same place the web/macOS sidebars keep it.
 struct AccountSheet: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
