@@ -58,6 +58,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.flowtoo.app
+        DEVELOPMENT_TEAM: 76NSMTH84G # BizTrip AI Inc. — App Store signing team
         MARKETING_VERSION: "0.1.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"

@@ -59,10 +59,10 @@ certificate by hand — automatic signing provisions it.
    GUI** (GUI edits are wiped on the next `xcodegen generate`, and a literal in
    the plist would silently pin every archive to its value). Increment
    `CURRENT_PROJECT_VERSION` and re-run `xcodegen generate` for every upload.
-3. Target → **Signing & Capabilities** → tick **Automatically manage signing**
-   and select your **Team**. (`project.yml` intentionally sets no
-   `DEVELOPMENT_TEAM`, so this is required — and must be re-selected after every
-   `xcodegen generate`, which resets it.)
+3. Signing is already wired: `project.yml` sets `DEVELOPMENT_TEAM` (BizTrip AI
+   Inc., `76NSMTH84G`) with automatic signing, so the team survives
+   `xcodegen generate`. Just confirm **Signing & Capabilities** shows that team
+   with no errors (you must be signed into an Xcode account that belongs to it).
 4. Set the run destination to **Any iOS Device (arm64)** — not a simulator;
    archiving needs a device SDK.
 5. **Product ▸ Archive.** When it finishes, the Organizer opens.
