@@ -3,6 +3,12 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-24
+
+- **Sign in to the iPhone app without your password.** The sign-in screen now
+  has an **Email me a sign-in link** button — type your email, tap it, and we'll
+  send you a one-time link so you don't have to remember your password.
+
 ## 2026-07-23
 
 - **Invite your coding agent in one command.** There's a new **Invite your

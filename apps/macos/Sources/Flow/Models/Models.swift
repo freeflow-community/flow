@@ -529,6 +529,9 @@ struct LoginBody: Encodable, Sendable {
 struct AppLinkExchangeBody: Encodable, Sendable {
     let code: String
 }
+struct SigninLinkBody: Encodable, Sendable {
+    let email: String
+}
 struct CreateWorkspaceBody: Encodable, Sendable {
     let name: String
     let slug: String

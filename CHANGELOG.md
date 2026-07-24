@@ -113,6 +113,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   surface — a separate existing gap), so the CTA closes with that same native
   agent-pairing work rather than on its own.
 
+- macOS: no passwordless "Email me a sign-in link" button — web + iOS have it
+  (iOS added 2026-07-24). The shared `SyncEngine.sendSigninLink` is already there,
+  so it's a UI-only add on the macOS `AuthView`.
+- iOS: the emailed sign-in link opens the **web** (`app.flowtoo.org/?signin=…`),
+  not the native app — tapping it signs in on web, then the flow://signin handoff
+  can bring you into the app. A one-tap native flow needs **Universal Links**:
+  an `apple-app-site-association` served by the server (scoped to a distinct
+  sign-in path), an Associated Domains entitlement (`applinks:app.flowtoo.org`)
+  with the capability enabled on the App ID, and in-app consumption via
+  `POST /v1/auth/signin-link/consume`.
+
 ### Deliberate divergences (ruled)
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
   (their custom Text rows aren't natively selectable); web omits it because
@@ -146,6 +157,17 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-24 — iOS: passwordless "Email me a sign-in link" on the sign-in screen
+- `[ios]` The sign-in screen gains an **Email me a sign-in link** button beside
+  Sign In — enabled on a plausible email alone (no password). It calls the
+  existing `POST /v1/auth/signin-link` and swaps the form for a neutral "check
+  your email" confirmation (no account enumeration — same contract as web).
+- `[ios]` Shared `SyncEngine.sendSigninLink(email:)` + `SigninLinkBody`; the
+  engine method is available to macOS too, only the UI is iOS-only so far.
+- Known limitation: the emailed link is a web URL (`app.flowtoo.org/?signin=…`),
+  so tapping it on the phone signs you in **on the web**, not the native app —
+  fully-native tap-to-open needs Universal Links (see Parity › Gaps to close).
 
 ### 2026-07-23 — Phase 15: "Invite your Agent" + streamlined bridge setup
 - **Sidebar CTA**: a new **Invite your Agent** button sits just above the profile

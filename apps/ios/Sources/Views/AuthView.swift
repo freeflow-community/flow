@@ -10,8 +10,12 @@ struct AuthView: View {
     @State private var password = ""
     @State private var busy = false
     @State private var error: String?
+    /// True after a sign-in link was requested — swaps the form for a neutral
+    /// "check your email" confirmation.
+    @State private var linkSent = false
 
     private var formValid: Bool { !email.isEmpty && !password.isEmpty }
+    private var emailValid: Bool { email.contains("@") && !email.hasSuffix("@") }
 
     var body: some View {
         VStack(spacing: 22) {
@@ -21,6 +25,27 @@ struct AuthView: View {
                 .foregroundStyle(MC.accent)
             Text("Flow").font(.largeTitle.bold()).foregroundStyle(MC.ink)
 
+            if linkSent {
+                linkSentCard
+            } else {
+                signInForm
+            }
+
+            if !Server.isDefaultLocal {
+                Link("New to Flow? Create your account on the web", destination: Server.baseURL)
+                    .font(.callout)
+            }
+            Spacer()
+            Text("Server: \(Server.displayName)")
+                .font(.caption).foregroundStyle(MC.muted)
+                .padding(.bottom, 8)
+        }
+        .padding()
+        .background(MC.base.ignoresSafeArea())
+    }
+
+    private var signInForm: some View {
+        VStack(spacing: 22) {
             VStack(spacing: 12) {
                 TextField("Email", text: $email)
                     .textContentType(.username)
@@ -49,17 +74,33 @@ struct AuthView: View {
             .tint(MC.accent)
             .disabled(busy || !formValid)
 
-            if !Server.isDefaultLocal {
-                Link("New to Flow? Create your account on the web", destination: Server.baseURL)
-                    .font(.callout)
+            // Passwordless alternative: email a one-time sign-in link. Enabled on
+            // a plausible email alone — no password needed.
+            Button(action: sendLink) {
+                Text("Email me a sign-in link")
             }
-            Spacer()
-            Text("Server: \(Server.displayName)")
-                .font(.caption).foregroundStyle(MC.muted)
-                .padding(.bottom, 8)
+            .font(.callout)
+            .tint(MC.accent)
+            .disabled(busy || !emailValid)
         }
-        .padding()
-        .background(MC.base.ignoresSafeArea())
+    }
+
+    private var linkSentCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "envelope.badge.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(MC.accent)
+            Text("Check your email").font(.title3.bold()).foregroundStyle(MC.ink)
+            Text("If an account exists for \(email), we just sent a sign-in link. Open it to sign in — the link works once and expires in 15 minutes.")
+                .font(.callout).foregroundStyle(MC.muted)
+                .multilineTextAlignment(.center).frame(maxWidth: 320)
+            Button("Back to sign in") {
+                linkSent = false
+                error = nil
+            }
+            .font(.callout).tint(MC.accent).padding(.top, 4)
+        }
+        .frame(maxWidth: 320)
     }
 
     private func submit() {
@@ -71,6 +112,23 @@ struct AuthView: View {
             do {
                 try await app.engine.login(email: email, password: password)
             } catch {
+                self.error = (error as? APIError)?.message ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func sendLink() {
+        guard emailValid, !busy else { return }
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await app.engine.sendSigninLink(email: email)
+                linkSent = true
+            } catch {
+                // Only a transport failure lands here — the server itself never
+                // reveals whether the address exists.
                 self.error = (error as? APIError)?.message ?? error.localizedDescription
             }
         }

@@ -91,6 +91,17 @@ actor SyncEngine {
         await didSignIn(user: resp.user, token: resp.token)
     }
 
+    /// Passwordless sign-in: ask the server to email a one-time sign-in link.
+    /// The server never reveals whether the address has an account (no
+    /// enumeration), so a success here just means "the request was accepted" —
+    /// the caller shows a neutral "check your email" confirmation regardless.
+    func sendSigninLink(email: String) async throws {
+        let _: OkResponse = try await api.post(
+            "/v1/auth/signin-link",
+            body: SigninLinkBody(email: email)
+        )
+    }
+
     func logout() async {
         let _: OkResponse? = try? await api.post("/v1/auth/logout")
         Keychain.deleteToken()
