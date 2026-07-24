@@ -9,7 +9,7 @@
 //
 // Arriving already signed in on the web skips straight to the handoff: the
 // point of the trip is the code, not the sign-in.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GoogleAuthResponse } from '@flow/shared';
 import { setToken } from '../lib/api';
 import { GoogleButton } from './AuthScreen';
@@ -21,12 +21,25 @@ export default function NativeSignIn({ signedIn }: { signedIn: boolean }) {
   const [phase, setPhase] = useState<Phase>(signedIn ? 'handing-off' : 'choose');
   const [error, setError] = useState<string | null>(null);
 
+  // A handoff must never overlap itself. Each one mints a single-use app-link
+  // code and navigates to flow://, so firing twice opens the app twice and
+  // races two sign-ins in it — and the auto-handoff below runs from an effect,
+  // which StrictMode deliberately double-invokes in development. Cleared when
+  // the attempt settles, so the retry button still works.
+  const inFlight = useRef(false);
+
   const handOff = useCallback(() => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setPhase('handing-off');
     setError(null);
     void openInApp(() => setPhase('no-app')).then(
-      () => setPhase((p) => (p === 'handing-off' ? 'sent' : p)),
+      () => {
+        inFlight.current = false;
+        setPhase((p) => (p === 'handing-off' ? 'sent' : p));
+      },
       (err: unknown) => {
+        inFlight.current = false;
         setError(err instanceof Error ? err.message : 'could not reach Flow');
         setPhase('error');
       },

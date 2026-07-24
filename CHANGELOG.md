@@ -167,6 +167,26 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-24 — Fix: the native Google handoff opened a second Flow window
+- `[macos]` **The production bug.** `RootView`'s `.onOpenURL` sits inside a
+  `WindowGroup` that never declared `handlesExternalEvents`, so when a running
+  app received a `flow://` URL, SwiftUI spawned a *second* window to service it.
+  The Google handoff hit this every time — you press that button from inside a
+  running app, so the callback always arrived at a live instance. The sign-in
+  itself was fine (`onOpenURL` fired in the new window), you just got a
+  duplicate. The window group and its root view now claim external events, so
+  the URL goes to the window already open. Also fixes the same duplicate on
+  `flow://invite/…`, which had it all along.
+- `[web]` Separately, and dev-only: the `/?native=google` page auto-fires the
+  handoff from an effect, and `StrictMode` deliberately double-invokes effects in
+  development — so on the Vite dev server it minted two single-use app-link
+  codes and navigated twice. Guarded with an in-flight latch, cleared when the
+  attempt settles so the retry button still works. A handoff should never
+  overlap itself whatever triggers it.
+- `[web]` Also dev-only: GIS `renderButton` appends rather than replaces, so the
+  double-invoked effect stacked two Google buttons. The slot is cleared first.
+- `[ios]` Unaffected — one window, so there is no second one to spawn.
+
 ### 2026-07-24 — Phase 16: Sign in with Google + domain self-registration
 - `[server]` `POST /v1/auth/google` takes a Google **ID token** (the GIS
   ID-token flow — no client secret, no redirect URI, no server-side exchange)
