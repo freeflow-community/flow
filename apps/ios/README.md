@@ -53,7 +53,7 @@ certificate by hand — automatic signing provisions it.
    ```
 2. **Bump the build number first.** App Store Connect rejects a re-used build
    number for the same version. Version + build come from `project.yml`
-   (`MARKETING_VERSION: 0.1.1`, `CURRENT_PROJECT_VERSION: 1`), which the
+   (`MARKETING_VERSION: 2.0`, `CURRENT_PROJECT_VERSION: 1`), which the
    generated `Info.plist` references as `$(MARKETING_VERSION)` /
    `$(CURRENT_PROJECT_VERSION)` — so edit them **in `project.yml`, not the Xcode
    GUI** (GUI edits are wiped on the next `xcodegen generate`, and a literal in
