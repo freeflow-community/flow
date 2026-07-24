@@ -194,6 +194,9 @@ export interface UnfurlDTO {
   expiresAt: string;
 }
 
+/** Channel event lines rendered inline in the stream (join/leave notices). */
+export type SystemMessageKind = 'member_joined' | 'member_left';
+
 export interface MessageDTO {
   id: string;
   channelId: string;
@@ -206,6 +209,11 @@ export interface MessageDTO {
   deletedAt: string | null;
   replyCount: number;
   lastReplyAt: string | null;
+  /** Non-null marks a channel event line (join/leave) rather than a user message.
+   * The `body` is the pre-rendered sentence ("Alice joined the channel"); clients
+   * render it as a centered, muted notice with no avatar/header. Null = a normal
+   * message. */
+  systemKind: SystemMessageKind | null;
   /** first (up to) 4 distinct reply authors in thread order — drives the reply-avatar stack */
   replyParticipantUserIds: string[];
   reactions: ReactionAggDTO[];

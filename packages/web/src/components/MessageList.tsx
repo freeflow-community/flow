@@ -156,13 +156,17 @@ export default function MessageList({
         {messages.map((m, i) => (
           <div key={m.id}>
             {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
-            <MessageRow
-              message={m}
-              names={names}
-              membersById={membersById}
-              showHeader={showsHeader(messages, i)}
-              showThreadAffordances={showThreadAffordances}
-            />
+            {m.systemKind ? (
+              <SystemLine message={m} />
+            ) : (
+              <MessageRow
+                message={m}
+                names={names}
+                membersById={membersById}
+                showHeader={showsHeader(messages, i)}
+                showThreadAffordances={showThreadAffordances}
+              />
+            )}
           </div>
         ))}
         <div ref={bottomRef} />
@@ -176,6 +180,9 @@ function showsHeader(messages: MessageDTO[], index: number): boolean {
   if (startsNewDay(messages, index)) return true;
   const prev = messages[index - 1]!;
   const cur = messages[index]!;
+  // A system line (join/leave) breaks a run — the next real message always
+  // re-shows its author header rather than merging into the pre-notice group.
+  if (prev.systemKind) return true;
   if (prev.userId !== cur.userId) return true;
   return new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime() > 300_000;
 }
@@ -201,6 +208,16 @@ function DayDivider({ iso }: { iso: string }) {
   return (
     <div className="my-2 text-center">
       <span className="rounded-[20px] bg-daypill px-3 py-[3px] text-[11px] text-faint">{label}</span>
+    </div>
+  );
+}
+
+/** A channel event line (join/leave) — centered, muted, no avatar/header.
+ * The body is the pre-rendered sentence ("Alice joined the channel"). */
+function SystemLine({ message }: { message: MessageDTO }) {
+  return (
+    <div data-testid={`system-message-${message.id}`} className="py-1 text-center">
+      <span className="text-[11px] text-faint">{message.body}</span>
     </div>
   );
 }

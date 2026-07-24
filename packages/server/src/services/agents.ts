@@ -22,6 +22,7 @@ import { newId } from '../lib/ids.js';
 import { hashToken, newToken, tokensEqual } from '../lib/tokens.js';
 import { badRequest, forbidden, notFound, unauthorized } from '../lib/errors.js';
 import { publishEvent, subjectMeta, subjectUserNotify } from '../bus.js';
+import { postSystemMessage } from './messages.js';
 import { requireMembership } from './workspaces.js';
 import { killAgentCredentials, removeMemberDeep } from './memberRemoval.js';
 import { hashSecret, toUserDTO, verifySecret } from './auth.js';
@@ -187,6 +188,7 @@ export async function approveAgentRequest(
   if (row.status !== 'pending') throw badRequest('not_pending', 'this pairing request is already resolved');
   if (row.expiresAt < new Date()) throw badRequest('expired', 'this pairing request has expired — re-run register');
   const userId = newId();
+  let generalChannel: { id: string; workspaceId: string; kind: string } | null = null;
   await db.transaction(async (tx) => {
     // claim first (conditional update guards double-approve races); the agent
     // user row doesn't exist yet, so agentUserId is stamped after the insert
@@ -222,6 +224,7 @@ export async function approveAgentRequest(
       .limit(1);
     if (general[0]) {
       await tx.insert(channelMembers).values({ channelId: general[0].id, userId }).onConflictDoNothing();
+      generalChannel = { id: general[0].id, workspaceId, kind: general[0].kind };
     }
   });
   // apply the sponsor's preset pick through the normal avatar pipeline
@@ -248,6 +251,9 @@ export async function approveAgentRequest(
       joinedAt: new Date().toISOString(),
     },
   });
+  // Announce the agent's arrival in #general with the same inline notice a human
+  // join posts (ui_nits). Best-effort inside postSystemMessage.
+  if (generalChannel) await postSystemMessage(generalChannel, userId, 'member_joined');
 }
 
 /** Sponsor denial: ends the pairing request immediately. */
