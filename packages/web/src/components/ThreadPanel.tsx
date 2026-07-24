@@ -67,6 +67,7 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
           threadRootId={rootId}
           placeholder="Reply in thread"
           onArrowUpEdit={arrowUpEdit(messages, auth.user.id, sel.setEditingMessage)}
+          editingMessage={messages.find((m) => m.id === sel.editingMessageId)}
         />
       )}
     </>

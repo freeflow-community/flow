@@ -263,10 +263,10 @@ function MessageRow({
   const [showPicker, setShowPicker] = useState(false);
   // Clicking the sender's avatar opens their profile card (ui_nits).
   const [showCard, setShowCard] = useState(false);
-  // Editing state lives in the selection context so the composer's ↑-to-edit
-  // (ui_nits item 4) can start an edit on this row.
+  // Editing state lives in the selection context; the edit itself happens in the
+  // prompt editor (ui_nits), so here we only highlight the row and hide its hover
+  // menu while it's the one loaded in the composer.
   const editing = sel.editingMessageId === message.id;
-  const [editText, setEditText] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const mine = message.userId === auth.user.id;
   const sender = names[message.userId] ?? 'Unknown';
@@ -276,17 +276,6 @@ function MessageRow({
   // Optimistic row whose POST errored out: kept in place with Retry/discard.
   const failed = (message as LocalMessage).failed === true;
   const send = useSendMessage(message.channelId);
-
-  useEffect(() => {
-    if (editing) setEditText(message.body);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing]);
-
-  const saveEdit = async () => {
-    const body = editText.trim();
-    if (body) await api('PATCH', `/v1/messages/${message.id}`, { body });
-    sel.setEditingMessage(null);
-  };
 
   // Pin the message's file(s) as shared artifacts in this channel (phase 13);
   // the new artifact opens in the side panel automatically.
@@ -310,7 +299,7 @@ function MessageRow({
     <div
       data-testid={`message-${message.id}`}
       data-pending={pending || undefined}
-      className={`group relative flex gap-2.5 px-[22px] hover:bg-daypill/40 ${showHeader ? 'mt-3' : 'py-px'} ${pending ? 'opacity-55' : ''}`}
+      className={`group relative flex gap-2.5 px-[22px] ${editing ? 'bg-accent/5' : 'hover:bg-daypill/40'} ${showHeader ? 'mt-3' : 'py-px'} ${pending ? 'opacity-55' : ''}`}
     >
       <div className="w-[38px] shrink-0">
         {showHeader && (
@@ -348,21 +337,6 @@ function MessageRow({
 
         {message.deletedAt ? (
           <p className="text-sm text-faint italic">This message was deleted</p>
-        ) : editing ? (
-          <div className="flex gap-2 py-1">
-            <input
-              className="flex-1 rounded border border-hairline2 bg-white px-2 py-1 text-sm"
-              value={editText}
-              onChange={(e) => setEditText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void saveEdit();
-                if (e.key === 'Escape') sel.setEditingMessage(null);
-              }}
-              autoFocus
-            />
-            <button className="text-sm font-semibold text-accent-soft" onClick={() => void saveEdit()}>Save</button>
-            <button className="text-sm text-muted" onClick={() => sel.setEditingMessage(null)}>Cancel</button>
-          </div>
         ) : (
           <>
             {message.body.trim() && (

@@ -152,6 +152,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           channelId={channelId}
           placeholder={`Message ${channel?.kind === 'standard' ? `#${title}` : title}`}
           onArrowUpEdit={arrowUpEdit(messages, auth.user.id, sel.setEditingMessage)}
+          editingMessage={messages.find((m) => m.id === sel.editingMessageId)}
         />
       )}
 

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO } from '@flow/shared';
 import { emojiMatches } from '@flow/shared';
 import { api, uploadFile } from '../lib/api';
@@ -15,6 +15,7 @@ export default function Composer({
   threadRootId,
   placeholder,
   onArrowUpEdit,
+  editingMessage,
 }: {
   channelId: string;
   threadRootId?: string;
@@ -22,6 +23,10 @@ export default function Composer({
   /** ↑ in an empty composer starts editing the caller's last message when it
    * is the newest in this channel/thread (ui_nits item 4, Slack semantics). */
   onArrowUpEdit?: (() => void) | undefined;
+  /** The message being edited when it belongs to this composer's channel/thread.
+   * Editing reuses the prompt editor (ui_nits) rather than an inline box: the
+   * body loads here, Enter saves via PATCH, Esc/Cancel restores the draft. */
+  editingMessage?: MessageDTO | undefined;
 }) {
   const sel = useSelection();
   const live = useLive();
@@ -157,6 +162,24 @@ export default function Composer({
     setCaretAt(el, Math.max(0, Math.min(caret, value.length)));
   };
 
+  // Editing reuses this prompt editor (ui_nits). Entering edit mode stashes the
+  // in-progress draft and loads the message body; leaving it restores the draft.
+  const editingId = editingMessage?.id ?? null;
+  const stashedDraft = useRef('');
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (editingId && editingMessage) {
+      if (!wasEditing.current) stashedDraft.current = text;
+      wasEditing.current = true;
+      setDraft(editingMessage.body);
+    } else if (wasEditing.current) {
+      wasEditing.current = false;
+      setDraft(stashedDraft.current);
+      stashedDraft.current = '';
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId]);
+
   /** Splice text at the current selection (Shift+Enter newline, sanitized text paste). */
   const insertAtCaret = (insert: string) => {
     const el = editorRef.current;
@@ -183,6 +206,14 @@ export default function Composer({
 
   const doSend = (override?: string) => {
     const raw = (override ?? text).trim();
+    // Editing an existing message: PATCH in place (body is already in stored
+    // token form), then leave edit mode — the effect restores the stashed draft.
+    // An emptied edit just cancels (no delete), matching the prior inline editor.
+    if (editingId) {
+      if (raw) void api('PATCH', `/v1/messages/${editingId}`, { body: raw });
+      sel.setEditingMessage(null);
+      return;
+    }
     if ((!raw && attachments.length === 0) || uploading > 0) return;
     const { body, mentions } = transformOutgoing(raw || ' ', members.data ?? []);
     // Detect @mentions of users who aren't in this standard channel; the CTA
@@ -266,6 +297,11 @@ export default function Composer({
         applySuggestion(suggestions[selected]!.insert);
         return;
       }
+    }
+    if (e.key === 'Escape' && editingId) {
+      e.preventDefault();
+      sel.setEditingMessage(null); // leave edit mode; effect restores the draft
+      return;
     }
     if (e.key === 'ArrowUp' && !text && onArrowUpEdit) {
       e.preventDefault();
@@ -417,6 +453,24 @@ export default function Composer({
         </div>
       )}
 
+      {editingId && (
+        <div
+          data-testid={`${testPrefix}-editing-banner`}
+          className="mb-1.5 flex items-center gap-2 px-1 text-xs text-muted"
+        >
+          <span>Editing message</span>
+          <span className="text-faint">·</span>
+          <button
+            data-testid={`${testPrefix}-editing-cancel`}
+            className="font-semibold text-accent-soft hover:underline"
+            onClick={() => sel.setEditingMessage(null)}
+          >
+            Cancel
+          </button>
+          <span className="text-faint">· Enter to save · Esc to cancel</span>
+        </div>
+      )}
+
       {error && <p className="mb-1 text-xs text-red-600">{error}</p>}
 
       <div
@@ -477,11 +531,11 @@ export default function Composer({
           <button
             data-testid={`${testPrefix}-send`}
             className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
-            title="Send"
-            disabled={(!text.trim() && attachments.length === 0) || uploading > 0}
+            title={editingId ? 'Save edit' : 'Send'}
+            disabled={editingId ? !text.trim() : (!text.trim() && attachments.length === 0) || uploading > 0}
             onClick={() => doSend()}
           >
-            ➤
+            {editingId ? '✓' : '➤'}
           </button>
         </div>
       </div>
