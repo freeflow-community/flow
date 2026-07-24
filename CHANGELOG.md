@@ -145,6 +145,12 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   should be 32"), and opts out of the CLI v2 checksums R2 rejects. Overwriting
   the key ships a new build with no code deploy. docs/ops/DEPLOYMENT.md § macOS
   app download. `[qa]`
+- Ops: `dist.sh` now also notarizes and staples the **`.dmg` itself** (not just
+  the app inside it), so mounting a downloaded DMG is offline-clean with no
+  "downloaded from the Internet" prompt — Apple's recommended practice of
+  notarizing the final artifact. Adds one notary round-trip; the submit+verdict
+  logic is factored into a `notarize()` helper shared by the app zip and the
+  DMG. `[qa]`
 
 ### 2026-07-23 — iOS: channel list is now a slide-in drawer (web mobile parity)
 - The iOS channel list moves from a drill-down `List` (tap a channel → push a
