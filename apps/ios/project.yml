@@ -34,12 +34,18 @@ targets:
       properties:
         FlowServerURL: https://app.flowtoo.org
         CFBundleDisplayName: Flow
+        # Version + build come from the MARKETING_VERSION / CURRENT_PROJECT_VERSION
+        # build settings below. Without these, XcodeGen writes literal "1.0"/"1"
+        # into the plist, which override the settings and pin every archive to
+        # 1.0 (1) — bump CURRENT_PROJECT_VERSION per TestFlight upload.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         # Register flow:// so the web-to-app handoff (flow://signin?code=…) and
         # invite links (flow://invite/…) open the app — the intended way to
         # sign in on a phone.
         CFBundleURLTypes:
-          - CFBundleURLName: org.flowtoo.ios
+          - CFBundleURLName: org.flowtoo.app
             CFBundleURLSchemes: [flow]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -51,8 +57,8 @@ targets:
           NSAllowsLocalNetworking: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.flowtoo.ios
-        MARKETING_VERSION: "0.1.0"
+        PRODUCT_BUNDLE_IDENTIFIER: org.flowtoo.app
+        MARKETING_VERSION: "0.1.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
