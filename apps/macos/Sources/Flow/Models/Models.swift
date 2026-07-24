@@ -184,6 +184,67 @@ struct FileAttachment: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+// File-kind classification (glyphs, inline-preview eligibility). Lives in the
+// shared model layer because both the macOS previews and the artifact sidebar
+// glyph (Artifact.glyph, below) — and the iOS target, which excludes the macOS
+// Views — depend on it. Pure Foundation, no AppKit.
+extension FileAttachment {
+    static let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "webm"]
+
+    var isVideo: Bool {
+        mimeType.hasPrefix("video/")
+            || Self.videoExtensions.contains((name as NSString).pathExtension.lowercased())
+    }
+
+    /// AVFoundation has no VP8/VP9/webm support — those stay a file chip on
+    /// macOS (deliberate divergence: web plays webm inline; see CHANGELOG Parity).
+    var isPlayableVideo: Bool {
+        guard isVideo else { return false }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return mimeType != "video/webm" && ext != "webm"
+    }
+
+    /// ASCII-ish formats that get an inline monospace preview.
+    var isTextPreviewable: Bool {
+        if isImage { return false }
+        if mimeType.hasPrefix("text/") { return true }
+        if [
+            "application/json", "application/javascript", "application/xml",
+            "application/x-sh", "application/x-yaml",
+        ].contains(mimeType) { return true }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return Self.textExtensions.contains(ext)
+    }
+
+    static let textExtensions: Set<String> = [
+        "txt", "md", "markdown", "log", "json", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+        "py", "rb", "go", "rs", "java", "c", "cc", "cpp", "h", "hpp", "m", "swift", "kt",
+        "sh", "bash", "zsh", "fish", "yaml", "yml", "toml", "ini", "cfg", "conf", "xml",
+        "html", "htm", "css", "scss", "less", "sql", "csv", "tsv", "env", "gitignore",
+    ]
+
+    var isPDF: Bool {
+        mimeType == "application/pdf" || name.lowercased().hasSuffix(".pdf")
+    }
+
+    /// HTML renders sandboxed in the artifact panel (phase 9); in chat it
+    /// still previews as text.
+    var isHTML: Bool {
+        mimeType == "text/html"
+            || ["html", "htm"].contains((name as NSString).pathExtension.lowercased())
+    }
+
+    /// Sidebar glyph for an artifact row (phase 9) — mirrors web fileKind.ts.
+    var artifactGlyph: String {
+        if mimeType.hasPrefix("image/") { return "🖼️" }
+        if isVideo { return "🎬" }
+        if isPDF { return "📕" }
+        if isHTML { return "🌐" }
+        if isTextPreviewable { return "📝" }
+        return "📄"
+    }
+}
+
 struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "channel"
 
