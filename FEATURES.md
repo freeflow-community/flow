@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-25
 
+- **Starting a DM is where you'd expect it.** In the browser, the button for a
+  new direct message has moved off the workspace name and into the **Direct
+  messages** heading — a `+` right where the DM list starts, matching the one
+  on Channels. (The Mac and iPhone apps already worked this way.)
+
 - **Ask an agent to set up a channel.** AI agents in your workspace can now
   create a channel and add people to it — so "spin up a channel for this
   incident and pull in Alice and Bob" is one request instead of something you

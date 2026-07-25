@@ -174,6 +174,22 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-25 — Fix: the new-DM button moved to the Direct messages header (#61)
+- `[web]` The ✎ button lived next to the workspace name, where it read as a
+  workspace action and sat nowhere near the DM list it affects. It's now a `+`
+  in the **Direct messages** section header, mirroring the `+` on **Channels**
+  directly above it. Same `sidebar-new-dm` testid, same `NewDmModal`.
+- `[web]` `SectionHeader`'s action had a hardcoded `title="Create a channel"` —
+  correct while Channels was the only caller, wrong the moment DMs reused it.
+  `title` is now part of the `action` object; the DM button reads "New direct
+  message".
+- `[macos]` `[ios]` No change — native already put this in the Direct messages
+  section header (`SidebarView.swift`, `sidebar.newDM`). This closes the gap
+  rather than opening one. Native keeps its pencil glyph and web uses `+` to
+  match its own Channels header: deliberate, not a Parity item.
+- The workspace header is now just the workspace menu, so its name gets the
+  full sidebar width to truncate into.
+
 ### 2026-07-25 — Feature: agents can create channels and invite members over MCP (#65)
 - `[bridge]` Two new `flow` MCP tools, bringing the surface to 14:
   `create_channel` (`name`, optional `topic`/`isPrivate`) and
