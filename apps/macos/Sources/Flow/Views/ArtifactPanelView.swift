@@ -319,6 +319,9 @@ struct LinkArtifactView: View {
     let artifact: Artifact
     @EnvironmentObject private var app: AppState
     @State private var draft: String = ""
+    /// Bumped when the URL bar is submitted with the url we're already showing:
+    /// nothing changes server-side, so this is what makes it a reload.
+    @State private var reloadToken: Int = 0
 
     private var url: String { artifact.url ?? "" }
 
@@ -344,7 +347,7 @@ struct LinkArtifactView: View {
             .padding(.horizontal, 12)
             .frame(height: 38)
             Rectangle().fill(MC.hairline).frame(height: 1)
-            CoBrowserWebView(url: url) { navigated in
+            CoBrowserWebView(url: url, reloadToken: reloadToken) { navigated in
                 // A navigation inside the web view (link click or form) — broadcast
                 // it so everyone follows. Typing in the bar goes through navigate().
                 broadcast(navigated)
@@ -364,6 +367,9 @@ struct LinkArtifactView: View {
         let withScheme = s.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) != nil
             ? s : "https://\(s)"
         guard URL(string: withScheme) != nil else { draft = url; return }
+        // Submitting the url already showing means "reload", not "no-op" — and it
+        // also pulls the view back to the shared url after in-page browsing.
+        if withScheme == url { reloadToken += 1; draft = url; return }
         broadcast(withScheme)
     }
 
@@ -385,6 +391,8 @@ struct LinkArtifactView: View {
 /// our own committed navigations (which echo back through `url`) never reload.
 private struct CoBrowserWebView: NSViewRepresentable {
     let url: String
+    /// Any change forces a fresh load of `url`, even when it's already showing.
+    let reloadToken: Int
     let onNavigate: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onNavigate: onNavigate) }
@@ -393,6 +401,7 @@ private struct CoBrowserWebView: NSViewRepresentable {
         let view = WKWebView(frame: .zero)
         view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
+        context.coordinator.lastReloadToken = reloadToken
         if let u = URL(string: url) {
             context.coordinator.lastLoaded = url
             view.load(URLRequest(url: u))
@@ -403,6 +412,12 @@ private struct CoBrowserWebView: NSViewRepresentable {
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.onNavigate = onNavigate
         guard let u = URL(string: url) else { return }
+        if context.coordinator.lastReloadToken != reloadToken {
+            context.coordinator.lastReloadToken = reloadToken
+            context.coordinator.lastLoaded = url
+            view.load(URLRequest(url: u))
+            return
+        }
         // Load only genuine remote changes: skip when the view already shows this
         // url or we just loaded/committed it (prevents feedback loops).
         let current = view.url?.absoluteString
@@ -416,6 +431,7 @@ private struct CoBrowserWebView: NSViewRepresentable {
         var onNavigate: (String) -> Void
         weak var webView: WKWebView?
         var lastLoaded: String?
+        var lastReloadToken = 0
 
         init(onNavigate: @escaping (String) -> Void) { self.onNavigate = onNavigate }
 

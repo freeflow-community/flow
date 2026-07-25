@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-24
 
+- **Reload a shared page.** In the mini browser, pressing **Go** (or Enter) on
+  the address that's already showing now reloads the page instead of doing
+  nothing — handy for a dashboard that's gone stale, or to get back to the
+  shared page after clicking around inside it. Only actually changing the
+  address still moves everyone else's view.
 - **Sign in with Google — on the web, Mac and iPhone.** There's now a
   **Continue with Google** button on the sign-in screen everywhere: one click and
   you're in, no password to pick and no confirmation email to wait for. If you

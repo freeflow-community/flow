@@ -67,9 +67,14 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
   const [draft, setDraft] = useState(url);
   const [loaded, setLoaded] = useState(false);
   const [maybeBlocked, setMaybeBlocked] = useState(false);
+  // Bumped by Go/Enter on the url we're already showing: nothing changes
+  // server-side, but the iframe key does, so the page reloads (and any in-page
+  // navigation the iframe did on its own is reset back to the shared url).
+  const [reloadNonce, setReloadNonce] = useState(0);
 
-  // Follow the shared url: when it changes (remote navigation or our own echo),
-  // resync the field and reset the load state so the block hint re-evaluates.
+  // Follow the shared url: when it changes (remote navigation or our own echo)
+  // — or when we force a reload — resync the field and reset the load state so
+  // the block hint re-evaluates.
   useEffect(() => {
     setDraft(url);
     setLoaded(false);
@@ -77,11 +82,15 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
     if (!url) return;
     const t = setTimeout(() => setMaybeBlocked(true), 4000);
     return () => clearTimeout(t);
-  }, [url]);
+  }, [url, reloadNonce]);
 
   const go = async (raw: string) => {
     const next = normalizeUrl(raw);
-    if (!next || next === url) return;
+    if (!next) return;
+    if (next === url) {
+      setReloadNonce((n) => n + 1); // same page: reload rather than no-op
+      return;
+    }
     // Optimistic: the PATCH echoes back an artifact.updated that reconciles the
     // cache; we don't need to setDraft here (the url-effect will on echo).
     try {
@@ -130,7 +139,7 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
       <div className="relative min-h-0 flex-1 bg-white">
         {url ? (
           <iframe
-            key={url}
+            key={`${url}#${reloadNonce}`}
             data-testid={`artifact-link-${artifact.name}`}
             title={artifact.name}
             src={url}
