@@ -558,9 +558,8 @@ actor SyncEngine {
             try String.fetchOne(db, sql: "SELECT kind FROM channel WHERE id = ?", arguments: [channelId])
         }
         guard kind == "standard" else { return [] }
-        guard let resp: ChannelMembersResponse = try? await api.get("/v1/channels/\(channelId)/members")
-        else { return [] }
-        let members = Set(resp.userIds)
+        let members = Set(await channelMemberIds(channelId: channelId))
+        guard !members.isEmpty else { return [] }
         let missing = mentionIds.filter { !members.contains($0) }
         guard !missing.isEmpty else { return [] }
         let names: [String: String] = (try? await db.reader.read { db -> [String: String] in
@@ -829,6 +828,15 @@ actor SyncEngine {
     }
 
     // MARK: - Channel membership (phase2.md §5)
+
+    /// This channel's membership, for any kind (#70). The Channel DTO only
+    /// carries `memberIds` for DMs, so standard channels have to ask the
+    /// server. Returns [] on failure — callers fall back to what they have.
+    func channelMemberIds(channelId: String) async -> [String] {
+        guard let resp: ChannelMembersResponse = try? await api.get("/v1/channels/\(channelId)/members")
+        else { return [] }
+        return resp.userIds
+    }
 
     func addMember(channelId: String, userId: String) async throws {
         let _: OkResponse = try await api.post(
