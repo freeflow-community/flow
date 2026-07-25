@@ -7,12 +7,17 @@ struct ChannelView: View {
 
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
-    @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
-    @StateObject private var userStatuses = DBObserved<[String: String]>(initial: [:])
-    @StateObject private var memberIds = DBObserved<[String]>(initial: [])
+    /// One roster observer for the whole header + list: names, status and the
+    /// agent flag all come off the same User records (#70 needs status *text*,
+    /// which the old name/emoji maps dropped).
+    @StateObject private var users = DBObserved<[String: User]>(initial: [:])
     @State private var editingMessage: Message?
     @State private var profileUserId: String?
     @State private var showChannelEdit = false
+    /// This channel's real membership (#70) — fetched, since the DTO only
+    /// carries memberIds for DMs.
+    @State private var channelMemberIds: [String] = []
+    @State private var showMembers = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,8 +26,8 @@ struct ChannelView: View {
 
             MessageListView(
                 messages: messages.value,
-                userNames: userNames.value,
-                userStatuses: userStatuses.value,
+                userNames: userNames,
+                userStatuses: userStatuses,
                 currentUserId: app.currentUser?.id,
                 hasMore: app.hasMore[channelId] ?? false,
                 showThreadAffordances: true,
@@ -48,7 +53,7 @@ struct ChannelView: View {
                 onFocused: { app.focusMessageId = nil }
             )
 
-            TypingIndicatorView(channelId: channelId, userNames: userNames.value)
+            TypingIndicatorView(channelId: channelId, userNames: userNames)
 
             if channel.value?.archivedAt != nil {
                 Text("This channel is archived and read-only.")
@@ -75,30 +80,10 @@ struct ChannelView: View {
                     .order(Column("id"))
                     .fetchAll(db)
             }
-            userNames.start(db: app.db, reset: [:]) { db in
-                try Dictionary(
-                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
-                )
+            users.start(db: app.db, reset: [:]) { db in
+                try Dictionary(uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0) })
             }
-            userStatuses.start(db: app.db, reset: [:]) { db in
-                try Dictionary(
-                    uniqueKeysWithValues: User.fetchAll(db).compactMap { u in
-                        (u.statusEmoji?.isEmpty == false) ? (u.id, u.statusEmoji!) : nil
-                    }
-                )
-            }
-            if let wsId = app.selectedWorkspaceId {
-                memberIds.start(db: app.db, reset: []) { db in
-                    try String.fetchAll(
-                        db,
-                        sql: """
-                            SELECT m.userId FROM member m JOIN user u ON u.id = m.userId
-                            WHERE m.workspaceId = ? ORDER BY u.displayName COLLATE NOCASE
-                            """,
-                        arguments: [wsId]
-                    )
-                }
-            }
+            await loadChannelMembers()
         }
         // Jump-to-message (phase 12): a target from the Activity feed may sit
         // beyond the loaded page — page older history until it's in the list,
@@ -119,6 +104,23 @@ struct ChannelView: View {
                 ChannelEditSheet(channel: c)
             }
         }
+    }
+
+    /// Display names (agents badged) for the message list, typing line and header.
+    private var userNames: [String: String] {
+        users.value.mapValues { $0.displayNameWithBadge }
+    }
+
+    /// Status emoji only where one is set — the message list skips empties.
+    private var userStatuses: [String: String] {
+        users.value.compactMapValues { ($0.statusEmoji?.isEmpty == false) ? $0.statusEmoji : nil }
+    }
+
+    /// Refresh this channel's membership. Falls back to the DTO's DM-only
+    /// memberIds if the request fails, so the header never empties out.
+    private func loadChannelMembers() async {
+        let ids = await app.engine.channelMemberIds(channelId: channelId)
+        channelMemberIds = ids.isEmpty ? (channel.value?.memberIds ?? []) : ids
     }
 
     /// Page older history toward a jump-to-message target until it's loaded
@@ -152,7 +154,7 @@ struct ChannelView: View {
     private var headerTitle: String {
         guard let c = channel.value else { return "" }
         return c.isDM
-            ? c.displayTitle(userNames: userNames.value, currentUserId: app.currentUser?.id)
+            ? c.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
             : "#\(c.name ?? "")"
     }
 
@@ -211,34 +213,158 @@ struct ChannelView: View {
         .background(MC.base)
     }
 
-    /// Design 3a: overlapping member avatars + "+N" at the header's right edge
-    /// (channel members for DMs, workspace members otherwise).
+    /// Design 3a: overlapping member avatars + "+N" at the header's right edge —
+    /// this channel's members for every kind (#70; it used to show the whole
+    /// workspace roster for standard channels). Clicking opens the member list.
     private var headerAvatars: some View {
-        let ids = (channel.value?.isDM == true ? channel.value?.memberIds : nil) ?? memberIds.value
+        let ids = orderedMembers.map(\.id)
         let shown = Array(ids.prefix(3))
         let extra = ids.count - shown.count
-        return HStack(spacing: 4) {
-            HStack(spacing: -10) {
-                ForEach(shown, id: \.self) { id in
-                    AvatarChip(
-                        userId: id,
-                        name: userNames.value[id] ?? "?",
-                        avatarPath: app.avatarPaths[id],
-                        size: 26,
-                        radius: 13
-                    )
-                    .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(MC.base, lineWidth: 2))
+        return Button {
+            showMembers.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                HStack(spacing: -10) {
+                    ForEach(shown, id: \.self) { id in
+                        AvatarChip(
+                            userId: id,
+                            name: users.value[id]?.displayName ?? "?",
+                            avatarPath: app.avatarPaths[id],
+                            size: 26,
+                            radius: 13
+                        )
+                        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(MC.base, lineWidth: 2))
+                    }
+                }
+                if extra > 0 {
+                    Text("+\(extra)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(MC.muted)
+                }
+                // Nothing to stack yet (fetch in flight) — keep a click target.
+                if shown.isEmpty {
+                    Image(systemName: "person.2")
+                        .font(.system(size: 13))
+                        .foregroundStyle(MC.muted)
                 }
             }
-            if extra > 0 {
-                Text("+\(extra)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(MC.muted)
-            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help("View members")
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("channel.memberAvatars")
         .accessibilityValue("\(ids.count) members")
+        .popover(isPresented: $showMembers, arrowEdge: .bottom) {
+            membersPopover
+        }
+        .onChange(of: showMembers) { _, opening in
+            if opening { Task { await loadChannelMembers() } } // catch joins/leaves
+        }
+    }
+
+    /// This channel's members, online first then alphabetical (web parity).
+    private var orderedMembers: [User] {
+        let ids = channelMemberIds.isEmpty ? (channel.value?.memberIds ?? []) : channelMemberIds
+        return ids
+            .map { id in
+                users.value[id]
+                    ?? User(id: id, email: "", displayName: "Unknown", avatarUrl: nil, timezone: nil)
+            }
+            .sorted { a, b in
+                let aOn = isOnline(a.id), bOn = isOnline(b.id)
+                if aOn != bOn { return aOn }
+                return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
+            }
+    }
+
+    /// You're online by definition — this client is the one connected.
+    private func isOnline(_ userId: String) -> Bool {
+        userId == app.currentUser?.id || app.presence[userId] == true
+    }
+
+    private var membersPopover: some View {
+        let rows = orderedMembers
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(rows.count == 1 ? "1 MEMBER" : "\(rows.count) MEMBERS")
+                .font(.system(size: 11, weight: .bold))
+                .kerning(0.5)
+                .foregroundStyle(MC.muted)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            if rows.isEmpty {
+                Text("No members.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(MC.faint)
+                    .padding(.horizontal, 10)
+            }
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(rows) { user in
+                        memberRow(user)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+        }
+        .padding(.vertical, 10)
+        .frame(width: 260)
+        .accessibilityIdentifier("channel.membersPopover")
+    }
+
+    private func memberRow(_ user: User) -> some View {
+        Button {
+            showMembers = false
+            profileUserId = user.id
+        } label: {
+            HStack(spacing: 9) {
+                AvatarChip(
+                    userId: user.id,
+                    name: user.displayName,
+                    avatarPath: app.avatarPaths[user.id],
+                    size: 26,
+                    radius: 9
+                )
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(user.displayName)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(MC.ink)
+                            .lineLimit(1)
+                        if user.id == app.currentUser?.id {
+                            Text("(you)")
+                                .font(.system(size: 13.5))
+                                .foregroundStyle(MC.faint)
+                        }
+                        if user.isAgent == true { Text("🤖").font(.system(size: 12)) }
+                        if let emoji = user.statusEmoji, !emoji.isEmpty {
+                            Text(emoji).font(.system(size: 12))
+                        }
+                    }
+                    if let status = user.statusText, !status.isEmpty {
+                        Text(status)
+                            .font(.system(size: 11))
+                            .foregroundStyle(MC.faint)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                Circle()
+                    .fill(isOnline(user.id) ? MC.online : Color.clear)
+                    .overlay(
+                        Circle().strokeBorder(
+                            isOnline(user.id) ? Color.clear : MC.hairline2, lineWidth: 1.5
+                        )
+                    )
+                    .frame(width: 8, height: 8)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("channel.member.\(user.displayName)")
+        .accessibilityValue(isOnline(user.id) ? "online" : "offline")
     }
 
     private var headerIcon: String {

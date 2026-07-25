@@ -9,7 +9,7 @@ For the full technical changelog see `CHANGELOG.md`.
   of a conversation and you get the full member list — who's online, their
   status, and a click through to anyone's profile card. The faces themselves
   now show the channel's actual members too, instead of everyone in the
-  workspace.
+  workspace. On the web and in the Mac app.
 
 ## 2026-07-24
 

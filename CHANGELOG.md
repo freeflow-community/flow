@@ -123,12 +123,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   with the capability enabled on the App ID, and in-app consumption via
   `POST /v1/auth/signin-link/consume`.
 
-- macOS + iOS: the channel header avatar stack is still decorative — web made it
-  open a member-list popover (names, presence, status, tap-through to the user
-  card) on 2026-07-25 (#70). macOS also still fills the stack with the workspace
-  roster for standard channels (`ChannelView.swift` `memberAvatars`) rather than
-  the channel's own membership; `GET /v1/channels/:id/members` is the fix on both
-  clients, and macOS already observes a member list it can reuse.
+- iOS: the channel header avatar stack is still decorative — web and macOS make
+  it open a member list (names, presence, status, tap-through to the profile
+  card) as of 2026-07-25 (#70). iOS's header is a different construction with no
+  stack to hang it on, so it needs a members affordance chosen for the phone
+  (a header button or a row in the channel sheet) plus the
+  `GET /v1/channels/:id/members` fetch both other clients now use.
 
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
@@ -173,6 +173,29 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-25 — macOS: the header avatar stack opens the member list too (#70)
+- `[macos]` Ports the web popover from earlier today. `headerAvatars` is a
+  `Button` with a `.popover`: avatar, name, 🤖 badge, status emoji + text and a
+  presence dot per row, online first then alphabetical, and a row opens that
+  member's `MemberProfileSheet` (the sheet and its `profileUserId` binding were
+  already there). Empty stack while the fetch is in flight still gets a
+  `person.2` click target.
+- `[macos]` The stack now shows **this channel's** members for every kind — it
+  used to fall back to the workspace roster for standard channels, which said
+  nothing about the channel. New `SyncEngine.channelMemberIds(channelId:)` wraps
+  `GET /v1/channels/:id/members`; the Channel DTO's DM-only `memberIds` is the
+  fallback when the request fails. Refetched on channel switch and on each
+  popover open, so joins/leaves show up.
+- `[macos]` Collapsed the view's `userNames` + `userStatuses` + workspace-roster
+  `memberIds` observers into one `users: [String: User]` observer, with the two
+  maps derived for `MessageListView`/`TypingIndicatorView`. The rows needed
+  status *text*, which neither old map carried; three overlapping observers
+  became one.
+- `[ios]` Not ported; see Parity.
+- `swift build` clean (no new warnings). `swift test` is unrunnable in this
+  checkout — `no such module 'XCTest'` under the current toolchain, same on
+  `main`, unrelated to this change.
 
 ### 2026-07-25 — Fix: the channel header avatar stack now opens the member list (#70)
 - `[web]` The header stack was explicitly decorative — no click handler, and for
