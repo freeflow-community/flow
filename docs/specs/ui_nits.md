@@ -37,5 +37,9 @@ in on web and native, and add a new agent, it only shows in one place).
   of the list on all three clients — it's a scratchpad, not a conversation, so
   it sorts last regardless of name.
 
-- On natice macos app, the "hit" area to grab and size the Thread panel is too narrow and hard to grab
+- On native macos app, the "hit" area to grab and size the Thread panel is too narrow and hard to grab
+
+- Message sending should be "optimistic" so the message appears immediately in black in the chat, 
+and posting in the background. We can recolor the message only if posting fails.
+
 
