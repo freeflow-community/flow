@@ -415,6 +415,9 @@ actor SyncEngine {
         await appState?.setHasMore(channelId: channelId, resp.hasMore)
     }
 
+    /// Advance the channel read cursor. The server also reads that channel's
+    /// Activity notifications (issue #63) and pushes back a `notification.read`
+    /// event, which is what settles the badge.
     func markRead(channelId: String, lastReadMsgId: String) async {
         try? await db.writer.write { db in
             try db.execute(
@@ -425,6 +428,15 @@ actor SyncEngine {
         let _: OkResponse? = try? await api.post(
             "/v1/channels/\(channelId)/read",
             body: ReadBody(lastReadMsgId: lastReadMsgId)
+        )
+    }
+
+    /// "I'm looking at this thread" — reads the thread's notifications without
+    /// touching the channel cursor (which only tracks top-level messages).
+    private func markThreadRead(channelId: String, rootId: String) async {
+        let _: OkResponse? = try? await api.post(
+            "/v1/channels/\(channelId)/read",
+            body: ReadBody(lastReadMsgId: rootId, threadRootId: rootId)
         )
     }
 
@@ -934,10 +946,21 @@ actor SyncEngine {
         return resp
     }
 
+    /// Everything up to a cursor (opening the Activity feed).
     func markNotificationsRead(upToId: String) async {
         let _: OkResponse? = try? await api.post(
             "/v1/me/notifications/read",
             body: MarkNotificationsReadBody(upToId: upToId)
+        )
+        await refreshNotificationBadge()
+    }
+
+    /// A single row (clicking it in the feed, or seeing it land in the channel
+    /// you're already looking at — issue #63).
+    func markNotificationRead(id: String) async {
+        let _: OkResponse? = try? await api.post(
+            "/v1/me/notifications/read",
+            body: MarkNotificationsReadBody(id: id)
         )
         await refreshNotificationBadge()
     }
@@ -1008,6 +1031,7 @@ actor SyncEngine {
             query: [URLQueryItem(name: "limit", value: "100")]
         ) else { return }
         await storeMessages([resp.root] + resp.messages)
+        await markThreadRead(channelId: resp.root.channelId, rootId: rootId)
     }
 
     // MARK: - Typing
@@ -1131,21 +1155,39 @@ actor SyncEngine {
             await applyReactionEvent(data, added: added)
 
         case .notification(let n):
+            guard n.channelId != activeChannelId else {
+                // Already looking at where it came from: read it now (issue
+                // #63). Messages also clear via the channel read cursor, but a
+                // reaction moves no cursor — without this the row would stay
+                // unread and come back as a badge on the next launch.
+                await markNotificationRead(id: n.id)
+                return
+            }
             await appState?.notificationReceived(n)
-            // Banner unless the user is already looking at that channel.
-            if n.channelId != activeChannelId, n.message.userId != currentUser?.id {
+            // Banner unless the server's alert gate (per-user prefs + status
+            // suppression, phase 10) says no — kind 3 activity rows are always
+            // suppressed there, so they never bannered.
+            if n.alerts, n.actorUserId != currentUser?.id {
+                let actorId = n.actorUserId
                 let senderName: String? = try? await db.reader.read { db in
                     try String.fetchOne(
-                        db, sql: "SELECT displayName FROM user WHERE id = ?", arguments: [n.message.userId]
+                        db, sql: "SELECT displayName FROM user WHERE id = ?", arguments: [actorId]
                     )
                 }
                 let title = switch n.kind {
                 case 1: senderName ?? "New direct message"
                 case 2: "\(senderName ?? "Someone") replied in a thread"
+                case 4: "\(senderName ?? "Someone") reacted \(n.reactionEmoji ?? "")"
+                    .trimmingCharacters(in: .whitespaces)
                 default: "\(senderName ?? "Someone") mentioned you"
                 }
                 Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body))
             }
+
+        case .notificationRead(let data):
+            // Another session (or the server, on a channel/thread visit) read
+            // rows — the badge follows the server's count.
+            await appState?.setNotificationUnread(data.unreadCount)
 
         case .workspaceUpdated(let ws):
             await saveWorkspacePreservingRole(ws)

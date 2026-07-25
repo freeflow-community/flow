@@ -6,6 +6,8 @@ import { db, schema } from '../db/index.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { requireChannelAccess } from './channels.js';
 import { enqueueReactionEvent } from './appEvents.js';
+import { notifyReaction } from './notifications.js';
+import { toMessageDTO } from './messages.js';
 import { publishEvent, subjectMsg } from '../bus.js';
 
 const { reactions, messages } = schema;
@@ -40,6 +42,9 @@ export async function addReaction(messageId: string, userId: string, emoji: stri
       ts: new Date().toISOString(),
       data: { messageId, channelId: row.channelId, emoji, userId },
     });
+    // Reactions on your own messages notify you (issue #63). Post-commit, and
+    // never allowed to fail the reaction itself.
+    await notifyReaction(chan, toMessageDTO(row), userId, emoji).catch(() => {});
   }
   return (await reactionsForMessages([messageId])).get(messageId) ?? [];
 }

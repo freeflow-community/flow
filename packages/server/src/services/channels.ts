@@ -6,6 +6,7 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { isUniqueViolation, requireMembership } from './workspaces.js';
 import { enqueueChannelEvent, enqueueMemberEvent } from './appEvents.js';
 import { postSystemMessage } from './messages.js';
+import { markChannelNotificationsRead, markThreadNotificationsRead } from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
 const { channels, channelMembers, messages, workspaceMembers } = schema;
@@ -442,11 +443,27 @@ export async function setNotifyLevel(channelId: string, userId: string, level: 0
     .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
 }
 
-export async function markRead(channelId: string, userId: string, lastReadMsgId: string): Promise<void> {
-  const { isMember } = await requireChannelAccess(channelId, userId);
+/**
+ * Advance the read cursor. Reading a channel also reads the notifications it
+ * raised (issue #63) — `threadRootId` means "I'm looking at this thread", which
+ * clears the thread's rows without moving the channel cursor (it only tracks
+ * top-level messages).
+ */
+export async function markRead(
+  channelId: string,
+  userId: string,
+  lastReadMsgId: string,
+  threadRootId?: string,
+): Promise<void> {
+  const { chan, isMember } = await requireChannelAccess(channelId, userId);
   if (!isMember) throw forbidden('join the channel first');
+  if (threadRootId) {
+    await markThreadNotificationsRead(userId, chan, threadRootId);
+    return;
+  }
   await db
     .update(channelMembers)
     .set({ lastReadMsgId })
     .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
+  await markChannelNotificationsRead(userId, chan, lastReadMsgId);
 }

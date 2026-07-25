@@ -7,12 +7,20 @@
 // (approved deviation from the workspace-scoped subject in the spec).
 //
 // Kinds: 0=mention (user or group mention), 1=dm, 2=thread_reply,
-// 3=channel activity (notify_level=all). Precedence when a message qualifies a
-// user several ways: dm > mention > thread_reply > activity — one row per
-// (user, message). notify_level 0 (mute) suppresses everything, including DMs.
+// 3=channel activity (notify_level=all), 4=reaction on one of my messages.
+// Precedence when a message qualifies a user several ways: dm > mention >
+// thread_reply > activity — one row per (user, message). notify_level 0 (mute)
+// suppresses everything, including DMs.
 //
 // Phase 10: rows are ALWAYS written — per-user prefs and status suppression
 // only gate OS *alerts* (suppressAlert on the DTO), never the inbox.
+//
+// Issue #63: rows also carry their actor (message author, or the reactor for
+// kind 4), and they go read either from the Activity feed or implicitly when
+// the user visits the channel/thread they came from — see
+// markChannelNotificationsRead / markThreadNotificationsRead. Every read path
+// publishes `notification.read` with the fresh unread total so the native
+// badges converge without polling.
 import { and, desc, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
 import {
   GROUP_MENTION_RE,
@@ -38,6 +46,17 @@ export interface PlannedNotification {
   userId: string;
   kind: NotificationKind;
   subkind: NotificationSubkind | null;
+}
+
+/**
+ * What a read pass flipped, plus the fresh unread total (badge source).
+ * `unreadCount` is null when the pass was a no-op and the caller didn't need
+ * the number — the channel read path runs on every cursor bump, so it doesn't
+ * pay for a count it has nothing to publish with.
+ */
+interface ReadResult {
+  ids: string[];
+  unreadCount: number | null;
 }
 
 interface RecipientPlan {
@@ -68,9 +87,11 @@ export function suppressAlertFor(
       ? 'dm'
       : kind === 2
         ? 'threadReply'
-        : subkind === 'here' || subkind === 'channel'
-          ? 'groupMention'
-          : 'mention';
+        : kind === 4
+          ? 'reaction'
+          : subkind === 'here' || subkind === 'channel'
+            ? 'groupMention'
+            : 'mention';
   return ctx.prefs[key] === false;
 }
 
@@ -98,7 +119,7 @@ export async function computeRecipients(
 
   const muted = (uid: string): boolean => memberLevel.get(uid) === 0;
   // priority: lower number wins (dm strongest)
-  const PRIORITY: Record<NotificationKind, number> = { 1: 0, 0: 1, 2: 2, 3: 3 };
+  const PRIORITY: Record<NotificationKind, number> = { 1: 0, 0: 1, 2: 2, 3: 3, 4: 4 };
   const out = new Map<string, RecipientPlan>();
   const propose = (uid: string, kind: NotificationKind, subkind: NotificationSubkind | null = null): void => {
     if (uid === senderId || muted(uid)) return;
@@ -108,7 +129,9 @@ export async function computeRecipients(
   };
 
   if (chan.kind !== 'standard') {
-    // any DM message notifies every other member (kind 1)
+    // any DM message notifies every other member (kind 1). Your personal DM
+    // (a "DM" whose only member is you) therefore never notifies — `propose`
+    // drops the sender, and there is nobody else (issue #63).
     for (const [uid] of memberLevel) propose(uid, 1);
     return finish(out);
   }
@@ -164,6 +187,18 @@ export async function computeRecipients(
   return finish(out);
 }
 
+/** One user's alert context (prefs + status flag). */
+async function alertContextFor(userId: string): Promise<AlertContext> {
+  const row = (
+    await db
+      .select({ prefs: users.notificationPrefs, suppress: users.statusSuppressAlerts })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+  )[0];
+  return { prefs: row?.prefs ?? {}, statusSuppressAlerts: row?.suppress ?? false };
+}
+
 /** Load each recipient's alert context (prefs + status flag) in one query. */
 async function finish(out: Map<string, RecipientPlan>): Promise<{
   recipients: Map<string, RecipientPlan>;
@@ -188,12 +223,21 @@ export async function insertNotifications(
   recipients: Map<string, RecipientPlan>,
   messageId: string,
   channelId: string,
+  actorId: string,
 ): Promise<PlannedNotification[]> {
   const planned: PlannedNotification[] = [...recipients].map(([userId, p]) => ({ id: newId(), userId, ...p }));
   if (planned.length > 0) {
-    await tx
-      .insert(notifications)
-      .values(planned.map((p) => ({ id: p.id, userId: p.userId, messageId, channelId, kind: p.kind, subkind: p.subkind })));
+    await tx.insert(notifications).values(
+      planned.map((p) => ({
+        id: p.id,
+        userId: p.userId,
+        messageId,
+        channelId,
+        kind: p.kind,
+        subkind: p.subkind,
+        actorId,
+      })),
+    );
   }
   return planned;
 }
@@ -215,6 +259,8 @@ export function publishNotifications(
       channelId: message.channelId,
       workspaceId,
       kind: p.kind,
+      actorId: message.userId,
+      reactionEmoji: null,
       subkind: p.subkind,
       suppressAlert: suppressAlertFor(p.kind, p.subkind, ctx),
       createdAt: ts,
@@ -269,6 +315,8 @@ export async function listNotifications(
         channelId: r.n.channelId,
         workspaceId: r.workspaceId,
         kind,
+        actorId: r.n.actorId ?? r.m.userId, // legacy rows: the author was the actor
+        reactionEmoji: r.n.reactionEmoji,
         subkind,
         suppressAlert: suppressAlertFor(kind, subkind, ctx),
         createdAt: r.n.createdAt.toISOString(),
@@ -281,12 +329,159 @@ export async function listNotifications(
   };
 }
 
-/** POST /v1/me/notifications/read {upToId} — mark everything up to the cursor read. */
-export async function markNotificationsRead(userId: string, upToId: string): Promise<number> {
+/**
+ * Reaction on one of my messages → kind 4 (issue #63). The actor is the
+ * reactor, so the feed row reads "Bob reacted 👍 to your message".
+ *
+ * Skipped for self-reactions, muted channels, and any message whose author
+ * can no longer see the channel (they left). The unique partial index makes
+ * the same emoji from the same person idempotent: react → unreact → react
+ * notifies once, and never re-raises a row the author already read.
+ */
+export async function notifyReaction(
+  chan: ChannelRow,
+  message: import('@flow/shared').MessageDTO,
+  actorId: string,
+  emoji: string,
+): Promise<void> {
+  const authorId = message.userId;
+  if (authorId === actorId) return; // your own reaction on your own message
+  const mem = await db
+    .select({ notifyLevel: channelMembers.notifyLevel })
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, chan.id), eq(channelMembers.userId, authorId)))
+    .limit(1);
+  const level = mem[0]?.notifyLevel;
+  if (level === undefined || level === 0) return; // gone, or muted this channel
+
+  const id = newId();
+  const inserted = await db
+    .insert(notifications)
+    .values({ id, userId: authorId, messageId: message.id, channelId: chan.id, kind: 4, actorId, reactionEmoji: emoji })
+    .onConflictDoNothing()
+    .returning({ id: notifications.id, createdAt: notifications.createdAt });
+  const row = inserted[0];
+  if (!row) return; // already notified for this (author, message, actor, emoji)
+
+  const ctx = await alertContextFor(authorId);
+  const dto: NotificationDTO = {
+    id: row.id,
+    userId: authorId,
+    messageId: message.id,
+    channelId: chan.id,
+    workspaceId: chan.workspaceId,
+    kind: 4,
+    actorId,
+    reactionEmoji: emoji,
+    subkind: null,
+    suppressAlert: suppressAlertFor(4, null, ctx),
+    createdAt: row.createdAt.toISOString(),
+    readAt: null,
+    message,
+  };
+  publishEvent(subjectUserNotify(authorId), {
+    type: 'notification.created',
+    workspaceId: chan.workspaceId,
+    channelId: chan.id,
+    ts: dto.createdAt,
+    data: dto,
+  });
+}
+
+/** This user's unread total — the number every client badges. */
+async function unreadCount(userId: string): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Flip the rows matched by `where` to read and tell every session of this user
+ * (badge + Activity list). No rows changed → no event: the implicit
+ * channel/thread paths run on every read-cursor bump and are usually no-ops.
+ */
+async function applyRead(
+  userId: string,
+  where: ReturnType<typeof and>,
+  workspaceId = '',
+  alwaysCount = false,
+): Promise<ReadResult> {
+  const readAt = new Date();
   const updated = await db
     .update(notifications)
-    .set({ readAt: new Date() })
-    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt), lte(notifications.id, upToId)))
+    .set({ readAt })
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt), where))
     .returning({ id: notifications.id });
-  return updated.length;
+  const ids = updated.map((r) => r.id);
+  if (ids.length === 0 && !alwaysCount) return { ids, unreadCount: null };
+
+  const total = await unreadCount(userId);
+  if (ids.length > 0) {
+    publishEvent(subjectUserNotify(userId), {
+      type: 'notification.read',
+      workspaceId, // '' when the rows can span workspaces (Activity feed)
+      ts: readAt.toISOString(),
+      data: { ids, unreadCount: total, readAt: readAt.toISOString() },
+    });
+  }
+  return { ids, unreadCount: total };
+}
+
+/**
+ * POST /v1/me/notifications/read — `upToId` marks everything up to the cursor
+ * read (opening the Activity feed), `id` marks a single row (clicking it).
+ */
+export async function markNotificationsRead(
+  userId: string,
+  body: { upToId?: string | undefined; id?: string | undefined },
+): Promise<ReadResult> {
+  const where = body.upToId ? lte(notifications.id, body.upToId) : eq(notifications.id, body.id!);
+  return applyRead(userId, where, '', true);
+}
+
+/**
+ * Visiting a channel reads its notifications (issue #63). Scoped to top-level
+ * messages at or before the read cursor — thread replies live behind a click,
+ * so they clear via markThreadNotificationsRead instead.
+ */
+export async function markChannelNotificationsRead(
+  userId: string,
+  chan: ChannelRow,
+  lastReadMsgId: string,
+): Promise<ReadResult> {
+  const channelId = chan.id;
+  return applyRead(
+    userId,
+    and(
+      eq(notifications.channelId, channelId),
+      sql`${notifications.messageId} IN (
+        SELECT ${messages.id} FROM ${messages}
+         WHERE ${messages.channelId} = ${channelId}
+           AND ${messages.threadRootId} IS NULL
+           AND ${messages.id} <= ${lastReadMsgId}
+      )`,
+    ),
+    chan.workspaceId,
+  );
+}
+
+/** Opening a thread reads the notifications its replies (and root) raised. */
+export async function markThreadNotificationsRead(
+  userId: string,
+  chan: ChannelRow,
+  threadRootId: string,
+): Promise<ReadResult> {
+  return applyRead(
+    userId,
+    and(
+      eq(notifications.channelId, chan.id),
+      sql`${notifications.messageId} IN (
+        SELECT ${messages.id} FROM ${messages}
+         WHERE ${messages.id} = ${threadRootId} OR ${messages.threadRootId} = ${threadRootId}
+      )`,
+    ),
+    chan.workspaceId,
+  );
 }

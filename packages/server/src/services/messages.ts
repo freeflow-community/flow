@@ -183,7 +183,7 @@ export async function sendMessage(
         .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
     }
     // notification rows in the same transaction (phase2.md §4)
-    planned = await insertNotifications(tx, recipients, id, channelId);
+    planned = await insertNotifications(tx, recipients, id, channelId, userId);
     // Slack-compat Events API outbox rows, same transaction (phase4.md §1)
     await enqueueMessageEvents(
       tx,

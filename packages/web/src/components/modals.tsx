@@ -573,6 +573,8 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.groupMention !== false} onChange={(v) => void setPref('groupMention', v)} />
       <PrefToggle testid="pref-thread-reply" label="Thread replies" hint="threads you started or joined"
         checked={prefs.threadReply !== false} onChange={(v) => void setPref('threadReply', v)} />
+      <PrefToggle testid="pref-reaction" label="Reactions" hint="someone reacts to your message"
+        checked={prefs.reaction !== false} onChange={(v) => void setPref('reaction', v)} />
       <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
         checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
 

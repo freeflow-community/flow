@@ -509,10 +509,31 @@ struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
     let messageId: String
     let channelId: String
     let workspaceId: String
-    let kind: Int // 0=mention 1=dm 2=thread_reply 3=channel activity
+    let kind: Int // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction
+    /// Who caused it (issue #63) — the reactor for kind 4, the message author
+    /// otherwise. Optional: rows written before the column existed have none.
+    let actorId: String?
+    /// kind 4 only: the emoji someone added to my message.
+    let reactionEmoji: String?
+    /// Server's alert decision (phase 10: per-user prefs + status suppression).
+    /// Optional so an older server, which omits it, still decodes — absent
+    /// means "alert", the pre-phase-10 behavior.
+    let suppressAlert: Bool?
     let createdAt: String
     let readAt: String?
     let message: Message
+
+    /// The user whose name and avatar the row/banner should show.
+    var actorUserId: String { actorId ?? message.userId }
+    /// Whether this notification may raise an OS banner.
+    var alerts: Bool { suppressAlert != true }
+}
+
+/// `notification.read` payload (issue #63): rows this user just read, in this
+/// or another session, plus the unread total every badge follows.
+struct NotificationReadData: Decodable, Sendable {
+    let ids: [String]
+    let unreadCount: Int
 }
 
 struct NotificationsResponse: Decodable, Sendable {
@@ -574,7 +595,13 @@ struct SendMessageBody: Encodable, Sendable {
     }
 }
 struct EditMessageBody: Encodable, Sendable { let body: String }
-struct ReadBody: Encodable, Sendable { let lastReadMsgId: String }
+/// POST /v1/channels/:id/read. `threadRootId` means "I'm looking at this
+/// thread": it reads the thread's notifications (issue #63) and leaves the
+/// channel cursor, which only tracks top-level messages, alone.
+struct ReadBody: Encodable, Sendable {
+    let lastReadMsgId: String
+    var threadRootId: String?
+}
 struct CreateDmBody: Encodable, Sendable { let userIds: [String] }
 struct AddMemberBody: Encodable, Sendable { let userId: String }
 struct NotifyLevelBody: Encodable, Sendable { let level: Int }
@@ -599,7 +626,12 @@ struct PatchMeBody: Encodable, Sendable {
         self.statusSuppressAlerts = statusSuppressAlerts
     }
 }
-struct MarkNotificationsReadBody: Encodable, Sendable { let upToId: String }
+/// POST /v1/me/notifications/read — a cursor (`upToId`, opening the Activity
+/// feed) or one row (`id`, clicking it). Exactly one is sent.
+struct MarkNotificationsReadBody: Encodable, Sendable {
+    var upToId: String?
+    var id: String?
+}
 struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String }
 /// POST /v1/artifacts — pin a file as a shared artifact in a channel. nil name
 /// = server derives it from the filename.
@@ -664,6 +696,7 @@ enum EventPayload: Sendable {
     case memberLeft(MemberJoinedData)
     case reaction(ReactionEventData, added: Bool)
     case notification(NotificationItem)
+    case notificationRead(NotificationReadData)
     case userUpdated(User)
     case workspaceUpdated(Workspace)
     case artifact(Artifact, change: ArtifactChange)
@@ -713,6 +746,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .reaction(try c.decode(ReactionEventData.self, forKey: .data), added: false)
         case "notification.created":
             payload = .notification(try c.decode(NotificationItem.self, forKey: .data))
+        case "notification.read":
+            payload = .notificationRead(try c.decode(NotificationReadData.self, forKey: .data))
         case "user.updated":
             payload = .userUpdated(try c.decode(User.self, forKey: .data))
         case "workspace.updated":

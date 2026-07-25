@@ -31,6 +31,8 @@ export interface NotificationPrefs {
   groupMention?: boolean | undefined;
   /** Replies to threads the user started or participated in (kind 2). Default on. */
   threadReply?: boolean | undefined;
+  /** Reactions on my own messages (kind 4). Default on. */
+  reaction?: boolean | undefined;
   /** Web-only presentation pref: OS notifications persist until dismissed (requireInteraction). Default off. */
   persistentBanners?: boolean | undefined;
 }
@@ -227,8 +229,11 @@ export interface MessageDTO {
   unfurls: UnfurlDTO[];
 }
 
-/** notifications.kind: 0=mention (incl. group mentions), 1=dm, 2=thread_reply, 3=channel activity (notify_level=all) */
-export type NotificationKind = 0 | 1 | 2 | 3;
+/**
+ * notifications.kind: 0=mention (incl. group mentions), 1=dm, 2=thread_reply,
+ * 3=channel activity (notify_level=all), 4=reaction on one of my messages
+ */
+export type NotificationKind = 0 | 1 | 2 | 3 | 4;
 
 export interface NotificationDTO {
   id: string;
@@ -237,6 +242,13 @@ export interface NotificationDTO {
   channelId: string;
   workspaceId: string;
   kind: NotificationKind;
+  /**
+   * Who caused it — the message author for kinds 0-3, the reactor for kind 4.
+   * Null only for legacy rows written before the column existed.
+   */
+  actorId: string | null;
+  /** kind 4 only: the emoji that was added to my message. */
+  reactionEmoji: string | null;
   /** For kind 0: what fired the mention (null for other kinds and legacy rows). */
   subkind: NotificationSubkind | null;
   /**

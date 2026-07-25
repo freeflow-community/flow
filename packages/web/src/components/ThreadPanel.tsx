@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { typingKey, useAuth, useLive, useMobileNav, useSelection } from '../state';
-import { useMemberMap, useNameMap, useThread } from '../hooks';
+import { useMarkRead, useMemberMap, useNameMap, useThread } from '../hooks';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 
@@ -22,6 +22,8 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
   const memberMap = useMemberMap(sel.workspaceId);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
+  const markRead = useMarkRead();
+  const readRef = useRef<string | null>(null);
   // Mobile: the thread covers the channel full-screen (its ✕ closes it)
   // instead of splitting an already-narrow viewport into two columns.
   const { isMobile } = useMobileNav();
@@ -32,6 +34,17 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
   }, [thread.data]);
 
   const channelId = thread.data?.root.channelId;
+
+  // Looking at a thread reads its notifications (issue #63) — the channel's own
+  // read cursor only tracks top-level messages, so replies need this. Re-runs
+  // when a new reply lands while the thread is open.
+  const newestId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
+  useEffect(() => {
+    if (!channelId || !newestId || readRef.current === newestId) return;
+    readRef.current = newestId;
+    markRead.mutate({ channelId, lastReadMsgId: newestId, threadRootId: rootId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelId, newestId, rootId]);
 
   // Typing in this thread's composer — scoped to the thread, so it appears
   // here and not in the channel behind it.

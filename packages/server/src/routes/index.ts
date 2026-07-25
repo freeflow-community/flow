@@ -242,8 +242,8 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.post('/v1/me/notifications/read', { preHandler: requireAuth }, async (req) => {
     const body = parse(MarkNotificationsReadBody, req.body);
-    await nt.markNotificationsRead(req.user.id, body.upToId);
-    return { ok: true };
+    const { unreadCount } = await nt.markNotificationsRead(req.user.id, body);
+    return { ok: true, unreadCount };
   });
 
   // ---- users / avatars -----------------------------------------
@@ -480,7 +480,7 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/channels/:id/read', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(MarkReadBody, req.body);
-    await ch.markRead(id, req.user.id, body.lastReadMsgId);
+    await ch.markRead(id, req.user.id, body.lastReadMsgId, body.threadRootId);
     return { ok: true };
   });
 

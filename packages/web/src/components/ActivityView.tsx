@@ -16,10 +16,11 @@ import { useMemberMap, useNameMap, useNotifications } from '../hooks';
 import { Avatar } from './Avatar';
 import { MobileMenuButton } from './MobileMenuButton';
 
-const kindLabel = (kind: number, sender: string) =>
+const kindLabel = (kind: number, sender: string, emoji: string | null) =>
   kind === 1 ? `${sender} sent you a direct message`
   : kind === 2 ? `${sender} replied in a thread`
   : kind === 3 ? `${sender} posted`
+  : kind === 4 ? `${sender} reacted ${emoji ?? ''} to your message`.replace('  ', ' ')
   : `${sender} mentioned you`;
 
 export default function ActivityView() {
@@ -61,8 +62,10 @@ export default function ActivityView() {
           <p className="py-16 text-center text-sm text-faint">No activity yet</p>
         )}
         {rows.map((n) => {
-          const sender = names[n.message.userId] ?? 'Someone';
-          const m = memberMap[n.message.userId];
+          // Who to show: the reactor on a reaction row, the author otherwise.
+          const actorId = n.actorId ?? n.message.userId;
+          const sender = names[actorId] ?? 'Someone';
+          const m = memberMap[actorId];
           return (
             <button
               key={n.id}
@@ -75,15 +78,15 @@ export default function ActivityView() {
                 // Jump straight to the triggering message (scroll + flash),
                 // opening its thread first when it's a thread reply.
                 sel.jumpToMessage(n.channelId, n.messageId, n.message.threadRootId);
-                await api('POST', '/v1/me/notifications/read', { upToId: n.id });
+                await api('POST', '/v1/me/notifications/read', { id: n.id });
                 void qc.invalidateQueries({ queryKey: ['notifications'] });
               }}
             >
-              <Avatar userId={n.message.userId} name={m?.displayName ?? sender} avatarUrl={m?.avatarUrl} size={34} radius={9} />
+              <Avatar userId={actorId} name={m?.displayName ?? sender} avatarUrl={m?.avatarUrl} size={34} radius={9} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2">
                   <span className={`truncate text-sm ${n.readAt === null ? 'font-semibold' : ''}`}>
-                    {kindLabel(n.kind, sender)}
+                    {kindLabel(n.kind, sender, n.reactionEmoji)}
                   </span>
                   <span className="ml-auto shrink-0 text-xs text-faint">{displayTime(n.createdAt)}</span>
                 </span>

@@ -295,11 +295,20 @@ export function useToggleReaction() {
   });
 }
 
+/**
+ * Advance the channel read cursor — which also clears that channel's Activity
+ * notifications server-side (issue #63). With `threadRootId` it means "I'm
+ * looking at this thread": the thread's rows go read and the channel cursor
+ * (top-level only) stays put.
+ */
 export function useMarkRead() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { channelId: string; lastReadMsgId: string }) =>
-      api('POST', `/v1/channels/${input.channelId}/read`, { lastReadMsgId: input.lastReadMsgId }),
+    mutationFn: (input: { channelId: string; lastReadMsgId: string; threadRootId?: string }) =>
+      api('POST', `/v1/channels/${input.channelId}/read`, {
+        lastReadMsgId: input.lastReadMsgId,
+        ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
+      }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['channels'] }),
   });
 }

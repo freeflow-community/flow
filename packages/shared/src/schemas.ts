@@ -222,6 +222,12 @@ export type EditMessageBody = z.infer<typeof EditMessageBody>;
 
 export const MarkReadBody = z.object({
   lastReadMsgId: z.string().uuid(),
+  /**
+   * "I'm looking at this thread" (issue #63): marks the thread's notifications
+   * read without touching the channel's own read cursor, which only tracks
+   * top-level messages. Absent = a plain channel read.
+   */
+  threadRootId: z.string().uuid().optional(),
 });
 export type MarkReadBody = z.infer<typeof MarkReadBody>;
 
@@ -252,9 +258,13 @@ export const ListNotificationsQuery = z.object({
 });
 export type ListNotificationsQuery = z.infer<typeof ListNotificationsQuery>;
 
-export const MarkNotificationsReadBody = z.object({
-  upToId: z.string().uuid(),
-});
+/** Either a cursor (everything up to it) or a single row (one Activity click). */
+export const MarkNotificationsReadBody = z
+  .object({
+    upToId: z.string().uuid().optional(),
+    id: z.string().uuid().optional(),
+  })
+  .refine((b) => b.upToId !== undefined || b.id !== undefined, 'upToId or id required');
 export type MarkNotificationsReadBody = z.infer<typeof MarkNotificationsReadBody>;
 
 // ---- profiles --------------------------------------------------
@@ -263,6 +273,7 @@ export const NotificationPrefsBody = z.object({
   mention: z.boolean().optional(),
   groupMention: z.boolean().optional(),
   threadReply: z.boolean().optional(),
+  reaction: z.boolean().optional(),
   persistentBanners: z.boolean().optional(),
 });
 

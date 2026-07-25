@@ -28,13 +28,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
   per-workspace switch/allowlist) is missing on *every* client — API-only.
 - macOS: phase 10 notification settings — no Notifications section in the
-  profile/settings UI, banner path doesn't consult `suppressAlert` yet, and
-  the status picker doesn't set `status_suppress_alerts` (web shipped
-  2026-07-21). The shared `setStatus(emoji:text:suppressAlerts:)` now carries
-  the flag and iOS sends it; macOS just needs to pass it at the call site.
+  profile/settings UI (including the new per-user **Reactions** toggle), and the
+  status picker doesn't set `status_suppress_alerts` (web shipped 2026-07-21).
+  The shared `setStatus(emoji:text:suppressAlerts:)` now carries the flag and
+  iOS sends it; macOS just needs to pass it at the call site. The banner path
+  itself now honours the server's `suppressAlert` (2026-07-25, #63), so prefs
+  set on web do take effect on macOS — only the settings surface is missing.
 - iOS: no Notifications section in the account/profile UI (web shipped the
-  per-user pref toggles in phase 10). Nothing on-device consumes them yet —
-  iOS has no push notifications — so this closes with the APNs work.
+  per-user pref toggles in phase 10, plus the Reactions toggle 2026-07-25).
+  Nothing on-device consumes them yet — iOS has no push notifications — so this
+  closes with the APNs work.
 - iOS: no Artifacts UI — no nested sidebar rows, artifact side panel, or
   pin-as-artifact action; the `artifact.*` WS events are safely ignored. Now
   the per-channel model (phase 13); server + web + macOS shipped together
@@ -173,6 +176,58 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-25 — Fix notifications: reactions, and read-on-visit (#63)
+- `[server]` **Reactions on your own messages now notify you** — a new kind 4.
+  `notifyReaction` (services/notifications.ts) runs post-commit from
+  `addReaction`, and never fails the reaction itself. It skips self-reactions,
+  muted channels (`notify_level = 0`) and authors who have left. Migration
+  `0024_reaction_notifications.sql` adds `notifications.actor_id` (who caused
+  it — the reactor for kind 4, the message author for kinds 0-3; backfilled
+  from `messages.user_id`) and `reaction_emoji`, plus a partial unique index on
+  `(user_id, message_id, actor_id, reaction_emoji) WHERE kind = 4` so
+  react → unreact → react notifies exactly once and never resurrects a row the
+  author already read.
+- `[server]` **A notification goes read when you visit where it came from.**
+  `POST /v1/channels/:id/read` now also reads that channel's rows (top-level
+  messages at or before the cursor); the same route with `threadRootId` means
+  "I'm looking at this thread" and reads the thread's rows without moving the
+  channel cursor, which only tracks top-level messages. New partial index
+  `notifications_unread_channel_idx` backs both.
+- `[server]` New `notification.read` event on the per-user notify subject
+  (`{ids, unreadCount, readAt}`) — every read path publishes it, so every
+  session's badge follows the server's count instead of local arithmetic. The
+  no-op case (the common one: a read-cursor bump with nothing unread) publishes
+  nothing and skips the count query.
+- `[server]` `POST /v1/me/notifications/read` accepts `{id}` for a single row
+  alongside `{upToId}` for the cursor, and returns the fresh `unreadCount`.
+  Clicking one Activity row no longer marks everything older read.
+- `[server]` Alert gate covers kind 4 via a new `reaction` pref key. Confirmed
+  and covered by tests: a message in your **personal DM** raises no
+  notification at all (the only member is you, and you're never your own
+  recipient), and a plain channel message still raises nothing unless you set
+  that channel to "All messages".
+- `[web]` Activity rows render reaction notifications ("Bob reacted 🎉 to your
+  message") with the *reactor's* name and avatar — rows now key off `actorId`
+  rather than assuming the message author. Same for OS banners. New
+  **Reactions** toggle in the profile Notifications section.
+- `[web]` The thread panel marks the thread read while it's open, and a
+  notification that lands in the channel you're already looking at is read
+  immediately (a reaction moves no read cursor, so otherwise it would come back
+  as a badge on the next load). `notification.read` drives the sidebar badge.
+- `[macos]` `[ios]` Same reaction rows in the Activity feed (actor name/avatar,
+  emoji in the headline), single-row read on click, and the dock / app-icon
+  badge now follows `notification.read` from any session. Opening a thread marks
+  it read.
+- `[macos]` The banner path finally honours the server's `suppressAlert`
+  (phase-10 parity gap): prefs and a DND status set on web now silence macOS
+  banners, and kind-3 "all messages" activity no longer banners as "mentioned
+  you". Banners for a channel you're actively viewing are suppressed as before.
+- `[qa]` `packages/server/test/notifications.test.ts` +10 cases (reaction
+  actor/emoji/idempotence/mute, personal DM silence, channel vs thread read
+  scoping, cross-channel isolation, single-row read). Full suite: 215 pass.
+  Verified end-to-end over the HTTP surface with a throwaway two-user script —
+  all 18 checks (one per bullet in the issue) pass.
 
 ### 2026-07-25 — Fix: the channel header avatar stack now opens the member list (#70)
 - `[web]` The header stack was explicitly decorative — no click handler, and for

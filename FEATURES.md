@@ -5,6 +5,18 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-25
 
+- **Someone reacts to your message? You'll know.** Reactions on your own
+  messages now show up in Activity ("Bob reacted 🎉 to your message") and can
+  raise a notification — with a new Reactions switch in your notification
+  settings if you'd rather they didn't. Adding and removing the same reaction
+  only ever tells you once.
+- **Notifications clear themselves when you've seen them.** Opening the channel
+  — or the thread — a notification came from marks it read, so the Activity dot
+  and the app's badge number match what you've actually looked at, on every
+  device you're signed in on. Clicking a single item in Activity now marks just
+  that one read instead of everything below it.
+- **Notes to yourself stay quiet.** A message in your own personal DM never
+  notifies you.
 - **See who's in a channel.** Click the little stack of faces at the top right
   of a conversation and you get the full member list — who's online, their
   status, and a click through to anyone's profile card. The faces themselves
