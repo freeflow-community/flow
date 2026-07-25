@@ -173,6 +173,15 @@ export async function sendMessage(
     if (attachRows.length > 0) {
       await tx.insert(messageFiles).values(attachRows.map((f) => ({ messageId: id, fileId: f.id })));
     }
+    if (!threadRootId) {
+      // Posting in a channel means you've seen what's above it — advance the
+      // sender's read cursor so the channel doesn't badge on their other
+      // clients (#71). `greatest` ignores NULLs and never moves it backwards.
+      await tx
+        .update(channelMembers)
+        .set({ lastReadMsgId: sql`greatest(${channelMembers.lastReadMsgId}, ${id}::uuid)` })
+        .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
+    }
     // notification rows in the same transaction (phase2.md §4)
     planned = await insertNotifications(tx, recipients, id, channelId);
     // Slack-compat Events API outbox rows, same transaction (phase4.md §1)

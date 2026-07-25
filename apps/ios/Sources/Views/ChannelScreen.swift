@@ -56,6 +56,7 @@ struct ChannelScreen: View {
                 focusMessageId: app.focusMessageId,
                 onFocused: { app.focusMessageId = nil }
             )
+            .dismissesKeyboardOnTap()
             TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
             Divider()
             ComposerView(channelId: channelId)
