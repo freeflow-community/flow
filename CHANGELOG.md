@@ -192,6 +192,11 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   maps derived for `MessageListView`/`TypingIndicatorView`. The rows needed
   status *text*, which neither old map carried; three overlapping observers
   became one.
+- `[macos]` The popover sets `.presentationBackground(MC.base)`. Without it a
+  SwiftUI `.popover` uses the system vibrant material, which samples whatever is
+  behind it — gray over the message list, violet over the sidebar — and washed
+  out the ink-on-paper row text. The app's other popovers (status picker,
+  reaction picker, avatar menu) still do this; left alone as out of scope here.
 - `[ios]` Not ported; see Parity.
 - `swift build` clean (no new warnings). `swift test` is unrunnable in this
   checkout — `no such module 'XCTest'` under the current toolchain, same on

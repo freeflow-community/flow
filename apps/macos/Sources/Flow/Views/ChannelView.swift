@@ -309,6 +309,10 @@ struct ChannelView: View {
         }
         .padding(.vertical, 10)
         .frame(width: 260)
+        // Without this the popover uses the system vibrant material, which
+        // samples whatever is behind it — gray over the message list, violet
+        // over the sidebar — and washes out the ink-on-paper row text.
+        .presentationBackground(MC.base)
         .accessibilityIdentifier("channel.membersPopover")
     }
 
