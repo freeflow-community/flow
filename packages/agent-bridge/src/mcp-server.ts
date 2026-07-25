@@ -1,7 +1,8 @@
 // The `flow` MCP stdio server (rich mode, operator ruling 6): messaging
 // (send_message, react, upload_file, search_history), the key channel
 // operations (list_channels, list_users, join_channel, leave_channel,
-// read_messages), and self-service profile bits (set_avatar) against /v1
+// create_channel, invite_to_channel, read_messages), and self-service profile
+// bits (set_avatar) against /v1
 // with the agent token.
 //
 // Hand-rolled newline-delimited JSON-RPC (the MCP stdio transport) — a small
@@ -10,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { FlowApi } from './api.js';
+import { FlowApi, FlowApiError } from './api.js';
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -102,6 +103,36 @@ const TOOLS = [
     },
   },
   {
+    name: 'create_channel',
+    description:
+      'Create a new channel in the workspace and join it. Names are lowercase letters, digits, - and _ (max 80 chars). Returns the new channel id — use it with invite_to_channel and send_message.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Channel name without the #, e.g. incident-2026-07-25.' },
+        topic: { type: 'string', description: 'Optional channel topic (max 250 chars).' },
+        isPrivate: {
+          type: 'boolean',
+          description: 'Private channel — visible only to its members (default false).',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'invite_to_channel',
+    description:
+      'Add workspace members to a channel. Pass several userIds to invite a group in one call — each is added independently and the result reports any that failed. Get ids from list_users.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channelId: { type: 'string', description: 'Channel to add people to (default: current conversation).' },
+        userIds: { type: 'array', items: { type: 'string' }, description: 'User ids to add.' },
+      },
+      required: ['userIds'],
+    },
+  },
+  {
     name: 'set_avatar',
     description:
       'Set your own avatar from a local image file (png/jpeg/gif/webp — the server square-crops it to 512px).',
@@ -176,6 +207,18 @@ const MIME_BY_EXT: Record<string, string> = {
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
 };
+
+/** Per-user failure text for invite_to_channel. The server's own messages are
+ * already agent-readable (`dm_channel`, `channel_archived`, `bad_user`), so
+ * they pass through — except 404, which a private channel the agent isn't in
+ * also returns (membership privacy), making "channel not found" misleading. */
+function inviteErrorText(err: unknown): string {
+  if (!(err instanceof FlowApiError)) return (err as Error).message;
+  if (err.status === 404) {
+    return 'channel not found, or it is private and you are not a member (only members can invite to a private channel)';
+  }
+  return err.message;
+}
 
 export async function runMcpServer(): Promise<void> {
   const serverUrl = process.env.FLOW_SERVER_URL ?? '';
@@ -284,6 +327,57 @@ export async function runMcpServer(): Promise<void> {
       case 'leave_channel': {
         await api.leaveChannel(String(args.channelId ?? ''));
         return toolText('left');
+      }
+      case 'create_channel': {
+        const name = String(args.name ?? '').trim();
+        if (!name) return toolText('create_channel needs a name', true);
+        try {
+          const created = await api.createChannel(workspaceId, {
+            name,
+            ...(args.topic ? { topic: String(args.topic) } : {}),
+            ...(args.isPrivate === true ? { isPrivate: true } : {}),
+          });
+          return toolText(
+            `created #${created.name} (id ${created.id})${created.isPrivate ? ' — private' : ''}; you are a member`,
+          );
+        } catch (err) {
+          if (err instanceof FlowApiError && err.code === 'channel_exists') {
+            // hand back the existing id when we can see it, so the agent can just use it
+            const existing = await api
+              .listChannels(workspaceId)
+              .then((cs) => cs.find((c) => c.name === name))
+              .catch(() => undefined);
+            return toolText(
+              existing
+                ? `a channel named #${name} already exists (id ${existing.id}) — use it instead of creating one`
+                : `a channel named #${name} already exists`,
+              true,
+            );
+          }
+          throw err;
+        }
+      }
+      case 'invite_to_channel': {
+        if (!channelId) return toolText('invite_to_channel needs a channelId', true);
+        const raw = Array.isArray(args.userIds)
+          ? args.userIds
+          : [args.userIds ?? args.userId].filter((v) => v !== undefined && v !== null);
+        const userIds = [...new Set(raw.map((u) => String(u).trim()).filter(Boolean))].slice(0, 50);
+        if (userIds.length === 0) return toolText('invite_to_channel needs one or more userIds', true);
+        // one call per user (the server adds one at a time); report each outcome
+        const added: string[] = [];
+        const failed: string[] = [];
+        for (const userId of userIds) {
+          try {
+            await api.addChannelMember(channelId, userId);
+            added.push(userId);
+          } catch (err) {
+            failed.push(`<@${userId}>: ${inviteErrorText(err)}`);
+          }
+        }
+        const summary = added.length ? `invited ${added.map((u) => `<@${u}>`).join(', ')}` : 'invited nobody';
+        const detail = failed.length ? `\nfailed:\n${failed.join('\n')}` : '';
+        return toolText(summary + detail, added.length === 0);
       }
       case 'set_avatar': {
         const p = path.resolve(String(args.path ?? ''));
