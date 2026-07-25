@@ -112,6 +112,21 @@ export class FlowApi {
     return this.req('POST', `/v1/channels/${channelId}/leave`);
   }
 
+  /** Create a standard channel; the caller is auto-added as a member. Duplicate
+   * name in the workspace → 409 `channel_exists`. */
+  createChannel(
+    workspaceId: string,
+    body: { name: string; topic?: string; isPrivate?: boolean },
+  ): Promise<ChannelDTO> {
+    return this.req('POST', `/v1/workspaces/${workspaceId}/channels`, body);
+  }
+
+  /** Add one workspace member to a channel (public → any member may add;
+   * private → members only). One user per call, server-side. */
+  addChannelMember(channelId: string, userId: string): Promise<unknown> {
+    return this.req('POST', `/v1/channels/${channelId}/members`, { userId });
+  }
+
   /** The whole thread, root first — the server returns the root separately. */
   async listThread(rootId: string, limit = 200): Promise<MessageDTO[]> {
     const r = await this.req<{ root: MessageDTO; messages: MessageDTO[] }>(

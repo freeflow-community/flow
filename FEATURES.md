@@ -5,6 +5,12 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-25
 
+- **Ask an agent to set up a channel.** AI agents in your workspace can now
+  create a channel and add people to it — so "spin up a channel for this
+  incident and pull in Alice and Bob" is one request instead of something you
+  do by hand first. They can add a whole group at once, and they're bound by
+  the same rules you are: no adding people to a private channel they're not in.
+
 - **See who's in a channel.** Click the little stack of faces at the top right
   of a conversation and you get the full member list — who's online, their
   status, and a click through to anyone's profile card. The faces themselves

@@ -305,6 +305,70 @@ describe('remove agent', () => {
   });
 });
 
+// Backs the flow MCP `create_channel` / `invite_to_channel` tools (issue #65):
+// agents are ordinary workspace members, so no new authorization model — these
+// pin the behaviour the tools surface to agents.
+describe('agent channel creation + invites', () => {
+  it('an agent creates a public channel and is a member of it', async () => {
+    const a = await registerAgent('ChannelBot');
+    const name = `agent-made-${Date.now()}`;
+    const chan = await ch.createChannel(workspaceId, a.user.id, name, 'spun up by an agent');
+
+    expect(chan.name).toBe(name);
+    expect(chan.isPrivate).toBe(false);
+    expect(chan.createdBy).toBe(a.user.id);
+    expect(chan.isMember).toBe(true);
+    const cm = await db
+      .select()
+      .from(channelMembers)
+      .where(and(eq(channelMembers.channelId, chan.id), eq(channelMembers.userId, a.user.id)));
+    expect(cm.length).toBe(1);
+  });
+
+  it('an agent adds a workspace member to a public channel', async () => {
+    const a = await registerAgent('InviteBot');
+    const chan = await ch.createChannel(workspaceId, a.user.id, `agent-invites-${Date.now()}`);
+
+    await ch.addMember(chan.id, a.user.id, memberId);
+
+    const cm = await db
+      .select()
+      .from(channelMembers)
+      .where(and(eq(channelMembers.channelId, chan.id), eq(channelMembers.userId, memberId)));
+    expect(cm.length).toBe(1);
+    // adding the same person again is a no-op, not an error (tool reports success)
+    await expect(ch.addMember(chan.id, a.user.id, memberId)).resolves.toBeUndefined();
+  });
+
+  it('an agent cannot invite to a private channel it is not in — 404, not 403 (membership privacy)', async () => {
+    const a = await registerAgent('OutsiderBot');
+    const secret = await ch.createChannel(workspaceId, ownerId, `owner-only-${Date.now()}`, undefined, true);
+
+    // requireChannelAccess 404s before the private-channel forbidden() is reached,
+    // so the tool must not promise a 403 here.
+    await expect(ch.addMember(secret.id, a.user.id, memberId)).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'not_found',
+    });
+    // ...but a member of that private channel may invite
+    await expect(ch.addMember(secret.id, ownerId, memberId)).resolves.toBeUndefined();
+  });
+
+  it('an agent gets a clean 409 channel_exists on a duplicate channel name', async () => {
+    const a = await registerAgent('DupeBot');
+    const name = `dupe-${Date.now()}`;
+    const first = await ch.createChannel(workspaceId, a.user.id, name);
+
+    await expect(ch.createChannel(workspaceId, a.user.id, name)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'channel_exists',
+    });
+    // the tool recovers the existing id from the channel list to hand back
+    const listed = (await ch.listChannels(workspaceId, a.user.id)).find((c) => c.name === name);
+    expect(listed?.id).toBe(first.id);
+  });
+});
+
 describe('sponsor departure cascade', () => {
   it('removing the sponsor from a workspace removes the agents they sponsor there', async () => {
     const sponsor = await registerHuman(`sponsor-${Date.now()}@example.test`, 'Sponsor');
