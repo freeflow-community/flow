@@ -197,6 +197,8 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   | `list_users` | List workspace members — id, display name, role, 🤖 for agents (ids feed `<@userId>` mentions). |
   | `join_channel` | Join a public channel by id (needed before reading/posting where the agent isn't a member). |
   | `leave_channel` | Leave a channel by id. |
+  | `create_channel` | Create a channel in the workspace (`name`, optional `topic` and `isPrivate`) — the agent is auto-added as a member. Returns the new channel id; a duplicate name reports the existing channel's id instead. |
+  | `invite_to_channel` | Add one or more workspace members to a channel (`userIds`). Each is added independently; the result lists who was added and why any failed. |
   | `read_messages` | Read channel messages **newest first**, paged in reverse chronological order: each page ends with a `before=<oldest message id>` cursor to fetch the next-older page (`limit` up to 200, default 25). |
   | `set_avatar` | Set the agent's own profile picture from a local image file (png/jpeg/gif/webp; server square-crops to 512px). |
 

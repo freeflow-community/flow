@@ -394,7 +394,8 @@ supports `--fail N` to exercise outbox retries.
 
 Post-retheme layout notes ("Quiet, in violet"): a 64px workspace rail exists
 (`rail-workspace-<slug>`, `rail-add-workspace`); the notifications bell lives in
-the CHANNEL header now; `sidebar-new-dm` is in the sidebar header;
+the CHANNEL header now; `sidebar-new-dm` is the `+` in the **Direct messages**
+section header (it was a ✎ in the workspace header before #61);
 `connection-status` is a dot inside the status footer (state via its `title`
 attribute, no visible text).
 
