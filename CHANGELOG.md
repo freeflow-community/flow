@@ -167,6 +167,23 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-24 — Fix: the mini-browser's Go button didn't reload the page
+- `[web]` `LinkPane.go()` bailed out when the normalized URL matched the one
+  already pinned (`next === url`), because the only job it knew about was
+  PATCHing the artifact. With an unchanged address that meant no PATCH, no
+  `artifact.updated` echo, and — since the iframe is keyed on `url` — no
+  remount: pressing **Go** (or Enter) on the current page did nothing at all.
+  The same-url case now bumps a `reloadNonce` that feeds the iframe key, so the
+  page reloads locally; the block-hint timer restarts with it. Only a genuine
+  url change still broadcasts, so a reload doesn't spam co-browsers.
+- `[macos]` Same bug, same shape: `broadcast()` guards on `next != url`, so
+  Enter on the current address was a no-op. Submitting the shown url now bumps a
+  `reloadToken` that `CoBrowserWebView` turns into a fresh `load()` of the
+  shared url — which also pulls the web view back from wherever in-page clicks
+  wandered. The reload's `didCommit` matches `lastLoaded`, so it isn't
+  re-broadcast.
+- `[ios]` Unaffected — no artifacts UI there yet (tracked under Parity).
+
 ### 2026-07-24 — Fix: the native Google handoff opened a second Flow window
 - `[macos]` **The production bug.** `RootView`'s `.onOpenURL` sits inside a
   `WindowGroup` that never declared `handlesExternalEvents`, so when a running
