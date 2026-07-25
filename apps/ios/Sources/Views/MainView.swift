@@ -102,7 +102,12 @@ struct MainView: View {
         workspaces.value.first { $0.id == app.selectedWorkspaceId }?.name ?? "Flow"
     }
 
-    private func openDrawer() { drawerOpen = true }
+    // The drawer slides over the whole screen, so a raised composer keyboard
+    // would sit on top of it — put it away before opening (#69).
+    private func openDrawer() {
+        dismissKeyboard()
+        drawerOpen = true
+    }
     private func closeDrawer() { drawerOpen = false }
 
     // DEBUG QA: FLOW_DEBUG_OPEN_CHANNEL=<name> auto-selects that channel so the

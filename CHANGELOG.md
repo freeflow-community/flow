@@ -167,6 +167,38 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-24 — Fix: your own messages counted toward the unread badge (#71)
+- `[server]` The per-channel unread query in `listChannels` counted every
+  non-deleted, non-system, top-level message newer than `lastReadMsgId` with no
+  author filter, so a message you sent badged your own channel until the read
+  cursor caught up — which it never does when you send from one client and look
+  at the sidebar on another. Added `ne(messages.userId, userId)` to the
+  condition: you can't have unread mail from yourself, in a DM or anywhere else.
+- `[server]` `sendMessage` now advances the sender's `lastReadMsgId` for
+  top-level posts (`greatest(lastReadMsgId, <id>)`, so it never moves
+  backwards) — posting in a channel means you've seen what's above it. Thread
+  replies leave the channel cursor alone; they don't count toward it either.
+- `[server]` Notification rows were already correct — `computeRecipients`
+  skips the sender — so the notification unread count needed no change.
+- New `packages/server/test/unread.test.ts` (6 DB-backed cases): own DM/channel
+  messages don't badge, the other party's still does, a null cursor doesn't
+  resurrect your own messages, sends advance the cursor, replies don't.
+- `[web]` `[macos]` `[ios]` No client change — the web sidebar renders the
+  server count, and macOS already skips its local increment for own messages.
+
+### 2026-07-24 — Fix: iOS keyboard stayed up over the drawer and message list (#69)
+- `[ios]` Composer focus is a `@FocusState private var` inside `ComposerView`,
+  so nothing outside it could drop the keyboard: opening the channel drawer
+  slid it over a raised keyboard, and tapping the message list did nothing.
+  New `Sources/Platform/Keyboard.swift` adds a `dismissKeyboard()` (app-wide
+  resign-first-responder) plus a `dismissesKeyboardOnTap()` view modifier.
+- `[ios]` `MainView.openDrawer()` dismisses before opening; `ChannelScreen`
+  and `ThreadScreen` apply the tap modifier to their message lists. It uses
+  `simultaneousGesture`, so message taps, links and long-press actions still
+  work. Both lists also gained `.scrollDismissesKeyboard(.interactively)` for
+  drag-to-dismiss.
+- `[web]` `[macos]` Not applicable — no software keyboard.
+
 ### 2026-07-24 — Fix: the mini-browser's Go button didn't reload the page
 - `[web]` `LinkPane.go()` bailed out when the normalized URL matched the one
   already pinned (`next === url`), because the only job it knew about was

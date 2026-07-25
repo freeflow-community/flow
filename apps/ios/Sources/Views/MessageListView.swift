@@ -84,6 +84,9 @@ struct MessageListView: View {
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
             .defaultScrollAnchor(.bottom)
+            // Drag the list down and the keyboard follows your finger (#69) —
+            // the tap-to-dismiss handler on the list covers the discrete case.
+            .scrollDismissesKeyboard(.interactively)
             // Jump-to-message (phase 12): center + flash the target once it's in
             // the list (older history pages in via ChannelScreen), then release.
             .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }

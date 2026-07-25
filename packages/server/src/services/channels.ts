@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { ChannelDTO, ChannelKind, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -212,10 +212,17 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     let unreadCount = 0;
     if (r.isMember) {
       // System lines (join/leave) never contribute to unread — they're courtesy
-      // notices, not messages you need to catch up on.
-      const cond = r.lastReadMsgId
-        ? and(eq(messages.channelId, r.c.id), isNull(messages.threadRootId), isNull(messages.deletedAt), isNull(messages.systemKind), gt(messages.id, r.lastReadMsgId))
-        : and(eq(messages.channelId, r.c.id), isNull(messages.threadRootId), isNull(messages.deletedAt), isNull(messages.systemKind));
+      // notices, not messages you need to catch up on. Neither do your own
+      // messages: you can't have unread mail from yourself, and the read cursor
+      // may not have caught up if you sent from another client (#71).
+      const base = and(
+        eq(messages.channelId, r.c.id),
+        isNull(messages.threadRootId),
+        isNull(messages.deletedAt),
+        isNull(messages.systemKind),
+        ne(messages.userId, userId),
+      );
+      const cond = r.lastReadMsgId ? and(base, gt(messages.id, r.lastReadMsgId)) : base;
       const cnt = await db.select({ n: sql<number>`count(*)::int` }).from(messages).where(cond);
       unreadCount = cnt[0]?.n ?? 0;
     }

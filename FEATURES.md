@@ -5,6 +5,13 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-24
 
+- **No more unread badges for your own messages.** Sending a message no longer
+  leaves the conversation looking unread in your sidebar — including DMs, where
+  a note you sent yourself or a reply you fired off from your phone used to
+  come back with a number on it. Messages from other people badge as always.
+- **iPhone: the keyboard gets out of the way.** Opening the channel menu now
+  puts the keyboard down instead of sliding the menu over it, and tapping (or
+  dragging down) the conversation dismisses it too.
 - **Reload a shared page.** In the mini browser, pressing **Go** (or Enter) on
   the address that's already showing now reloads the page instead of doing
   nothing — handy for a dashboard that's gone stale, or to get back to the
