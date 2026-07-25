@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
-import { useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMembers, useMessages, useNameMap, flattenMessages } from '../hooks';
+import { useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
+import ChannelMembersPopover, { type MemberRow } from './ChannelMembersPopover';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
@@ -13,7 +14,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const sel = useSelection();
   const live = useLive();
   const channels = useChannels(sel.workspaceId);
-  const members = useMembers(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
   const displayNames = useDisplayNameMap(sel.workspaceId); // agent names carry the 🤖 badge
@@ -22,6 +22,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const lastReadRef = useRef<string | null>(null);
   const [cardUserId, setCardUserId] = useState<string | null>(null);
   const [editChannel, setEditChannel] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
@@ -63,10 +64,32 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       : dmTitle(channel, displayNames, auth.user.id)
     : '';
 
-  // header avatar stack: channel members for DMs, workspace members otherwise
-  const headerIds = (isDm ? channel?.memberIds ?? [] : (members.data ?? []).map((m) => m.userId));
+  // Header avatar stack: this channel's membership for every kind (issue #70 —
+  // standard channels used to show the whole workspace roster, which said
+  // nothing about who was actually in the channel). The DTO only carries
+  // memberIds for DMs, so it's the fallback while the fetch is in flight.
+  const chanMembers = useChannelMembers(channelId);
+  const headerIds = chanMembers.data ?? channel?.memberIds ?? [];
   const shown = headerIds.slice(0, 3);
   const extra = headerIds.length - shown.length;
+
+  const memberRows: MemberRow[] = headerIds.map((id) => {
+    const m = memberMap[id];
+    return {
+      userId: id,
+      displayName: m?.displayName ?? 'Unknown',
+      avatarUrl: m?.avatarUrl,
+      isAgent: m?.isAgent ?? false,
+      statusEmoji: m?.statusEmoji ?? '',
+      statusText: m?.statusText ?? '',
+      // You're online by definition — this client is the one connected.
+      online: id === auth.user.id || !!live.presence[id],
+      isSelf: id === auth.user.id,
+    };
+  });
+
+  // Switching channels shouldn't leave the previous channel's roster hanging open.
+  useEffect(() => setMembersOpen(false), [channelId]);
 
   // Main-composer typing only — thread typing shows in its own panel. An agent
   // at work "thinks" rather than "types" (ui_nits), so carry the isAgent flag.
@@ -97,9 +120,17 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           {channel?.topic && <p className="truncate text-xs text-muted">{channel.topic}</p>}
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {/* decorative member stack — dropped on mobile so the title gets the room */}
-          <div className="flex items-center max-md:hidden">
+        <div className="relative flex shrink-0 items-center gap-3">
+          {/* member stack — opens the roster; dropped on mobile so the title gets the room */}
+          <button
+            data-testid="channel-members-trigger"
+            data-members-trigger
+            title="View members"
+            aria-haspopup="dialog"
+            aria-expanded={membersOpen}
+            className="flex items-center rounded-lg px-1 py-0.5 hover:bg-daypill/60 max-md:hidden"
+            onClick={() => setMembersOpen((v) => !v)}
+          >
             {shown.map((id, i) => {
               const m = memberMap[id];
               return (
@@ -116,7 +147,17 @@ export default function ChannelView({ channelId }: { channelId: string }) {
               );
             })}
             {extra > 0 && <span className="ml-1.5 text-xs text-muted">+{extra}</span>}
-          </div>
+            {/* nothing to stack yet (fetch in flight) — keep a clickable target */}
+            {shown.length === 0 && <span className="text-sm text-muted">👥</span>}
+          </button>
+          {membersOpen && (
+            <ChannelMembersPopover
+              rows={memberRows}
+              loading={chanMembers.isLoading}
+              onClose={() => setMembersOpen(false)}
+              onSelect={(id) => { setMembersOpen(false); setCardUserId(id); }}
+            />
+          )}
         </div>
       </header>
 
