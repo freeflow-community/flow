@@ -197,6 +197,9 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   New `inviteErrorText()` maps 404 → "channel not found, or it is private and
   you are not a member"; every other server code (`dm_channel`,
   `channel_archived`, `bad_user`) passes through as-is.
+- `[bridge]` Package bumped to `0.9.0` — a published tool-surface change, so
+  existing installs need it to pick the tools up (`currentVersion()` reads
+  package.json, so the startup staleness warning follows automatically).
 - `[bridge]` `FlowApi.createChannel()` / `addChannelMember()` in `api.ts`; the
   hardcoded tool list in `bridge.ts`'s system prompt learned both tools, or
   agents would never know they exist.
