@@ -68,3 +68,35 @@ targets:
         # Capabilities, or via DEVELOPMENT_TEAM). Simulator CLI builds pass
         # CODE_SIGNING_ALLOWED=NO on the xcodebuild invocation instead, so the
         # committed project stays device-ready by default.
+
+  # XCUITest target: taps happen inside the simulator, so iOS UI checks don't
+  # need the operator's desktop the way the macOS AX harness does. Runs against
+  # a local dev server + `qa-seed.mjs` fixtures — see UITests/README.md.
+  FlowUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: UITests
+    dependencies:
+      - target: Flow
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.flowtoo.app.uitests
+        DEVELOPMENT_TEAM: 76NSMTH84G
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Flow
+
+schemes:
+  Flow:
+    build:
+      targets:
+        Flow: all
+        FlowUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [FlowUITests]

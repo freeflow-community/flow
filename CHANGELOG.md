@@ -198,6 +198,13 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   work. Both lists also gained `.scrollDismissesKeyboard(.interactively)` for
   drag-to-dismiss.
 - `[web]` `[macos]` Not applicable — no software keyboard.
+- `[qa]` First iOS UI-test target (`apps/ios/UITests`, XCUITest via a new
+  `FlowUITests` target in `project.yml`) — taps run inside the simulator, so
+  unlike the macOS AX harness they don't need an idle desktop.
+  `KeyboardDismissTests` encodes both acceptance criteria; it fails on the
+  pre-fix code (keyboard still up after both gestures) and passes after.
+  Composer's `TextField` gained a `composer.input` identifier to drive it.
+  Setup + run instructions in `apps/ios/UITests/README.md`.
 
 ### 2026-07-24 — Fix: the mini-browser's Go button didn't reload the page
 - `[web]` `LinkPane.go()` bailed out when the normalized URL matched the one

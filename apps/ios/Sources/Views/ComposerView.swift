@@ -62,6 +62,7 @@ struct ComposerView: View {
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($focused)
+                    .accessibilityIdentifier(threadRootId == nil ? "composer.input" : "thread.composer.input")
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(RoundedRectangle(cornerRadius: 18).fill(MC.base))
