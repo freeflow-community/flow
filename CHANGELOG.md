@@ -72,7 +72,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - No syntax highlighting in code blocks (both clients; never scoped).
 - iOS: no push notifications (APNs — deferred to a follow-on phase; needs
   server device-token registry + Apple push key + device testing). Everything
-  else in core messaging + files is now at parity.
+  else in core messaging + files is now at parity. Now designed end-to-end in
+  `docs/design/PUSH_APNS.md` (registry, sender seam, outbox, payload, client
+  work, phasing) — that doc also carries the open operator questions:
+  message body in the payload or not, the Apple Developer key, and
+  sandbox-vs-production.
 - macOS has no in-app registration, password-reset, or passwordless sign-in
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
@@ -223,6 +227,13 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   (phase-10 parity gap): prefs and a DND status set on web now silence macOS
   banners, and kind-3 "all messages" activity no longer banners as "mentioned
   you". Banners for a channel you're actively viewing are suppressed as before.
+- Docs only, no code: `docs/design/PUSH_APNS.md` — how iOS gets real push.
+  Device-token registry, a `PushSender` seam mirroring the email/storage
+  drivers, an outbox + worker on the Events API precedent (a missed push has
+  no socket to backfill from, so this one can't be loss-tolerant), the payload
+  and its `suppressAlert` gate, silent badge-sync pushes off the new
+  `notification.read`, client work, `simctl`-based testing without an Apple
+  account, and the operator questions that block it.
 - `[qa]` `packages/server/test/notifications.test.ts` +10 cases (reaction
   actor/emoji/idempotence/mute, personal DM silence, channel vs thread read
   scoping, cross-channel isolation, single-row read). Full suite: 215 pass.
