@@ -3,6 +3,14 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-25
+
+- **See who's in a channel.** Click the little stack of faces at the top right
+  of a conversation and you get the full member list — who's online, their
+  status, and a click through to anyone's profile card. The faces themselves
+  now show the channel's actual members too, instead of everyone in the
+  workspace.
+
 ## 2026-07-24
 
 - **No more unread badges for your own messages.** Sending a message no longer

@@ -123,6 +123,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   with the capability enabled on the App ID, and in-app consumption via
   `POST /v1/auth/signin-link/consume`.
 
+- macOS + iOS: the channel header avatar stack is still decorative — web made it
+  open a member-list popover (names, presence, status, tap-through to the user
+  card) on 2026-07-25 (#70). macOS also still fills the stack with the workspace
+  roster for standard channels (`ChannelView.swift` `memberAvatars`) rather than
+  the channel's own membership; `GET /v1/channels/:id/members` is the fix on both
+  clients, and macOS already observes a member list it can reuse.
+
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
   SDK: the native button opens the system browser at `/?native=google`, which
@@ -166,6 +173,30 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-25 — Fix: the channel header avatar stack now opens the member list (#70)
+- `[web]` The header stack was explicitly decorative — no click handler, and for
+  standard channels it rendered the whole **workspace roster**, which said
+  nothing about who was actually in the channel. It's now a button, and it
+  sources its ids from `useChannelMembers(channelId)`
+  (`GET /v1/channels/:id/members`, already permission-checked by
+  `requireChannelAccess`) for every channel kind. The DTO's `memberIds` — DM-only
+  — stays as the fallback while that fetch is in flight, so DM headers don't
+  flash empty.
+- `[web]` New `ChannelMembersPopover` (`packages/web/src/components/`): avatar,
+  name, 🤖 badge, status emoji/text and a presence dot per row; online members
+  sort first, then alphabetically. Clicking a row opens that user's `UserCard`
+  via the existing `setCardUserId`. Dismisses on outside pointerdown or Esc;
+  the trigger is exempted from the outside-click (`data-members-trigger`) so its
+  own click toggles instead of reopening. Switching channels closes it.
+- `[web]` Kept the popover presentational (rows in, `onSelect`/`onClose` out) —
+  ChannelView owns the fetch, the presence lookup and the card handoff. You're
+  always shown online (this client is the connected one) and tagged "(you)".
+- New `packages/web/src/components/ChannelMembersPopover.test.tsx` (5 cases):
+  ordering rule + no input mutation, row render with agent/status, the "(you)"
+  marker and count singularization, loading vs empty state.
+- `[server]` No change — the endpoint already existed.
+- `[macos]` `[ios]` Not ported; see Parity.
 
 ### 2026-07-24 — Fix: your own messages counted toward the unread badge (#71)
 - `[server]` The per-channel unread query in `listChannels` counted every
