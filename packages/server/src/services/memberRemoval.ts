@@ -9,7 +9,7 @@ import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
-const { channels, channelMembers, workspaceMembers, users, agentTokens } = schema;
+const { channels, channelMembers, notifications, workspaceMembers, users, agentTokens } = schema;
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -36,12 +36,28 @@ export async function removeMemberDeep(
         .from(channelMembers)
         .where(and(inArray(channelMembers.channelId, dmIds), ne(channelMembers.userId, userId)))
     : [];
+  const channelIds = memberChannels.map((c) => c.id);
   await db.transaction(async (tx) => {
     if (dmIds.length) await tx.delete(channels).where(inArray(channels.id, dmIds));
     await tx.delete(channelMembers).where(eq(channelMembers.userId, userId));
     await tx
       .delete(workspaceMembers)
       .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
+    // Retire the leaver's unread signal in the channels it just lost — the
+    // rows could never clear by visiting (issue #63 review). Read, not
+    // deleted: the record survives. DM rows go with the channel cascade above.
+    if (channelIds.length) {
+      await tx
+        .update(notifications)
+        .set({ readAt: new Date() })
+        .where(
+          and(
+            eq(notifications.userId, userId),
+            isNull(notifications.readAt),
+            inArray(notifications.channelId, channelIds),
+          ),
+        );
+    }
     if (also) await also(tx);
   });
   const ts = new Date().toISOString();

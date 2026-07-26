@@ -1,5 +1,9 @@
 # Phase 10 — Web & macOS notifications (PROPOSED)
 
+> **Historical proposal.** Accurate on `suppressAlert`, per-user prefs and
+> status suppression — those shipped as designed. The pref table predates the
+> `reaction` toggle (#63). Current behaviour: `docs/design/NOTIFICATIONS.md`.
+
 Notifications from our chat app are critical. They alert users when important events occur.
 
 In addition to implementing notifications themselves, we should add User settings to control

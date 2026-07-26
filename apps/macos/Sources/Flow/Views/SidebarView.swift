@@ -311,8 +311,11 @@ struct SidebarView: View {
                         .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
                 }
                 Spacer(minLength: 0)
-                if channel.unreadCount > 0 {
-                    unreadBadge(channel.unreadCount)
+                // A number means "this needs you" — unread notifications, not
+                // unread messages (operator ruling 2026-07-26). Messages only
+                // embolden the row, above.
+                if channel.unreadNotifications > 0 {
+                    unreadBadge(channel.unreadNotifications)
                 }
             }
             .padding(.horizontal, 8)
@@ -364,8 +367,11 @@ struct SidebarView: View {
                         .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
                 }
                 Spacer(minLength: 0)
-                if channel.unreadCount > 0 {
-                    unreadBadge(channel.unreadCount)
+                // A number means "this needs you" — unread notifications, not
+                // unread messages (operator ruling 2026-07-26). Messages only
+                // embolden the row, above.
+                if channel.unreadNotifications > 0 {
+                    unreadBadge(channel.unreadNotifications)
                 }
             }
             .padding(.horizontal, 8)

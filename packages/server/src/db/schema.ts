@@ -294,13 +294,23 @@ export const notifications = pgTable(
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
-    kind: smallint('kind').notNull(), // 0=mention 1=dm 2=thread_reply 3=channel activity
+    kind: smallint('kind').notNull(), // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction
     // phase 10: for kind 0 — 'mention' | 'here' | 'channel'; NULL otherwise
     subkind: text('subkind'),
+    // issue #63: who caused it — message author (kinds 0-3) or reactor (kind 4).
+    // Nullable only for rows written before the column existed.
+    actorId: uuid('actor_id').references(() => users.id, { onDelete: 'cascade' }),
+    reactionEmoji: text('reaction_emoji'), // kind 4 only
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     readAt: timestamp('read_at', { withTimezone: true }),
   },
-  (t) => [index('notifications_user_idx').on(t.userId, t.readAt, t.id.desc())],
+  (t) => [
+    index('notifications_user_idx').on(t.userId, t.readAt, t.id.desc()),
+    index('notifications_unread_channel_idx').on(t.userId, t.channelId).where(sql`read_at IS NULL`),
+    uniqueIndex('notifications_reaction_uniq')
+      .on(t.userId, t.messageId, t.actorId, t.reactionEmoji)
+      .where(sql`kind = 4`),
+  ],
 );
 
 // ---- First-class AI agents (AGENTS_DESIGN.md) -------------------

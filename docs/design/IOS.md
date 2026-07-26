@@ -34,8 +34,8 @@ server (and previously production).
 
 **Not yet ported**: push notifications (APNs — deferred to a follow-on phase;
 needs server device-token registry + Apple push key + physical-device
-testing). In-app registration & password reset stay web-only by design, same
-as macOS.
+testing; designed in `docs/design/PUSH_APNS.md`). In-app registration &
+password reset stay web-only by design, same as macOS.
 
 ## Architecture: shared data layer
 
@@ -196,7 +196,8 @@ xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
 ## Known limitations
 
 - No push notifications yet (the one remaining parity gap — see the
-  **Parity** section of `CHANGELOG.md`).
+  **Parity** section of `CHANGELOG.md`). Design for closing it:
+  `docs/design/PUSH_APNS.md`.
 - Composer input is plain text + @-mention autocomplete (ruled scope) — the
   live-styled fence/code composer was not ported; rendering is full parity.
 - No CI for the iOS target yet; builds are local.

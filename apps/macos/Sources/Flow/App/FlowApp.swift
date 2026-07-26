@@ -6,12 +6,17 @@ import UserNotifications
 struct FlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup(Profile.windowTitle) {
             RootView()
                 .environmentObject(app)
                 .frame(minWidth: 900, minHeight: 560)
+                // "Is the user actually looking at us?" — the native answer to
+                // the web client's `document.hidden`. A selected channel in a
+                // hidden window must not mark its mail read (issue #63).
+                .onChange(of: scenePhase) { _, phase in app.setAppActive(phase == .active) }
                 // Hand the app state to the notification-center delegate so a
                 // tapped banner can jump to its message (and flush any tap that
                 // arrived before the UI was ready, e.g. a cold launch).

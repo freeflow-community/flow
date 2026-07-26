@@ -186,6 +186,14 @@ struct AppDatabase: Sendable {
                 t.add(column: "systemKind", .text)
             }
         }
+        // Sidebar badge semantics (operator ruling 2026-07-26): a number on a
+        // channel row counts unread *notifications*, not unread messages —
+        // messages only embolden the row. Cached rows read 0 until refetched.
+        migrator.registerMigration("v11") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "unreadNotifications", .integer).notNull().defaults(to: 0)
+            }
+        }
         try migrator.migrate(writer)
     }
 

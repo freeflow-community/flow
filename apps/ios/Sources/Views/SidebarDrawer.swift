@@ -271,7 +271,9 @@ struct SidebarDrawer: View {
                         .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
                 }
                 Spacer(minLength: 0)
-                if channel.unreadCount > 0 { unreadBadge(channel.unreadCount) }
+                // A number means "this needs you" — unread notifications, not
+                // unread messages (operator ruling 2026-07-26).
+                if channel.unreadNotifications > 0 { unreadBadge(channel.unreadNotifications) }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 9)
@@ -281,7 +283,10 @@ struct SidebarDrawer: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
-        .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
+        .accessibilityValue(
+            channel.unreadNotifications > 0 ? "\(channel.unreadNotifications) notifications"
+            : channel.unreadCount > 0 ? "unread" : "read"
+        )
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
@@ -317,7 +322,9 @@ struct SidebarDrawer: View {
                         .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
                 }
                 Spacer(minLength: 0)
-                if channel.unreadCount > 0 { unreadBadge(channel.unreadCount) }
+                // A number means "this needs you" — unread notifications, not
+                // unread messages (operator ruling 2026-07-26).
+                if channel.unreadNotifications > 0 { unreadBadge(channel.unreadNotifications) }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 9)
@@ -327,7 +334,10 @@ struct SidebarDrawer: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.dm.\(title.replacingOccurrences(of: " 🤖", with: ""))")
-        .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
+        .accessibilityValue(
+            channel.unreadNotifications > 0 ? "\(channel.unreadNotifications) notifications"
+            : channel.unreadCount > 0 ? "unread" : "read"
+        )
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 

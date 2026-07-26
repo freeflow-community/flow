@@ -18,6 +18,10 @@ export type EventType =
   | 'reaction.added'
   | 'reaction.removed'
   | 'notification.created' // per-user notify subject (phase 2 §4)
+  // per-user notify subject: rows this user just read (from the Activity feed,
+  // or implicitly by visiting the channel/thread they came from). Carries the
+  // fresh unread total so every session's badge converges without a refetch.
+  | 'notification.read'
   | 'artifact.created' // per-channel subject (phase 13 — artifacts are shared per channel)
   | 'artifact.updated' // per-channel subject: rename or new backing file
   | 'artifact.deleted' // per-channel subject
@@ -66,6 +70,14 @@ export type ChannelArchivedData = ChannelDTO;
 export type MemberJoinedData = WorkspaceMemberDTO;
 export type MemberUpdatedData = WorkspaceMemberDTO;
 export type NotificationCreatedData = NotificationDTO;
+
+export interface NotificationReadData {
+  /** Ids that just flipped to read (empty when nothing was unread). */
+  ids: string[];
+  /** This user's unread notification count after the update — badge source. */
+  unreadCount: number;
+  readAt: string;
+}
 export type ArtifactEventData = ArtifactDTO;
 export type UserUpdatedData = UserDTO;
 

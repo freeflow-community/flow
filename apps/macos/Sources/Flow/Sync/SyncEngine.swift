@@ -415,6 +415,9 @@ actor SyncEngine {
         await appState?.setHasMore(channelId: channelId, resp.hasMore)
     }
 
+    /// Advance the channel read cursor. The server also reads that channel's
+    /// Activity notifications (issue #63) and pushes back a `notification.read`
+    /// event, which is what settles the badge.
     func markRead(channelId: String, lastReadMsgId: String) async {
         try? await db.writer.write { db in
             try db.execute(
@@ -425,6 +428,31 @@ actor SyncEngine {
         let _: OkResponse? = try? await api.post(
             "/v1/channels/\(channelId)/read",
             body: ReadBody(lastReadMsgId: lastReadMsgId)
+        )
+    }
+
+    /// The app came back to the front with `channelId` on screen: everything
+    /// that arrived while it was hidden has now genuinely been seen. Called from
+    /// `AppState.setAppActive` — the arrival path deliberately skips backgrounded
+    /// windows, so this is what closes the loop.
+    func catchUpRead(channelId: String) async {
+        let newest: String? = try? await db.reader.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
+                arguments: [channelId]
+            )
+        }
+        guard let newest else { return }
+        await markRead(channelId: channelId, lastReadMsgId: newest)
+    }
+
+    /// "I'm looking at this thread" — reads the thread's notifications without
+    /// touching the channel cursor (which only tracks top-level messages).
+    private func markThreadRead(channelId: String, rootId: String) async {
+        let _: OkResponse? = try? await api.post(
+            "/v1/channels/\(channelId)/read",
+            body: ReadBody(lastReadMsgId: rootId, threadRootId: rootId)
         )
     }
 
@@ -942,10 +970,21 @@ actor SyncEngine {
         return resp
     }
 
+    /// Everything up to a cursor (opening the Activity feed).
     func markNotificationsRead(upToId: String) async {
         let _: OkResponse? = try? await api.post(
             "/v1/me/notifications/read",
             body: MarkNotificationsReadBody(upToId: upToId)
+        )
+        await refreshNotificationBadge()
+    }
+
+    /// A single row (clicking it in the feed, or seeing it land in the channel
+    /// you're already looking at — issue #63).
+    func markNotificationRead(id: String) async {
+        let _: OkResponse? = try? await api.post(
+            "/v1/me/notifications/read",
+            body: MarkNotificationsReadBody(id: id)
         )
         await refreshNotificationBadge()
     }
@@ -1016,6 +1055,7 @@ actor SyncEngine {
             query: [URLQueryItem(name: "limit", value: "100")]
         ) else { return }
         await storeMessages([resp.root] + resp.messages)
+        await markThreadRead(channelId: resp.root.channelId, rootId: rootId)
     }
 
     // MARK: - Typing
@@ -1051,7 +1091,10 @@ actor SyncEngine {
             // System lines (join/leave) never affect unread — mirror the server,
             // which excludes them from its counts (ui_nits).
             if event.type == "message.created", isNew, m.userId != currentUser?.id, m.systemKind == nil {
-                if m.channelId == activeChannelId {
+                // Same "actually looking at it" test as notifications above —
+                // the read cursor now also clears that channel's notification
+                // rows server-side, so a backgrounded window must not advance it.
+                if await appState?.isViewing(channelId: m.channelId) == true {
                     await markRead(channelId: m.channelId, lastReadMsgId: m.id)
                 } else {
                     try? await db.writer.write { db in
@@ -1139,20 +1182,62 @@ actor SyncEngine {
             await applyReactionEvent(data, added: added)
 
         case .notification(let n):
+            // Only when the row is genuinely on screen — app frontmost, channel
+            // selected (AppState.isViewing), and, when the message lives in a
+            // thread (a reply, a mention in a reply, a reaction on your reply),
+            // that thread open. Threads are behind a click: same scoping the
+            // server's channel-read path uses (threadRootId IS NULL). A selected
+            // channel in a backgrounded window is not "seen" either — treating
+            // it as read swallowed DMs that landed while the app sat behind the
+            // browser. Reading it here matters because a reaction moves no read
+            // cursor, so nothing else would ever clear it.
+            let behindClosedThread =
+                n.message.threadRootId != nil && n.message.threadRootId != openThreadRootId
+            if !behindClosedThread, await appState?.isViewing(channelId: n.channelId) == true {
+                await markNotificationRead(id: n.id)
+                return
+            }
             await appState?.notificationReceived(n)
-            // Banner unless the user is already looking at that channel.
-            if n.channelId != activeChannelId, n.message.userId != currentUser?.id {
-                let senderName: String? = try? await db.reader.read { db in
-                    try String.fetchOne(
-                        db, sql: "SELECT displayName FROM user WHERE id = ?", arguments: [n.message.userId]
+            // The sidebar badge is this channel's unread-notification count.
+            let notifChannelId = n.channelId
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE channel SET unreadNotifications = unreadNotifications + 1 WHERE id = ? AND isMember = 1",
+                    arguments: [notifChannelId]
+                )
+            }
+            // Banner unless the server's alert gate (per-user prefs + status
+            // suppression, phase 10) says no — kind 3 activity rows are always
+            // suppressed there, so they never bannered.
+            if n.alerts, n.actorUserId != currentUser?.id {
+                // Full name map, not just the sender: the body carries raw
+                // <@userId> tokens, and plainText without names renders every
+                // one as "@someone". The user table is small and cached.
+                let names: [String: String] = (try? await db.reader.read { db in
+                    try Dictionary(
+                        uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayName) }
                     )
-                }
+                }) ?? [:]
+                let senderName = names[n.actorUserId]
                 let title = switch n.kind {
                 case 1: senderName ?? "New direct message"
                 case 2: "\(senderName ?? "Someone") replied in a thread"
+                case 4: "\(senderName ?? "Someone") reacted \(n.reactionEmoji ?? "")"
+                    .trimmingCharacters(in: .whitespaces)
                 default: "\(senderName ?? "Someone") mentioned you"
                 }
-                Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body))
+                Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body, names: names))
+            }
+
+        case .notificationRead(let data):
+            // Another session (or the server, on a channel/thread visit) read
+            // rows — the badge follows the server's count.
+            await appState?.setNotificationUnread(data.unreadCount)
+            // The rows can span channels (and workspaces, from the Activity
+            // feed), and the event carries ids rather than a per-channel
+            // breakdown — refetch the list rather than guess at the deltas.
+            if let workspaceId = activeWorkspaceId {
+                await refreshChannels(workspaceId: workspaceId)
             }
 
         case .workspaceUpdated(let ws):

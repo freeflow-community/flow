@@ -570,7 +570,12 @@ function ChannelRow({
   // The channel stays selected (and highlighted) even with an artifact tab open
   // in the side panel — the conversation is still shown behind it (phase 13).
   const active = sel.channelId === channel.id;
+  // Two separate signals (operator ruling 2026-07-26): unread *messages* only
+  // embolden the row — "something happened here". A *number* means "this needs
+  // you", so it counts unread notifications (mentions, thread replies,
+  // reactions; every message in a DM) and nothing else.
   const unread = channel.unreadCount > 0 && !hideUnread;
+  const notifications = hideUnread ? 0 : channel.unreadNotifications;
   return (
     <div
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
@@ -580,6 +585,7 @@ function ChannelRow({
       <button
         data-testid={testid ?? `sidebar-channel-${channel.name}`}
         data-unread={channel.unreadCount}
+        data-notifications={notifications}
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={() => sel.selectChannel(channel.id)}
       >
@@ -597,9 +603,9 @@ function ChannelRow({
           <span className="ml-0.5 shrink-0 text-sm" title={statusTitle}>{statusEmoji}</span>
         )}
         {channel.notifyLevel === 0 && <span className="text-xs opacity-60">🔕</span>}
-        {unread && (
+        {notifications > 0 && (
           <span className="ml-auto rounded-[9px] bg-unread px-[7px] py-px text-[11px] font-bold text-white">
-            {channel.unreadCount}
+            {Math.min(notifications, 99)}
           </span>
         )}
       </button>

@@ -98,6 +98,14 @@ POST   /v1/channels/:id/messages      body gains optional fileIds: [uuid]
 
 ## 4. Mentions and notifications
 
+> **Superseded — historical.** This is the phase-2 proposal. The system has
+> since gained group mentions, `notify_level=all` rows, the `suppressAlert`
+> gate (phase 10), the Activity feed (phase 12), reaction notifications and
+> read-on-visit (#63). The schema block below is out of date (no `subkind`,
+> `actor_id` or `reaction_emoji`; kinds 3 and 4 missing) and the delivery
+> subject was later changed to the user-global `user.{userId}.notify`.
+> **Current behaviour: `docs/design/NOTIFICATIONS.md`.**
+
 **Parse at write time, server-side.** The message service extracts `@display_name` tokens (client sends resolved `mentions: [userId]` alongside the body; server validates each is a workspace member — no fuzzy server-side name matching).
 
 ```sql

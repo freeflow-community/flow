@@ -17,7 +17,9 @@
 //   node scripts/qa-bot.mjs send --token T --channel C --body "hi" [--thread ROOTID]
 //   node scripts/qa-bot.mjs edit --token T --message M --body "new text"
 //   node scripts/qa-bot.mjs delete --token T --message M
-//   node scripts/qa-bot.mjs read --token T --channel C --message M   (mark read up to M)
+//   node scripts/qa-bot.mjs read --token T --channel C --message M [--thread ROOTID]
+//        (mark read up to M; --thread reads that thread's notifications instead)
+//   node scripts/qa-bot.mjs notifications --token T          (this user's Activity feed)
 //   node scripts/qa-bot.mjs messages --token T --channel C [--limit 20]
 import WebSocket from 'ws';
 import fs from 'node:fs';
@@ -62,11 +64,18 @@ switch (mode) {
   case 'delete':
     await api('DELETE', `/v1/messages/${need('message')}`);
     break;
-  case 'read':
-    await api('POST', `/v1/channels/${need('channel')}/read`, { lastReadMsgId: need('message') });
+  case 'read': // --thread ROOTID means "I'm looking at this thread" (issue #63):
+    // reads the thread's notifications, leaves the channel cursor alone.
+    await api('POST', `/v1/channels/${need('channel')}/read`, {
+      lastReadMsgId: need('message'),
+      ...(opts.thread ? { threadRootId: opts.thread } : {}),
+    });
     break;
   case 'messages':
     await api('GET', `/v1/channels/${need('channel')}/messages?limit=${opts.limit ?? 20}`);
+    break;
+  case 'notifications': // this user's Activity feed + unread total
+    await api('GET', `/v1/me/notifications?limit=${opts.limit ?? 20}`);
     break;
   case 'react': // add (default) or remove with --remove true
     await api(opts.remove ? 'DELETE' : 'PUT',
