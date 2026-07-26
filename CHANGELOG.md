@@ -993,3 +993,5 @@ silently consumed or permanently stuck; all fixed.
   re-encode + store pipeline, and the web card loads them via `AuthImg`.
   Trade-off: `.ico` favicons are dropped (sharp can't decode ICO), so those
   cards show the site name without a mark. `[server] [web]`
+
+claude --resume ee57a0b1-262a-473e-9122-f0ba5e2bfc0a

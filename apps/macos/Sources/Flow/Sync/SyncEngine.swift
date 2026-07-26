@@ -1202,12 +1202,15 @@ actor SyncEngine {
             // suppression, phase 10) says no — kind 3 activity rows are always
             // suppressed there, so they never bannered.
             if n.alerts, n.actorUserId != currentUser?.id {
-                let actorId = n.actorUserId
-                let senderName: String? = try? await db.reader.read { db in
-                    try String.fetchOne(
-                        db, sql: "SELECT displayName FROM user WHERE id = ?", arguments: [actorId]
+                // Full name map, not just the sender: the body carries raw
+                // <@userId> tokens, and plainText without names renders every
+                // one as "@someone". The user table is small and cached.
+                let names: [String: String] = (try? await db.reader.read { db in
+                    try Dictionary(
+                        uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayName) }
                     )
-                }
+                }) ?? [:]
+                let senderName = names[n.actorUserId]
                 let title = switch n.kind {
                 case 1: senderName ?? "New direct message"
                 case 2: "\(senderName ?? "Someone") replied in a thread"
@@ -1215,7 +1218,7 @@ actor SyncEngine {
                     .trimmingCharacters(in: .whitespaces)
                 default: "\(senderName ?? "Someone") mentioned you"
                 }
-                Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body))
+                Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body, names: names))
             }
 
         case .notificationRead(let data):
