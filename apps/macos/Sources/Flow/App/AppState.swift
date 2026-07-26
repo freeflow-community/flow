@@ -54,6 +54,9 @@ final class AppState: ObservableObject {
     @Published private(set) var hasMore: [String: Bool] = [:]
     /// Unread in-app notification count (bell badge + dock badge).
     @Published private(set) var notificationUnread: Int = 0
+    /// Is the app frontmost? See `isViewing(channelId:)` — a selection in a
+    /// backgrounded window must not count as "the user has seen this".
+    @Published private(set) var isAppActive: Bool = true
     /// userId -> avatar path (/v1/avatars/<key>), for message rows & popovers.
     @Published private(set) var avatarPaths: [String: String] = [:]
     /// Set of agent user ids — the typing indicator says an agent "thinks"
@@ -175,6 +178,28 @@ final class AppState: ObservableObject {
 
     func notificationReceived(_ n: NotificationItem) {
         setNotificationUnread(notificationUnread + 1)
+    }
+
+    /// Is the user actually looking at this channel *right now*? A selected
+    /// channel in a backgrounded window is NOT being looked at — the app keeps
+    /// its selection while you work elsewhere, so treating "selected" as "read"
+    /// silently swallows DMs that arrive while the app sits behind a browser
+    /// (the web client's equivalent test is `document.hidden`).
+    func isViewing(channelId: String) -> Bool {
+        isAppActive && selectedChannelId == channelId && !showActivity
+    }
+
+    /// Frontmost-and-visible, driven by SwiftUI's `scenePhase` in both app
+    /// entry points. Starts true so a launch before the first phase callback
+    /// behaves as it always did.
+    func setAppActive(_ active: Bool) {
+        guard isAppActive != active else { return }
+        isAppActive = active
+        // Coming back to a channel that collected mail while we were away is
+        // the moment to read it — the arrival path deliberately didn't.
+        if active, let channelId = selectedChannelId {
+            Task { await engine.catchUpRead(channelId: channelId) }
+        }
     }
 
     /// Active channel was archived or left — drop the selection.

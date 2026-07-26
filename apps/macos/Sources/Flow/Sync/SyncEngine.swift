@@ -431,6 +431,22 @@ actor SyncEngine {
         )
     }
 
+    /// The app came back to the front with `channelId` on screen: everything
+    /// that arrived while it was hidden has now genuinely been seen. Called from
+    /// `AppState.setAppActive` — the arrival path deliberately skips backgrounded
+    /// windows, so this is what closes the loop.
+    func catchUpRead(channelId: String) async {
+        let newest: String? = try? await db.reader.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
+                arguments: [channelId]
+            )
+        }
+        guard let newest else { return }
+        await markRead(channelId: channelId, lastReadMsgId: newest)
+    }
+
     /// "I'm looking at this thread" — reads the thread's notifications without
     /// touching the channel cursor (which only tracks top-level messages).
     private func markThreadRead(channelId: String, rootId: String) async {
@@ -1067,7 +1083,10 @@ actor SyncEngine {
             // System lines (join/leave) never affect unread — mirror the server,
             // which excludes them from its counts (ui_nits).
             if event.type == "message.created", isNew, m.userId != currentUser?.id, m.systemKind == nil {
-                if m.channelId == activeChannelId {
+                // Same "actually looking at it" test as notifications above —
+                // the read cursor now also clears that channel's notification
+                // rows server-side, so a backgrounded window must not advance it.
+                if await appState?.isViewing(channelId: m.channelId) == true {
                     await markRead(channelId: m.channelId, lastReadMsgId: m.id)
                 } else {
                     try? await db.writer.write { db in
@@ -1155,11 +1174,13 @@ actor SyncEngine {
             await applyReactionEvent(data, added: added)
 
         case .notification(let n):
-            guard n.channelId != activeChannelId else {
-                // Already looking at where it came from: read it now (issue
-                // #63). Messages also clear via the channel read cursor, but a
-                // reaction moves no cursor — without this the row would stay
-                // unread and come back as a badge on the next launch.
+            // Only when the user is genuinely looking at that channel — app
+            // frontmost, channel selected (AppState.isViewing). A selected
+            // channel in a backgrounded window is not "seen": treating it as
+            // read swallowed DMs that landed while the app sat behind the
+            // browser. Reading it here matters because a reaction moves no read
+            // cursor, so nothing else would ever clear it.
+            if await appState?.isViewing(channelId: n.channelId) == true {
                 await markNotificationRead(id: n.id)
                 return
             }
