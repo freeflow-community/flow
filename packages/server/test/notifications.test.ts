@@ -303,6 +303,32 @@ describe('per-channel unread notification count (the sidebar badge)', () => {
   });
 });
 
+describe('losing access retires the unread signal (read, never deleted)', () => {
+  it('leaving a channel marks its rows read — threads included', async () => {
+    const fresh = await ch.createChannel(workspaceId, aliceId, `leave-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(fresh.id, aliceId, bobId);
+    const root = await msg.sendMessage(fresh.id, aliceId, randomUUID(), `<@${bobId}> root`, undefined, undefined, [bobId]);
+    const reply = await msg.sendMessage(fresh.id, aliceId, randomUUID(), `<@${bobId}> reply`, root.id, undefined, [bobId]);
+
+    await ch.removeMember(fresh.id, bobId, bobId); // self-leave
+    expect((await notificationFor(bobId, root.id))?.readAt).not.toBeNull();
+    expect((await notificationFor(bobId, reply.id))?.readAt).not.toBeNull(); // no thread to visit either
+    // the record survives — rows are read, not deleted
+    expect(await notificationFor(bobId, root.id)).toBeDefined();
+  });
+
+  it('archiving a channel retires every member unread rows', async () => {
+    const fresh = await ch.createChannel(workspaceId, aliceId, `arch-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(fresh.id, aliceId, bobId);
+    await ch.addMember(fresh.id, aliceId, carolId);
+    const m = await msg.sendMessage(fresh.id, aliceId, randomUUID(), '<!channel> last call');
+
+    await ch.archiveChannel(fresh.id, aliceId);
+    expect((await notificationFor(bobId, m.id))?.readAt).not.toBeNull();
+    expect((await notificationFor(carolId, m.id))?.readAt).not.toBeNull();
+  });
+});
+
 describe('implicit read: visiting the channel or thread', () => {
   it('reading a channel reads its top-level notifications, not its threads', async () => {
     const root = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> root`, undefined, undefined, [bobId]);

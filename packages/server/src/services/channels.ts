@@ -6,7 +6,12 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { isUniqueViolation, requireMembership } from './workspaces.js';
 import { enqueueChannelEvent, enqueueMemberEvent } from './appEvents.js';
 import { postSystemMessage } from './messages.js';
-import { markChannelNotificationsRead, markThreadNotificationsRead } from './notifications.js';
+import {
+  clearChannelNotifications,
+  clearChannelNotificationsForAll,
+  markChannelNotificationsRead,
+  markThreadNotificationsRead,
+} from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
 const { channels, channelMembers, messages, notifications, workspaceMembers } = schema;
@@ -369,6 +374,9 @@ export async function removeMember(channelId: string, actorId: string, targetUse
     return del;
   });
   if (deleted.length > 0) {
+    // Losing access retires the unread signal: these rows could never clear by
+    // visiting again, so they'd count in Activity forever (issue #63 review).
+    await clearChannelNotifications(targetUserId, chan);
     publishEvent(subjectMeta(chan.workspaceId), {
       type: 'member.left',
       workspaceId: chan.workspaceId,
@@ -437,6 +445,9 @@ export async function archiveChannel(channelId: string, actorId: string): Promis
     return up;
   });
   const dto = toChannelDTO(updated[0]!, { isMember });
+  // An archived channel leaves the sidebar, so its unread rows would count in
+  // Activity forever with no visit to clear them — retire them for everyone.
+  await clearChannelNotificationsForAll(updated[0]!);
   publishEvent(subjectMeta(chan.workspaceId), {
     type: 'channel.archived',
     workspaceId: chan.workspaceId,

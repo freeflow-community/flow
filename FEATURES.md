@@ -5,6 +5,12 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-26
 
+- **Notifications stop vanishing — and stop sticking.** A mention that lands
+  while Flow sits in a background tab now stays unread until you actually come
+  back to it, and a thread reply stays marked until you open the thread — not
+  just the channel. And when you leave a channel (or it gets archived), its
+  pending notifications stop counting against your badge instead of haunting
+  it forever.
 - **A number in the sidebar now always means "this needs you."** Channels with
   new messages simply go **bold**; the number only appears when something in
   there is actually for you — a mention, a reply in your thread, a reaction to

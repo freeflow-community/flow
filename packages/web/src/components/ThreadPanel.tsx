@@ -37,12 +37,19 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
 
   // Looking at a thread reads its notifications (issue #63) — the channel's own
   // read cursor only tracks top-level messages, so replies need this. Re-runs
-  // when a new reply lands while the thread is open.
+  // when a new reply lands while the thread is open. Only while the tab is
+  // visible: an open thread in a hidden tab is not being looked at, and the
+  // WS keeps the cache fresh there. Coming back catches up.
   const newestId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
-    if (!channelId || !newestId || readRef.current === newestId) return;
-    readRef.current = newestId;
-    markRead.mutate({ channelId, lastReadMsgId: newestId, threadRootId: rootId });
+    const sync = () => {
+      if (document.hidden || !channelId || !newestId || readRef.current === newestId) return;
+      readRef.current = newestId;
+      markRead.mutate({ channelId, lastReadMsgId: newestId, threadRootId: rootId });
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId, newestId, rootId]);
 

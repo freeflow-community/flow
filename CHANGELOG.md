@@ -181,6 +181,36 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-26 — Notification review fixes: hidden tabs, closed threads, lost access (#63)
+Adversarial review of the #63 work found three ways unread state could be
+silently consumed or permanently stuck; all fixed.
+- `[web]` The mark-read effects (channel view + thread panel) ran in hidden
+  tabs — the WS keeps the cache fresh there, so a mention arriving while the
+  Flow tab sat behind another window was bannered *and* immediately marked
+  read (the read cursor clears notification rows server-side since #63). Both
+  effects now bail on `document.hidden` and catch up on `visibilitychange` —
+  the web twin of the macOS hidden-window fix.
+- `[web]` `[macos]` The arrive-while-viewing auto-read now honours "threads
+  are behind a click": a notification whose message lives in a thread (reply,
+  mention in a reply, reaction on a reply) is only read on arrival when that
+  thread is open — the same `threadRootId IS NULL` scoping the server's
+  channel-read path uses. Before, having the channel open ate its threads'
+  notifications.
+- `[server]` Losing access retires the unread signal: leaving or being removed
+  from a channel marks all your rows there read (they could never clear by
+  visiting again — the Activity total counted them forever), and archiving a
+  channel does the same for every member, each session told via
+  `notification.read`. Rows are marked read, never deleted — the inbox stays a
+  complete record (phase 10 principle). Covers `removeMember`,
+  `removeMemberDeep` (agents/bots) and `archiveChannel`; 1:1 DM deletion
+  already cascaded.
+- Docs: NOTIFICATIONS.md scopes the badge-sum invariant honestly (per
+  workspace, held up by the losing-access rule; Activity total is user-global
+  across workspaces), documents the strict three-condition "looking at it"
+  rule, and adds the leave/archive rows to the read-path table.
+- `[qa]` +2 cases: self-leave marks rows read (threads included, record
+  survives), archive retires every member's rows. Suite: 220.
+
 ### 2026-07-26 — Sidebar badges count notifications, not messages (#63)
 - Operator ruling (decision_log 2026-07-26): **a number always means
   notifications.** Unread *messages* only embolden a sidebar row; the badge

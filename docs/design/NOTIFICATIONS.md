@@ -18,8 +18,12 @@ Every unread signal in Flow answers exactly one of these, and never both:
 | How many things need me? | a **number** | `ChannelDTO.unreadNotifications` — unread *notification rows* |
 
 The number means the same thing everywhere it appears: on a channel row, on
-the Activity row (the total), and on the dock / app-icon badge. Per-channel
-counts sum to the Activity total — the test suite asserts it.
+the Activity row (the total), and on the dock / app-icon badge. Within one
+workspace, per-channel counts sum across the channels you're in to that
+workspace's share of the total — the test suite asserts it, and leaving or
+archiving a channel retires its unread rows precisely so this invariant can't
+drift (see Read state). The Activity row and the app badge are user-global:
+with several workspaces they show the sum over all of them.
 
 Keeping these separate is an operator ruling (decision_log 2026-07-26). Before
 it, a channel showed "12" because twelve people had talked in it, so the same
@@ -84,12 +88,22 @@ suppressAlert = kind == 3                       // channel activity never alerts
 subkind `here`/`channel`), else `mention`. Absent pref = on. `persistentBanners`
 is presentation-only (web: keep the banner up until dismissed).
 
-Clients add one local rule the server can't know: **don't banner the channel
-I'm looking at right now.** Web tests `document.hidden`; native tests
-`AppState.isViewing(channelId:)` — app frontmost *and* that channel selected
-*and* not sitting on the Activity feed. A selected channel in a backgrounded
-window is **not** "seen"; getting that wrong swallowed DMs entirely (fixed
-2026-07-26).
+Clients add one local rule the server can't know: **"looking at it" means the
+row is actually on screen.** All three conditions, on every client:
+
+1. that channel is selected;
+2. the app/tab is visible — `document.hidden` on web, `scenePhase`-driven
+   `AppState.isViewing(channelId:)` natively. A selected channel in a
+   backgrounded window or hidden tab is **not** seen; getting that wrong
+   swallowed DMs entirely (fixed 2026-07-26);
+3. if the notification's message lives in a thread — a reply, a mention in a
+   reply, a reaction on your reply — that thread is open. Threads are behind a
+   click, the same scoping the server's channel-read path uses.
+
+Only then does the arriving row get marked read (and the banner skipped);
+otherwise it badges and banners like any other. The mark-read-on-view effects
+carry the same visibility guard and catch up when the tab or app comes back
+to the front.
 
 ## Read state
 
@@ -103,7 +117,12 @@ visible.*
 | Clicking one Activity row | `POST /v1/me/notifications/read {id}` | that row only |
 | Visiting the channel | `POST /v1/channels/:id/read {lastReadMsgId}` | that channel's rows for **top-level** messages at or before the cursor |
 | Opening a thread | `POST /v1/channels/:id/read {lastReadMsgId, threadRootId}` | that thread's rows (root + replies); the channel cursor is untouched |
-| It arrives while you're looking | client marks the single row read | a reaction moves no read cursor, so without this it would linger |
+| It arrives while you're looking | client marks the single row read | a reaction moves no read cursor, so without this it would linger. "Looking" is strict — see below |
+| Leaving / being removed from a channel | server-side, in the removal path | all of that user's rows there — they could never clear by visiting again |
+| The channel is archived | server-side, in the archive path | every member's rows there — an archived channel leaves the sidebar, so they'd count in Activity forever |
+
+Losing-access rows are marked **read, never deleted** — the inbox stays a
+complete record; only the unread signal is retired.
 
 Threads are scoped separately on purpose: the channel's read cursor only tracks
 top-level messages, so a reply lives behind a click and reading the channel

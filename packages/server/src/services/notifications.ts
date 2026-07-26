@@ -467,6 +467,41 @@ export async function markChannelNotificationsRead(
   );
 }
 
+/**
+ * Losing access reads everything (issue #63 review): when a user leaves or is
+ * removed from a channel, its rows can never clear by visiting — mark them all
+ * read (threads included). Read, not deleted: the inbox stays a complete
+ * record (phase 10 principle); only the unread signal is retired.
+ */
+export async function clearChannelNotifications(userId: string, chan: ChannelRow): Promise<ReadResult> {
+  return applyRead(userId, eq(notifications.channelId, chan.id), chan.workspaceId);
+}
+
+/**
+ * Archiving retires the channel's unread signal for every member at once —
+ * an archived channel disappears from the sidebar, so its rows would
+ * otherwise count in Activity forever. One bulk update, then one
+ * notification.read per affected user (each carries that user's fresh total).
+ */
+export async function clearChannelNotificationsForAll(chan: ChannelRow): Promise<void> {
+  const readAt = new Date();
+  const updated = await db
+    .update(notifications)
+    .set({ readAt })
+    .where(and(eq(notifications.channelId, chan.id), isNull(notifications.readAt)))
+    .returning({ id: notifications.id, userId: notifications.userId });
+  const byUser = new Map<string, string[]>();
+  for (const r of updated) byUser.set(r.userId, [...(byUser.get(r.userId) ?? []), r.id]);
+  for (const [userId, ids] of byUser) {
+    publishEvent(subjectUserNotify(userId), {
+      type: 'notification.read',
+      workspaceId: chan.workspaceId,
+      ts: readAt.toISOString(),
+      data: { ids, unreadCount: await unreadCount(userId), readAt: readAt.toISOString() },
+    });
+  }
+}
+
 /** Opening a thread reads the notifications its replies (and root) raised. */
 export async function markThreadNotificationsRead(
   userId: string,

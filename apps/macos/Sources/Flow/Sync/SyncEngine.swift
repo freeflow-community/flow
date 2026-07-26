@@ -1174,13 +1174,18 @@ actor SyncEngine {
             await applyReactionEvent(data, added: added)
 
         case .notification(let n):
-            // Only when the user is genuinely looking at that channel — app
-            // frontmost, channel selected (AppState.isViewing). A selected
-            // channel in a backgrounded window is not "seen": treating it as
-            // read swallowed DMs that landed while the app sat behind the
+            // Only when the row is genuinely on screen — app frontmost, channel
+            // selected (AppState.isViewing), and, when the message lives in a
+            // thread (a reply, a mention in a reply, a reaction on your reply),
+            // that thread open. Threads are behind a click: same scoping the
+            // server's channel-read path uses (threadRootId IS NULL). A selected
+            // channel in a backgrounded window is not "seen" either — treating
+            // it as read swallowed DMs that landed while the app sat behind the
             // browser. Reading it here matters because a reaction moves no read
             // cursor, so nothing else would ever clear it.
-            if await appState?.isViewing(channelId: n.channelId) == true {
+            let behindClosedThread =
+                n.message.threadRootId != nil && n.message.threadRootId != openThreadRootId
+            if !behindClosedThread, await appState?.isViewing(channelId: n.channelId) == true {
                 await markNotificationRead(id: n.id)
                 return
             }

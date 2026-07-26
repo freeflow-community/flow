@@ -237,17 +237,25 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['notifications'] });
         // the sidebar badge is this channel's unread-notification count
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
-        if (n.channelId !== cur.channelId || document.hidden) {
-          setNotificationUnread((v) => v + 1);
-          maybeBanner(n);
-        } else {
-          // Already looking at where it came from — read it now (issue #63).
-          // Messages clear via the channel read cursor, but a reaction moves no
-          // cursor, so without this the row would stay unread on the server and
-          // reappear as a badge on the next load.
+        // "Looking at it" means the row is actually on screen: this channel,
+        // tab visible, and — when the message lives in a thread (a reply, a
+        // mention in a reply, a reaction on your reply) — that thread open.
+        // Threads are behind a click, same scoping the server's channel-read
+        // path uses (threadRootId IS NULL).
+        const viewing =
+          n.channelId === cur.channelId &&
+          !document.hidden &&
+          (n.message.threadRootId == null || n.message.threadRootId === cur.threadRootId);
+        if (viewing) {
+          // Read it now (issue #63): messages clear via the read cursor, but a
+          // reaction moves no cursor, so without this the row would stay
+          // unread on the server and reappear as a badge on the next load.
           void api('POST', '/v1/me/notifications/read', { id: n.id }).then(() =>
             qc.invalidateQueries({ queryKey: ['notifications'] }),
           );
+        } else {
+          setNotificationUnread((v) => v + 1);
+          maybeBanner(n);
         }
         break;
       }

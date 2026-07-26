@@ -27,13 +27,23 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
 
-  // mark read whenever the newest visible message changes
+  // Mark read whenever the newest visible message changes — but only while
+  // the tab is actually visible. The WS keeps filling the cache in a hidden
+  // tab, and marking read there silently consumed the very notifications the
+  // banner path was raising (the read cursor also clears that channel's
+  // notification rows server-side since #63). Coming back catches up.
   const newestId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
-    if (newestId && newestId !== lastReadRef.current) {
-      lastReadRef.current = newestId;
-      markRead.mutate({ channelId, lastReadMsgId: newestId });
-    }
+    const sync = () => {
+      if (document.hidden) return;
+      if (newestId && newestId !== lastReadRef.current) {
+        lastReadRef.current = newestId;
+        markRead.mutate({ channelId, lastReadMsgId: newestId });
+      }
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newestId, channelId]);
 
