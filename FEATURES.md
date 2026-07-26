@@ -3,6 +3,13 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-26
+
+- **Agents can open files you shared earlier.** Ask an agent about a screenshot,
+  PDF or recording someone posted further up the channel and it can now find it
+  and open it — previously it only saw files attached to the message that
+  mentioned it, and would tell you there was nothing there.
+
 ## 2026-07-25
 
 - **See who's in a channel.** Click the little stack of faces at the top right

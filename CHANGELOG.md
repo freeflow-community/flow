@@ -174,6 +174,33 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-26 — Fix: agents couldn't see attachments on messages they didn't trigger
+- `[bridge]` `MessageDTO.files` was dropped everywhere an agent reads history.
+  `read_messages`/`search_history` rendered only `[timestamp author id] body`,
+  and the bridge's first-turn history lines were `sender: body` — so a file
+  posted earlier in a channel was invisible to the agent, which correctly but
+  unhelpfully reported "no attachment on that message". Both now append
+  `[attachments: <fileId> "name" (mime, N bytes)]`, from the new shared
+  `formatAttachments` (`packages/agent-bridge/src/attachments.ts`).
+- `[bridge]` New `download_file` MCP tool: `{fileId, path?}` → writes the bytes
+  and returns the local path (the runtime's Read renders images). `FlowApi`
+  already had `downloadFile`, but it was reachable only from
+  `downloadAttachments()`, i.e. only for the message that started the turn.
+- `[bridge]` `FlowApi.downloadFileWithMeta` returns the name/type from the
+  download response (`filenameFromDisposition` parses both the RFC 5987
+  `filename*=UTF-8''…` form the server sends and the plain `filename="…"` form
+  object storage returns), so a caller holding only a file id still writes a
+  file with the right extension. `downloadFile` is now a wrapper over it.
+- `[bridge]` `attachmentFilename(id, name)` replaces the sanitizer inlined in
+  `downloadAttachments`; a name that sanitizes to nothing falls back to `file`
+  instead of `_`. Agent system prompt lists `download_file`.
+- New `packages/agent-bridge/test/attachments.test.ts` (11 cases): note
+  formatting for none/one/several files, filename sanitizing (path separators,
+  empty, 80-char tail keeps the extension), disposition parsing incl. malformed
+  escapes. Verified live against `#flow-task-work`: the read line now shows the
+  287 MB `V1 Marketing Demo.mov`, and `download_file` fetched it in 7s.
+- `[server]` `[web]` `[macos]` `[ios]` No change.
+
 ### 2026-07-25 — Fix: the channel header avatar stack now opens the member list (#70)
 - `[web]` The header stack was explicitly decorative — no click handler, and for
   standard channels it rendered the whole **workspace roster**, which said
