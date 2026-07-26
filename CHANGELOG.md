@@ -181,6 +181,41 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-26 — macOS auto-update (Sparkle)
+- `[macos]` The app now updates itself: it polls a signed appcast daily (and on
+  demand via **Check for Updates…** under About Flow), downloads in the
+  background and installs on quit. Until now a shipped build was final —
+  users had no way to learn a newer one existed, since `FlowBuild` is a commit
+  SHA (unorderable) and `CFBundleShortVersionString` was hardcoded `2.0.0`.
+- `[macos]` **Versions are comparable at last**: `CFBundleVersion` is the commit
+  count (monotonic, no state to keep — Sparkle orders updates by it) and the
+  marketing string comes from the new `apps/macos/VERSION`. `FlowBuild` stays
+  as the workspace-menu build label.
+- `[macos]` `make-app.sh` embeds and signs `Sparkle.framework` — the XPC
+  services, `Updater.app`, `Autoupdate` and framework signed inside-out, plus
+  the `@executable_path/../Frameworks` rpath SwiftPM doesn't emit. All of it is
+  work Xcode does for you and a hand-rolled bundle doesn't get. `dist.sh`
+  re-signs that nested code with the Developer ID under the hardened runtime,
+  or notarization rejects the bundle.
+- `[server]` `GET /download/mac/:asset` serves the appcast and update archives
+  from `downloads/mac/` in blob storage, allowlisted to `appcast.xml` and
+  `Flow-<ver>-<build>.zip` (no arbitrary key access). Feed is `no-cache` — it
+  *is* the "is there an update" answer; archives are immutable and cache for a
+  year.
+- `[macos]` Release flow: `dist.sh` packages a zip of the stapled app and
+  generates the EdDSA-signed feed (keeping the 5 newest archives so it can't
+  grow unbounded); `publish-dmg.sh` uploads archives **before** the feed, since
+  the feed names them. Publishing without a feed warns loudly rather than
+  silently shipping to new downloads only.
+- `[macos]` Safe by default: the updater stays inert with the menu item
+  disabled unless the build has a real bundle *and* a public key, and
+  `SUFeedURL` derives from the server the build points at — so a dev build can
+  never be offered a production update, and an unverifiable one is never
+  installed. Signature enforcement verified against a tampered archive.
+- Docs: DEPLOYMENT.md § macOS auto-update (trust model, key custody, the
+  one-time keychain authorization, CI key-file path); decision_log records why
+  Sparkle over a hand-rolled updater and what losing the signing key costs.
+
 ### 2026-07-26 — Notification review fixes: hidden tabs, closed threads, lost access (#63)
 Adversarial review of the #63 work found three ways unread state could be
 silently consumed or permanently stuck; all fixed.

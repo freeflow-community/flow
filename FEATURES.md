@@ -5,6 +5,12 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-26
 
+- **The Mac app updates itself.** No more finding out months later that you're
+  running an old build: Flow checks for a new version once a day, downloads it
+  quietly in the background, and installs it the next time you quit — or right
+  now, via **Check for Updates…** in the Flow menu. Every update is
+  cryptographically signed, so the app refuses anything that isn't genuinely
+  from us.
 - **Notifications stop vanishing — and stop sticking.** A mention that lands
   while Flow sits in a background tab now stays unread until you actually come
   back to it, and a thread reply stays marked until you open the thread — not
