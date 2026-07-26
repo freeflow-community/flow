@@ -130,12 +130,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   with the capability enabled on the App ID, and in-app consumption via
   `POST /v1/auth/signin-link/consume`.
 
-- macOS + iOS: the channel header avatar stack is still decorative — web made it
-  open a member-list popover (names, presence, status, tap-through to the user
-  card) on 2026-07-25 (#70). macOS also still fills the stack with the workspace
-  roster for standard channels (`ChannelView.swift` `memberAvatars`) rather than
-  the channel's own membership; `GET /v1/channels/:id/members` is the fix on both
-  clients, and macOS already observes a member list it can reuse.
+- iOS: the channel header avatar stack is still decorative — web and macOS make
+  it open a member list (names, presence, status, tap-through to the profile
+  card) as of 2026-07-25 (#70). iOS's header is a different construction with no
+  stack to hang it on, so it needs a members affordance chosen for the phone
+  (a header button or a row in the channel sheet) plus the
+  `GET /v1/channels/:id/members` fetch both other clients now use.
 
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
@@ -294,6 +294,88 @@ silently consumed or permanently stuck; all fixed.
   scoping, cross-channel isolation, single-row read). Full suite: 215 pass.
   Verified end-to-end over the HTTP surface with a throwaway two-user script —
   all 18 checks (one per bullet in the issue) pass.
+### 2026-07-25 — macOS: the header avatar stack opens the member list too (#70)
+- `[macos]` Ports the web popover from earlier today. `headerAvatars` is a
+  `Button` with a `.popover`: avatar, name, 🤖 badge, status emoji + text and a
+  presence dot per row, online first then alphabetical, and a row opens that
+  member's `MemberProfileSheet` (the sheet and its `profileUserId` binding were
+  already there). Empty stack while the fetch is in flight still gets a
+  `person.2` click target.
+- `[macos]` The stack now shows **this channel's** members for every kind — it
+  used to fall back to the workspace roster for standard channels, which said
+  nothing about the channel. New `SyncEngine.channelMemberIds(channelId:)` wraps
+  `GET /v1/channels/:id/members`; the Channel DTO's DM-only `memberIds` is the
+  fallback when the request fails. Refetched on channel switch and on each
+  popover open, so joins/leaves show up.
+- `[macos]` Collapsed the view's `userNames` + `userStatuses` + workspace-roster
+  `memberIds` observers into one `users: [String: User]` observer, with the two
+  maps derived for `MessageListView`/`TypingIndicatorView`. The rows needed
+  status *text*, which neither old map carried; three overlapping observers
+  became one.
+- `[macos]` The popover sets `.presentationBackground(MC.base)`. Without it a
+  SwiftUI `.popover` uses the system vibrant material, which samples whatever is
+  behind it — gray over the message list, violet over the sidebar — and washed
+  out the ink-on-paper row text. The app's other popovers (status picker,
+  reaction picker, avatar menu) still do this; left alone as out of scope here.
+- `[ios]` Not ported; see Parity.
+- `swift build` clean (no new warnings). `swift test` is unrunnable in this
+  checkout — `no such module 'XCTest'` under the current toolchain, same on
+  `main`, unrelated to this change.
+### 2026-07-25 — Fix: the new-DM button moved to the Direct messages header (#61)
+- `[web]` The ✎ button lived next to the workspace name, where it read as a
+  workspace action and sat nowhere near the DM list it affects. It's now a `+`
+  in the **Direct messages** section header, mirroring the `+` on **Channels**
+  directly above it. Same `sidebar-new-dm` testid, same `NewDmModal`.
+- `[web]` `SectionHeader`'s action had a hardcoded `title="Create a channel"` —
+  correct while Channels was the only caller, wrong the moment DMs reused it.
+  `title` is now part of the `action` object; the DM button reads "New direct
+  message".
+- `[macos]` `[ios]` No change — native already put this in the Direct messages
+  section header (`SidebarView.swift`, `sidebar.newDM`). This closes the gap
+  rather than opening one. Native keeps its pencil glyph and web uses `+` to
+  match its own Channels header: deliberate, not a Parity item.
+- The workspace header is now just the workspace menu, so its name gets the
+  full sidebar width to truncate into.
+
+### 2026-07-25 — Feature: agents can create channels and invite members over MCP (#65)
+- `[bridge]` Two new `flow` MCP tools, bringing the surface to 14:
+  `create_channel` (`name`, optional `topic`/`isPrivate`) and
+  `invite_to_channel` (`channelId` + **`userIds` array**). Agents could already
+  join a public channel but had no way to set one up and pull people in.
+- `[bridge]` `invite_to_channel` takes a list because `addMember` is
+  one-user-per-call server-side — batching moves that loop below the MCP
+  boundary instead of burning an agent turn per person. Adds are independent:
+  the result names who was added and, per failure, why ("invited <@a>, <@b>" +
+  a `failed:` block). `isError` is set only when *nobody* was added, so a
+  partial success doesn't read as a failure. Dedupes ids, caps at 50.
+- `[bridge]` `create_channel` on a duplicate name returns the **existing
+  channel's id** ("use it instead of creating one") by looking it up in
+  `list_channels`, so the agent can proceed instead of retrying blind. Falls
+  back to a plain conflict message when the existing channel isn't visible to
+  the agent (a private one it isn't in).
+- `[bridge]` Private-channel invites report a merged reason. `requireChannelAccess`
+  404s for a private channel the caller isn't in (membership privacy) *before*
+  `addMember`'s `forbidden()` can fire, so the 403 that branch suggests is
+  unreachable from outside — a bare "channel not found" would be misleading.
+  New `inviteErrorText()` maps 404 → "channel not found, or it is private and
+  you are not a member"; every other server code (`dm_channel`,
+  `channel_archived`, `bad_user`) passes through as-is.
+- `[bridge]` Package bumped to `0.9.0` — a published tool-surface change, so
+  existing installs need it to pick the tools up (`currentVersion()` reads
+  package.json, so the startup staleness warning follows automatically).
+- `[bridge]` `FlowApi.createChannel()` / `addChannelMember()` in `api.ts`; the
+  hardcoded tool list in `bridge.ts`'s system prompt learned both tools, or
+  agents would never know they exist.
+- `[server]` No change — `POST /v1/workspaces/:id/channels` and
+  `POST /v1/channels/:id/members` already existed and already enforce this.
+  Agents are ordinary workspace members, so no new authorization model.
+- 4 new cases in `packages/server/test/agents.test.ts` (agent creates a public
+  channel and is a member; agent adds a member, re-add is a no-op; the private
+  channel rejection is asserted as **404, not 403**; duplicate name → 409
+  `channel_exists` with the original id still resolvable). Also verified
+  end-to-end by driving the MCP server over stdio against a live instance.
+- Docs: tool tables in `docs/integrators/AGENT_MEMBERS.md` and
+  `skills/flow-agent-member/SKILL.md`.
 
 ### 2026-07-25 — Fix: the channel header avatar stack now opens the member list (#70)
 - `[web]` The header stack was explicitly decorative — no click handler, and for
