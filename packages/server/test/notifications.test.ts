@@ -265,6 +265,44 @@ describe('your personal DM never notifies', () => {
   });
 });
 
+describe('per-channel unread notification count (the sidebar badge)', () => {
+  const countFor = async (userId: string, workspaceId: string, channelId: string) =>
+    (await ch.listChannels(workspaceId, userId)).find((c) => c.id === channelId)?.unreadNotifications;
+
+  it('counts this channel unread notifications, not its unread messages', async () => {
+    const fresh = await ch.createChannel(workspaceId, aliceId, `badge-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(fresh.id, aliceId, bobId);
+    // three messages, one of which mentions bob → bold-worthy, but badge 1
+    await msg.sendMessage(fresh.id, aliceId, randomUUID(), 'chatter one');
+    await msg.sendMessage(fresh.id, aliceId, randomUUID(), 'chatter two');
+    await msg.sendMessage(fresh.id, aliceId, randomUUID(), `<@${bobId}> look`, undefined, undefined, [bobId]);
+
+    const row = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === fresh.id);
+    expect(row?.unreadCount).toBe(3); // emboldens the row
+    expect(row?.unreadNotifications).toBe(1); // the number on screen
+  });
+
+  it('drops to zero when the channel is read, and never counts another channel', async () => {
+    const fresh = await ch.createChannel(workspaceId, aliceId, `badge-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(fresh.id, aliceId, bobId);
+    const m = await msg.sendMessage(fresh.id, aliceId, randomUUID(), `<@${bobId}> hi`, undefined, undefined, [bobId]);
+    const dmMsg = await msg.sendMessage(dmChannelId, aliceId, randomUUID(), 'unrelated dm');
+    expect(await countFor(bobId, workspaceId, fresh.id)).toBe(1);
+
+    await ch.markRead(fresh.id, bobId, m.id);
+    expect(await countFor(bobId, workspaceId, fresh.id)).toBe(0);
+    // the DM's own badge is untouched by reading a channel
+    expect(await countFor(bobId, workspaceId, dmChannelId)).toBeGreaterThan(0);
+    expect((await nt.listNotifications(bobId, undefined, 50)).notifications.find((n) => n.messageId === dmMsg.id)?.readAt).toBeNull();
+  });
+
+  it('sums to the Activity total', async () => {
+    const page = await nt.listNotifications(bobId, undefined, 200);
+    const perChannel = (await ch.listChannels(workspaceId, bobId)).reduce((n, c) => n + c.unreadNotifications, 0);
+    expect(perChannel).toBe(page.unreadCount);
+  });
+});
+
 describe('implicit read: visiting the channel or thread', () => {
   it('reading a channel reads its top-level notifications, not its threads', async () => {
     const root = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> root`, undefined, undefined, [bobId]);

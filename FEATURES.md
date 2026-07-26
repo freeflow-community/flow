@@ -3,6 +3,15 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-26
+
+- **A number in the sidebar now always means "this needs you."** Channels with
+  new messages simply go **bold**; the number only appears when something in
+  there is actually for you — a mention, a reply in your thread, a reaction to
+  your message, or a direct message. So a busy channel you're only half
+  following stops shouting "47", and the numbers you do see are worth acting
+  on. They add up to the count on Activity and on the app icon.
+
 ## 2026-07-25
 
 - **Someone reacts to your message? You'll know.** Reactions on your own

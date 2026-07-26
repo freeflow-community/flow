@@ -97,7 +97,18 @@ export interface ChannelDTO {
   archivedAt: string | null;
   isMember: boolean;
   lastReadMsgId: string | null;
+  /**
+   * Unread *messages* — drives the bold state of the sidebar row, never a
+   * number on screen (operator ruling 2026-07-26): a count means "this needs
+   * you", and a busy channel you're not in the middle of doesn't.
+   */
   unreadCount: number;
+  /**
+   * Unread *notifications* raised in this channel (mentions, thread replies,
+   * reactions — and every message in a DM). This is the number the sidebar
+   * badge shows, and these sum to the Activity row's total.
+   */
+  unreadNotifications: number;
   notifyLevel: NotifyLevel;
   /** Member user ids — populated for dm/group_dm channels only (clients render DM names from these). */
   memberIds?: string[];

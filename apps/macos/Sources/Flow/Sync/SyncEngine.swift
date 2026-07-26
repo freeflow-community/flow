@@ -1164,6 +1164,14 @@ actor SyncEngine {
                 return
             }
             await appState?.notificationReceived(n)
+            // The sidebar badge is this channel's unread-notification count.
+            let notifChannelId = n.channelId
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE channel SET unreadNotifications = unreadNotifications + 1 WHERE id = ? AND isMember = 1",
+                    arguments: [notifChannelId]
+                )
+            }
             // Banner unless the server's alert gate (per-user prefs + status
             // suppression, phase 10) says no — kind 3 activity rows are always
             // suppressed there, so they never bannered.
@@ -1188,6 +1196,12 @@ actor SyncEngine {
             // Another session (or the server, on a channel/thread visit) read
             // rows — the badge follows the server's count.
             await appState?.setNotificationUnread(data.unreadCount)
+            // The rows can span channels (and workspaces, from the Activity
+            // feed), and the event carries ids rather than a per-channel
+            // breakdown — refetch the list rather than guess at the deltas.
+            if let workspaceId = activeWorkspaceId {
+                await refreshChannels(workspaceId: workspaceId)
+            }
 
         case .workspaceUpdated(let ws):
             await saveWorkspacePreservingRole(ws)

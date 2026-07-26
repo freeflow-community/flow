@@ -1,5 +1,26 @@
 # Decision log
 
+## 2026-07-26 — A badge number always means notifications (operator ruling)
+
+- **A number on a sidebar row counts unread *notifications*, never unread
+  messages.** The two were conflated: a channel showed "12" because twelve
+  people had talked in it, which trains you to ignore the number — the same
+  glyph meant "you were mentioned" in one row and "a conversation happened" in
+  another. A count now answers exactly one question everywhere it appears
+  (channel row, Activity row, dock/app-icon badge): *how many things need me?*
+- **Unread messages only embolden the row.** Bold answers the other question —
+  *is there anything new in here?* — and that is all it answers. Ruled while
+  testing #63, where a channel badge incrementing on a mention addressed to a
+  different user made this ambiguity concrete.
+- **DMs keep their numbers, and get them for free**: every message in a DM
+  already raises a notification, so the DM badge is a notification count with
+  no special case. A muted DM (`notify_level = 0`) writes no rows, so it goes
+  bold without a number — correct, and the one place the two counts visibly
+  diverge.
+- The message count is still tracked and still shipped as
+  `ChannelDTO.unreadCount`; it just never renders as a number. Per-channel
+  notification counts sum to the Activity total (asserted in the test suite).
+
 ## 2026-07-24 — Phase 16: what "open this workspace to my domain" actually trusts
 
 - **We trust Google's `email_verified`, not domain ownership.** Turning on

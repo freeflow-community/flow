@@ -235,6 +235,8 @@ export default function Main() {
       case 'notification.created': {
         const n = event.data as NotificationDTO;
         void qc.invalidateQueries({ queryKey: ['notifications'] });
+        // the sidebar badge is this channel's unread-notification count
+        void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         if (n.channelId !== cur.channelId || document.hidden) {
           setNotificationUnread((v) => v + 1);
           maybeBanner(n);
@@ -255,6 +257,8 @@ export default function Main() {
         const d = event.data as NotificationReadData;
         setNotificationUnread(d.unreadCount);
         void qc.invalidateQueries({ queryKey: ['notifications'] });
+        // rows can span workspaces (Activity feed) — refresh every channel list
+        void qc.invalidateQueries({ queryKey: ['channels'] });
         break;
       }
       default:

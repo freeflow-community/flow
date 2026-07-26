@@ -259,7 +259,12 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var archivedAt: String?
     var isMember: Bool
     var lastReadMsgId: String?
+    /// Unread *messages* — emboldens the sidebar row, never shown as a number
+    /// (operator ruling 2026-07-26).
     var unreadCount: Int
+    /// Unread *notifications* raised in this channel — the number the sidebar
+    /// badge shows. Mentions, thread replies, reactions; every message in a DM.
+    var unreadNotifications: Int
     var notifyLevel: Int // 0=mute 1=mentions 2=all
     var memberIds: [String]? // dm/group_dm only
 
@@ -275,14 +280,15 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
 
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
-        case archivedAt, isMember, lastReadMsgId, unreadCount, notifyLevel, memberIds
+        case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
+        case notifyLevel, memberIds
     }
 
     init(
         id: String, workspaceId: String, name: String?, kind: String = "standard", topic: String?,
         isPrivate: Bool, createdBy: String, createdAt: String, archivedAt: String?,
-        isMember: Bool, lastReadMsgId: String?, unreadCount: Int, notifyLevel: Int = 1,
-        memberIds: [String]? = nil
+        isMember: Bool, lastReadMsgId: String?, unreadCount: Int, unreadNotifications: Int = 0,
+        notifyLevel: Int = 1, memberIds: [String]? = nil
     ) {
         self.id = id
         self.workspaceId = workspaceId
@@ -296,6 +302,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.isMember = isMember
         self.lastReadMsgId = lastReadMsgId
         self.unreadCount = unreadCount
+        self.unreadNotifications = unreadNotifications
         self.notifyLevel = notifyLevel
         self.memberIds = memberIds
     }
@@ -314,6 +321,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         isMember = try c.decodeIfPresent(Bool.self, forKey: .isMember) ?? false
         lastReadMsgId = try c.decodeIfPresent(String.self, forKey: .lastReadMsgId)
         unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
+        unreadNotifications = try c.decodeIfPresent(Int.self, forKey: .unreadNotifications) ?? 0
         notifyLevel = try c.decodeIfPresent(Int.self, forKey: .notifyLevel) ?? 1
         memberIds = try c.decodeIfPresent([String].self, forKey: .memberIds)
     }

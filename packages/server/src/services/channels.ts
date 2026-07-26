@@ -9,7 +9,7 @@ import { postSystemMessage } from './messages.js';
 import { markChannelNotificationsRead, markThreadNotificationsRead } from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
-const { channels, channelMembers, messages, workspaceMembers } = schema;
+const { channels, channelMembers, messages, notifications, workspaceMembers } = schema;
 
 type ChannelRow = typeof channels.$inferSelect;
 
@@ -19,6 +19,7 @@ export function toChannelDTO(
     isMember: boolean;
     lastReadMsgId?: string | null | undefined;
     unreadCount?: number | undefined;
+    unreadNotifications?: number | undefined;
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
   },
@@ -36,6 +37,7 @@ export function toChannelDTO(
     isMember: opts.isMember,
     lastReadMsgId: opts.lastReadMsgId ?? null,
     unreadCount: opts.unreadCount ?? 0,
+    unreadNotifications: opts.unreadNotifications ?? 0,
     notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
   };
   if (opts.memberIds) dto.memberIds = opts.memberIds;
@@ -208,6 +210,17 @@ export async function listChannels(workspaceId: string, userId: string): Promise
   const visible = rows.filter((r) => !r.c.isPrivate || r.isMember);
   const dmIds = visible.filter((r) => r.c.kind !== 'standard').map((r) => r.c.id);
   const dmMembers = await dmMemberIds(dmIds);
+
+  // Unread notifications per channel — the number the sidebar badge shows
+  // (operator ruling 2026-07-26; unread *messages* only embolden the row).
+  // One grouped query for the whole list, served by notifications_unread_channel_idx.
+  const notifRows = await db
+    .select({ channelId: notifications.channelId, n: sql<number>`count(*)::int` })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+    .groupBy(notifications.channelId);
+  const notifByChannel = new Map(notifRows.map((r) => [r.channelId, r.n]));
+
   const result: ChannelDTO[] = [];
   for (const r of visible) {
     let unreadCount = 0;
@@ -232,6 +245,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         isMember: r.isMember,
         lastReadMsgId: r.lastReadMsgId,
         unreadCount,
+        unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
       }),

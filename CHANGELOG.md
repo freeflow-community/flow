@@ -181,6 +181,31 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-26 — Sidebar badges count notifications, not messages (#63)
+- Operator ruling (decision_log 2026-07-26): **a number always means
+  notifications.** Unread *messages* only embolden a sidebar row; the badge
+  number counts unread *notifications* for that channel — the same thing the
+  Activity row and the dock/app-icon badge count. Before this, a channel showed
+  "12" for twelve unrelated messages, so the number meant something different
+  per row.
+- `[server]` `ChannelDTO` gains `unreadNotifications`, filled by one grouped
+  query in `listChannels` (served by `notifications_unread_channel_idx`) — not
+  a per-channel count. `unreadCount` is unchanged and still shipped; it just
+  stops rendering as a number. Per-channel counts sum to the Activity total.
+- `[web]` `[macos]` `[ios]` Sidebar rows badge `unreadNotifications` and bold
+  on `unreadCount`. DMs keep numbers with no special case (every DM message
+  raises a notification); a muted DM goes bold with no number, which is the one
+  place the two counts visibly differ.
+- `[web]` `notification.created` / `notification.read` now invalidate the
+  channel list too, so the per-channel badge moves live.
+- `[macos]` `[ios]` GRDB migration v11 adds `channel.unreadNotifications`
+  (cached rows read 0 until refetched). A notification bumps its channel's
+  count locally; a read event refetches the list, since the event carries ids
+  rather than a per-channel breakdown.
+- `[qa]` +3 cases: "3 unread messages, 1 mention → bold with badge 1", read
+  clears it without touching another channel, and per-channel counts sum to the
+  Activity total.
+
 ### 2026-07-25 — Fix notifications: reactions, and read-on-visit (#63)
 - `[server]` **Reactions on your own messages now notify you** — a new kind 4.
   `notifyReaction` (services/notifications.ts) runs post-commit from
