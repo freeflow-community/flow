@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { SIDEBAR_COLORS } from '@flow/shared';
-import type { ChannelDTO, InviteDTO, NotificationPrefs, UserDTO } from '@flow/shared';
+import type { ChannelDTO, InviteDTO, JoinLinkDTO, NotificationPrefs, UserDTO } from '@flow/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
@@ -174,6 +174,88 @@ function SelfRegisterToggle({ workspaceId }: { workspaceId: string }) {
   );
 }
 
+/**
+ * The workspace's persistent join link (issue #85) — the "drop it in a doc"
+ * counterpart to emailing one address at a time. One link is live at a time:
+ * Regenerate replaces it (which kills the old URL) and Revoke removes it.
+ */
+function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  // null = still asking; false = the server said no (not an owner/admin), which
+  // is the same permission that gates emailed invites, so we hide the section.
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const link = await api<JoinLinkDTO>('GET', `/v1/workspaces/${workspaceId}/join-link`);
+        if (!live) return;
+        setUrl(link.joinUrl);
+        setAllowed(true);
+      } catch {
+        if (live) setAllowed(false);
+      }
+    })();
+    return () => { live = false; };
+  }, [workspaceId]);
+
+  const run = async (method: 'POST' | 'DELETE') => {
+    setBusy(true);
+    setError(null);
+    setCopied(false);
+    try {
+      const link = await api<JoinLinkDTO>(method, `/v1/workspaces/${workspaceId}/join-link`);
+      setUrl(link.joinUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+  };
+
+  if (!allowed) return null;
+
+  return (
+    <div className="mt-4 border-t border-hairline pt-3" data-testid="join-link-section">
+      <p className="mb-1 text-sm font-semibold">Share a join link</p>
+      <p className="mb-2 text-xs text-ink-soft">
+        Anyone with this link can join the workspace. It stays valid until you regenerate or revoke it.
+      </p>
+      {url ? (
+        <>
+          <code data-testid="join-link-url" className="mb-2 block rounded bg-daypill p-2 text-xs break-all select-all">{url}</code>
+          <div className="flex gap-2">
+            <button data-testid="join-link-copy"
+              className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              disabled={busy} onClick={() => void copy()}>{copied ? 'Copied' : 'Copy link'}</button>
+            <button data-testid="join-link-regenerate"
+              className="px-3 py-1.5 text-sm text-ink-soft disabled:opacity-50"
+              disabled={busy} onClick={() => void run('POST')}>Regenerate</button>
+            <button data-testid="join-link-revoke"
+              className="px-3 py-1.5 text-sm text-red-600 disabled:opacity-50"
+              disabled={busy} onClick={() => void run('DELETE')}>Revoke</button>
+          </div>
+        </>
+      ) : (
+        <button data-testid="join-link-create"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy} onClick={() => void run('POST')}>Create join link</button>
+      )}
+      {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
 export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const [email, setEmail] = useState('');
   const [invite, setInvite] = useState<InviteDTO | null>(null);
@@ -218,6 +300,9 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
           <SelfRegisterToggle workspaceId={workspaceId} />
         </>
       )}
+      {/* Always available, emailed invite or not: the link is the workspace's,
+          not this dialog's. Renders nothing for non-admins. */}
+      <JoinLinkSection workspaceId={workspaceId} />
     </Modal>
   );
 }

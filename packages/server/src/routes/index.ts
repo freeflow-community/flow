@@ -30,6 +30,7 @@ import {
   UpdateArtifactBody,
   AgentLoginBody,
   RedeemAgentInviteBody,
+  RedeemJoinLinkBody,
   SendMessageBody,
   SetMemberRoleBody,
   SetNotifyLevelBody,
@@ -422,6 +423,46 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/invites/accept', { preHandler: requireAuth }, async (req) => {
     const body = parse(AcceptInviteBody, req.body);
     return ws.acceptInvite(req.user.id, body.token);
+  });
+
+  // ---- Persistent workspace join link (issue #85): one live link per
+  // workspace, managed by owners/admins, redeemable by anyone who has it.
+  app.get('/v1/workspaces/:id/join-link', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ws.getJoinLink(id, req.user.id);
+  });
+
+  app.post('/v1/workspaces/:id/join-link', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ws.createJoinLink(id, req.user.id);
+  });
+
+  app.delete('/v1/workspaces/:id/join-link', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ws.revokeJoinLink(id, req.user.id);
+  });
+
+  // Unauthenticated on purpose: the landing page names the workspace before
+  // the visitor has signed up. The token is the authorization — which makes
+  // this the one guessing oracle on the join-link surface, so it is capped.
+  // The limit is loose because a link pasted in a busy channel means many
+  // legitimate people clicking from behind one NAT address.
+  app.get('/v1/join-links/:token', async (req) => {
+    if (!rateAllow(`join-preview:${req.ip}`, 60, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
+    }
+    const { token } = req.params as { token: string };
+    return ws.previewJoinLink(token);
+  });
+
+  // Keyed by user, not IP: redeeming already costs an account, and an office
+  // full of people joining off the same link shares one egress address.
+  app.post('/v1/join-links/redeem', { preHandler: requireAuth }, async (req) => {
+    if (!rateAllow(`join-redeem:${req.user.id}`, 20, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
+    }
+    const body = parse(RedeemJoinLinkBody, req.body);
+    return ws.redeemJoinLink(req.user.id, body.token);
   });
 
   app.get('/v1/workspaces/:id/members', { preHandler: requireAuth }, async (req) => {

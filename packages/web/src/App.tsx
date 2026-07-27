@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
 import { api, getToken, setToken } from './lib/api';
+import { parseJoinPath } from './lib/joinLink';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
 import NativeSignIn from './components/NativeSignIn';
@@ -11,6 +12,7 @@ import Main from './components/Main';
 const ACTIVE_WS_KEY = 'flow.activeWorkspace';
 const ADMIN_PANEL_KEY = 'flow.adminPanelOpen';
 export const PENDING_INVITE_KEY = 'flow.pendingInvite';
+export const PENDING_JOIN_KEY = 'flow.pendingJoinLink';
 
 /** Pull ?signup= / ?reset= / ?signin= (emailed links) and ?native= (the native
  * Google handoff, phase16 §9) off the URL before rendering. */
@@ -26,6 +28,14 @@ function consumeEmailLinkParams(): {
   const invite = location.pathname.match(/^\/invite\/([A-Za-z0-9_-]+)$/);
   if (invite) {
     localStorage.setItem(PENDING_INVITE_KEY, invite[1]!);
+    history.replaceState(null, '', '/');
+  }
+  // /join/<workspace-slug>/<token> (issue #85): the persistent join link. Same
+  // stash-and-redeem trick as the emailed invite — the slug is decoration for
+  // the human reading the URL, the token is what the server matches on.
+  const joinToken = parseJoinPath(location.pathname);
+  if (joinToken) {
+    localStorage.setItem(PENDING_JOIN_KEY, joinToken);
     history.replaceState(null, '', '/');
   }
   const params = new URLSearchParams(location.search);
@@ -96,6 +106,28 @@ export default function App() {
         console.warn(`invite accept failed: ${(err as Error).message}`);
       } finally {
         localStorage.removeItem(PENDING_INVITE_KEY);
+      }
+    })();
+  }, [user, qc]);
+
+  // Same dance for a stashed join link (issue #85). Redeeming is idempotent,
+  // so someone who follows the link while already a member simply lands in the
+  // workspace.
+  useEffect(() => {
+    if (!user) return;
+    const token = localStorage.getItem(PENDING_JOIN_KEY);
+    if (!token) return;
+    void (async () => {
+      try {
+        const ws = await api<WorkspaceDTO>('POST', '/v1/join-links/redeem', { token });
+        localStorage.setItem(ACTIVE_WS_KEY, ws.id);
+        setWorkspaceId(ws.id);
+        await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      } catch (err) {
+        setNotice('That join link is no longer valid — ask for a fresh one.');
+        console.warn(`join link redeem failed: ${(err as Error).message}`);
+      } finally {
+        localStorage.removeItem(PENDING_JOIN_KEY);
       }
     })();
   }, [user, qc]);

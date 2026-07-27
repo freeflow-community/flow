@@ -251,6 +251,24 @@ actor SyncEngine {
         return resp.inviteUrl
     }
 
+    /// The workspace's persistent join link, or nil if none is live (issue #85).
+    /// Owner/admin only — the server rejects everyone else.
+    func joinLink(workspaceId: String) async throws -> String? {
+        let resp: JoinLinkResponse = try await api.get("/v1/workspaces/\(workspaceId)/join-link")
+        return resp.joinUrl
+    }
+
+    /// Mints a fresh join link, replacing (and thereby revoking) any existing one.
+    func createJoinLink(workspaceId: String) async throws -> String? {
+        let resp: JoinLinkResponse = try await api.post("/v1/workspaces/\(workspaceId)/join-link")
+        return resp.joinUrl
+    }
+
+    /// Revokes the join link outright; the URL stops working immediately.
+    func revokeJoinLink(workspaceId: String) async throws {
+        let _: JoinLinkResponse = try await api.delete("/v1/workspaces/\(workspaceId)/join-link")
+    }
+
     /// Mints a single-use invite code for a coding agent (AGENT_MEMBERS.md).
     /// The sponsor is the caller; the agent redeems the code and joins on its
     /// own — no approval step.

@@ -9,6 +9,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 ## Parity
 
 ### Gaps to close
+- iOS: no join-link management (#85). Web + macOS can create/copy/regenerate/
+  revoke the workspace's persistent join link from the invite surface; iOS has
+  no invite surface at all to hang it on. Server API is done and client-agnostic
+  (`/v1/workspaces/:id/join-link`), so this is a pure client port. Following a
+  join link still works on iOS — it opens the web app, which redeems it.
 - iOS: no build tag or "What's new" notes in the UI — web + macOS show the
   build's short commit SHA at the foot of the workspace menu, and clicking it
   opens a FEATURES.md lightbox. iOS has no workspace dropdown to hang either on;
@@ -334,3 +339,57 @@ Entries below start after phase 16.
   its two contradictory CNAME targets replaced with "read it from Railway".
 - Web needed no changes (served same-origin, hardcodes nothing).
 - `pnpm -r build` + `swift build` clean; `pnpm -r test` green (310 tests).
+
+### 2026-07-26 — Feature: persistent, revocable workspace join links (#85)
+- `[server]` New `workspace_join_links` table (migration 0025) — primary key on
+  `workspace_id`, so a workspace has at most one live link and regenerating
+  *is* revoking. No expiry: the emailed invite covers "one address, one use",
+  this covers "paste it in a doc and leave it there".
+- `[server]` The token is stored **in plaintext**, the only token in the schema
+  that is. A persistent link has to be re-readable next month, which a one-way
+  hash makes impossible. It grants exactly one capability (become a member of
+  this workspace), dies on one click, and only owners/admins can read it — the
+  same permission that gates sending invites. Reasoning is in the migration.
+- `[server]` The token is **16 bytes / 22 characters**, not the 32-byte
+  `newToken()` the rest of the schema uses — new `newLinkToken()`. This is the
+  only token a person reads off a screen and pastes into a document, and 22
+  characters keeps the whole URL on one line in a chat client. 128 bits is
+  still far past guessing, and the two endpoints that accept a token are now
+  rate-limited: preview at 60/IP/10min (loose — a link in a busy channel means
+  many real people behind one NAT address) and redeem at 20/user/10min (keyed
+  by user, since redeeming already costs an account). Preview is the one that
+  matters: unauthenticated plus an unhashed token makes it the only guessing
+  oracle on this surface.
+- `[server]` `GET`/`POST`/`DELETE /v1/workspaces/:id/join-link` (owner/admin;
+  non-members get 404 for membership privacy), plus unauthenticated
+  `GET /v1/join-links/:token` so the landing page can name the workspace before
+  the visitor has an account, and `POST /v1/join-links/redeem`. Redeem goes
+  through the existing `enrollInWorkspace` + `announceJoin` path, so joining by
+  link is indistinguishable downstream from accepting an invite — and is
+  idempotent for someone who is already a member (no second join message).
+- `[server]` `[web]` `[macos]` The shared URL is
+  `<WEB_URL_BASE>/join/<workspace-slug>/<token>`. The slug is decoration for
+  the human reading it; only the token is matched server-side, so a link
+  carrying a stale slug still works.
+- `[web]` The **Invite People** dialog gained a *Share a join link* section —
+  create / copy / regenerate / revoke. It renders nothing for non-admins (the
+  `GET` 403s and the section hides itself), and sits below both the email form
+  and the post-send result, because the link belongs to the workspace, not to
+  one invite.
+- `[web]` `/join/<slug>/<token>` stashes the token in `localStorage` and
+  redeems it once a user is signed in — the same survive-the-signup-round-trip
+  trick as the emailed invite. An invalid link now says so in the banner
+  instead of failing silently. New `lib/joinLink.ts` (`parseJoinPath`).
+- `[macos]` Same section in the invite sheet, gated the same way; new
+  `SyncEngine.joinLink/createJoinLink/revokeJoinLink` and `JoinLinkResponse`.
+  Redemption stays web-side — the link is an `http(s)` URL and opens there.
+- New `packages/server/test/joinLinks.test.ts` (17 cases): the link reads back
+  identical across calls (it's persistent, not shown-once), regenerating
+  invalidates the previous URL, revoke + double-revoke, multiple people redeem
+  the same link, idempotent for an existing member and role-preserving for the
+  owner, and the 403/404 permission split. The token length is pinned exactly
+  (22 chars / 16 bytes, URL-safe alphabet, no repeats across 20 mints) because
+  the temptation is to "fix" it back to the house 32-byte token, and the
+  rate-limit policy is pinned at the numbers the handlers pass. Plus 4 web
+  cases for the URL parse.
+- `[ios]` Not ported — see the Parity gap added above.
