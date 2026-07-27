@@ -109,6 +109,15 @@ if [ -f "$UPDATES_DIR/appcast.xml" ]; then
     echo "==> Uploading $(basename "$zip") ($(du -h "$zip" | cut -f1))"
     r2_cp "$zip" "downloads/mac/$(basename "$zip")" application/zip
   done
+  # Deltas too: generate_appcast writes <enclosure> entries for them, so leaving
+  # them behind announces URLs that 404. Sparkle falls back to the full archive,
+  # so this degraded quietly rather than breaking — every delta-eligible update
+  # silently pulled ~5 MB instead of ~500 KB.
+  for delta in "$UPDATES_DIR"/Flow*.delta; do
+    [ -e "$delta" ] || continue
+    echo "==> Uploading $(basename "$delta") ($(du -h "$delta" | cut -f1))"
+    r2_cp "$delta" "downloads/mac/$(basename "$delta")" application/octet-stream
+  done
   echo "==> Uploading appcast.xml"
   r2_cp "$UPDATES_DIR/appcast.xml" "downloads/mac/appcast.xml" application/xml
 else

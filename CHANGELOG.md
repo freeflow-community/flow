@@ -188,6 +188,26 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — Fix: Sparkle deltas were advertised but never served
+- `[server]` `[macos]` `generate_appcast` writes `<enclosure>` entries for the
+  binary deltas it produces, but **neither end could deliver them**:
+  `publish-dmg.sh` globbed `Flow-*.zip` only, so deltas never reached R2, and
+  the server's allowlist (`UPDATE_ASSET_RE`) admitted `appcast.xml` and
+  `Flow-<ver>-<build>.zip` only — deltas are `Flow<to>-<from>.delta`, with no
+  hyphen after `Flow`, so they were refused even once uploaded.
+- Effect was invisible: Sparkle falls back to the full archive when a delta
+  404s, so **every** delta-eligible update quietly pulled ~5 MB instead of
+  ~500 KB. Found while verifying the re-domain publish, not by a failure.
+- `[server]` Allowlist gains `Flow<digits>-<digits>.delta`, served as
+  `application/octet-stream`. Deliberately still a tight pattern — the route
+  must never become a read primitive for arbitrary blob keys.
+- New `packages/server/test/updateAssets.test.ts` (4 cases): the route had
+  **no test coverage at all**, which is why this survived. Pins the shapes that
+  must be served (feed, archives, deltas) and the ones that must stay rejected
+  (traversal, `Flow.dmg`, suffixed lookalikes like `…zip.enc`).
+- Also corrected one stale `app.flowtoo.org` delta URL that `generate_appcast`
+  had carried forward from the previous feed into the re-domained one.
+
 ### 2026-07-27 — bridge: bump to 0.11.0 to publish the new default host
 - `[bridge]` The re-domain changed the default `serverUrl` to
   `https://app.freeflow.im`, but agents install via `npx flow-agent-bridge`, so

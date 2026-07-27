@@ -47,8 +47,11 @@ import { blobStore } from '../storage/index.js';
 const DOWNLOAD_MAC_KEY = 'downloads/Flow.dmg';
 /** Sparkle auto-update assets (appcast + update archives) live under this prefix. */
 const UPDATE_MAC_PREFIX = 'downloads/mac/';
-/** Only the two shapes Sparkle fetches — never an arbitrary blob key. */
-const UPDATE_ASSET_RE = /^(appcast\.xml|Flow-[A-Za-z0-9._-]+\.zip)$/;
+/** Only the shapes Sparkle fetches — never an arbitrary blob key.
+ * Deltas are `Flow<to>-<from>.delta` (no hyphen after "Flow"), so they need
+ * their own alternative; the feed advertises them and a 404 here silently
+ * costs every updater the full ~5 MB archive instead of ~500 KB. */
+const UPDATE_ASSET_RE = /^(appcast\.xml|Flow-[A-Za-z0-9._-]+\.zip|Flow[0-9]+-[0-9]+\.delta)$/;
 import { config } from '../config.js';
 import * as auth from '../services/auth.js';
 import * as google from '../services/oauthGoogle.js';
@@ -153,7 +156,11 @@ export function registerRoutes(app: FastifyInstance): void {
     if (!UPDATE_ASSET_RE.test(asset)) throw notFound('unknown update asset');
     const key = UPDATE_MAC_PREFIX + asset;
     const isFeed = asset.endsWith('.xml');
-    const contentType = isFeed ? 'application/xml' : 'application/zip';
+    const contentType = isFeed
+      ? 'application/xml'
+      : asset.endsWith('.delta')
+        ? 'application/octet-stream'
+        : 'application/zip';
     const store = blobStore();
     // The feed must never be cached stale — it IS the "is there an update"
     // answer. Archives are immutable (versioned filenames) and cache freely.
