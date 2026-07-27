@@ -26,7 +26,10 @@ targets:
       - path: ../macos/Sources/Flow/Sync
       - path: ../macos/Sources/Flow/App/AppState.swift
       - path: ../macos/Sources/Flow/Support
-        excludes: [Banners.swift]
+        # Updater.swift is Sparkle (macOS-only auto-update); iOS ships through
+        # the App Store and has no Sparkle dependency, so compiling it here
+        # fails on the missing module.
+        excludes: [Banners.swift, Updater.swift]
     dependencies:
       - package: GRDB
     info:

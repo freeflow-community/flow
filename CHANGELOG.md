@@ -188,6 +188,18 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — Fix: the iOS target couldn't compile (Sparkle leaked in)
+- `[ios]` The iOS target pulls in `../macos/Sources/Flow/Support` wholesale,
+  excluding only `Banners.swift`. `Updater.swift` landed there with Sparkle
+  auto-update (`82fa540`, phase 14) and `import Sparkle` has no iOS module, so
+  **every iOS build since that commit failed** with "Unable to find module
+  dependency: 'Sparkle'". Added it to the excludes alongside `Banners.swift`.
+  Nothing shared references `Updater`, so the exclusion is inert for macOS.
+- Found while rebuilding both clients for the re-domain; unrelated to it. No
+  Parity line — this is a build break, not a feature that shipped one-sided.
+- `xcodebuild -scheme Flow` clean; the built bundle stamps
+  `FlowServerURL = https://app.freeflow.im`.
+
 ### 2026-07-27 — Re-domain: flowtoo.org → freeflow.im (repo side)
 - `[server]` `FLOW_EMAIL_FROM` default → `noreply@mail.freeflow.im`; the unfurl
   bot User-Agent now points at `https://app.freeflow.im/bot`.
