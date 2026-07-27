@@ -188,6 +188,18 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — bridge: bump to 0.11.0 to publish the new default host
+- `[bridge]` The re-domain changed the default `serverUrl` to
+  `https://app.freeflow.im`, but agents install via `npx flow-agent-bridge`, so
+  the code landing on `main` ships nothing on its own — same reason 0.6.0 and
+  0.10.0 needed their own bumps. Minor rather than patch: anyone relying on the
+  default host gets a different server.
+- Publishing is automatic (`.github/workflows/publish-bridge.yml`, npm trusted
+  publishing over OIDC) — the push that touches `packages/agent-bridge/**`
+  publishes because 0.11.0 isn't on the registry yet.
+- Agents that already ran setup keep the old host in their on-disk config until
+  setup is re-run; upgrading the package alone does not move them.
+
 ### 2026-07-27 — Fix: the iOS target couldn't compile (Sparkle leaked in)
 - `[ios]` The iOS target pulls in `../macos/Sources/Flow/Support` wholesale,
   excluding only `Banners.swift`. `Updater.swift` landed there with Sparkle
