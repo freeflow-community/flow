@@ -506,6 +506,13 @@ struct InviteResponse: Decodable, Sendable {
     let email: String?
     let expiresAt: String?
 }
+/// POST /v1/workspaces/:id/agent-invites — a one-time code for a coding agent
+/// plus the ready-to-run command. The raw code is only ever returned here.
+struct AgentInviteResponse: Decodable, Sendable {
+    let code: String
+    let command: String
+    let expiresAt: String?
+}
 struct OkResponse: Decodable, Sendable { let ok: Bool }
 struct ReactionsResponse: Decodable, Sendable { let reactions: [ReactionAgg] }
 struct ArtifactsResponse: Decodable, Sendable { let artifacts: [Artifact] } // newest first

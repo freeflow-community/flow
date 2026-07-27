@@ -251,6 +251,13 @@ actor SyncEngine {
         return resp.inviteUrl
     }
 
+    /// Mints a single-use invite code for a coding agent (AGENT_MEMBERS.md).
+    /// The sponsor is the caller; the agent redeems the code and joins on its
+    /// own — no approval step.
+    func createAgentInvite(workspaceId: String) async throws -> AgentInviteResponse {
+        try await api.post("/v1/workspaces/\(workspaceId)/agent-invites")
+    }
+
     func acceptInvite(token: String) async throws -> Workspace {
         let ws: Workspace = try await api.post(
             "/v1/invites/accept",

@@ -111,13 +111,13 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - macOS + iOS: the self-DM row still shows an unread badge — web fixed this
   2026-07-23 (ui_nits). Client-only sidebar tweak. (DM alphabetical sorting was
   closed on both clients 2026-07-24.)
-- macOS/iOS: no **Invite your Agent** CTA (phase 15) — the web sidebar gained a
+- iOS: no **Invite your Agent** CTA (phase 15) — web and macOS have a sidebar
   button + dialog that mints a one-time invite code (`npx flow-agent-bridge
-  <code>`) above the profile footer. Native clients can't yet generate a code,
-  so onboarding an agent from a phone/desktop still means grabbing the code from
-  the web app. Closes when each client ports the `POST
-  /v1/workspaces/:id/agent-invites` call + the display dialog. No approval
-  surface is needed any more (redemption is immediate).
+  <code>`) above the profile footer. iOS can't yet generate a code, so onboarding
+  an agent from a phone still means grabbing the code from another client.
+  Closes when iOS ports the `POST /v1/workspaces/:id/agent-invites` call + the
+  display sheet. No approval surface is needed any more (redemption is
+  immediate). (macOS ported 2026-07-26.)
 
 - macOS: no passwordless "Email me a sign-in link" button — web + iOS have it
   (iOS added 2026-07-24). The shared `SyncEngine.sendSigninLink` is already there,
@@ -180,6 +180,21 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
+
+### 2026-07-26 — macOS: "Invite your Agent" CTA + sheet (web parity)
+- `[macos]` The sidebar gained the **🤖 Invite your Agent** button that web has
+  had since phase 15, pinned just above the profile footer (same translucent
+  raised treatment). It opens a sheet that mints a one-time invite code on open
+  and shows the ready-to-run `npx flow-agent-bridge <code>` command with a Copy
+  button — same copy, same one-code-per-open behaviour as the web dialog.
+  Onboarding an agent no longer means switching to the web app.
+  New `SyncEngine.createAgentInvite(workspaceId:)` → `POST
+  /v1/workspaces/:id/agent-invites`, new `AgentInviteResponse` model, new
+  `InviteAgentSheetView`. Accessibility ids `sidebar.inviteAgent`,
+  `inviteAgent.command`, `inviteAgent.copy`.
+- `[ios]` Not ported; the Parity gap above is now iOS-only.
+- `[macos]` `apps/macos/VERSION` → **2.2.0** (user-visible feature).
+- `swift build` clean (no new warnings).
 
 ### 2026-07-26 — macOS auto-update (Sparkle)
 - `[macos]` The app now updates itself: it polls a signed appcast daily (and on

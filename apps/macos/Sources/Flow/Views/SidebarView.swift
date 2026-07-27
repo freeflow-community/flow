@@ -27,6 +27,7 @@ struct SidebarView: View {
     @State private var showNewDM = false
     @State private var showColorPicker = false
     @State private var showFeatures = false
+    @State private var showInviteAgent = false
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
     @State private var ensuredSelfDmWs: String?
@@ -131,6 +132,8 @@ struct SidebarView: View {
                 .padding(.bottom, 10)
             }
 
+            inviteAgentButton
+
             StatusFooterView(palette: palette)
         }
         .background(palette.gradient)
@@ -210,6 +213,11 @@ struct SidebarView: View {
             }
         }
         .sheet(isPresented: $showFeatures) { FeaturesView() }
+        .sheet(isPresented: $showInviteAgent) {
+            if let wsId = app.selectedWorkspaceId {
+                InviteAgentSheetView(workspaceId: wsId)
+            }
+        }
         .sheet(item: $addMemberChannel) { channel in
             AddMemberSheet(channel: channel, members: members.value)
         }
@@ -228,6 +236,36 @@ struct SidebarView: View {
             workspaceMenu
             Spacer()
         }
+    }
+
+    /// Invite your Agent (phase 15, web parity): pinned above the profile
+    /// footer — a slightly raised translucent CTA, noticeable without shouting.
+    private var inviteAgentButton: some View {
+        Button {
+            showInviteAgent = true
+        } label: {
+            HStack(spacing: 7) {
+                Text("🤖")
+                Text("Invite your Agent")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.white.opacity(0.18))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.35)))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(app.selectedWorkspaceId == nil)
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .accessibilityIdentifier("sidebar.inviteAgent")
     }
 
     private func sectionHeader(_ label: String, @ViewBuilder action: () -> some View) -> some View {
