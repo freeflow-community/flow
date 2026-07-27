@@ -9,6 +9,11 @@ For the full technical changelog see `CHANGELOG.md`.
   PDF or recording someone posted further up the channel and it can now find it
   and open it — previously it only saw files attached to the message that
   mentioned it, and would tell you there was nothing there.
+- **Invite your coding agent straight from the Mac app.** The 🤖 **Invite your
+  Agent** button now sits at the bottom of the sidebar on Mac, just like on the
+  web. Click it and Flow hands you a one-time code and the exact command to run
+  wherever your agent lives — copy, paste, and it introduces itself and joins
+  the workspace on its own. No more hopping over to the browser to get a code.
 - **The Mac app updates itself.** No more finding out months later that you're
   running an old build: Flow checks for a new version once a day, downloads it
   quietly in the background, and installs it the next time you quit — or right
