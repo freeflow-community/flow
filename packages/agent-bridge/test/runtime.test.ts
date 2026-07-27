@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,6 +28,24 @@ describe('StreamJsonParser', () => {
     expect(p.sawResult).toBe(true);
     expect(p.isError).toBe(false);
     expect(p.finalText).toBe('all done');
+    expect(p.sawEvent).toBe(true);
+    expect(p.lastText).toBe('thinking'); // salvage for a run that never reaches a result
+  });
+
+  it('keeps the newest assistant text and ignores empty blocks', () => {
+    const p = new StreamJsonParser(() => {});
+    const say = (text: string): string =>
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+    p.feed(`${say('first pass')}\n${say('   ')}\n${say('second pass')}\n`);
+    expect(p.lastText).toBe('second pass');
+    expect(p.sawResult).toBe(false); // no result event — but the session exists
+    expect(p.sawEvent).toBe(true);
+  });
+
+  it('does not mistake non-JSON noise for a live session', () => {
+    const p = new StreamJsonParser(() => {});
+    p.feed('claude: command not found\n');
+    expect(p.sawEvent).toBe(false);
   });
 
   it('ignores non-JSON noise and flags error results', () => {
@@ -54,7 +72,7 @@ describe('formatToolStep', () => {
 describe('buildClaudeArgs permissions', () => {
   const base: RuntimeConfig = {
     kind: 'claude', command: 'claude', extraArgs: [], cwd: '/tmp',
-    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300,
+    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300, idleTimeoutSec: 120,
     mcp: false, systemPromptExtra: undefined,
   };
   const opts = { sessionId: 's', resume: false, prompt: 'p', systemPrompt: '', onToolStep: () => {}, log: () => {} };
@@ -83,6 +101,99 @@ describe('buildClaudeArgs permissions', () => {
   });
 });
 
+// A run ends when it goes quiet, not when it gets long: these drive real
+// spawns through fake runtime scripts, so the timers, the process-group kill
+// and the stdout rearm are all exercised for real.
+describe('run expiry', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-runtime-'));
+  const TICK = '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"tick"}}]}}';
+  const DONE = '{"type":"result","subtype":"success","result":"done","is_error":false}';
+
+  /** A fake `claude` — it ignores the CLI flags buildClaudeArgs passes it. */
+  function script(name: string, body: string): string {
+    const p = path.join(dir, `${name}.sh`);
+    fs.writeFileSync(p, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    return p;
+  }
+  function cfg(command: string, over: Partial<RuntimeConfig> = {}): RuntimeConfig {
+    return {
+      kind: 'claude', command, extraArgs: [], cwd: dir, permissionMode: undefined,
+      allowedTools: [], maxTurns: 10, timeoutSec: 30, idleTimeoutSec: 0.4,
+      mcp: false, systemPromptExtra: undefined, ...over,
+    };
+  }
+  const run = (c: RuntimeConfig): ReturnType<typeof runRuntime> =>
+    runRuntime(c, { sessionId: 's', resume: false, prompt: 'p', systemPrompt: '', onToolStep: () => {}, log: () => {} });
+
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('kills a run that goes silent', async () => {
+    const res = await run(cfg(script('silent', 'sleep 30')));
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('no output for 0.4s');
+  });
+
+  it('lets a chatty run outlive the idle window — output rearms it', async () => {
+    // 12 ticks × 100ms ≈ 1.2s of work under a 0.4s idle window: a fixed
+    // wall-clock timeout of the same length would have killed this.
+    const p = script('chatty', `i=0\nwhile [ $i -lt 12 ]; do\n  echo '${TICK}'\n  sleep 0.1\n  i=$((i+1))\ndone\necho '${DONE}'`);
+    const res = await run(cfg(p));
+    expect(res).toMatchObject({ ok: true, text: 'done', sawSession: true });
+  });
+
+  it('salvages the last thing the agent said, and reports the session as resumable', () => {
+    // The regression: hours of work vanished into an error string because the
+    // terminal result event never arrives for a killed run.
+    const say = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Found the leak in the WS reconnect path.' }] },
+    }).replace(/'/g, `'\\''`);
+    const p = script('salvage', `echo '${say}'\nsleep 30`);
+    return run(cfg(p)).then((res) => {
+      expect(res.ok).toBe(false);
+      expect(res.error).toBe('no output for 0.4s');
+      expect(res.text).toBe('Found the leak in the WS reconnect path.');
+      expect(res.sawSession).toBe(true); // → the bridge keeps the session id
+    });
+  });
+
+  it('reports no session when the CLI dies before emitting anything', async () => {
+    const res = await run(cfg(script('stillborn', 'echo "boom" >&2\nexit 1')));
+    expect(res.ok).toBe(false);
+    expect(res.sawSession).toBe(false); // → the bridge rerolls to a fresh id
+    expect(res.text).toBe('');
+  });
+
+  it('still enforces the absolute run cap on a runaway', async () => {
+    const p = script('forever', `while true; do\n  echo '${TICK}'\n  sleep 0.1\ndone`);
+    const res = await run(cfg(p, { idleTimeoutSec: 30, timeoutSec: 0.5 }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('hit the 0.5s run cap');
+  });
+
+  it('takes the whole process group down, not just the CLI', async () => {
+    // The regression: a bare child.kill() left Bash-tool grandchildren (builds,
+    // test runs, dev servers) orphaned and running after the turn was killed.
+    const pidFile = path.join(dir, 'grandchild.pid');
+    const p = script('grandchild', `sleep 60 &\necho $! > ${pidFile}\necho starting\nsleep 60`);
+    const res = await run(cfg(p));
+    expect(res.ok).toBe(false);
+    const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    expect(pid).toBeGreaterThan(0);
+    for (let i = 0; i < 40 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(alive(pid)).toBe(false);
+  });
+});
+
 describe('loadConfig', () => {
   it('applies defaults and resolves cwd relative to the config file', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
@@ -102,6 +213,19 @@ describe('loadConfig', () => {
     expect(cfg.respondToAgents).toBe(false);
     expect(cfg.concurrency).toBe(4);
     expect(cfg.runtime.mcp).toBe(true);
+    expect(cfg.runtime.idleTimeoutSec).toBe(120);
+    expect(cfg.runtime.timeoutSec).toBe(3600); // backstop only — idle is the real limit
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rejects a non-positive timeout (it would expire every run instantly)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-cfg-'));
+    const p = path.join(dir, 'agent.json');
+    const base = { serverUrl: 'http://x', agentToken: 't', runtime: { kind: 'demo' } };
+    fs.writeFileSync(p, JSON.stringify({ ...base, runtime: { kind: 'demo', idleTimeoutSec: 0 } }));
+    expect(() => loadConfig(p)).toThrow(/idleTimeoutSec must be a positive number/);
+    fs.writeFileSync(p, JSON.stringify({ ...base, runtime: { kind: 'demo', timeoutSec: -1 } }));
+    expect(() => loadConfig(p)).toThrow(/timeoutSec must be a positive number/);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

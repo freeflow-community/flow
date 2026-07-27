@@ -188,6 +188,59 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — Agent turns expire on silence, and survive expiring
+- `[bridge]` Published as **0.12.0**. Running bridges keep their old behaviour
+  until operators update — the startup staleness check nags them to.
+- `[bridge]` A killed turn no longer loses its session. The "is this session
+  resumable" test was `sawResult` — the *terminal* result event, which a killed
+  run never emits — so an expired first turn fell through to
+  `conv.sessionId = randomUUID()` and discarded the uuid the CLI had been
+  writing a transcript under. The next message then started cold: chat history
+  but none of the agent's own context, with its half-finished edits still on
+  disk and unmentioned. `RunResult.sawResult` becomes `sawSession`, set by *any*
+  well-formed stream-json event (`StreamJsonParser.sawEvent`) — the CLI only
+  emits those once the session exists, so it proves resumability without
+  needing the run to finish. A runtime that dies before emitting anything still
+  rerolls to a fresh id.
+- `[bridge]` A failed turn now posts what the agent managed to say. The parser
+  was reading assistant `text` blocks off the wire and dropping them (only
+  `tool_use` was kept, for the status line), and `finalText` was populated
+  solely by the result event — so an expired run had nothing to salvage even in
+  principle. `StreamJsonParser.lastText` now keeps the newest assistant text,
+  expiry resolves with it (codex: raw stdout), and `failureReply()` posts it
+  under a "Where I got to:" heading, capped at 4000 chars against the API's
+  12000-char body limit. Since the runtime's own words now ride along as
+  salvage, the error string no longer splices `finalText` in truncated at 300
+  chars.
+- Together these close the hole where an expired turn left no trace anywhere:
+  no reply, no status line (`progress.finish()` hard-deletes it by design), and
+  no resumable session.
+
+### 2026-07-27 — Agent turns expire on silence, not on the clock
+- `[bridge]` A runtime turn was capped at a flat `timeoutSec` (600) wall clock
+  armed at spawn and never reset — a turn actively streaming tool calls at 9:59
+  was SIGKILLed exactly like a wedged one, and real multi-hour coding work died
+  at ten minutes with the whole turn discarded.
+- New `runtime.idleTimeoutSec` (default **120**) is now the operative limit: the
+  timer is rearmed by every byte on stdout/stderr. stream-json narrates each
+  tool call, so a run that is still working can never expire, however long it
+  takes; only genuine silence — a CLI blocked on a prompt it can't get — ends
+  it. `timeoutSec` survives as the absolute runaway backstop and its default
+  moves 600 → **3600**. Both are validated positive at config load, since a `0`
+  would expire every run at spawn.
+- Expiry now kills the **process group**, not the CLI process. Runtimes spawn
+  `detached: true` and expiry sends `SIGTERM` to `-pid` (escalating to
+  `SIGKILL` after 5s, so the CLI can flush the session transcript that makes
+  the next turn resumable). Previously a bare `child.kill()` reached only
+  `claude`, orphaning whatever its Bash tool had started — builds, test runs,
+  dev servers kept running unsupervised forever. The flip side of `detached` is
+  that runtimes no longer die with the daemon, so `AgentBridge.stop()` calls a
+  new `killAllRuntimes()`.
+- Error text now names the limit that fired (`no output for 120s` vs `hit the
+  3600s run cap`) — they need different fixes, so the message says which.
+- Docs: `AGENT_MEMBERS.md` had been claiming a 300s default since before it was
+  600; both it and the bridge README now match the code.
+
 ### 2026-07-27 — Retired-hostname redirect, in the app rather than at the CDN
 - `[server]` New `FLOW_REDIRECT_FROM_HOSTS` (comma-separated, **empty by
   default**): a request arriving on one of those hostnames 302s to the same
