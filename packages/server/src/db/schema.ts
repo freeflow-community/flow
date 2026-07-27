@@ -156,6 +156,22 @@ export const invites = pgTable(
   (t) => [uniqueIndex('invites_pending_unique').on(t.workspaceId, t.email).where(sql`accepted_at IS NULL`)],
 );
 
+/**
+ * Persistent Slack-style join link — at most one live link per workspace
+ * (hence the PK on workspace_id: regenerating overwrites, which revokes the
+ * previous URL). The token is stored raw, not hashed, because an admin must be
+ * able to re-read and re-share the same link indefinitely; see 0025 for the
+ * reasoning.
+ */
+export const workspaceJoinLinks = pgTable('workspace_join_links', {
+  workspaceId: uuid('workspace_id')
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: 'cascade' }),
+  token: text('token').notNull().unique(),
+  createdBy: uuid('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const channelKind = pgEnum('channel_kind', ['standard', 'dm', 'group_dm']);
 
 export const channels = pgTable(

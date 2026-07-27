@@ -4,6 +4,8 @@ import {
   emailDomain,
   isSelfRegisterableDomain,
   type InviteDTO,
+  type JoinLinkDTO,
+  type JoinLinkPreviewDTO,
   type MemberRole,
   type WorkspaceDTO,
   type WorkspaceMemberDTO,
@@ -20,6 +22,7 @@ import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents } from '.
 const {
   workspaces,
   workspaceMembers,
+  workspaceJoinLinks,
   invites,
   channels,
   channelMembers,
@@ -424,6 +427,116 @@ export async function acceptInvite(userId: string, token: string): Promise<Works
   await announceJoin(inv.workspaceId, userId);
   const ws = await db.select().from(workspaces).where(eq(workspaces.id, inv.workspaceId)).limit(1);
   return toWorkspaceDTO(ws[0]!, 'member');
+}
+
+// ---- Persistent workspace join links (issue #85) --------------------------
+//
+// The emailed invite above is one-address, one-use. This is the other half of
+// the job Slack splits the same way: a link an admin drops in a doc or a group
+// chat and leaves there. Exactly one is live per workspace — generating a new
+// one revokes the old — and unlike invites it never expires on its own.
+
+/** Owner/admin gate, shared by every join-link operation (same rule as invites). */
+async function requireInviteRights(workspaceId: string, userId: string): Promise<void> {
+  const m = await requireMembership(workspaceId, userId);
+  if (m.role !== 'owner' && m.role !== 'admin') throw forbidden('only owners and admins can invite');
+}
+
+/** The shareable URL: the slug is in there so the link reads as the workspace
+ * it joins, not an opaque blob (issue #85). */
+function joinUrl(slug: string, token: string): string {
+  return `${config.webUrlBase}/join/${slug}/${token}`;
+}
+
+async function joinLinkRow(workspaceId: string) {
+  return (await db.select().from(workspaceJoinLinks).where(eq(workspaceJoinLinks.workspaceId, workspaceId)).limit(1))[0];
+}
+
+/** Owner/admin only. The live link, or `joinUrl: null` when there isn't one. */
+export async function getJoinLink(workspaceId: string, userId: string): Promise<JoinLinkDTO> {
+  await requireInviteRights(workspaceId, userId);
+  const row = await joinLinkRow(workspaceId);
+  if (!row) return { workspaceId, joinUrl: null };
+  const ws = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0]!;
+  return {
+    workspaceId,
+    joinUrl: joinUrl(ws.slug, row.token),
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Owner/admin only. Mint the workspace's join link, replacing any existing one
+ * — "one at a time" is the point, so regenerating IS the way to revoke a link
+ * that leaked while keeping the door open.
+ */
+export async function createJoinLink(workspaceId: string, userId: string): Promise<JoinLinkDTO> {
+  await requireInviteRights(workspaceId, userId);
+  const ws = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0];
+  if (!ws) throw notFound('workspace not found');
+  const token = newToken();
+  const row = (
+    await db
+      .insert(workspaceJoinLinks)
+      .values({ workspaceId, token, createdBy: userId })
+      .onConflictDoUpdate({
+        target: workspaceJoinLinks.workspaceId,
+        set: { token, createdBy: userId, createdAt: new Date() },
+      })
+      .returning()
+  )[0]!;
+  return {
+    workspaceId,
+    joinUrl: joinUrl(ws.slug, token),
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** Owner/admin only. Kills the link outright — the URL 404s from here on.
+ * Idempotent: revoking when there is no link is a no-op, not an error. */
+export async function revokeJoinLink(workspaceId: string, userId: string): Promise<JoinLinkDTO> {
+  await requireInviteRights(workspaceId, userId);
+  await db.delete(workspaceJoinLinks).where(eq(workspaceJoinLinks.workspaceId, workspaceId));
+  return { workspaceId, joinUrl: null };
+}
+
+/**
+ * Unauthenticated: name the workspace behind a join link so the landing page
+ * can say "Join Acme" before the visitor has an account. Holding the token is
+ * the authorization — it already grants membership.
+ */
+export async function previewJoinLink(token: string): Promise<JoinLinkPreviewDTO> {
+  const row = (await db.select().from(workspaceJoinLinks).where(eq(workspaceJoinLinks.token, token)).limit(1))[0];
+  if (!row) throw notFound('this join link is no longer valid');
+  const ws = (await db.select().from(workspaces).where(eq(workspaces.id, row.workspaceId)).limit(1))[0];
+  if (!ws) throw notFound('this join link is no longer valid');
+  return { workspaceId: ws.id, slug: ws.slug, name: ws.name };
+}
+
+/**
+ * Redeem a join link → join the workspace (+ #general), same enrollment path
+ * as an invite accept. Idempotent for someone who is already a member: they
+ * just land in the workspace, and nobody gets a second "joined" message.
+ */
+export async function redeemJoinLink(userId: string, token: string): Promise<WorkspaceDTO> {
+  const row = (await db.select().from(workspaceJoinLinks).where(eq(workspaceJoinLinks.token, token)).limit(1))[0];
+  if (!row) throw notFound('this join link is no longer valid');
+  const ws = (await db.select().from(workspaces).where(eq(workspaces.id, row.workspaceId)).limit(1))[0];
+  if (!ws) throw notFound('this join link is no longer valid');
+
+  const joined = await db.transaction(async (tx) => enrollInWorkspace(tx, ws.id, userId));
+  if (joined) await announceJoin(ws.id, userId);
+
+  const m = (
+    await db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.userId, userId)))
+      .limit(1)
+  )[0];
+  return toWorkspaceDTO(ws, m?.role ?? 'member');
 }
 
 /**

@@ -153,6 +153,13 @@ export const AcceptInviteBody = z.object({
 });
 export type AcceptInviteBody = z.infer<typeof AcceptInviteBody>;
 
+/** POST /v1/join-links/redeem — the persistent workspace join link (issue #85).
+ * The slug is carried for a readable URL; the token alone identifies the link. */
+export const RedeemJoinLinkBody = z.object({
+  token: z.string().min(16).max(128),
+});
+export type RedeemJoinLinkBody = z.infer<typeof RedeemJoinLinkBody>;
+
 /**
  * PATCH /v1/workspaces/:id/members/:userId/role — owner/admin manage users
  * (admin panel). Only 'admin' and 'member' are assignable; 'owner' is fixed.

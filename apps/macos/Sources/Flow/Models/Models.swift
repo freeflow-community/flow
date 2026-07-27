@@ -506,6 +506,12 @@ struct InviteResponse: Decodable, Sendable {
     let email: String?
     let expiresAt: String?
 }
+/// The workspace's persistent join link (issue #85). `joinUrl` is nil when no
+/// link is live — one exists at a time, and revoking clears it.
+struct JoinLinkResponse: Decodable, Sendable {
+    let workspaceId: String
+    let joinUrl: String?
+}
 /// POST /v1/workspaces/:id/agent-invites — a one-time code for a coding agent
 /// plus the ready-to-run command. The raw code is only ever returned here.
 struct AgentInviteResponse: Decodable, Sendable {

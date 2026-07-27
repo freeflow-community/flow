@@ -12,6 +12,15 @@ struct InviteSheetView: View {
     @State private var error: String?
     @State private var copied = false
 
+    // Persistent workspace join link (issue #85). `canManageJoinLink` stays
+    // false until the server answers — non-admins get a 403 and never see the
+    // section at all.
+    @State private var joinUrl: String?
+    @State private var canManageJoinLink = false
+    @State private var joinBusy = false
+    @State private var joinCopied = false
+    @State private var joinError: String?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Invite to Workspace").font(.headline)
@@ -50,6 +59,11 @@ struct InviteSheetView: View {
                 .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.5)))
             }
 
+            if canManageJoinLink {
+                Divider()
+                joinLinkSection
+            }
+
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
@@ -58,6 +72,80 @@ struct InviteSheetView: View {
         }
         .padding(20)
         .frame(width: 460)
+        .task { await loadJoinLink() }
+    }
+
+    /// Generate / copy / regenerate / revoke the one link that's live for this
+    /// workspace. Regenerate is also how you revoke a leaked link without
+    /// closing the door.
+    private var joinLinkSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Share a join link").font(.headline)
+            Text("Anyone with this link can join the workspace. It stays valid until you regenerate or revoke it.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            if let joinUrl {
+                HStack {
+                    Text(joinUrl)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(joinUrl, forType: .string)
+                        joinCopied = true
+                    } label: {
+                        Label(joinCopied ? "Copied" : "Copy", systemImage: joinCopied ? "checkmark" : "doc.on.doc")
+                    }
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.5)))
+
+                HStack {
+                    Button("Regenerate") { mutateJoinLink(revoke: false) }
+                    Button("Revoke", role: .destructive) { mutateJoinLink(revoke: true) }
+                }
+                .disabled(joinBusy)
+            } else {
+                Button("Create Join Link") { mutateJoinLink(revoke: false) }
+                    .disabled(joinBusy)
+            }
+
+            if let joinError {
+                Text(joinError).font(.callout).foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func loadJoinLink() async {
+        do {
+            joinUrl = try await app.engine.joinLink(workspaceId: workspaceId)
+            canManageJoinLink = true
+        } catch {
+            canManageJoinLink = false // not an owner/admin, or offline
+        }
+    }
+
+    private func mutateJoinLink(revoke: Bool) {
+        guard !joinBusy else { return }
+        joinBusy = true
+        joinError = nil
+        joinCopied = false
+        Task {
+            defer { joinBusy = false }
+            do {
+                if revoke {
+                    try await app.engine.revokeJoinLink(workspaceId: workspaceId)
+                    joinUrl = nil
+                } else {
+                    joinUrl = try await app.engine.createJoinLink(workspaceId: workspaceId)
+                }
+            } catch {
+                joinError = error.localizedDescription
+            }
+        }
     }
 
     private func createInvite() {

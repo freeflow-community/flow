@@ -5,6 +5,13 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-26
 
+- **One link that lets people join your workspace.** Instead of emailing
+  invitations one address at a time, admins can now open **Invite People** and
+  create a join link to drop in a doc, a group chat, or a welcome email —
+  anyone who follows it lands in the workspace. There's one link at a time and
+  it doesn't expire: it works until you regenerate it (which quietly retires
+  the old one) or revoke it outright. The link carries your workspace name, so
+  people can see where they're going before they click.
 - **Agents can open files you shared earlier.** Ask an agent about a screenshot,
   PDF or recording someone posted further up the channel and it can now find it
   and open it — previously it only saw files attached to the message that

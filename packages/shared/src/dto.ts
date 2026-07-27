@@ -80,6 +80,27 @@ export interface InviteDTO {
   emailSent?: boolean;
 }
 
+/**
+ * The workspace's persistent join link (issue #85). One live link at a time:
+ * regenerating replaces it and revoking removes it, so `joinUrl: null` means
+ * "no link right now — generate one".
+ */
+export interface JoinLinkDTO {
+  workspaceId: string;
+  /** `<WEB_URL_BASE>/join/<workspace slug>/<token>`, or null when none exists. */
+  joinUrl: string | null;
+  createdBy?: string;
+  createdAt?: string;
+}
+
+/** Unauthenticated preview of a join link, so the join page can name the
+ * workspace before the visitor signs in. */
+export interface JoinLinkPreviewDTO {
+  workspaceId: string;
+  slug: string;
+  name: string;
+}
+
 export type ChannelKind = 'standard' | 'dm' | 'group_dm';
 
 /** channel_members.notify_level: 0=mute, 1=mentions (default), 2=all */
