@@ -194,6 +194,16 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — macOS 2.2.1
+- `[macos]` Bump `apps/macos/VERSION` to 2.2.1 so the thread-parking fix (#89)
+  can ship. 2.2.0 (build 287) was published before #89 merged, and the macOS
+  pipeline is manual — merging to `main` does not release the app, unlike
+  `flow-agent-bridge`. Sparkle compares `CFBundleVersion` (the commit count, so
+  it always increases), but the release notes users see are keyed to the short
+  version, and reusing 2.2.0 would show the same version twice in the feed.
+  Cutting the build still needs a local `dist.sh` + `publish-dmg.sh` run with
+  the signing identity and notary profile.
+
 ### 2026-07-27 — An open thread survives a channel switch (#89)
 - `[web]` `[macos]` `[ios]` Switching channels used to close the open thread:
   the thread lives in a single selection slot (`threadRootId` /
