@@ -48,6 +48,24 @@ export const config = {
     return process.env.FLOW_WEB_URL ?? 'http://127.0.0.1:8787';
   },
   /**
+   * Hostnames retired in favour of `webUrlBase`. A request arriving on one of
+   * these 302s to the same path on the canonical host — the retirement window
+   * after a re-domain (phase17 §13), when the old hostname still resolves to
+   * this service and we want browsers and installed clients to migrate
+   * themselves before the DNS records are dropped.
+   *
+   * Comma-separated; empty (the default) disables the hook entirely, so this
+   * costs a self-hosted deployment nothing. Doing it here rather than at the
+   * CDN keeps the old hostname on DNS-only, which is what lets the platform
+   * keep renewing its own certificate for it.
+   */
+  get redirectFromHosts(): readonly string[] {
+    return (process.env.FLOW_REDIRECT_FROM_HOSTS ?? '')
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+  },
+  /**
    * Phase 11 §3: consult robots.txt before unfurling?
    *
    * DEFAULT OFF, by operator ruling 2026-07-22 (see decision_log.md). The spec

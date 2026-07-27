@@ -188,6 +188,35 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — Retired-hostname redirect, in the app rather than at the CDN
+- `[server]` New `FLOW_REDIRECT_FROM_HOSTS` (comma-separated, **empty by
+  default**): a request arriving on one of those hostnames 302s to the same
+  path on `FLOW_WEB_URL`. This is phase17 §13's retirement window — the old and
+  new hostnames resolve to the same service, so the redirect keys off the Host
+  header in an `onRequest` hook, before routing and before body parsing.
+- Config-driven rather than hardcoded: `app.flowtoo.org` has no business being
+  compiled into a server other people self-host, and unset means the hook is
+  never installed.
+- **`/v1` and `/api` are exempt.** A 302 on a POST is replayed as a GET by most
+  clients, and the WebSocket upgrade at `/v1/ws` cannot follow a redirect at
+  all — redirecting those would make old native clients go quiet, which reads
+  as an outage rather than a migration. They keep working on the old hostname
+  until its DNS is dropped, then everything stops together. `/download/*` is
+  deliberately **not** exempt: that is how an installed macOS app reaches the
+  new appcast, and Sparkle follows redirects.
+- Loop guard: an entry naming the canonical host itself is dropped with a
+  warning, since honouring it would 302 the live host to itself.
+- Chosen over a Cloudflare redirect rule, which would have required flipping
+  the record to proxied and the zone to Full (strict) — putting Cloudflare in
+  front of a Railway-issued cert it then has to keep renewing, plus a new
+  request-body ceiling. Operator call: not worth it for a few weeks.
+- New `packages/server/test/retiredHost.test.ts` (8 cases): off-by-default,
+  path+query preserved (emailed `/?signup=<token>` links with the old host are
+  still live), canonical host untouched, the `/v1` `/api` exemptions, `/download`
+  redirected, list parsing, the loop guard, and Host-header port stripping.
+- Documented in both `DEPLOYMENT.md` (self-hosting) and `docs/ops/DEPLOYMENT.md`.
+  Not enabled yet — shipping it is inert until the variable is set.
+
 ### 2026-07-27 — Fix: Sparkle deltas were advertised but never served
 - `[server]` `[macos]` `generate_appcast` writes `<enclosure>` entries for the
   binary deltas it produces, but **neither end could deliver them**:

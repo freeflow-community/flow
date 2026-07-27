@@ -118,6 +118,7 @@ need at least the four variables in the first block.
 | `LOG_LEVEL` | pino default | `debug`, `info`, `warn`, … |
 | `FLOW_MAX_FILE_MB` | `500` | Upload cap (direct-to-object-storage path only) |
 | `INVITE_URL_BASE` | `flow://invite/` | Prefix for invite links. The default deep-links into the native app; set it to `https://your-host/invite/` if your users are on the web. |
+| `FLOW_REDIRECT_FROM_HOSTS` | empty (off) | Comma-separated hostnames to 302 onto `FLOW_WEB_URL`. Use this when you change domains and the old hostname still points at this server — browsers and installed apps migrate themselves before you drop the DNS. `/v1` and `/api` are exempt on purpose: a 302 turns a POST into a GET and a WebSocket upgrade can't follow one, so old clients keep working on the old hostname until it goes away. |
 
 ### Email
 

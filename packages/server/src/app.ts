@@ -26,6 +26,50 @@ export function buildApp(): FastifyInstance {
   const rawBody = { parseAs: 'buffer', bodyLimit: config.maxFileBytes } as const;
   app.addContentTypeParser('*', rawBody, (_req, body, done) => done(null, body));
   app.addContentTypeParser('text/plain', rawBody, (_req, body, done) => done(null, body));
+
+  // Retired-hostname redirect (phase17 §13). Both the old and new hostnames
+  // resolve to this one service, so the redirect has to key off the Host
+  // header. `onRequest` runs before routing and before any body is parsed, so
+  // a redirected request costs nothing downstream.
+  //
+  // /v1 and /api are deliberately exempt. A 302 on a POST is replayed as a GET
+  // by most clients, and the WebSocket upgrade at /v1/ws cannot follow a
+  // redirect at all — redirecting those would make old native clients go
+  // quiet instead of failing visibly. They keep working on the old hostname
+  // until its DNS is dropped, at which point everything stops together.
+  // /download/* is NOT exempt: that is how an installed macOS app finds the
+  // new appcast and migrates itself, and Sparkle follows redirects.
+  const retiredHosts = config.redirectFromHosts;
+  if (retiredHosts.length) {
+    const canonical = config.webUrlBase.replace(/\/+$/, '');
+    // Guard against a misconfiguration that would redirect the canonical host
+    // to itself — an infinite loop that would take the whole service down.
+    const canonicalHost = (() => {
+      try {
+        return new URL(canonical).hostname.toLowerCase();
+      } catch {
+        return '';
+      }
+    })();
+    const hosts = retiredHosts.filter((h) => h !== canonicalHost);
+    if (hosts.length !== retiredHosts.length) {
+      app.log.warn(
+        { canonicalHost },
+        'FLOW_REDIRECT_FROM_HOSTS names the canonical host; ignoring that entry',
+      );
+    }
+    if (hosts.length) {
+      app.addHook('onRequest', async (req, reply) => {
+        // req.hostname excludes the port in Fastify 5, but strip defensively.
+        const host = (req.hostname ?? '').toLowerCase().split(':')[0] ?? '';
+        if (!hosts.includes(host)) return;
+        if (req.url.startsWith('/v1') || req.url.startsWith('/api')) return;
+        return reply.redirect(`${canonical}${req.url}`, 302);
+      });
+      app.log.info({ hosts, canonical }, 'redirecting retired hostnames');
+    }
+  }
+
   registerRoutes(app);
   registerSlackCompat(app); // Slack Web API compat surface at /api/* (phase4.md §1)
 
