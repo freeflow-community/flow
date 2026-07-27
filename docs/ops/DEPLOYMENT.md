@@ -128,6 +128,59 @@ the current object. Until the key exists the route returns `404 not_found`
 (the page's download link just fails to fetch, no crash). The bucket's existing
 CORS policy already covers this (same-origin redirect from app.flowtoo.org).
 
+## macOS auto-update (Sparkle)
+
+The DMG only reaches *new* downloads. Installed copies update themselves from a
+Sparkle appcast published in the same step:
+
+| Object | Route | Purpose |
+|---|---|---|
+| `downloads/mac/appcast.xml` | `/download/mac/appcast.xml` | the feed the app polls (daily, plus **Check for Updates…** in the app menu) |
+| `downloads/mac/Flow-<ver>-<build>.zip` | `/download/mac/Flow-<ver>-<build>.zip` | the archive it installs |
+
+`dist.sh` generates both after stapling; `publish-dmg.sh` uploads archives
+first, then the feed (publishing the feed first would announce an update that
+404s). Publishing without a feed is a loud warning, not a silent pass — that
+build would ship to new downloads only.
+
+**Trust model.** Each archive is signed with an **EdDSA key**; the public half
+is baked into every bundle as `SUPublicEDKey` (`tools/sparkle-public-key.txt`,
+committed — it's public). The app refuses anything that doesn't verify, so
+neither the transport nor the bucket has to be trusted. The **private** half
+lives in the login keychain of whoever publishes and never touches disk. Losing
+it means no existing install can be updated again: rotating it requires shipping
+a new bundle (with the new public key) through the DMG, which only reaches
+people who re-download. Guard it accordingly.
+
+**Versions.** `CFBundleVersion` is the commit count (`git rev-list --count
+HEAD`) — monotonic, no state to keep — and Sparkle orders updates by it. The
+marketing string comes from `apps/macos/VERSION`; bump that for a user-visible
+version change. `FlowBuild` (short SHA) stays as the build label in the
+workspace menu.
+
+**A keychain prompt blocks the first signing run** on any machine: the tools
+need permission to read the key, and a headless run can't answer. Authorize it
+once interactively (click *Always Allow*):
+
+```sh
+apps/macos/.build/artifacts/sparkle/Sparkle/bin/sign_update apps/macos/dist/updates/*.zip
+```
+
+For CI, export the key once and point the release at the file instead:
+
+```sh
+apps/macos/.build/artifacts/sparkle/Sparkle/bin/generate_keys -x sparkle-private-key.txt
+FLOW_SPARKLE_KEY_FILE=sparkle-private-key.txt apps/macos/tools/dist.sh
+```
+
+That file is gitignored and is a credential — treat it like the Developer ID
+cert.
+
+**A dev build never offers production updates**: `SUFeedURL` is derived from
+whatever `FLOW_SERVER_URL` the bundle was built with, and a build with no public
+key (or no bundle at all — `swift run`) leaves the updater inert with the menu
+item disabled.
+
 ## DNS / domain
 
 Two records in the Cloudflare `flowtoo.org` zone, both required:

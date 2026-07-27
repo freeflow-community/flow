@@ -1,5 +1,30 @@
 # Decision log
 
+## 2026-07-26 — macOS auto-update: Sparkle, and the key we now have to guard
+
+- **Sparkle 2 over a hand-rolled updater.** Downloading a build is easy;
+  *replacing a running app* is where update code goes wrong, and a bug there
+  breaks the user's install with no way for us to push a fix. Sparkle is the
+  battle-tested standard for exactly that swap, so we take the dependency
+  rather than re-implement it worse.
+- **Notify-only was considered and rejected as the endpoint** (it remains what
+  users get when an update can't be verified). The check is the same work
+  either way; the install is the part users actually feel.
+- **EdDSA signing key is now a release credential.** The private half lives in
+  the publisher's login keychain (never on disk); the public half ships in
+  every bundle. Losing it means existing installs can never be updated
+  again — recovery is a new public key shipped via DMG, which only reaches
+  people who re-download. It joins the Developer ID cert and notary profile as
+  something the release depends on.
+- **A build only trusts the feed for its own server.** `SUFeedURL` derives from
+  the `FLOW_SERVER_URL` baked in at bundle time, and no public key means the
+  updater stays inert. A local dev build can therefore never be handed a
+  production update, and an unsigned build can't be handed anything.
+- **`CFBundleVersion` = commit count.** Sparkle orders updates by it, so it must
+  be monotonic; the commit count is monotonic on `main` with no state to keep.
+  The old hardcoded `2.0.0` made "is there a newer build?" unanswerable — a SHA
+  can't be compared, which is why the app previously had no update check at all.
+
 ## 2026-07-26 — A badge number always means notifications (operator ruling)
 
 - **A number on a sidebar row counts unread *notifications*, never unread

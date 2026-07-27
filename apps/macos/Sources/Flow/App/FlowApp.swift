@@ -6,6 +6,7 @@ import UserNotifications
 struct FlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppState()
+    @StateObject private var updater = AppUpdater()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -30,6 +31,12 @@ struct FlowApp: App {
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .handlesExternalEvents(matching: ["*"])
+        // Standard placement: right under "About Flow" in the app menu.
+        .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesCommand(updater: updater)
+            }
+        }
     }
 }
 

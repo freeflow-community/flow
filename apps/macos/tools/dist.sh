@@ -68,6 +68,26 @@ echo "==> Building release bundle"
 tools/make-app.sh release
 
 # --- 2. Sign: hardened runtime + secure timestamp + entitlements --------------
+# Nested code first (make-app.sh signed it with the *dev* identity): notarization
+# rejects a bundle whose nested code isn't Developer ID-signed under the hardened
+# runtime with a secure timestamp. Inside-out — signing the app seals everything
+# beneath it, so anything re-signed afterwards invalidates the outer signature.
+SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
+if [ -d "$SPARKLE_FW" ]; then
+  echo "==> Signing embedded Sparkle (nested code, inside-out)"
+  for nested in \
+    "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
+    "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
+    "$SPARKLE_FW/Versions/B/Updater.app" \
+    "$SPARKLE_FW/Versions/B/Autoupdate" \
+    "$SPARKLE_FW"; do
+    [ -e "$nested" ] || continue
+    codesign --force --options runtime --timestamp \
+      -s "$FLOW_SIGN_IDENTITY" "$nested" \
+      || fail "failed to sign $(basename "$nested")"
+  done
+fi
+
 echo "==> Signing with Developer ID under the hardened runtime"
 codesign --force --options runtime --timestamp \
   --entitlements "$ENTITLEMENTS" \
@@ -125,6 +145,53 @@ xcrun stapler validate "$APP"
 xcrun stapler validate "$DMG"
 
 rm -f "$ZIP"
+
+# --- 10. Sparkle update archive + appcast -------------------------------------
+# Existing installs update from the appcast, not the DMG: Sparkle downloads a
+# zip of the *stapled* app and swaps it in place. generate_appcast signs each
+# archive with the EdDSA private key from the login keychain (public half is
+# baked into the bundle as SUPublicEDKey) and writes the feed.
+UPDATES_DIR="dist/updates"
+SPARKLE_BIN=$(find .build/artifacts -type d -name bin -path "*sparkle*" 2>/dev/null | head -1)
+if [ -n "$SPARKLE_BIN" ] && [ -x "$SPARKLE_BIN/generate_appcast" ]; then
+  VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+  BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Contents/Info.plist")
+  DOWNLOAD_PREFIX=${FLOW_UPDATE_URL_PREFIX:-"https://app.flowtoo.org/download/mac/"}
+  echo "==> Packaging update archive Flow-$VERSION-$BUILD.zip"
+  # Keep only the newest archives: generate_appcast lists every zip it finds, and
+  # an unbounded directory means an unbounded feed (and a slow publish).
+  mkdir -p "$UPDATES_DIR"
+  ditto -c -k --keepParent "$APP" "$UPDATES_DIR/Flow-$VERSION-$BUILD.zip"
+  ls -t "$UPDATES_DIR"/Flow-*.zip 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+
+  echo "==> Generating signed appcast"
+  # Key source: the login keychain by default (Sparkle's recommendation — the
+  # private key never touches disk). A keychain read needs a GUI prompt the
+  # first time, which a headless/CI run can't answer, so FLOW_SPARKLE_KEY_FILE
+  # points at an exported key for those. "$@"-style expansion, not an array —
+  # bash 3.2 (see make-app.sh).
+  set -- --download-url-prefix "$DOWNLOAD_PREFIX"
+  if [ -n "${FLOW_SPARKLE_KEY_FILE:-}" ]; then
+    [ -f "$FLOW_SPARKLE_KEY_FILE" ] || fail "FLOW_SPARKLE_KEY_FILE not found: $FLOW_SPARKLE_KEY_FILE"
+    set -- "$@" --ed-key-file "$FLOW_SPARKLE_KEY_FILE"
+  fi
+  "$SPARKLE_BIN/generate_appcast" "$@" "$UPDATES_DIR" \
+    || fail "generate_appcast failed.
+If it reported a Keychain error (-25320), the signing key exists but this
+(non-interactive) run can't be granted access. Authorize it once from YOUR
+terminal, clicking 'Always Allow' at the prompt:
+  $SPARKLE_BIN/sign_update $UPDATES_DIR/*.zip
+Or export the key for headless use and set FLOW_SPARKLE_KEY_FILE:
+  $SPARKLE_BIN/generate_keys -x sparkle-private-key.txt   # keep this OUT of git
+If there is no key at all, create one: $SPARKLE_BIN/generate_keys
+(its public half belongs in tools/sparkle-public-key.txt)"
+  echo "    feed: $UPDATES_DIR/appcast.xml"
+else
+  echo "warning: Sparkle tools not found — skipping appcast (existing installs won't see this build)"
+fi
+
 echo
 echo "Done. Distributable: $DMG"
 echo "  → download, open, drag Flow to /Applications, launch — no Gatekeeper prompt."
+[ -f "$UPDATES_DIR/appcast.xml" ] && \
+  echo "  → existing installs update from $UPDATES_DIR/appcast.xml (publish with tools/publish-dmg.sh)"
