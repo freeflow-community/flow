@@ -1,5 +1,5 @@
 #!/bin/bash
-# Publish the notarized macOS DMG to R2 so https://app.flowtoo.org/download/mac
+# Publish the notarized macOS DMG to R2 so https://app.freeflow.im/download/mac
 # serves it. Re-run whenever the DMG changes — overwriting the object ships the
 # new build with no code deploy (the /download/mac route always presigns the
 # current object). See docs/ops/DEPLOYMENT.md § macOS app download.
@@ -21,7 +21,7 @@ REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 ENV_FILE=${ENV_FILE:-"$REPO_ROOT/.env"}
 BUCKET=${FLOW_R2_BUCKET:-flow-files}
 KEY=${FLOW_DMG_KEY:-downloads/Flow.dmg}
-WEB_URL=${FLOW_WEB_URL:-https://app.flowtoo.org}
+WEB_URL=${FLOW_WEB_URL:-https://app.freeflow.im}
 
 fail() { echo "publish-dmg: $*" >&2; exit 1; }
 
@@ -108,6 +108,15 @@ if [ -f "$UPDATES_DIR/appcast.xml" ]; then
     [ -e "$zip" ] || continue
     echo "==> Uploading $(basename "$zip") ($(du -h "$zip" | cut -f1))"
     r2_cp "$zip" "downloads/mac/$(basename "$zip")" application/zip
+  done
+  # Deltas too: generate_appcast writes <enclosure> entries for them, so leaving
+  # them behind announces URLs that 404. Sparkle falls back to the full archive,
+  # so this degraded quietly rather than breaking — every delta-eligible update
+  # silently pulled ~5 MB instead of ~500 KB.
+  for delta in "$UPDATES_DIR"/Flow*.delta; do
+    [ -e "$delta" ] || continue
+    echo "==> Uploading $(basename "$delta") ($(du -h "$delta" | cut -f1))"
+    r2_cp "$delta" "downloads/mac/$(basename "$delta")" application/octet-stream
   done
   echo "==> Uploading appcast.xml"
   r2_cp "$UPDATES_DIR/appcast.xml" "downloads/mac/appcast.xml" application/xml

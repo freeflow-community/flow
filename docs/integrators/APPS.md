@@ -3,7 +3,7 @@
 Flow speaks enough of Slack's app surface (phase 4) that an existing Slack bot
 can run against a Flow workspace, usually by changing its API base URL. This
 documents what's implemented, how to connect a bot, and where compatibility
-ends. Production base URL: `https://app.flowtoo.org`.
+ends. Production base URL: `https://app.freeflow.im`.
 
 ## Creating an app
 
@@ -37,7 +37,7 @@ Verified against the official `@slack/web-api` SDK:
 ```js
 import { WebClient } from '@slack/web-api';
 const web = new WebClient(process.env.FLOW_BOT_TOKEN, {
-  slackApiUrl: 'https://app.flowtoo.org/api/',
+  slackApiUrl: 'https://app.freeflow.im/api/',
 });
 await web.chat.postMessage({ channel, text: 'hello from the bot' });
 ```
@@ -91,14 +91,14 @@ codespace) can receive events. App creation returns an app-level token
 import { SocketModeClient } from '@slack/socket-mode';
 const sm = new SocketModeClient({
   appToken: process.env.FLOW_APP_TOKEN,
-  clientOptions: { slackApiUrl: 'https://app.flowtoo.org/api/' },
+  clientOptions: { slackApiUrl: 'https://app.freeflow.im/api/' },
 });
 sm.on('app_mention', async ({ event, ack }) => { await ack(); /* … */ });
 await sm.start();
 ```
 
 (Python: `SocketModeHandler(app, app_token, web_client=WebClient(token=app_token,
-base_url="https://app.flowtoo.org/api/"))` — the custom `web_client` is what
+base_url="https://app.freeflow.im/api/"))` — the custom `web_client` is what
 routes `apps.connections.open` to Flow.)
 
 Under the hood: `apps.connections.open` (app-token-authenticated) returns a
@@ -148,6 +148,6 @@ the surface end-to-end against a local server; phase-4 QA ran the official
 SDK against every implemented method. For a quick manual check:
 
 ```sh
-curl -s -X POST https://app.flowtoo.org/api/auth.test \
+curl -s -X POST https://app.freeflow.im/api/auth.test \
   -H "Authorization: Bearer xoxb-…" | jq
 ```

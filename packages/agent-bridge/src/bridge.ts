@@ -15,10 +15,26 @@ import { FlowApi } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
 import { ProgressReporter } from './progress.js';
-import { runRuntime } from './runtime.js';
+import { killAllRuntimes, runRuntime, type RunResult } from './runtime.js';
 import { currentVersion, isOutdated, latestPublishedVersion } from './version.js';
 
 const THINKING_PREFIX = '🤖 *thinking…*';
+/** Cap on salvaged text in a failure reply (the API caps a body at 12000). */
+const SALVAGE_LIMIT = 4000;
+
+/**
+ * What a failed turn posts. An expired run has no final result event, and the
+ * thinking status line is deleted on the way out, so without this an agent that
+ * worked for hours leaves nothing behind but an error string.
+ */
+export function failureReply(result: RunResult): string {
+  const note = `🤖 sorry — I hit an error (${result.error ?? 'unknown'}).`;
+  const salvaged = result.text.trim();
+  if (!salvaged) return note;
+  const capped =
+    salvaged.length > SALVAGE_LIMIT ? `${salvaged.slice(0, SALVAGE_LIMIT - 1).trimEnd()}…` : salvaged;
+  return `${note}\n\nWhere I got to:\n\n${capped}`;
+}
 
 interface Conversation {
   sessionId: string;
@@ -140,6 +156,9 @@ export class AgentBridge {
 
   stop(): void {
     this.socket?.close();
+    // Runtimes run detached (own process group) so expiry can kill their whole
+    // subprocess tree — the flip side is they outlive us unless we end them.
+    killAllRuntimes();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.logStream?.end();
     this.logStream = null;
@@ -333,16 +352,14 @@ export class AgentBridge {
         }
       } else {
         this.log(`runtime error: ${result.error ?? 'unknown'}`);
-        // Self-heal for the NEXT turn: a run that emitted a result event
-        // (even an error like max-turns) has a live, resumable session;
-        // anything else retries on a fresh session id.
+        // Self-heal for the NEXT turn: a run the CLI got far enough to create a
+        // session for (max-turns, or an expiry that killed real work) is
+        // resumable with all its context; anything else retries on a fresh id.
         if (!conv.started) {
-          if (result.sawResult) conv.started = true;
+          if (result.sawSession) conv.started = true;
           else conv.sessionId = randomUUID();
         }
-        await this.api
-          .sendMessage(msg.channelId, `🤖 sorry — I hit an error (${result.error ?? 'unknown'}).`, replyRoot)
-          .catch(() => {});
+        await this.api.sendMessage(msg.channelId, failureReply(result), replyRoot).catch(() => {});
       }
     } finally {
       await progress.finish().catch(() => {});

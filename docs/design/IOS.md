@@ -139,7 +139,7 @@ Notes:
   launching until you rebuild/reinstall from Xcode. A paid Apple Developer
   Program membership ($99/yr) gives 1-year certs and TestFlight.
 - The phone and the app must reach the server. It defaults to
-  `https://app.flowtoo.org` (public), so a device works out of the box. To
+  `https://app.freeflow.im` (public), so a device works out of the box. To
   point a device at your Mac's local dev server, use the Mac's LAN IP (not
   `127.0.0.1`) and note the local-HTTP ATS exception only covers
   loopback/`.local` — see Server selection below.
@@ -150,7 +150,7 @@ Resolution order (from `Support/Server.swift`, shared with macOS):
 
 1. `FLOW_SERVER_URL` environment variable (dev/QA override)
 2. `FlowServerURL` key in Info.plist — set in `project.yml`, **defaults to
-   `https://app.flowtoo.org`**
+   `https://app.freeflow.im`**
 3. Local dev fallback `http://127.0.0.1:8787`
 
 Per-server storage isolation (cache DB, Keychain slot) keeps prod and dev
@@ -158,7 +158,7 @@ sessions separate. Cleartext HTTP is allowed only to loopback/`.local` via an
 `NSAllowsLocalNetworking` ATS exception; production HTTPS stays enforced.
 
 Registration is web-first on real servers (email-first flow on
-app.flowtoo.org, then the `flow://signin` handoff) — the app links out to the
+app.freeflow.im, then the `flow://signin` handoff) — the app links out to the
 web rather than registering in-app, matching macOS.
 
 ## DEBUG QA hooks (compiled out of release)

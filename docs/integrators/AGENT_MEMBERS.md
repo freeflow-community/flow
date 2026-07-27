@@ -10,7 +10,7 @@ agent redeems it to join **immediately**, with no approval step. The usual
 deployment is the **agent bridge** (npm: `flow-agent-bridge`; source in
 `packages/agent-bridge`): a daemon that consumes Flow events and execs a
 coding-agent CLI (Claude Code first) headlessly per conversation.
-Production base URL: `https://app.flowtoo.org`.
+Production base URL: `https://app.freeflow.im`.
 
 ## Quick start
 
@@ -100,7 +100,7 @@ this for you after asking name/handle/harness.
 
 ```json
 {
-  "serverUrl": "https://app.flowtoo.org",
+  "serverUrl": "https://app.freeflow.im",
   "agentToken": "flow-agent-token-…",
   "runtime": {
     "kind": "claude",
@@ -134,7 +134,8 @@ channel it's a member of (invite it to channels like any member).
 | `runtime.permissionMode` | unset | `--permission-mode` passthrough; when BOTH this and allowedTools are unset, the bridge passes `bypassPermissions` — full access in the cwd (operator ruling) |
 | `runtime.allowedTools` | `[]` (= allow everything) | set to scope the agent, e.g. `["Read", "Bash(pnpm test:*)"]` — disables the bypass default |
 | `runtime.maxTurns` | 100 | `--max-turns` runaway cap |
-| `runtime.timeoutSec` | 300 | wall-clock kill per run |
+| `runtime.idleTimeoutSec` | 120 | kill a run after this many seconds with **no output at all**. stream-json narrates every tool call, so a run that is still working keeps rearming this and never expires — silence is what marks a wedged run |
+| `runtime.timeoutSec` | 3600 | absolute wall-clock backstop per run — the runaway cap, not the normal limit |
 | `runtime.mcp` | true (claude) | rich mode: expose the `flow` MCP server to the runtime |
 | `runtime.extraArgs` | `[]` | appended verbatim before the prompt |
 | `runtime.systemPromptExtra` | unset | appended to the Flow system prompt |
@@ -244,7 +245,10 @@ use if the daemon stays up.
   default messages from other agents are ignored (`respondToAgents`).
 - **Loop guard**: the agent never reacts to its own messages, including ones
   it sent via MCP.
-- **Cost caps**: `maxTurns` + `timeoutSec` bound every run.
+- **Cost caps**: `maxTurns` + `timeoutSec` bound every run; `idleTimeoutSec`
+  ends a wedged one early. An expired run is killed by process group, so the
+  agent's own subprocesses (builds, test runs, dev servers) go with it rather
+  than being orphaned.
 - **Permissions**: agents are permanently role `member` (server-enforced —
   they can never be owner/admin, can't invite, can't manage apps/agents).
   Runtime tool permissions default to **full access in the cwd**
@@ -281,8 +285,15 @@ CLIs (any "prompt in, text out" CLI fits via `runtime.command` +
   member of the channel.
 - **Replies but no thinking steps**: the runtime must support stream-json
   (claude). `codex`/custom CLIs fall back to typing-only feedback.
-- **Runs die at exactly `timeoutSec`**: raise it — long test suites easily
-  exceed the 300s default.
+- **A killed run is not lost work.** Whatever the agent last said is posted
+  under "Where I got to:", and as long as the CLI got far enough to create its
+  session, the next message `--resume`s it with all its context — so "carry on"
+  continues rather than restarts.
+- **A long run was killed**: check which limit the log names. `no output for
+  Ns` means the runtime went silent for `idleTimeoutSec` — usually a CLI
+  waiting on an interactive prompt it can never get, so look at the
+  permissions config before raising it. `hit the Ns run cap` means the
+  absolute `timeoutSec` backstop; raise that for genuinely multi-hour work.
 - **`mcp disabled: built entrypoint not found`**: only affects repo-checkout
   runs — run `pnpm build` in `packages/agent-bridge` (the MCP server is
   invoked from `dist/`, which npm installs ship prebuilt).

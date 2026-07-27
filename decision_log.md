@@ -1,5 +1,32 @@
 # Decision log
 
+## 2026-07-27 — Re-domaining to freeflow.im (operator rulings)
+
+- **Backward compatibility is not a concern** (operator, 2026-07-27). The app is
+  in minimal use, so the three bindings that normally make a re-domaining hard
+  are all "shrug and redo it": shipped Macs keep polling the old appcast (fix:
+  re-download), `Server.storageSuffix` keys native local state off the hostname
+  so every install presents as signed-out (fix: sign in again), and agent
+  configs carry `serverUrl` on disk (fix: re-run setup). An earlier draft of
+  phase17 specced a bridging release, a session migration and a year-long
+  overlap; all three were cut. **If the install base ever grows, none of this is
+  reusable** — a future re-domaining has to re-derive them.
+- **Bundle ids stay `org.flowtoo.*` permanently.** They are reverse-DNS
+  identifiers, not URLs; nothing resolves them, and nothing breaks by them
+  disagreeing with the web domain. Changing the iOS one creates a *new App Store
+  record* — no upgrade path from the existing app, reviews and rankings reset,
+  APNs re-issued. That is a permanent product cost with no connection to the
+  domain move. Recorded here so a later cleanup pass doesn't "fix" the
+  inconsistency.
+- **`app.` subdomain over the apex.** `freeflow.im` is short enough that the
+  apex was tempting, but it keeps the apex free for a marketing site and avoids
+  apex-CNAME flattening. Decided while it was still free to decide — every cost
+  in the move is per-move, not per-name.
+- **Email is the one thing user count doesn't excuse.** A new sending domain has
+  no reputation regardless of volume, and `.im` is an uncommon ccTLD that some
+  corporate filters may treat more conservatively. Verify a real send lands in
+  an inbox before relying on it.
+
 ## 2026-07-26 — macOS auto-update: Sparkle, and the key we now have to guard
 
 - **Sparkle 2 over a hand-rolled updater.** Downloading a build is easy;

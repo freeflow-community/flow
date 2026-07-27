@@ -156,7 +156,7 @@ SPARKLE_BIN=$(find .build/artifacts -type d -name bin -path "*sparkle*" 2>/dev/n
 if [ -n "$SPARKLE_BIN" ] && [ -x "$SPARKLE_BIN/generate_appcast" ]; then
   VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
   BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Contents/Info.plist")
-  DOWNLOAD_PREFIX=${FLOW_UPDATE_URL_PREFIX:-"https://app.flowtoo.org/download/mac/"}
+  DOWNLOAD_PREFIX=${FLOW_UPDATE_URL_PREFIX:-"https://app.freeflow.im/download/mac/"}
   echo "==> Packaging update archive Flow-$VERSION-$BUILD.zip"
   # Keep only the newest archives: generate_appcast lists every zip it finds, and
   # an unbounded directory means an unbounded feed (and a slow publish).

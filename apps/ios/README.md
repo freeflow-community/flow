@@ -71,14 +71,14 @@ certificate by hand — automatic signing provisions it.
    cert/profile), and finish. The build appears in App Store Connect →
    TestFlight after processing (a few minutes), then assign it to testers.
 
-Note: builds default to the production server `https://app.flowtoo.org` (see
+Note: builds default to the production server `https://app.freeflow.im` (see
 Server selection below), which is what you want for TestFlight.
 
 ## Server selection
 
 Same mechanism as macOS (`Support/Server.swift`): `FLOW_SERVER_URL` env →
 `FlowServerURL` in Info.plist → local-dev fallback. **Packaged builds default to
-`https://app.flowtoo.org`** (set in `project.yml`). Per-server storage isolation
+`https://app.freeflow.im`** (set in `project.yml`). Per-server storage isolation
 keeps prod and dev sessions/caches separate.
 
 Register on the web (email-first flow) then sign in here — in-app registration

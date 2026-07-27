@@ -1,0 +1,116 @@
+import type { CodeTab } from "@/components/code-tabs";
+
+/**
+ * Agents are a Freeflow primitive, not an integration you wire up. You describe
+ * one, scope it, and it shows up in the channel. Code is the escape hatch for
+ * when you want more control — never the price of entry.
+ */
+export const agentTabs: CodeTab[] = [
+  {
+    id: "define",
+    label: "Define it",
+    file: "agents/review-bot.freeflow.ts",
+    lines: [
+      'import { agent } from "@freeflow/agents";',
+      "",
+      "// This is the whole agent. Freeflow runs it, gives it a seat in the",
+      "// channel, and streams what it does back into the thread.",
+      "export default agent({",
+      '  name: "review-bot",',
+      '  purpose: "Review pull requests before anyone merges them.",',
+      "",
+      "  repos: [\"freeflow-chat/freeflow\"],",
+      '  channels: ["#engineering", "#deploys"],',
+      "",
+      "  can: {",
+      "    readCode: true,",
+      "    runTests: true,",
+      "    pushBranch: true,",
+      "    merge: false,          // earn it later",
+      "  },",
+      "});",
+    ],
+  },
+  {
+    id: "tools",
+    label: "Give it tools",
+    file: "agents/tools/deploy.ts",
+    lines: [
+      'import { tool } from "@freeflow/agents";',
+      "",
+      "// Anything you can run, the agent can run — on your infrastructure,",
+      "// with your credentials, never leaving your network.",
+      "export const deploy = tool({",
+      '  name: "deploy",',
+      '  describe: "Deploy a commit to an environment.",',
+      "  input: { env: [\"staging\", \"prod\"], sha: \"string\" },",
+      "",
+      "  async run({ env, sha }, ctx) {",
+      "    await ctx.say(`Deploying ${sha} to ${env}…`);",
+      "    const result = await sh(`./deploy.sh ${env} ${sha}`);",
+      "    return { ok: result.code === 0, log: result.stdout };",
+      "  },",
+      "});",
+    ],
+  },
+  {
+    id: "context",
+    label: "Give it context",
+    file: "agents/review-bot.freeflow.ts",
+    lines: [
+      "// An agent already sees the thread it was asked in. Point it at",
+      "// whatever else it should know, and it stops asking obvious questions.",
+      "export const context = {",
+      "  repos: [\"freeflow-chat/freeflow\"],",
+      '  runbooks: "docs/ops/",',
+      "",
+      "  // Past incidents in this channel, so it stops rediscovering them.",
+      "  history: { channel: \"#incidents\", months: 6 },",
+      "",
+      "  // Nothing here is uploaded anywhere. It reads from your disk.",
+      "  onPrem: true,",
+      "};",
+    ],
+  },
+];
+
+export const migrateTabs: CodeTab[] = [
+  {
+    id: "slack",
+    label: "From Slack",
+    file: "migrate/from-slack.ts",
+    lines: [
+      'import { SlackImporter } from "@freeflow/migrate";',
+      "",
+      "// Point it at a standard Slack export. It rebuilds the workspace:",
+      "// channels, threads, DMs, files, emoji, membership, timestamps.",
+      "const run = new SlackImporter({",
+      '  export: "./acme-slack-export.zip",',
+      "  target: process.env.FREEFLOW_URL,",
+      "});",
+      "",
+      'run.on("channel", (c) => log(`#${c.name} → ${c.messages} messages`));',
+      "",
+      "// Idempotent. Run it Friday as a rehearsal, again Sunday for real.",
+      "await run.start({ dryRun: false });",
+    ],
+  },
+  {
+    id: "discord",
+    label: "From Discord",
+    file: "migrate/from-discord.ts",
+    lines: [
+      'import { DiscordImporter } from "@freeflow/migrate";',
+      "",
+      "// Discord servers map cleanly onto Freeflow: categories become channel",
+      "// groups, forum posts become threads, roles become memberships.",
+      "const run = new DiscordImporter({",
+      "  guild: process.env.DISCORD_GUILD_ID,",
+      "  target: process.env.FREEFLOW_URL,",
+      "});",
+      "",
+      "// Keeps original authors and timestamps. Nobody loses their history.",
+      "await run.start({ includeAttachments: true });",
+    ],
+  },
+];

@@ -1,0 +1,67 @@
+/**
+ * Every outbound URL and top-level fact about Freeflow lives here.
+ */
+
+export const site = {
+  name: "Freeflow",
+  tagline: "Team chat where humans and agents work together.",
+  description:
+    "Freeflow is free, open-source team chat built for teams that work alongside agents. Agents join channels as members, read the thread, and get things done. Use it hosted, or run it on your own servers.",
+  url: "https://freeflow.chat",
+  repo: "freeflow-chat/freeflow",
+} as const;
+
+/**
+ * Routes that exist in the codebase but are not ready for visitors yet.
+ * Flip a flag to true and the page goes live, plus its nav and footer links.
+ */
+export const routes: Record<"agents" | "migrate" | "selfHost", boolean> = {
+  agents: false,
+  migrate: false,
+  selfHost: false,
+};
+
+const repo = "https://github.com/freeflow-chat/freeflow";
+
+export const links = {
+  /**
+   * Hosted signup. Empty for now, so the button renders but goes nowhere.
+   * Put the real URL here when it exists and every Sign up button wakes up.
+   */
+  signup: "",
+
+  github: repo,
+  issues: `${repo}/issues`,
+  discussions: `${repo}/discussions`,
+
+  // Kept for the pages that are currently hidden.
+  docs: `${repo}/tree/main/docs`,
+  agentMembers: `${repo}/blob/main/docs/integrators/AGENT_MEMBERS.md`,
+  agentsDesign: `${repo}/blob/main/docs/design/AGENTS_DESIGN.md`,
+  storage: `${repo}/blob/main/docs/design/STORAGE.md`,
+  deployment: `${repo}/blob/main/docs/ops/DEPLOYMENT.md`,
+  macosReadme: `${repo}/blob/main/apps/macos/README.md`,
+  appsDocs: `${repo}/blob/main/docs/integrators/APPS.md`,
+  changelog: `${repo}/blob/main/CHANGELOG.md`,
+  decisionLog: `${repo}/blob/main/decision_log.md`,
+  todo: `${repo}/blob/main/TODO.md`,
+  contributing: `${repo}/blob/main/CONTRIBUTING.md`,
+  license: `${repo}/blob/main/LICENSE`,
+  overview: `${repo}/blob/main/docs/specs/overview.md`,
+  ios: `${repo}/blob/main/docs/design/IOS.md`,
+  discord: "https://discord.gg/freeflow",
+  x: "https://x.com/freeflowchat",
+
+  // internal routes
+  agents: "/agents",
+  migrate: "/migrate",
+  selfHost: "/self-host",
+} as const;
+
+/** Short, checkable facts. Nothing that needs a footnote. */
+export const specs = [
+  { value: "$0", label: "forever, any team size" },
+  { value: "Open", label: "source, built in public" },
+  { value: "Native", label: "agents, not add-ons" },
+  { value: "3", label: "commands to self-host" },
+] as const;

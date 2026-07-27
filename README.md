@@ -1,18 +1,31 @@
 ```
- ███████╗██╗      ██████╗ ██╗    ██╗
- ██╔════╝██║     ██╔═══██╗██║    ██║
- █████╗  ██║     ██║   ██║██║ █╗ ██║
- ██╔══╝  ██║     ██║   ██║██║███╗██║
- ██║     ███████╗╚██████╔╝╚███╔███╔╝
- ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝
-        team chat that keeps up
+╭──────────────────────────────────────────────────────────╮
+│  ● ● ●                                                   │
+│                                                          │
+│   ███████████  ███           █████████   ███       ███   │
+│   ███████████  ███          ███████████  ███       ███   │
+│   ███          ███          ███     ███  ███       ███   │
+│   ███          ███          ███     ███  ███       ███   │
+│   █████████    ███          ███     ███  ███   █   ███   │
+│   █████████    ███          ███     ███  ███  ███  ███   │
+│   ███          ███          ███     ███  ███ ██ ██ ███   │
+│   ███          ███████████  ███████████  ██████ ██████   │
+│   ███          ███████████   █████████    ████   ████    │
+│                                                          │
+│   team chat for the age of AI                            │
+╰──────────────────────────────────────────────────────────╯
 ```
 
 # Flow
 
-Welcome! Flow is a an open-source, free to **use** and free to host, production-grade messaging
+Welcome! Flow is a fair-source, free to **use** and free to host, production-grade messaging
 app, with UX inspired by Slack. Flow is designed to be be great for collaboration between humans
 and _AI Agents_ as well.
+
+The source is public and self-hosting is free, for your team or your company, commercial or
+not. The one restriction is that you can't turn Flow into a competing hosted product of your
+own — and every release becomes plain Apache 2.0 two years after it ships. See
+[License](#license).
 
 ## Why??
 
@@ -33,9 +46,11 @@ productive to work with AI coding agents in your workflow.
 
 ## Getting started
 
-Flow offers free accounts on our production servers here: https://freeflow.im.
+Flow offers free accounts on our production servers here: https://app.freeflow.im.
 
-Or you can choose to host the service yourself. See install notes below.
+Or you can choose to host the service yourself — one Node process, Postgres,
+and NATS. **[DEPLOYMENT.md](DEPLOYMENT.md)** walks through it end to end. To
+run Flow locally as a contributor instead, see the build steps below.
 
 ![status](https://img.shields.io/badge/status-active_development-blue)
 
@@ -83,6 +98,10 @@ with a group or team and then pick somewhere you'd like to help:
 
 Generally our active work queue is on [Issues](/issues). Discussions of larger
 features can be found in [Discussions](/discussions).
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the sign-off requirement (`git commit -s`),
+how contributions are licensed, and the `CHANGELOG.md` / `FEATURES.md` conventions
+every PR has to satisfy.
 
 ### Making code contributions
 
@@ -171,6 +190,8 @@ native character palette). QA verifies parity at each phase checkpoint.
 
 Living process files stay at the repo root; everything else is under `docs/`.
 
+- `DEPLOYMENT.md` — self-hosting guide: requirements, configuration, storage,
+  reverse proxy, backups
 - `CHANGELOG.md` — per-platform history (`[server]` `[web]` `[macos]` `[ios]`
   `[qa]`) and the live parity ledger
 - `decision_log.md` — key decisions and operator rulings
@@ -191,3 +212,36 @@ Phases 1–6 are complete: foundation, DMs/reactions/files/mentions, the design
 retheme and status system, Slack app compatibility, attachment/thread UX, and
 text/PDF previews — plus the MyChat → Flow deep rename and the web-to-app auth
 handoff. See `CHANGELOG.md` for the full history.
+
+## License
+
+Flow is **fair source**, under the
+[Functional Source License 1.1 with an Apache 2.0 future license](LICENSE.md)
+(`FSL-1.1-ALv2`) — the license Sentry wrote and uses.
+
+**You can**, with no permission needed and no fee:
+
+- run Flow for your own team or company, including commercially
+- self-host it for your users, employees, students or community
+- read, modify, fork and redistribute the source
+- build products, bots and integrations on top of it
+- use it in consulting or professional services for a client running their own Flow
+
+**You can't** use Flow to offer a commercial product or service that competes
+with Flow itself — in practice, standing up Flow as a multi-tenant chat service
+and selling seats on it.
+
+**And it opens up on a clock.** Every version is irrevocably licensed under
+Apache 2.0 two years after it's published. The restriction is a rolling
+two-year window, not a permanent one, and that grant can't be taken back.
+
+FSL is not an OSI-approved open source license — the "no competing service"
+term is a field-of-use restriction, which the Open Source Definition doesn't
+allow. We use "fair source" rather than "open source" for that reason. If you
+need OSI-approved terms specifically, wait two years for the version you want,
+or [get in touch](/discussions).
+
+`packages/agent-bridge` — the library your agent runs to join a workspace — is
+**MIT licensed** instead, deliberately, so nothing stands between you and
+connecting whatever agent you like. See
+[`packages/agent-bridge/LICENSE`](packages/agent-bridge/LICENSE).

@@ -3,6 +3,24 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-27
+
+- **Agents can take as long as a job actually needs.** An agent teammate used
+  to be cut off after ten minutes, even mid-task — so a long build, a big test
+  suite or a genuinely hard piece of work would end in an error with nothing to
+  show for it. Now an agent is only stopped if it goes properly quiet, so it
+  can keep working for as long as it's making progress. And if an agent does
+  get stopped, it no longer loses the thread: it tells you where it got to, and
+  picks up from there when you ask it to carry on — instead of starting over
+  with no memory of the work it had already done.
+- **Flow has a new address: freeflow.im.** The app now lives at
+  **app.freeflow.im**, and our emails come from `mail.freeflow.im` — so if you
+  filter or allow-list mail from us, update it. Two things to expect on the day
+  of the switch: the Mac and iPhone apps will ask you to sign in again (nothing
+  is lost, they just don't recognise the new address as the same place yet), and
+  if you run a coding agent in Flow you'll want to point it at the new address.
+  The old address keeps working for a while, then retires.
+
 ## 2026-07-26
 
 - **One link that lets people join your workspace.** Instead of emailing
