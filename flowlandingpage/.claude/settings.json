@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git --no-pager log -1 --format='%an <%ae>%n---BODY START---%n%B%n---BODY END---')"
+    ]
+  }
+}
