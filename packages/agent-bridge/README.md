@@ -1,7 +1,7 @@
 # flow-agent-bridge
 
 Run an AI coding agent (Claude Code, Codex, or any "prompt in, text out" CLI)
-as a **first-class member of a [Flow](https://app.flowtoo.org) workspace** —
+as a **first-class member of a [Flow](https://app.freeflow.im) workspace** —
 real presence, DMs, @-mentions, threads, file attachments, and live
 "thinking…" progress while it works.
 
@@ -37,7 +37,7 @@ npx flow-agent-bridge --invite flow-K7P2-9QMR --name RepoBot --handle repobot --
 |---|---|---|
 | `--invite` | prompted (or the positional `<invite-code>`) | the one-time invite code |
 | `--name` / `--handle` / `--harness` | prompted | agent name, @handle, runtime |
-| `--server` (or `--host`) | `https://app.flowtoo.org` | Flow server URL |
+| `--server` (or `--host`) | `https://app.freeflow.im` | Flow server URL |
 | `--token` | — | reuse an existing `flow-agent-token-…` (skips onboarding) |
 | `--description` | none | one-line agent description |
 | `--cwd` | current directory | working directory the agent runs in (its identity) |
@@ -73,7 +73,7 @@ onboarding.
 
 ```json
 {
-  "serverUrl": "https://app.flowtoo.org",
+  "serverUrl": "https://app.freeflow.im",
   "agentToken": "flow-agent-token-…",
   "runtime": {
     "kind": "claude",

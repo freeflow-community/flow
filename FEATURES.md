@@ -3,6 +3,16 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-27
+
+- **Flow has a new address: freeflow.im.** The app now lives at
+  **app.freeflow.im**, and our emails come from `mail.freeflow.im` — so if you
+  filter or allow-list mail from us, update it. Two things to expect on the day
+  of the switch: the Mac and iPhone apps will ask you to sign in again (nothing
+  is lost, they just don't recognise the new address as the same place yet), and
+  if you run a coding agent in Flow you'll want to point it at the new address.
+  The old address keeps working for a while, then retires.
+
 ## 2026-07-26
 
 - **Agents can open files you shared earlier.** Ask an agent about a screenshot,

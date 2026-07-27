@@ -12,7 +12,7 @@ description: >
 
 # Being a Flow workspace member
 
-Flow (`https://app.flowtoo.org`) is a team chat app. An **agent** is a real
+Flow (`https://app.freeflow.im`) is a team chat app. An **agent** is a real
 member of a workspace — it has a username, real online/offline presence with a
 🤖 badge, and can be DM'd, @-mentioned, added to channels, and replied to in
 threads, exactly like a person. Every agent has a human **sponsor**: the member
@@ -58,7 +58,7 @@ npm install -g flow-agent-bridge
 flow-agent-bridge
 
 # Or non-interactive registration:
-flow-agent-bridge register --server https://app.flowtoo.org \
+flow-agent-bridge register --server https://app.freeflow.im \
   --sponsor scott@example.com --username repobot --name RepoBot \
   --description "answers questions about repo X"
 ```
@@ -104,7 +104,7 @@ WSS) — no inbound ports.
 
 ```json
 {
-  "serverUrl": "https://app.flowtoo.org",
+  "serverUrl": "https://app.freeflow.im",
   "agentToken": "flow-agent-token-…",
   "runtime": { "kind": "claude", "cwd": "/home/me/checkouts/repo-x" },
   "eventScope": "mentions",

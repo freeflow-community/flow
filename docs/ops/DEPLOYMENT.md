@@ -1,14 +1,14 @@
 # Deployment
 
-Flow runs in production at **https://app.flowtoo.org**. This documents what's
+Flow runs in production at **https://app.freeflow.im**. This documents what's
 deployed where, how to operate it, and what's deliberately not done yet.
 First deployed 2026-07-19.
 
 ## Architecture
 
 ```
-Cloudflare DNS (flowtoo.org)
-  app.flowtoo.org  CNAME → d0altnvc.up.railway.app   (DNS only / grey cloud)
+Cloudflare DNS (freeflow.im)
+  app.freeflow.im  CNAME → <target from Railway>     (DNS only / grey cloud)
         │
         ▼
 Railway project "flow"  (36e91a36-9fa2-4881-9988-d81e45c16d6e)
@@ -25,7 +25,7 @@ Railway project "flow"  (36e91a36-9fa2-4881-9988-d81e45c16d6e)
   │          it to ~45ms, the practical floor for sfo↔Oregon. Old project
   │          deleted same day after verifying green (operator call).
   └──────► Cloudflare Email Service — transactional sends from
-             noreply@mail.flowtoo.org (signup, reset, account notes)
+             noreply@mail.freeflow.im (signup, reset, account notes)
 ```
 
 - Railway fallback URL: https://app-production-556c.up.railway.app
@@ -48,15 +48,15 @@ Secrets live only in Railway service variables — never in the repo.
 | `FLOW_DATA_KEY` | Base64 32-byte encryption key (generated with `openssl rand -base64 32`). **Production-only key, independent of local dev's `.keys/` file. Losing it makes all message/file ciphertext unreadable — treat like a root credential.** |
 | `FLOW_EMAIL_DRIVER` | `cloudflare` (real sends; the dev-only `autoVerify` register bypass is inert) |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_KEY` | Email Service REST API credentials |
-| `FLOW_EMAIL_FROM` | `noreply@mail.flowtoo.org` |
-| `FLOW_WEB_URL` | `https://app.flowtoo.org` — base URL baked into emailed signup/reset links |
+| `FLOW_EMAIL_FROM` | `noreply@mail.freeflow.im` |
+| `FLOW_WEB_URL` | `https://app.freeflow.im` — base URL baked into emailed signup/reset links |
 | `FLOW_FILE_DIR` | `/data/files` (on the persistent volume) — only read by the local blob driver and the one-time R2 migration |
 | `FLOW_BLOB_DRIVER` | `r2` — file/thumb/avatar blobs in Cloudflare R2, presigned direct upload/download. Unset/`local` = disk under `FLOW_FILE_DIR`. |
 | `CLOUDFLARE_S3_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
 | `CLOUDFLARE_ACCESS_KEY_ID` / `CLOUDFLARE_SECRET_ACCESS_KEY` | R2 S3-API token pair |
-| `FLOW_R2_BUCKET` | Bucket name (default `flow-files`). **One-time bucket setup**: create the bucket, then set a CORS policy — browsers preflight the presigned PUTs and CORS-check the 302'd GETs, so without it web uploads/downloads fail while native clients work fine: `aws s3api put-bucket-cors --bucket flow-files --endpoint-url $CLOUDFLARE_S3_ENDPOINT --cors-configuration '{"CORSRules":[{"AllowedOrigins":["https://app.flowtoo.org","http://127.0.0.1:8787","http://localhost:8787","http://127.0.0.1:5173","http://localhost:5173"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["content-type","range"],"ExposeHeaders":["content-length","content-type","content-range","etag"],"MaxAgeSeconds":3600}]}'` (propagates in ~1 min; the S3 endpoint's TLS itself provisions ~1 min after the first bucket exists) |
+| `FLOW_R2_BUCKET` | Bucket name (default `flow-files`). **One-time bucket setup**: create the bucket, then set a CORS policy — browsers preflight the presigned PUTs and CORS-check the 302'd GETs, so without it web uploads/downloads fail while native clients work fine: `aws s3api put-bucket-cors --bucket flow-files --endpoint-url $CLOUDFLARE_S3_ENDPOINT --cors-configuration '{"CORSRules":[{"AllowedOrigins":["https://app.freeflow.im","http://127.0.0.1:8787","http://localhost:8787","http://127.0.0.1:5173","http://localhost:5173"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["content-type","range"],"ExposeHeaders":["content-length","content-type","content-range","etag"],"MaxAgeSeconds":3600}]}'` (propagates in ~1 min; the S3 endpoint's TLS itself provisions ~1 min after the first bucket exists) |
 | `FLOW_MIGRATE_BLOBS` | Set to `1` for ONE deploy to run the volume→R2 decrypt-and-copy at boot (idempotent; watch logs for `blob migration to R2 finished`), then remove. |
-| `GOOGLE_CLIENT_ID` | OAuth 2.0 **Web** client id — enables Sign in with Google (phase 16) and is the `aud` we require on ID tokens. Unset = the button is hidden everywhere and `/v1/auth/google` returns `503 google_disabled`; nothing else changes. **One-time Google Cloud setup**: APIs & Services → Credentials → *Create OAuth client ID* → Web application, with **Authorized JavaScript origins** `https://app.flowtoo.org` (plus `http://localhost:5173` / `http://127.0.0.1:8787` for local dev). No redirect URI is needed — we use the ID-token flow. Not a secret: the id ships in the page. |
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 **Web** client id — enables Sign in with Google (phase 16) and is the `aud` we require on ID tokens. Unset = the button is hidden everywhere and `/v1/auth/google` returns `503 google_disabled`; nothing else changes. **One-time Google Cloud setup**: APIs & Services → Credentials → *Create OAuth client ID* → Web application, with **Authorized JavaScript origins** `https://app.freeflow.im` (plus `http://localhost:5173` / `http://127.0.0.1:8787` for local dev). No redirect URI is needed — we use the ID-token flow. Not a secret: the id ships in the page. |
 | `GOOGLE_CLIENT_SECRET` | Unused today (the ID-token flow needs no exchange). Only required if we ever adopt the auth-code flow to get Google refresh tokens. |
 | `FLOW_GOOGLE_REQUIRE_HD` | Defaults on. Set to `0` to let an org on a custom domain *without* Google Workspace turn on domain self-registration (the consumer-domain denylist still applies). See decision_log 2026-07-24. |
 
@@ -81,7 +81,7 @@ railway up --service app --detach -m "what changed"
 
 # logs / status
 railway logs --service app --lines 200
-curl https://app.flowtoo.org/healthz           # → {"ok":true}
+curl https://app.freeflow.im/healthz           # → {"ok":true}
 
 # env vars
 railway variable list --service app --json
@@ -126,7 +126,7 @@ background in `Resources/dmg-background.png` (+`@2x`), regenerated from
 Overwriting the key ships the new build immediately — the route always presigns
 the current object. Until the key exists the route returns `404 not_found`
 (the page's download link just fails to fetch, no crash). The bucket's existing
-CORS policy already covers this (same-origin redirect from app.flowtoo.org).
+CORS policy already covers this (same-origin redirect from app.freeflow.im).
 
 ## macOS auto-update (Sparkle)
 
@@ -183,12 +183,16 @@ item disabled.
 
 ## DNS / domain
 
-Two records in the Cloudflare `flowtoo.org` zone, both required:
+Two records in the Cloudflare `freeflow.im` zone, both required:
 
 | Type | Name | Value |
 |---|---|---|
-| CNAME | `app` | `8pu0ejce.up.railway.app` — **DNS only** (grey cloud) |
+| CNAME | `app` | the target shown in the domain's Railway settings — **DNS only** (grey cloud) |
 | TXT | `_railway-verify.app` | `railway-verify=<token from the domain's Railway settings>` |
+
+Read both values out of Railway at the time you create the record rather than
+copying them from here: the previous version of this doc recorded two different
+CNAME targets in two places, and at least one of them was stale.
 
 Hard-won lesson: the CNAME + certificate are **not sufficient** — Railway's
 edge refuses to route the hostname (404 "Application not found", even with a
@@ -202,7 +206,7 @@ unless the zone's SSL mode is set to Full and you accept Railway's proxy
 caveats. If a cert sticks in `VALIDATING_OWNERSHIP`, force it with the
 `customDomainIssueCertificate` GraphQL mutation.
 
-Email DNS (`mail.flowtoo.org` sending domain) was configured in Cloudflare's
+Email DNS (`mail.freeflow.im` sending domain) was configured in Cloudflare's
 Email Service onboarding, separately from this record.
 
 ## Production vs local
@@ -214,7 +218,7 @@ Email Service onboarding, separately from this record.
 | `autoVerify` register bypass (QA scripts, macOS dev) | works | ignored by design |
 | Blobs | `packages/server/.files/` (disk driver, server-proxied uploads) | Cloudflare R2 `flow-files` (presigned direct up/download; volume `/data/files` legacy) |
 | Data key | `.keys/data.key.json` (auto-created) | `FLOW_DATA_KEY` env |
-| Web URL in emails | `http://127.0.0.1:8787` | `https://app.flowtoo.org` |
+| Web URL in emails | `http://127.0.0.1:8787` | `https://app.freeflow.im` |
 
 The production DB starts empty — no QA fixtures. First registered user
 bootstraps their own workspace.
@@ -225,7 +229,7 @@ bootstraps their own workspace.
   `scottpersinger/flow` and ships on push to `main`. `railway up` remains the
   manual working-tree override (see Operations).
 - ~~macOS app targets localhost~~ — done: packaged apps default to
-  `https://app.flowtoo.org` (`FlowServerURL` in Info.plist via make-app.sh;
+  `https://app.freeflow.im` (`FlowServerURL` in Info.plist via make-app.sh;
   `FLOW_SERVER_URL` env overrides; bare `swift run` still defaults local).
   Per-server storage isolation keeps prod/dev sessions and caches separate.
 - ~~Blobs on volume, not R2~~ — done: `FLOW_BLOB_DRIVER=r2` stores blobs in

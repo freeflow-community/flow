@@ -1,5 +1,5 @@
 #!/bin/bash
-# Publish the notarized macOS DMG to R2 so https://app.flowtoo.org/download/mac
+# Publish the notarized macOS DMG to R2 so https://app.freeflow.im/download/mac
 # serves it. Re-run whenever the DMG changes — overwriting the object ships the
 # new build with no code deploy (the /download/mac route always presigns the
 # current object). See docs/ops/DEPLOYMENT.md § macOS app download.
@@ -21,7 +21,7 @@ REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 ENV_FILE=${ENV_FILE:-"$REPO_ROOT/.env"}
 BUCKET=${FLOW_R2_BUCKET:-flow-files}
 KEY=${FLOW_DMG_KEY:-downloads/Flow.dmg}
-WEB_URL=${FLOW_WEB_URL:-https://app.flowtoo.org}
+WEB_URL=${FLOW_WEB_URL:-https://app.freeflow.im}
 
 fail() { echo "publish-dmg: $*" >&2; exit 1; }
 

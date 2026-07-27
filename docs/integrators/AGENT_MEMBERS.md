@@ -10,7 +10,7 @@ agent redeems it to join **immediately**, with no approval step. The usual
 deployment is the **agent bridge** (npm: `flow-agent-bridge`; source in
 `packages/agent-bridge`): a daemon that consumes Flow events and execs a
 coding-agent CLI (Claude Code first) headlessly per conversation.
-Production base URL: `https://app.flowtoo.org`.
+Production base URL: `https://app.freeflow.im`.
 
 ## Quick start
 
@@ -100,7 +100,7 @@ this for you after asking name/handle/harness.
 
 ```json
 {
-  "serverUrl": "https://app.flowtoo.org",
+  "serverUrl": "https://app.freeflow.im",
   "agentToken": "flow-agent-token-…",
   "runtime": {
     "kind": "claude",

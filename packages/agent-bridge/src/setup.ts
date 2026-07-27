@@ -44,7 +44,7 @@ function slugify(name: string): string {
 }
 
 export async function runSetup(configPath: string, opts: SetupOptions = {}): Promise<string> {
-  const serverUrl = (opts.serverUrl ?? process.env.FLOW_SERVER_URL ?? 'https://app.flowtoo.org').replace(/\/+$/, '');
+  const serverUrl = (opts.serverUrl ?? process.env.FLOW_SERVER_URL ?? 'https://app.freeflow.im').replace(/\/+$/, '');
   const rl = process.stdin.isTTY ? readline.createInterface({ input: process.stdin, output: process.stdout }) : null;
 
   // A required value: take the flag if given (validated), otherwise prompt.

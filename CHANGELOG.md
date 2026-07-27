@@ -181,6 +181,27 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 2026-07-22). Entries below start after phase 11.
 
+### 2026-07-27 — Re-domain: flowtoo.org → freeflow.im (repo side)
+- `[server]` `FLOW_EMAIL_FROM` default → `noreply@mail.freeflow.im`; the unfurl
+  bot User-Agent now points at `https://app.freeflow.im/bot`.
+- `[macos]` `[ios]` The server URL stamped into builds → `https://app.freeflow.im`
+  (`make-app.sh`, `dist.sh`, `publish-dmg.sh`, `project.yml`). On macOS that also
+  moves `SUFeedURL`, so a rebuilt app polls the new appcast.
+- `[bridge]` Default `serverUrl` → `https://app.freeflow.im`. Needs an npm
+  republish to reach `npx` users; agents that already ran setup keep the old
+  host in their on-disk config until re-run.
+- `[qa]` **Both native clients will present as signed out** after this lands:
+  `Server.storageSuffix` keys the Keychain slot, cache DB and UserDefaults
+  namespace off the hostname, so the new host addresses an empty namespace. The
+  old state stays on disk, just unread. Deliberate — see `decision_log.md`.
+- Bundle ids (`org.flowtoo.*`) are **unchanged and staying that way**; they are
+  identifiers, not URLs. Docs edits touched URL references only.
+- Spec: `docs/specs/phase17.md` (operator steps for DNS, Railway, email, OAuth
+  and R2 — none of which this commit performs). `DEPLOYMENT.md` retopologised;
+  its two contradictory CNAME targets replaced with "read it from Railway".
+- Web needed no changes (served same-origin, hardcodes nothing).
+- `pnpm -r build` + `swift build` clean; `pnpm -r test` green (310 tests).
+
 ### 2026-07-26 — Fix: agents couldn't see attachments on messages they didn't trigger
 - `[bridge]` `MessageDTO.files` was dropped everywhere an agent reads history.
   `read_messages`/`search_history` rendered only `[timestamp author id] body`,

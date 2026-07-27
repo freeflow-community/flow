@@ -31,7 +31,7 @@ export const config = {
     return process.env.FLOW_EMAIL_DRIVER === 'cloudflare' ? 'cloudflare' : 'dev';
   },
   get emailFrom(): string {
-    return process.env.FLOW_EMAIL_FROM ?? 'noreply@mail.flowtoo.org';
+    return process.env.FLOW_EMAIL_FROM ?? 'noreply@mail.freeflow.im';
   },
   get cloudflareAccountId(): string | undefined {
     return process.env.CLOUDFLARE_ACCOUNT_ID;

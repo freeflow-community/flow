@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONF=${1:-debug}
-SERVER_URL=${FLOW_SERVER_URL:-https://app.flowtoo.org}
+SERVER_URL=${FLOW_SERVER_URL:-https://app.freeflow.im}
 
 # Build tag = the short commit SHA of this build. `BUILD_SHA` env var overrides
 # for CI; `dev` outside a checkout. Surfaced at the bottom of the workspace menu

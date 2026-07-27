@@ -4,7 +4,7 @@ import { buildFlowServerEntry, mergeMcpJson } from '../src/mcp-init.js';
 describe('buildFlowServerEntry', () => {
   it('carries server/token/workspace env and pins no channel', () => {
     const entry = buildFlowServerEntry({
-      serverUrl: 'https://app.flowtoo.org',
+      serverUrl: 'https://app.freeflow.im',
       agentToken: 'flow-agent-token-x',
       workspaceId: 'ws-1',
       command: 'flow-agent-bridge',
@@ -14,7 +14,7 @@ describe('buildFlowServerEntry', () => {
       command: 'flow-agent-bridge',
       args: ['mcp'],
       env: {
-        FLOW_SERVER_URL: 'https://app.flowtoo.org',
+        FLOW_SERVER_URL: 'https://app.freeflow.im',
         FLOW_AGENT_TOKEN: 'flow-agent-token-x',
         FLOW_WORKSPACE_ID: 'ws-1',
       },

@@ -57,7 +57,7 @@ enum Server {
         return "@" + String(String.UnicodeScalarView(allowed))
     }()
 
-    /// Short label for UI ("app.flowtoo.org", or "127.0.0.1:8787" in dev).
+    /// Short label for UI ("app.freeflow.im", or "127.0.0.1:8787" in dev).
     static var displayName: String {
         let host = baseURL.host ?? baseURL.absoluteString
         return baseURL.port.map { "\(host):\($0)" } ?? host

@@ -8,7 +8,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { assertPublicHost, pinnedLookup, SsrfError } from './ssrf.js';
 
-export const USER_AGENT = 'Flow-LinkExpanding/1.0 (+https://app.flowtoo.org/bot)';
+export const USER_AGENT = 'Flow-LinkExpanding/1.0 (+https://app.freeflow.im/bot)';
 
 export const LIMITS = {
   connectTimeoutMs: 3_000,

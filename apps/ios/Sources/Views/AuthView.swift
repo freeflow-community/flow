@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Sign-in only (registration is web-first on real servers — the email-first
-/// flow lives on app.flowtoo.org, then the flow://signin handoff brings you
+/// flow lives on app.freeflow.im, then the flow://signin handoff brings you
 /// into the app). Mirrors the macOS auth screen's server-aware behavior.
 struct AuthView: View {
     @EnvironmentObject var app: AppState

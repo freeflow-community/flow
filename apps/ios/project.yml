@@ -32,7 +32,7 @@ targets:
     info:
       path: Sources/Generated-Info.plist
       properties:
-        FlowServerURL: https://app.flowtoo.org
+        FlowServerURL: https://app.freeflow.im
         CFBundleDisplayName: Flow
         # Version + build come from the MARKETING_VERSION / CURRENT_PROJECT_VERSION
         # build settings below. Without these, XcodeGen writes literal "1.0"/"1"
@@ -52,7 +52,7 @@ targets:
         NSCameraUsageDescription: Take a photo to share in the conversation.
         ITSAppUsesNonExemptEncryption: false
         # Allow cleartext HTTP only to loopback/.local (dev server); prod
-        # (app.flowtoo.org) stays HTTPS-enforced under ATS.
+        # (app.freeflow.im) stays HTTPS-enforced under ATS.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     settings:
