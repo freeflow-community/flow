@@ -90,7 +90,8 @@ onboarding.
 | `runtime.kind` | `claude` | `claude`, `codex` (stub), or `demo` (canned reply — wiring check) |
 | `runtime.cwd` | config dir | working directory the CLI runs in (`~` expands) |
 | `runtime.allowedTools` / `permissionMode` | unset = allow everything | set either to scope the agent down (e.g. `["Read", "Grep"]`) |
-| `runtime.maxTurns` / `timeoutSec` | 100 / 600 | runaway caps (timeout is per turn, in seconds) |
+| `runtime.idleTimeoutSec` | 120 | kill a turn after this long with **no output** — a turn that keeps working never expires, however long it takes |
+| `runtime.maxTurns` / `timeoutSec` | 100 / 3600 | runaway backstops (`timeoutSec` is the absolute per-turn wall clock, in seconds) |
 | `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic. Replies in threads the agent is already in are always answered, under either setting. |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
 | `logFile` | `<config>.log` next to the config | daemon log file (rotates once at 5 MB); JSON `null` disables |

@@ -37,8 +37,13 @@ export interface RuntimeConfig {
   allowedTools: string[];
   /** --max-turns cap (claude). */
   maxTurns: number;
-  /** Wall-clock timeout per run, seconds. */
+  /**
+   * Absolute wall-clock cap per run, seconds — the runaway backstop, not the
+   * normal way a long turn ends (see idleTimeoutSec).
+   */
   timeoutSec: number;
+  /** Kill a run after this many seconds with no output of any kind. */
+  idleTimeoutSec: number;
   /** MCP rich mode: expose the flow MCP server to the runtime (claude only). */
   mcp: boolean;
   /** Extra text appended to the Flow system prompt. */
@@ -101,10 +106,21 @@ export function loadConfig(configPath: string): BridgeConfig {
     permissionMode: r.permissionMode,
     allowedTools: r.allowedTools ?? [],
     maxTurns: r.maxTurns ?? 100, // real coding tasks blow past small caps — 25 wedged first turns via max-turns errors
-    timeoutSec: r.timeoutSec ?? 600, // real coding turns run past 5 min; 10 is the runaway cap
+    // A run dies when it goes *quiet*, not when it gets long. stream-json
+    // narrates every tool call, so silence — not elapsed time — is what
+    // distinguishes a wedged turn from a productive one; a fixed wall-clock cap
+    // killed real multi-hour work at exactly 10 minutes. timeoutSec remains as
+    // an absolute runaway backstop, set far above any healthy turn.
+    idleTimeoutSec: r.idleTimeoutSec ?? 120,
+    timeoutSec: r.timeoutSec ?? 3600,
     mcp: r.mcp ?? (kind === 'claude'),
     systemPromptExtra: r.systemPromptExtra,
   };
+
+  // Zero or negative would expire every run the instant it starts.
+  for (const k of ['timeoutSec', 'idleTimeoutSec'] as const) {
+    if (!(runtime[k] > 0)) throw new Error(`config: runtime.${k} must be a positive number`);
+  }
 
   // A missing cwd would otherwise surface as a misleading "spawn <cli> ENOENT"
   // (node reports ENOENT for a bad working directory too). Demo never spawns.

@@ -7,7 +7,7 @@
 //      or not.
 import { describe, expect, it } from 'vitest';
 import type { ChannelDTO, MessageDTO } from '@flow/shared';
-import { AgentBridge } from '../src/bridge.js';
+import { AgentBridge, failureReply } from '../src/bridge.js';
 import type { BridgeConfig } from '../src/config.js';
 
 const AGENT = 'aaaaaaaa-0000-0000-0000-000000000001';
@@ -27,6 +27,7 @@ function config(over: Partial<BridgeConfig> = {}): BridgeConfig {
       allowedTools: [],
       maxTurns: 10,
       timeoutSec: 30,
+      idleTimeoutSec: 10,
       mcp: false,
     },
     eventScope: 'mentions',
@@ -204,5 +205,25 @@ describe('inScope — thread participation', () => {
     const b = bridge();
     b.conversations.set('chan-1|root-1', { sessionId: 's', started: true, queue: [], running: false });
     expect(await b.inScope(message({ userId: OTHER_AGENT, threadRootId: 'root-1' }))).toBe(false);
+  });
+});
+
+describe('failureReply', () => {
+  it('posts salvaged work alongside the error, not just the error', () => {
+    const out = failureReply({ ok: false, text: 'Fixed the reconnect path.', error: 'no output for 120s' });
+    expect(out).toContain('no output for 120s');
+    expect(out).toContain('Where I got to:');
+    expect(out).toContain('Fixed the reconnect path.');
+  });
+
+  it('stays a bare apology when there is nothing to salvage', () => {
+    const out = failureReply({ ok: false, text: '  ', error: 'boom' });
+    expect(out).toBe('🤖 sorry — I hit an error (boom).');
+  });
+
+  it('caps salvage so the reply cannot exceed the API body limit', () => {
+    const out = failureReply({ ok: false, text: 'x'.repeat(20000), error: 'boom' });
+    expect(out.length).toBeLessThan(12000);
+    expect(out.endsWith('…')).toBe(true);
   });
 });

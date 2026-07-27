@@ -23,13 +23,19 @@ export interface RunOpts {
 
 export interface RunResult {
   ok: boolean;
+  /**
+   * The reply on success. On failure, whatever could be salvaged — the last
+   * thing the agent said before it died, which for an expired run is the only
+   * record of the work it did.
+   */
   text: string;
   error?: string;
   /**
-   * The runtime emitted a result event (even an error one, e.g. max-turns) —
-   * the CLI session definitely exists and can be resumed with its context.
+   * The CLI created a session under this id, so the next turn can `--resume`
+   * it with its context even though this turn failed. Any stream-json event
+   * proves it: the CLI only starts emitting them once the session exists.
    */
-  sawResult?: boolean;
+  sawSession?: boolean;
 }
 
 /** One line per tool call, latest step shown: "Bash: pnpm test". */
@@ -83,6 +89,14 @@ export class StreamJsonParser {
   finalText = '';
   isError = false;
   sawResult = false;
+  /** Any well-formed event — see RunResult.sawSession. */
+  sawEvent = false;
+  /**
+   * The most recent assistant text block. A run killed mid-turn never gets its
+   * terminal result event, so `finalText` stays empty and this is all there is
+   * to show for it.
+   */
+  lastText = '';
 
   constructor(private readonly onToolStep: (step: string) => void) {}
 
@@ -104,9 +118,12 @@ export class StreamJsonParser {
     } catch {
       return; // non-JSON noise
     }
+    if (typeof ev.type === 'string') this.sawEvent = true;
     if (ev.type === 'assistant') {
       for (const block of ev.message?.content ?? []) {
         if (block.type === 'tool_use' && block.name) this.onToolStep(formatToolStep(block.name, block.input));
+        // Latest wins: on a dead run the newest one is "where it got to".
+        else if (block.type === 'text' && block.text?.trim()) this.lastText = block.text.trim();
       }
     } else if (ev.type === 'result') {
       this.sawResult = true;
@@ -148,6 +165,42 @@ function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
 /** Demo mode: static canned reply, no CLI spawn. */
 export const DEMO_REPLY = 'Your message was received';
 
+/** Process-group ids of in-flight runtime spawns, for shutdown cleanup. */
+const liveGroups = new Set<number>();
+
+/**
+ * Take down a runtime and everything it started. The negative pid targets the
+ * whole process group: a bare `child.kill()` reaches only the CLI, leaving its
+ * Bash-tool grandchildren (builds, test runs, dev servers) orphaned and running
+ * unsupervised. SIGTERM first so the CLI can flush its session transcript —
+ * that transcript is what makes the next turn resumable.
+ */
+function killGroup(pid: number, graceMs: number): void {
+  const send = (sig: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, sig);
+    } catch {
+      // already exited, or never got its own group — nothing to do
+    }
+  };
+  send('SIGTERM');
+  if (graceMs <= 0) {
+    send('SIGKILL');
+    return;
+  }
+  const t = setTimeout(() => send('SIGKILL'), graceMs);
+  t.unref();
+}
+
+/**
+ * Shutdown hook: runtimes are spawned detached (own process group), so they no
+ * longer die with the bridge on Ctrl-C — the daemon has to end them itself.
+ */
+export function killAllRuntimes(): void {
+  for (const pid of liveGroups) killGroup(pid, 0);
+  liveGroups.clear();
+}
+
 export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<RunResult> {
   if (cfg.kind === 'demo') {
     // Brief pause so the typing indicator is visible in clients.
@@ -160,42 +213,86 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       cwd: cfg.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
+      // Own process group, so expiry can kill the agent's whole subprocess tree
+      // rather than just the CLI. Costs us the automatic teardown on bridge
+      // exit — killAllRuntimes() covers that.
+      detached: true,
     });
+    if (child.pid) liveGroups.add(child.pid);
     const parser = new StreamJsonParser(opts.onToolStep);
     let stdout = '';
     let stderr = '';
     let settled = false;
-    const timer = setTimeout(() => {
+    let idleTimer: NodeJS.Timeout | null = null;
+    let capTimer: NodeJS.Timeout | null = null;
+
+    const cleanup = (): void => {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (capTimer) clearTimeout(capTimer);
+      if (child.pid) liveGroups.delete(child.pid);
+    };
+    const expire = (error: string): void => {
       if (settled) return;
       settled = true;
-      child.kill('SIGKILL');
-      resolve({ ok: false, text: '', error: `timed out after ${cfg.timeoutSec}s` });
-    }, cfg.timeoutSec * 1000);
+      cleanup();
+      opts.log(`runtime expired: ${error} — killing the process group`);
+      if (child.pid) killGroup(child.pid, 5000);
+      // The terminal result event will never arrive, so salvage the last thing
+      // the agent said (codex has no events — its raw stdout is the contract).
+      resolve({
+        ok: false,
+        text: cfg.kind === 'claude' ? parser.lastText : stdout.trim(),
+        error,
+        sawSession: parser.sawEvent,
+      });
+    };
+    /**
+     * Rearmed by every byte the runtime emits. A turn that is still working
+     * narrates itself (stream-json emits an event per tool call), so it never
+     * expires no matter how long it runs; only genuine silence does.
+     */
+    const bumpIdle = (): void => {
+      if (settled) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => expire(`no output for ${cfg.idleTimeoutSec}s`), cfg.idleTimeoutSec * 1000);
+    };
+    capTimer = setTimeout(() => expire(`hit the ${cfg.timeoutSec}s run cap`), cfg.timeoutSec * 1000);
+    bumpIdle();
+
     child.stdout.on('data', (d: Buffer) => {
+      bumpIdle();
       const s = d.toString('utf8');
       stdout += s;
       if (cfg.kind === 'claude') parser.feed(s);
     });
     child.stderr.on('data', (d: Buffer) => {
+      bumpIdle();
       stderr += d.toString('utf8');
     });
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       resolve({ ok: false, text: '', error: `could not spawn ${cfg.command}: ${err.message}` });
     });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       parser.feed('\n'); // flush a trailing unterminated line
       if (cfg.kind === 'claude') {
-        if (parser.sawResult && !parser.isError) return resolve({ ok: true, text: parser.finalText, sawResult: true });
+        if (parser.sawResult && !parser.isError) return resolve({ ok: true, text: parser.finalText, sawSession: true });
+        // Error text stays short: the runtime's own words ride along as
+        // salvage instead of being spliced in truncated at 300 chars.
         const error = parser.sawResult
-          ? `runtime reported an error${parser.finalText ? `: ${parser.finalText.slice(0, 300)}` : ''}`
+          ? 'runtime reported an error'
           : `runtime exited ${code} without a result${stderr ? `: ${stderr.slice(-300)}` : ''}`;
-        return resolve({ ok: false, text: parser.finalText, error, sawResult: parser.sawResult });
+        return resolve({
+          ok: false,
+          text: parser.finalText || parser.lastText,
+          error,
+          sawSession: parser.sawEvent,
+        });
       }
       // baseline contract: stdout is the reply
       if (code === 0) return resolve({ ok: true, text: stdout.trim() });
