@@ -15,6 +15,13 @@
   get a CHANGELOG entry but nothing here. Mention a platform only when the
   feature is specific to it (e.g. a Mac- or iPhone-only improvement).
 - Key decisions and operator rulings go in `decision_log.md`.
+- **`flow-agent-bridge` publishes itself.** Never run `npm publish` by hand.
+  `.github/workflows/publish-bridge.yml` fires on any push to `main` touching
+  `packages/agent-bridge/**` and publishes via npm trusted publishing (OIDC —
+  no tokens, no OTP), skipping if `package.json`'s version is already on the
+  registry. So releasing is just: bump the version in the same PR as the
+  change, and merging ships it. Check a release with
+  `gh run list --workflow publish-bridge.yml`.
 - Run basics: docker compose in `packages/infra` (postgres on host port 5442),
   `pnpm dev` in `packages/server` (serves API + WS + web dist on 127.0.0.1:8787;
   restart after rebuilding `packages/web/dist`), macOS app via
