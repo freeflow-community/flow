@@ -1,8 +1,41 @@
+```
+ ███████╗██╗      ██████╗ ██╗    ██╗
+ ██╔════╝██║     ██╔═══██╗██║    ██║
+ █████╗  ██║     ██║   ██║██║ █╗ ██║
+ ██╔══╝  ██║     ██║   ██║██║███╗██║
+ ██║     ███████╗╚██████╔╝╚███╔███╔╝
+ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝
+        team chat that keeps up
+```
+
 # Flow
 
-Flow is a production-grade Slack clone: a high-performance messaging backend
-with encryption at rest, a native macOS client, and a web client — all kept in
-lockstep feature parity.
+Welcome! Flow is a an open-source, free to **use** and free to host, production-grade messaging
+app, with UX inspired by Slack. Flow is designed to be be great for collaboration between humans
+and _AI Agents_ as well.
+
+## Why??
+
+Communuication and collaboration are too fundamental to our teams to let those channels
+be owned and controlled by for-profit companies. This community effort aims to build
+a commercial-competitive messaging app that is free to use by anyone, and not controlled
+by any corporation.
+
+Some of the uncomfortable questions we face with commercial tools:
+
+- Who owns my data? Is someone training an AI on my data? (answer is likely yes)
+- Can I access my data easily? How much does API access cost, and what restrictions come with it?
+- Can I share work with AI agents from anyone, or is my vendor pushing their own AI tech?
+
+We believe that cooperation with AI teammates is a burgeoning development area - one
+that is not well served today by commercial tools. _Flow_ aims to make it easier and more
+productive to work with AI coding agents in your workflow.
+
+## Getting started
+
+Flow offers free accounts on our production servers here: https://freeflow.im.
+
+Or you can choose to host the service yourself. See install notes below.
 
 ![status](https://img.shields.io/badge/status-active_development-blue)
 
@@ -10,6 +43,9 @@ lockstep feature parity.
 
 - **Core messaging** — workspaces, public/private channels, message replies and
   threads, unread tracking, presence and typing indicators
+- **Workspaces** — users can join multiple workspaces; admin-set workspace-wide
+  sidebar color themes
+- **Web** and **native clients**: web, mobile web, **native apps** for **macOS** (no `Electron`!), **iOS**, and Windows/Anrdoid coming soon.
 - **Direct messages** — 1:1 DMs, private group DMs, and a persistent self-DM
 - **Rich chat** — Markdown styling live in the composer (quotes, code fences
   with an enterable code-block editor), emoji shortcodes, emoji reactions,
@@ -19,17 +55,48 @@ lockstep feature parity.
   with an in-app reader, one-click download
 - **Users** — profiles (name, email, timezone, avatar), user status
   (emoji + label) broadcast live, invites via `flow://invite/<token>` links
-- **Workspaces** — users can join multiple workspaces; admin-set workspace-wide
-  sidebar color themes
 - **Slack API compatibility** — admin-created apps with `xoxb-` bot tokens,
   17 Slack Web API methods at `POST /api/*` (verified against the official
   `@slack/web-api` SDK), and an Events API with HMAC v0 signatures, retries,
   and challenge verification
-- **Web-to-app auth handoff** — sign in on the web, then deep-link into the
-  desktop app via a single-use short-lived code (raw tokens never ride in URLs)
 
-Deliberate non-goals (see `overview.md`): Canvas, BlockKit, huddles/audio/video,
-message search, drafts, external/guest connections.
+### Agent support
+
+Flow includes an API and bridge library which makes it very easy to invite your coding
+agent to join your workspace. The bridge shuttles requests to your agent, runs the
+agent and streams results back to the chat.
+
+Create an account on Flow and click `Invite your agent` to see how easy it is to
+get your coding agent working alongside you and the team:
+
+[video]
+
+# Contributing
+
+🚨 We are looking for contributors! 🚨 The best way to contribute is to use Flow yourself
+with a group or team and then pick somewhere you'd like to help:
+
+- Feature ideas. How can Flow be better?
+- Implement features, bug fixes, or nits.
+- Work on our native apps for iOS, Android and Windows.
+- Improve integration with AI Agents
+
+Generally our active work queue is on [Issues](/issues). Discussions of larger
+features can be found in [Discussions](/discussions).
+
+### Making code contributions
+
+* **Contribute the prompt** - One of the best ways to contribute new functionality is
+to create a well crafted _AI prompt_. This means a well specified, narrowly scoped
+feature. Use the _ai_prompt_ label on a new Issue. Describe the intention in the
+title of the issue, and put the prompt in the body. Our core team will be the
+feature based on your prompt.
+
+* **Submitting code PRs** - If you want to submit a real code PR, please make sure
+the change is throughly described, tested and include screenshots. The Flow codebase
+can change very quickly, so make sure you rebase before submitting. It's a good idea
+to drop into the Flow HQ workspace and ping someone to review your PR.
+
 
 ## Architecture
 
