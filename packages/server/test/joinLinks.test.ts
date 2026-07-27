@@ -25,6 +25,7 @@ const { migrate } = await import('../src/db/migrate.js');
 const { db, schema, closeDb } = await import('../src/db/index.js');
 const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
+const { rateAllow } = await import('../src/lib/rateLimit.js');
 const { eq, and } = await import('drizzle-orm');
 
 const { workspaceMembers, channelMembers, channels } = schema;
@@ -75,8 +76,24 @@ describe('managing the link', () => {
   it('an owner mints a link whose URL carries the workspace slug', async () => {
     const link = await ws.createJoinLink(workspaceId, ownerId);
     expect(link.joinUrl).toContain(`/join/${slug}/`);
-    expect(tokenOf(link.joinUrl!).length).toBeGreaterThanOrEqual(16);
     expect(link.createdBy).toBe(ownerId);
+  });
+
+  // The token is short ON PURPOSE — people paste this link into documents and
+  // read it off a screen, so 22 characters beats the house 43. Pinned because
+  // the temptation is to "fix" it back to the 32-byte newToken() everything
+  // else uses. 128 bits is unguessable; the endpoints taking it are capped.
+  it('mints a 22-character token — 16 bytes, not the house 32', async () => {
+    const token = tokenOf((await ws.createJoinLink(workspaceId, ownerId)).joinUrl!);
+    expect(token).toHaveLength(22);
+    expect(Buffer.from(token, 'base64url')).toHaveLength(16);
+    expect(token).toMatch(/^[A-Za-z0-9_-]+$/); // URL-safe: no escaping in the link
+  });
+
+  it('does not repeat a token across mints', async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 20; i++) seen.add(tokenOf((await ws.createJoinLink(workspaceId, ownerId)).joinUrl!));
+    expect(seen.size).toBe(20);
   });
 
   it('reads back the SAME link later — it is persistent, not shown-once', async () => {
@@ -168,5 +185,33 @@ describe('using the link', () => {
     await ws.revokeJoinLink(workspaceId, ownerId);
     await expect(ws.previewJoinLink(token)).rejects.toMatchObject({ statusCode: 404 });
     await expect(ws.redeemJoinLink(outsiderId, token)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+/**
+ * The routes are thin wrappers, so these pin the POLICY (the numbers the
+ * handlers pass to rateAllow) rather than re-testing the limiter. Preview is
+ * the one that matters: unauthenticated, and the token is stored unhashed, so
+ * it is the only endpoint an outsider can use to guess a live link.
+ */
+describe('guessing limits', () => {
+  it('caps preview at 60 per IP per 10 minutes', () => {
+    const key = `join-preview:test-${Date.now()}`;
+    for (let i = 0; i < 60; i++) expect(rateAllow(key, 60, 10 * 60_000)).toBe(true);
+    expect(rateAllow(key, 60, 10 * 60_000)).toBe(false);
+  });
+
+  it('caps redeem at 20 per user per 10 minutes', () => {
+    const key = `join-redeem:test-${Date.now()}`;
+    for (let i = 0; i < 20; i++) expect(rateAllow(key, 20, 10 * 60_000)).toBe(true);
+    expect(rateAllow(key, 20, 10 * 60_000)).toBe(false);
+  });
+
+  it('keys separately, so one noisy caller cannot lock everyone else out', () => {
+    const mine = `join-preview:test-a-${Date.now()}`;
+    const theirs = `join-preview:test-b-${Date.now()}`;
+    for (let i = 0; i < 61; i++) rateAllow(mine, 60, 10 * 60_000);
+    expect(rateAllow(mine, 60, 10 * 60_000)).toBe(false);
+    expect(rateAllow(theirs, 60, 10 * 60_000)).toBe(true);
   });
 });

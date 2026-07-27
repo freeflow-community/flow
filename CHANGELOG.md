@@ -196,6 +196,16 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   hash makes impossible. It grants exactly one capability (become a member of
   this workspace), dies on one click, and only owners/admins can read it — the
   same permission that gates sending invites. Reasoning is in the migration.
+- `[server]` The token is **16 bytes / 22 characters**, not the 32-byte
+  `newToken()` the rest of the schema uses — new `newLinkToken()`. This is the
+  only token a person reads off a screen and pastes into a document, and 22
+  characters keeps the whole URL on one line in a chat client. 128 bits is
+  still far past guessing, and the two endpoints that accept a token are now
+  rate-limited: preview at 60/IP/10min (loose — a link in a busy channel means
+  many real people behind one NAT address) and redeem at 20/user/10min (keyed
+  by user, since redeeming already costs an account). Preview is the one that
+  matters: unauthenticated plus an unhashed token makes it the only guessing
+  oracle on this surface.
 - `[server]` `GET`/`POST`/`DELETE /v1/workspaces/:id/join-link` (owner/admin;
   non-members get 404 for membership privacy), plus unauthenticated
   `GET /v1/join-links/:token` so the landing page can name the workspace before
@@ -219,11 +229,15 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
 - `[macos]` Same section in the invite sheet, gated the same way; new
   `SyncEngine.joinLink/createJoinLink/revokeJoinLink` and `JoinLinkResponse`.
   Redemption stays web-side — the link is an `http(s)` URL and opens there.
-- New `packages/server/test/joinLinks.test.ts` (12 cases): the link reads back
+- New `packages/server/test/joinLinks.test.ts` (17 cases): the link reads back
   identical across calls (it's persistent, not shown-once), regenerating
   invalidates the previous URL, revoke + double-revoke, multiple people redeem
   the same link, idempotent for an existing member and role-preserving for the
-  owner, and the 403/404 permission split. Plus 4 web cases for the URL parse.
+  owner, and the 403/404 permission split. The token length is pinned exactly
+  (22 chars / 16 bytes, URL-safe alphabet, no repeats across 20 mints) because
+  the temptation is to "fix" it back to the house 32-byte token, and the
+  rate-limit policy is pinned at the numbers the handlers pass. Plus 4 web
+  cases for the URL parse.
 - `[ios]` Not ported — see the Parity gap added above.
 
 ### 2026-07-26 — Fix: agents couldn't see attachments on messages they didn't trigger

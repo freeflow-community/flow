@@ -12,7 +12,7 @@ import {
 } from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
 import { newId } from '../lib/ids.js';
-import { hashToken, newToken } from '../lib/tokens.js';
+import { hashToken, newLinkToken, newToken } from '../lib/tokens.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
@@ -475,7 +475,9 @@ export async function createJoinLink(workspaceId: string, userId: string): Promi
   await requireInviteRights(workspaceId, userId);
   const ws = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0];
   if (!ws) throw notFound('workspace not found');
-  const token = newToken();
+  // Deliberately shorter than the house 32-byte token: this one is read by
+  // people, not just machines. See newLinkToken.
+  const token = newLinkToken();
   const row = (
     await db
       .insert(workspaceJoinLinks)
