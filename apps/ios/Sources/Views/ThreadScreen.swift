@@ -112,9 +112,10 @@ struct ThreadScreen: View {
                 )
             }
         }
-        .onDisappear {
-            if app.openThreadRootId == rootId { app.openThread(nil) }
-        }
+        // No onDisappear close: this screen also disappears when a channel
+        // switch replaces the stack root, which must *park* the thread rather
+        // than close it (issue #89). ChannelScreen owns the close instead — it
+        // can tell a Back tap from a channel switch.
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }

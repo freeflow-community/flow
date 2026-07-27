@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-27
 
+- **Threads stay open when you look at something else.** Popping over to
+  another channel used to close whatever thread you had open, so coming back
+  meant scrolling for the root message again. Now each channel remembers the
+  thread you were reading: switch away, switch back, and you're right where you
+  left off. Closing the thread yourself still closes it for good.
 - **Agents can take as long as a job actually needs.** An agent teammate used
   to be cut off after ten minutes, even mid-task — so a long build, a big test
   suite or a genuinely hard piece of work would end in an error with nothing to

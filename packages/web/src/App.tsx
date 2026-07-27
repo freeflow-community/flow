@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
 import { api, getToken, setToken } from './lib/api';
 import { parseJoinPath } from './lib/joinLink';
+import { createThreadMemory } from './lib/threadMemory';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
 import NativeSignIn from './components/NativeSignIn';
@@ -67,6 +68,10 @@ export default function App() {
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
+  // Which thread each channel had open, so switching away and back restores it
+  // (issue #89). In state for a stable identity across renders only — it's
+  // mutable and never renders anything by itself; `threadRootId` still does.
+  const [threadMemory] = useState(createThreadMemory);
   // Admin panel pinned into the sidebar (per-device, admins only at render).
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(
     () => localStorage.getItem(ADMIN_PANEL_KEY) === '1',
@@ -166,10 +171,11 @@ export default function App() {
     setChannelId(null);
     setArtifactId(null);
     setThreadRootId(null);
+    threadMemory.clear();
     setAdminPanelOpen(false);
     localStorage.removeItem(ADMIN_PANEL_KEY);
     qc.clear();
-  }, [qc]);
+  }, [qc, threadMemory]);
 
   if (booting) {
     return <div className="flex h-full items-center justify-center text-faint">Loading…</div>;
@@ -209,16 +215,25 @@ export default function App() {
             setWorkspaceId(id);
             if (id) localStorage.setItem(ACTIVE_WS_KEY, id);
             else localStorage.removeItem(ACTIVE_WS_KEY);
+            threadMemory.clear();
             setChannelId(null);
             setArtifactId(null);
             setThreadRootId(null);
             setEditingMessageId(null);
             setFocusMessageId(null);
           },
+          // Switching channels parks the open thread rather than closing it: the
+          // channel we're leaving remembers it, and the one we're entering gets
+          // whatever it had open (issue #89).
           selectChannel: (id) => {
+            // Deselecting entirely only happens when the active channel goes
+            // away (left or archived) — there's nothing to come back to, so
+            // drop its thread instead of parking it.
+            if (id === null) threadMemory.remember(channelId, null);
+            else threadMemory.remember(channelId, threadRootId);
             setChannelId(id);
             setArtifactId(null);
-            setThreadRootId(null);
+            setThreadRootId(threadMemory.recall(id));
             setEditingMessageId(null);
             setFocusMessageId(null);
           },
@@ -232,12 +247,19 @@ export default function App() {
             if (id) {
               const cached = qc.getQueryData<{ artifacts: ArtifactDTO[] }>(['artifacts', workspaceId]);
               const a = cached?.artifacts.find((x) => x.id === id);
-              if (a) setChannelId(a.channelId);
+              // Changing channel this way still swaps the thread tab, or the
+              // panel would show one channel's thread over another's messages.
+              if (a && a.channelId !== channelId) {
+                threadMemory.remember(channelId, threadRootId);
+                setChannelId(a.channelId);
+                setThreadRootId(threadMemory.recall(a.channelId));
+              }
             }
           },
           // Open a thread and make its tab the visible one (artifacts stay as tabs).
           openThread: (id) => {
             setThreadRootId(id);
+            threadMemory.remember(channelId, id);
             if (id) setArtifactId(null);
           },
           // Switch the side panel to the Thread tab (thread stays open).
@@ -245,13 +267,18 @@ export default function App() {
           // Close the whole side panel.
           closeSidePanel: () => {
             setThreadRootId(null);
+            threadMemory.remember(channelId, null);
             setArtifactId(null);
           },
           setEditingMessage: setEditingMessageId,
-          jumpToMessage: (channelId, messageId, threadRootId) => {
+          jumpToMessage: (toChannelId, messageId, toThreadRootId) => {
+            threadMemory.remember(channelId, threadRootId);
             setArtifactId(null);
-            setChannelId(channelId);
-            setThreadRootId(threadRootId ?? null);
+            setChannelId(toChannelId);
+            // An explicit jump decides what's open in the target channel — a
+            // top-level target closes whatever thread it had parked.
+            setThreadRootId(toThreadRootId ?? null);
+            threadMemory.remember(toChannelId, toThreadRootId ?? null);
             setEditingMessageId(null);
             setFocusMessageId(messageId);
           },
@@ -259,6 +286,7 @@ export default function App() {
           openAdminPanel: () => {
             setAdminPanelOpen(true);
             localStorage.setItem(ADMIN_PANEL_KEY, '1');
+            threadMemory.remember(channelId, threadRootId);
             setChannelId(ADMIN_VIEW_ID);
             setThreadRootId(null);
             setEditingMessageId(null);

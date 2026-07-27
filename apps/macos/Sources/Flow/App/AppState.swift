@@ -64,6 +64,12 @@ final class AppState: ObservableObject {
     @Published private(set) var agentIds: Set<String> = []
     @Published var errorMessage: String?
 
+    /// channelId -> the thread that was open there (issue #89). The open thread
+    /// lives in the single `openThreadRootId` slot, so switching channels would
+    /// otherwise drop it; this parks it instead, and coming back restores it.
+    /// In-memory and per-workspace — cleared on workspace switch/sign-out.
+    private var openThreadByChannel: [String: String] = [:]
+
     let db: AppDatabase
     let engine: SyncEngine
 
@@ -95,6 +101,7 @@ final class AppState: ObservableObject {
             selectedWorkspaceId = nil
             selectedChannelId = nil
             openThreadRootId = nil
+            openThreadByChannel.removeAll()
             selectedArtifactId = nil
             artifacts = []
         }
@@ -105,6 +112,7 @@ final class AppState: ObservableObject {
         selectedWorkspaceId = nil
         selectedChannelId = nil
         openThreadRootId = nil
+        openThreadByChannel.removeAll()
         selectedArtifactId = nil
         showActivity = false
         focusMessageId = nil
@@ -204,6 +212,7 @@ final class AppState: ObservableObject {
 
     /// Active channel was archived or left — drop the selection.
     func channelBecameUnavailable(_ channelId: String) {
+        openThreadByChannel.removeValue(forKey: channelId) // nothing to come back to
         if selectedChannelId == channelId {
             selectedChannelId = nil
             openThreadRootId = nil
@@ -230,9 +239,10 @@ final class AppState: ObservableObject {
             selectWorkspace(workspaceId)
         }
         selectChannel(channelId)
-        if let threadRootId {
-            openThread(threadRootId)
-        }
+        // Unconditional: an explicit jump decides what's open in the target
+        // channel, so a top-level target closes any thread parked there rather
+        // than letting it hide the message we're jumping to (issue #89).
+        openThread(threadRootId)
         focusMessageId = messageId
     }
 
@@ -253,6 +263,7 @@ final class AppState: ObservableObject {
         selectedWorkspaceId = id
         selectedChannelId = nil
         openThreadRootId = nil
+        openThreadByChannel.removeAll()
         selectedArtifactId = nil
         showActivity = false
         artifacts = []
@@ -281,9 +292,29 @@ final class AppState: ObservableObject {
         selectedArtifactId = nil
         showActivity = false
         guard id != selectedChannelId else { return }
+        switchChannel(to: id)
+    }
+
+    /// Park the leaving channel's open thread, select `id`, and restore whatever
+    /// thread that channel had open (issue #89). The engine's own copy of the
+    /// selection is reset by `selectChannel`, so a restored thread has to be
+    /// re-announced — in the same task, since ordering between tasks isn't
+    /// guaranteed.
+    private func switchChannel(to id: String?) {
+        rememberOpenThread()
         selectedChannelId = id
-        openThreadRootId = nil
-        Task { await engine.selectChannel(id) }
+        openThreadRootId = id.flatMap { openThreadByChannel[$0] }
+        let restored = openThreadRootId
+        Task {
+            await engine.selectChannel(id)
+            if let restored { await engine.openThread(rootId: restored) }
+        }
+    }
+
+    /// Record (or, with no thread open, forget) the active channel's thread.
+    private func rememberOpenThread() {
+        guard let channelId = selectedChannelId else { return }
+        openThreadByChannel[channelId] = openThreadRootId
     }
 
     /// Open/activate an artifact tab in the side panel (phase 13). The panel is
@@ -295,8 +326,10 @@ final class AppState: ObservableObject {
         if let id {
             showActivity = false
             if let a = artifacts.first(where: { $0.id == id }), a.channelId != selectedChannelId {
-                selectedChannelId = a.channelId
-                Task { await engine.selectChannel(a.channelId) }
+                // Same park-and-restore as an ordinary channel switch, or the
+                // Thread tab would keep showing the *previous* channel's thread
+                // over this channel's conversation (issue #89).
+                switchChannel(to: a.channelId)
             }
         }
         selectedArtifactId = id
@@ -312,6 +345,7 @@ final class AppState: ObservableObject {
         selectedArtifactId = nil
         if openThreadRootId != nil {
             openThreadRootId = nil
+            rememberOpenThread() // an explicit close: don't restore it later
             Task { await engine.openThread(rootId: nil) }
         }
     }
@@ -341,6 +375,7 @@ final class AppState: ObservableObject {
     func openThread(_ rootId: String?) {
         if rootId != nil { selectedArtifactId = nil } // shares the slot with the artifact panel (phase 13)
         openThreadRootId = rootId
+        rememberOpenThread() // so leaving this channel and coming back restores it
         Task { await engine.openThread(rootId: rootId) }
     }
 

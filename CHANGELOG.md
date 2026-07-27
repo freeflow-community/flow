@@ -25,11 +25,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   idempotent on `(channelId, clientMsgId)`, so it's a client-only port.
 - iOS: a thread-reply Activity notification lands in the originating channel
   but does not open the thread or scroll to the reply (web + macOS open the
-  thread and flash the reply). iOS threads are a locally-owned pushed screen
-  (`ChannelScreen`'s `$threadRoute`), not driven by `AppState`, so the channel
-  push carries neither the thread route nor the in-thread jump target — the
-  Activity row deliberately sets `focusMessageId` only for top-level messages
-  there. Needs the thread route + focus threaded through. Phase 12.
+  thread and flash the reply). iOS threads are a pushed screen owned by
+  `ChannelScreen`'s `$threadRoute`; since #89 that route is seeded from
+  `AppState.openThreadRootId` on appear, so the thread half is now plumbed —
+  what's missing is an Activity row that sets `openThreadRootId` for a reply
+  (it deliberately targets only top-level messages today) and the in-thread
+  jump target, which `ThreadScreen` still ignores. Phase 12.
 - Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
   per-workspace switch/allowlist) is missing on *every* client — API-only.
 - macOS: phase 10 notification settings — no Notifications section in the
@@ -192,6 +193,34 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-07-27 — An open thread survives a channel switch (#89)
+- `[web]` `[macos]` `[ios]` Switching channels used to close the open thread:
+  the thread lives in a single selection slot (`threadRootId` /
+  `openThreadRootId`) and `selectChannel` cleared it unconditionally, so a
+  detour to another channel — or a notification banner — lost your place in a
+  conversation with no way back but re-finding the root message. Channel
+  switches now **park** the thread instead: the channel being left records what
+  it had open, and the channel being entered reopens whatever it had. Session-
+  scoped and in-memory (a `ThreadMemory` map on web, `openThreadByChannel` in
+  `AppState`), cleared on workspace switch, sign-out, and when a channel is left
+  or archived; nothing new is persisted, so a reload still starts clean.
+- `[web]` `[macos]` Opening an artifact in a *different* channel now swaps the
+  thread tab along with the channel. It used to change the channel behind the
+  panel while leaving the previous channel's thread mounted as a live Thread
+  tab — and on macOS the engine's copy of the selection had already been reset,
+  so that thread silently stopped backfilling.
+- `[macos]` An Activity/banner jump to a top-level message now explicitly closes
+  the target channel's thread rather than only opening one for thread replies —
+  with threads parked per channel, a restored thread would otherwise hide the
+  message being jumped to (`ChannelView` suppresses the focus target while a
+  thread is open).
+- `[ios]` The close-the-thread hook moved from `ThreadScreen.onDisappear` to
+  `ChannelScreen`'s `threadRoute` binding. `onDisappear` also fires when a
+  channel switch replaces the stack root, which is exactly the case that must
+  park the thread rather than close it; the binding only changes on a real
+  Back/swipe pop, and `ChannelScreen` seeds it from `AppState` on appear to
+  re-push a parked thread.
 
 ### 2026-07-27 — Agent turns expire on silence, and survive expiring
 - `[bridge]` Published as **0.12.0**. Running bridges keep their old behaviour

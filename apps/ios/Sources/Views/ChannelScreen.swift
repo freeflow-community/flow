@@ -67,6 +67,13 @@ struct ChannelScreen: View {
         .navigationDestination(item: $threadRoute) { route in
             ThreadScreen(rootId: route.rootId)
         }
+        // Popping the thread (Back/swipe) closes it for real — issue #89 parks
+        // an open thread per channel, and only this screen knows the difference
+        // between "the user went back" and "the whole channel screen was
+        // replaced by a channel switch", which must leave the parked thread be.
+        .onChange(of: threadRoute) { _, route in
+            if route == nil, app.selectedChannelId == channelId { app.openThread(nil) }
+        }
         // Jump-to-message (phase 12): page older history until the target is
         // loaded, then MessageListView scrolls to it; give up when exhausted.
         .onChange(of: app.focusMessageId) { _, _ in pageToFocusIfNeeded() }
@@ -82,6 +89,10 @@ struct ChannelScreen: View {
         // which MainView supplies as the content pane's leading toolbar item.
         .task {
             app.selectChannel(channelId)
+            // Re-push the thread this channel had open before we left it (#89).
+            if let rootId = app.openThreadRootId {
+                threadRoute = ThreadRoute(rootId: rootId)
+            }
             users.start(db: app.db) { try User.fetchAll($0) }
             channel.start(db: app.db) { try Channel.filter(key: channelId).fetchOne($0) }
             messages.start(db: app.db, reset: []) { db in

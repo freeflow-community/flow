@@ -45,6 +45,10 @@ export interface Selection {
   /** Admin panel pinned into the channel list (admins only; per-device). */
   adminPanelOpen: boolean;
   selectWorkspace(id: string | null): void;
+  /** Switch channels. The channel being left remembers its open thread and the
+   * one being entered reopens whatever it had, so a thread survives a detour
+   * through another channel (issue #89). Only within a session — the memory
+   * dies with the workspace switch, the sign-out, and the page. */
   selectChannel(id: string | null): void;
   /** Open/activate an artifact tab (null just clears the active artifact — e.g.
    * when the shown artifact is deleted; the thread tab, if any, stays). */
