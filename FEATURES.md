@@ -5,6 +5,10 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-26
 
+- **Agents can open files you shared earlier.** Ask an agent about a screenshot,
+  PDF or recording someone posted further up the channel and it can now find it
+  and open it — previously it only saw files attached to the message that
+  mentioned it, and would tell you there was nothing there.
 - **Invite your coding agent straight from the Mac app.** The 🤖 **Invite your
   Agent** button now sits at the bottom of the sidebar on Mac, just like on the
   web. Click it and Flow hands you a one-time code and the exact command to run

@@ -9,9 +9,11 @@
 // fixed tool surface; no SDK dependency needed. Conversation context
 // (channel/thread) arrives via env from the bridge's per-run --mcp-config.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { FlowApi, FlowApiError } from './api.js';
+import { attachmentFilename, formatAttachments } from './attachments.js';
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -178,7 +180,7 @@ const TOOLS = [
   {
     name: 'read_messages',
     description:
-      'Read messages from a channel, newest first. Page backwards by passing `before` = the oldest message id from the previous page.',
+      'Read messages from a channel, newest first. Page backwards by passing `before` = the oldest message id from the previous page. Messages with attachments list them as `[attachments: <fileId> "name" (type, size)]` — pass a file id to download_file to fetch the bytes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -186,6 +188,22 @@ const TOOLS = [
         limit: { type: 'number', description: 'Messages per page (default 25, max 200).' },
         before: { type: 'string', description: 'Only messages older than this message id (paging cursor).' },
       },
+    },
+  },
+  {
+    name: 'download_file',
+    description:
+      'Download a file attached to a Flow message to a local path, and return that path (Read it to view the contents; images render). Take the file id from the [attachments: …] note on a read_messages or search_history line.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fileId: { type: 'string', description: 'Id of the file to download.' },
+        path: {
+          type: 'string',
+          description: 'Where to write it (default: a temp file named after the attachment).',
+        },
+      },
+      required: ['fileId'],
     },
   },
 ];
@@ -299,7 +317,7 @@ export async function runMcpServer(): Promise<void> {
         const hits = page.messages
           .filter((m) => !m.deletedAt && m.body.toLowerCase().includes(q))
           .slice(-limit)
-          .map((m) => `[${m.createdAt} <@${m.userId}> msg ${m.id}] ${m.body.slice(0, 300)}`);
+          .map((m) => `[${m.createdAt} <@${m.userId}> msg ${m.id}] ${m.body.slice(0, 300)}${formatAttachments(m.files)}`);
         return toolText(hits.length ? hits.join('\n') : 'no matches');
       }
       case 'list_channels': {
@@ -424,10 +442,22 @@ export async function runMcpServer(): Promise<void> {
         if (msgs.length === 0) return toolText('no messages');
         const oldest = msgs[msgs.length - 1]!;
         const lines = msgs.map(
-          (m) => `[${m.createdAt} <@${m.userId}> msg ${m.id}]${m.threadRootId ? ` (in thread ${m.threadRootId})` : ''} ${m.deletedAt ? '(deleted)' : m.body.slice(0, 500)}`,
+          (m) =>
+            `[${m.createdAt} <@${m.userId}> msg ${m.id}]${m.threadRootId ? ` (in thread ${m.threadRootId})` : ''} ${m.deletedAt ? '(deleted)' : m.body.slice(0, 500) + formatAttachments(m.files)}`,
         );
         const footer = page.hasMore ? `\n(more — pass before=${oldest.id} for the next page)` : '';
         return toolText(lines.join('\n') + footer);
+      }
+      case 'download_file': {
+        const fileId = String(args.fileId ?? '');
+        if (!fileId) return toolText('download_file needs a fileId (from an [attachments: …] note)', true);
+        const file = await api.downloadFileWithMeta(fileId);
+        const dest = args.path
+          ? path.resolve(String(args.path))
+          : path.join(os.tmpdir(), 'flow-attachments', attachmentFilename(fileId, file.filename));
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, file.data, { mode: 0o600 });
+        return toolText(`${dest} (${file.mimeType ?? 'unknown type'}, ${file.data.length} bytes)`);
       }
       default:
         return toolText(`unknown tool: ${name}`, true);

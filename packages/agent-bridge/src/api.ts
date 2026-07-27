@@ -15,6 +15,21 @@ import type {
 
 const USER_MENTION_RE = /<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/g;
 
+/** `attachment; filename*=UTF-8''my%20clip.mp4` → `my clip.mp4`, also accepting
+ * the plain `filename="…"` form object stores send back. */
+export function filenameFromDisposition(header: string | null): string | undefined {
+  if (!header) return undefined;
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1]?.trim();
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded; // malformed percent-escapes — the raw value still beats nothing
+    }
+  }
+  return /filename="?([^";]+)"?/i.exec(header)?.[1]?.trim() || undefined;
+}
+
 export class FlowApiError extends Error {
   constructor(
     public readonly status: number,
@@ -142,11 +157,25 @@ export class FlowApi {
 
   /** Download a file attachment's original bytes (the agent is a channel member, so /v1/files authorizes it). */
   async downloadFile(fileId: string): Promise<Buffer> {
+    return (await this.downloadFileWithMeta(fileId)).data;
+  }
+
+  /** As `downloadFile`, plus the name and type the bytes came labelled with —
+   * a caller holding only a file id (the MCP `download_file` tool) needs the
+   * real extension for the file it writes. Either header may be missing when
+   * the download redirects to object storage; callers fall back. */
+  async downloadFileWithMeta(
+    fileId: string,
+  ): Promise<{ data: Buffer; filename: string | undefined; mimeType: string | undefined }> {
     const res = await fetch(`${this.serverUrl}/v1/files/${fileId}`, {
       headers: { authorization: `Bearer ${this.token}` },
     });
     if (!res.ok) await parseError(res);
-    return Buffer.from(await res.arrayBuffer());
+    return {
+      data: Buffer.from(await res.arrayBuffer()),
+      filename: filenameFromDisposition(res.headers.get('content-disposition')),
+      mimeType: res.headers.get('content-type') || undefined,
+    };
   }
 
   /** Set the agent's own avatar (server square-crops to 512px webp). */

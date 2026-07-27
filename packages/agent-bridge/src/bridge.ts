@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import type { ChannelDTO, Event, MessageDTO, UserDTO, WorkspaceDTO, WorkspaceMemberDTO } from '@flow/shared';
 import type { BridgeConfig } from './config.js';
 import { FlowApi } from './api.js';
+import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
 import { ProgressReporter } from './progress.js';
 import { runRuntime } from './runtime.js';
@@ -378,7 +379,7 @@ export class AgentBridge {
       `Reply in concise chat style; Flow renders markdown. Mention users by writing <@userId> literally, e.g. <@${msg.userId}>.`,
       roster ? `Workspace members: ${roster}.` : '',
       mcp
-        ? 'You have Flow MCP tools: send_message, react, upload_file, search_history, set_avatar (change your own profile picture from a local image), plus channel operations (list_channels, list_users, join_channel, leave_channel, create_channel, invite_to_channel — add several userIds in one call, read_messages — newest first, page with before=<oldest id>). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
+        ? 'You have Flow MCP tools: send_message, react, upload_file, download_file (fetch a file attached to any message — read_messages notes attachments with their file ids), search_history, set_avatar (change your own profile picture from a local image), plus channel operations (list_channels, list_users, join_channel, leave_channel, create_channel, invite_to_channel — add several userIds in one call, read_messages — newest first, page with before=<oldest id>). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
         : 'Your final response text is posted to the conversation as your reply.',
       this.cfg.runtime.systemPromptExtra ?? '',
     ];
@@ -392,7 +393,7 @@ export class AgentBridge {
     if (!conv.started) {
       const history = await this.fetchHistory(msg).catch(() => []);
       if (history.length > 0) {
-        const lines = history.map((m) => `${this.senderLabel(m.userId)}: ${m.body}`);
+        const lines = history.map((m) => `${this.senderLabel(m.userId)}: ${m.body}${formatAttachments(m.files)}`);
         context = `[recent conversation history]\n${lines.join('\n')}\n[end of history]\n\n`;
       }
     }
@@ -416,8 +417,7 @@ export class AgentBridge {
     fs.mkdirSync(dir, { recursive: true });
     const out: string[] = [];
     for (const f of msg.files) {
-      const safe = f.name.replace(/[^\w.\-]+/g, '_').slice(-80) || 'file';
-      const dest = path.join(dir, `${f.id}-${safe}`);
+      const dest = path.join(dir, attachmentFilename(f.id, f.name));
       try {
         if (!fs.existsSync(dest)) fs.writeFileSync(dest, await this.api.downloadFile(f.id), { mode: 0o600 });
         out.push(`${dest} (${f.mimeType}, ${f.sizeBytes} bytes)`);
