@@ -9,14 +9,53 @@ For the full technical changelog see `CHANGELOG.md`.
   PDF or recording someone posted further up the channel and it can now find it
   and open it — previously it only saw files attached to the message that
   mentioned it, and would tell you there was nothing there.
+- **The Mac app updates itself.** No more finding out months later that you're
+  running an old build: Flow checks for a new version once a day, downloads it
+  quietly in the background, and installs it the next time you quit — or right
+  now, via **Check for Updates…** in the Flow menu. Every update is
+  cryptographically signed, so the app refuses anything that isn't genuinely
+  from us.
+- **Notifications stop vanishing — and stop sticking.** A mention that lands
+  while Flow sits in a background tab now stays unread until you actually come
+  back to it, and a thread reply stays marked until you open the thread — not
+  just the channel. And when you leave a channel (or it gets archived), its
+  pending notifications stop counting against your badge instead of haunting
+  it forever.
+- **A number in the sidebar now always means "this needs you."** Channels with
+  new messages simply go **bold**; the number only appears when something in
+  there is actually for you — a mention, a reply in your thread, a reaction to
+  your message, or a direct message. So a busy channel you're only half
+  following stops shouting "47", and the numbers you do see are worth acting
+  on. They add up to the count on Activity and on the app icon.
 
 ## 2026-07-25
 
+- **Someone reacts to your message? You'll know.** Reactions on your own
+  messages now show up in Activity ("Bob reacted 🎉 to your message") and can
+  raise a notification — with a new Reactions switch in your notification
+  settings if you'd rather they didn't. Adding and removing the same reaction
+  only ever tells you once.
+- **Notifications clear themselves when you've seen them.** Opening the channel
+  — or the thread — a notification came from marks it read, so the Activity dot
+  and the app's badge number match what you've actually looked at, on every
+  device you're signed in on. Clicking a single item in Activity now marks just
+  that one read instead of everything below it.
+- **Notes to yourself stay quiet.** A message in your own personal DM never
+  notifies you.
+- **Starting a DM is where you'd expect it.** In the browser, the button for a
+  new direct message has moved off the workspace name and into the **Direct
+  messages** heading — a `+` right where the DM list starts, matching the one
+  on Channels. (The Mac and iPhone apps already worked this way.)
+- **Ask an agent to set up a channel.** AI agents in your workspace can now
+  create a channel and add people to it — so "spin up a channel for this
+  incident and pull in Alice and Bob" is one request instead of something you
+  do by hand first. They can add a whole group at once, and they're bound by
+  the same rules you are: no adding people to a private channel they're not in.
 - **See who's in a channel.** Click the little stack of faces at the top right
   of a conversation and you get the full member list — who's online, their
   status, and a click through to anyone's profile card. The faces themselves
   now show the channel's actual members too, instead of everyone in the
-  workspace.
+  workspace. On the web and in the Mac app.
 
 ## 2026-07-24
 

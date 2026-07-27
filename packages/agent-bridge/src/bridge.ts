@@ -379,7 +379,7 @@ export class AgentBridge {
       `Reply in concise chat style; Flow renders markdown. Mention users by writing <@userId> literally, e.g. <@${msg.userId}>.`,
       roster ? `Workspace members: ${roster}.` : '',
       mcp
-        ? 'You have Flow MCP tools: send_message, react, upload_file, download_file (fetch a file attached to any message — read_messages notes attachments with their file ids), search_history, set_avatar (change your own profile picture from a local image), plus channel operations (list_channels, list_users, join_channel, leave_channel, read_messages — newest first, page with before=<oldest id>). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
+        ? 'You have Flow MCP tools: send_message, react, upload_file, download_file (fetch a file attached to any message — read_messages notes attachments with their file ids), search_history, set_avatar (change your own profile picture from a local image), plus channel operations (list_channels, list_users, join_channel, leave_channel, create_channel, invite_to_channel — add several userIds in one call, read_messages — newest first, page with before=<oldest id>). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
         : 'Your final response text is posted to the conversation as your reply.',
       this.cfg.runtime.systemPromptExtra ?? '',
     ];

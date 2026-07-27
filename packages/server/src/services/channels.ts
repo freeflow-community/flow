@@ -6,9 +6,15 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { isUniqueViolation, requireMembership } from './workspaces.js';
 import { enqueueChannelEvent, enqueueMemberEvent } from './appEvents.js';
 import { postSystemMessage } from './messages.js';
+import {
+  clearChannelNotifications,
+  clearChannelNotificationsForAll,
+  markChannelNotificationsRead,
+  markThreadNotificationsRead,
+} from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
-const { channels, channelMembers, messages, workspaceMembers } = schema;
+const { channels, channelMembers, messages, notifications, workspaceMembers } = schema;
 
 type ChannelRow = typeof channels.$inferSelect;
 
@@ -18,6 +24,7 @@ export function toChannelDTO(
     isMember: boolean;
     lastReadMsgId?: string | null | undefined;
     unreadCount?: number | undefined;
+    unreadNotifications?: number | undefined;
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
   },
@@ -35,6 +42,7 @@ export function toChannelDTO(
     isMember: opts.isMember,
     lastReadMsgId: opts.lastReadMsgId ?? null,
     unreadCount: opts.unreadCount ?? 0,
+    unreadNotifications: opts.unreadNotifications ?? 0,
     notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
   };
   if (opts.memberIds) dto.memberIds = opts.memberIds;
@@ -207,6 +215,17 @@ export async function listChannels(workspaceId: string, userId: string): Promise
   const visible = rows.filter((r) => !r.c.isPrivate || r.isMember);
   const dmIds = visible.filter((r) => r.c.kind !== 'standard').map((r) => r.c.id);
   const dmMembers = await dmMemberIds(dmIds);
+
+  // Unread notifications per channel — the number the sidebar badge shows
+  // (operator ruling 2026-07-26; unread *messages* only embolden the row).
+  // One grouped query for the whole list, served by notifications_unread_channel_idx.
+  const notifRows = await db
+    .select({ channelId: notifications.channelId, n: sql<number>`count(*)::int` })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+    .groupBy(notifications.channelId);
+  const notifByChannel = new Map(notifRows.map((r) => [r.channelId, r.n]));
+
   const result: ChannelDTO[] = [];
   for (const r of visible) {
     let unreadCount = 0;
@@ -231,6 +250,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         isMember: r.isMember,
         lastReadMsgId: r.lastReadMsgId,
         unreadCount,
+        unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
       }),
@@ -354,6 +374,9 @@ export async function removeMember(channelId: string, actorId: string, targetUse
     return del;
   });
   if (deleted.length > 0) {
+    // Losing access retires the unread signal: these rows could never clear by
+    // visiting again, so they'd count in Activity forever (issue #63 review).
+    await clearChannelNotifications(targetUserId, chan);
     publishEvent(subjectMeta(chan.workspaceId), {
       type: 'member.left',
       workspaceId: chan.workspaceId,
@@ -422,6 +445,9 @@ export async function archiveChannel(channelId: string, actorId: string): Promis
     return up;
   });
   const dto = toChannelDTO(updated[0]!, { isMember });
+  // An archived channel leaves the sidebar, so its unread rows would count in
+  // Activity forever with no visit to clear them — retire them for everyone.
+  await clearChannelNotificationsForAll(updated[0]!);
   publishEvent(subjectMeta(chan.workspaceId), {
     type: 'channel.archived',
     workspaceId: chan.workspaceId,
@@ -442,11 +468,27 @@ export async function setNotifyLevel(channelId: string, userId: string, level: 0
     .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
 }
 
-export async function markRead(channelId: string, userId: string, lastReadMsgId: string): Promise<void> {
-  const { isMember } = await requireChannelAccess(channelId, userId);
+/**
+ * Advance the read cursor. Reading a channel also reads the notifications it
+ * raised (issue #63) — `threadRootId` means "I'm looking at this thread", which
+ * clears the thread's rows without moving the channel cursor (it only tracks
+ * top-level messages).
+ */
+export async function markRead(
+  channelId: string,
+  userId: string,
+  lastReadMsgId: string,
+  threadRootId?: string,
+): Promise<void> {
+  const { chan, isMember } = await requireChannelAccess(channelId, userId);
   if (!isMember) throw forbidden('join the channel first');
+  if (threadRootId) {
+    await markThreadNotificationsRead(userId, chan, threadRootId);
+    return;
+  }
   await db
     .update(channelMembers)
     .set({ lastReadMsgId })
     .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
+  await markChannelNotificationsRead(userId, chan, lastReadMsgId);
 }

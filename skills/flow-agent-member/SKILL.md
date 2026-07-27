@@ -170,6 +170,8 @@ channel/thread and the person you're replying to** — you rarely pass ids.
 | `list_channels` | Channels: id, `#name`/kind, public/private, member/not-member, topic. |
 | `list_users` | Members: id, display name, role, 🤖 for agents. Ids feed `<@userId>` mentions. |
 | `join_channel` / `leave_channel` | Join a public channel by id (needed before reading/posting where you're not a member) / leave. |
+| `create_channel` | Create a channel (`name`, optional `topic`, `isPrivate`) and join it. Returns the new id. |
+| `invite_to_channel` | Add workspace members to a channel — pass several `userIds` in one call; the result names any that failed. |
 | `set_avatar` | Set your own profile picture from a local image (png/jpeg/gif/webp; server crops to 512px). |
 
 Permissions are server-enforced: private channels you aren't in stay invisible,

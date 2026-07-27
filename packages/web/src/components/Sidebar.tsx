@@ -177,14 +177,6 @@ export default function Sidebar() {
           <span className="truncate">{ws?.name ?? 'Workspace'}</span>
           <span className="text-xs text-white/55">▾</span>
         </button>
-        <button
-          data-testid="sidebar-new-dm"
-          title="New direct message"
-          className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-white/15 text-xs text-white hover:bg-white/25"
-          onClick={() => setShowNewDm(true)}
-        >
-          ✎
-        </button>
         {wsMenuOpen && (
           <div className="absolute top-12 left-3 right-3 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
             {(workspaces.data ?? []).map((w) => (
@@ -247,7 +239,12 @@ export default function Sidebar() {
 
         <SectionHeader
           label="Channels"
-          action={{ label: '+', testid: 'sidebar-create-channel', onClick: () => setShowCreateChannel(true) }}
+          action={{
+            label: '+',
+            testid: 'sidebar-create-channel',
+            title: 'Create a channel',
+            onClick: () => setShowCreateChannel(true),
+          }}
         />
         {joined.map((c) => (
           <div key={c.id}>
@@ -258,7 +255,15 @@ export default function Sidebar() {
           </div>
         ))}
 
-        <SectionHeader label="Direct messages" />
+        <SectionHeader
+          label="Direct messages"
+          action={{
+            label: '+',
+            testid: 'sidebar-new-dm',
+            title: 'New direct message',
+            onClick: () => setShowNewDm(true),
+          }}
+        />
         {dmItems.map((item) => {
           if (item.kind === 'agent') {
             const a = item.member;
@@ -523,7 +528,7 @@ function SectionHeader({
   action,
 }: {
   label: string;
-  action?: { label: string; testid: string; onClick: () => void };
+  action?: { label: string; testid: string; title: string; onClick: () => void };
 }) {
   return (
     <div className="mt-4 mb-1 flex items-center justify-between px-2 first:mt-1">
@@ -533,7 +538,7 @@ function SectionHeader({
           data-testid={action.testid}
           className="rounded px-1 text-white/55 hover:bg-white/10 hover:text-white"
           onClick={action.onClick}
-          title="Create a channel"
+          title={action.title}
         >
           {action.label}
         </button>
@@ -565,7 +570,12 @@ function ChannelRow({
   // The channel stays selected (and highlighted) even with an artifact tab open
   // in the side panel — the conversation is still shown behind it (phase 13).
   const active = sel.channelId === channel.id;
+  // Two separate signals (operator ruling 2026-07-26): unread *messages* only
+  // embolden the row — "something happened here". A *number* means "this needs
+  // you", so it counts unread notifications (mentions, thread replies,
+  // reactions; every message in a DM) and nothing else.
   const unread = channel.unreadCount > 0 && !hideUnread;
+  const notifications = hideUnread ? 0 : channel.unreadNotifications;
   return (
     <div
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
@@ -575,6 +585,7 @@ function ChannelRow({
       <button
         data-testid={testid ?? `sidebar-channel-${channel.name}`}
         data-unread={channel.unreadCount}
+        data-notifications={notifications}
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={() => sel.selectChannel(channel.id)}
       >
@@ -592,9 +603,9 @@ function ChannelRow({
           <span className="ml-0.5 shrink-0 text-sm" title={statusTitle}>{statusEmoji}</span>
         )}
         {channel.notifyLevel === 0 && <span className="text-xs opacity-60">🔕</span>}
-        {unread && (
+        {notifications > 0 && (
           <span className="ml-auto rounded-[9px] bg-unread px-[7px] py-px text-[11px] font-bold text-white">
-            {channel.unreadCount}
+            {Math.min(notifications, 99)}
           </span>
         )}
       </button>

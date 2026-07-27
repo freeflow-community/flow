@@ -45,6 +45,10 @@ import { blobStore } from '../storage/index.js';
 
 /** Blob-store key the notarized macOS DMG is uploaded to (see /download/mac). */
 const DOWNLOAD_MAC_KEY = 'downloads/Flow.dmg';
+/** Sparkle auto-update assets (appcast + update archives) live under this prefix. */
+const UPDATE_MAC_PREFIX = 'downloads/mac/';
+/** Only the two shapes Sparkle fetches — never an arbitrary blob key. */
+const UPDATE_ASSET_RE = /^(appcast\.xml|Flow-[A-Za-z0-9._-]+\.zip)$/;
 import { config } from '../config.js';
 import * as auth from '../services/auth.js';
 import * as google from '../services/oauthGoogle.js';
@@ -136,6 +140,30 @@ export function registerRoutes(app: FastifyInstance): void {
       .header('content-type', 'application/x-apple-diskimage')
       .header('content-disposition', "attachment; filename*=UTF-8''Flow.dmg")
       .send(data);
+  });
+
+  // Sparkle auto-update assets: the appcast the installed app polls, and the
+  // update archives it names. Same publish-by-overwrite model as the DMG — a
+  // new build ships by uploading these, no code deploy. Public by design (the
+  // app checks before anyone signs in); integrity comes from the EdDSA
+  // signature in the feed, which the app verifies against the public key baked
+  // into its bundle, not from the transport.
+  app.get('/download/mac/:asset', async (req, reply) => {
+    const { asset } = req.params as { asset: string };
+    if (!UPDATE_ASSET_RE.test(asset)) throw notFound('unknown update asset');
+    const key = UPDATE_MAC_PREFIX + asset;
+    const isFeed = asset.endsWith('.xml');
+    const contentType = isFeed ? 'application/xml' : 'application/zip';
+    const store = blobStore();
+    // The feed must never be cached stale — it IS the "is there an update"
+    // answer. Archives are immutable (versioned filenames) and cache freely.
+    reply.header('cache-control', isFeed ? 'no-cache' : 'public, max-age=31536000, immutable');
+    const signed = await store.presignGet(key, { filename: asset, contentType });
+    if (signed) return reply.redirect(signed, 302);
+    const head = await store.head(key);
+    if (!head) throw notFound('no update available');
+    const data = await store.get(key);
+    return reply.header('content-type', contentType).send(data);
   });
 
   // ---- auth ----------------------------------------------------
@@ -242,8 +270,8 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.post('/v1/me/notifications/read', { preHandler: requireAuth }, async (req) => {
     const body = parse(MarkNotificationsReadBody, req.body);
-    await nt.markNotificationsRead(req.user.id, body.upToId);
-    return { ok: true };
+    const { unreadCount } = await nt.markNotificationsRead(req.user.id, body);
+    return { ok: true, unreadCount };
   });
 
   // ---- users / avatars -----------------------------------------
@@ -480,7 +508,7 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/channels/:id/read', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(MarkReadBody, req.body);
-    await ch.markRead(id, req.user.id, body.lastReadMsgId);
+    await ch.markRead(id, req.user.id, body.lastReadMsgId, body.threadRootId);
     return { ok: true };
   });
 

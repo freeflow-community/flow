@@ -75,6 +75,16 @@ Build it first: apps/macos/tools/dist.sh   (or pass --build)"
 
 echo "==> Uploading $(du -h "$DMG" | cut -f1) → s3://$BUCKET/$KEY"
 
+# Upload helper (same credential mapping as the DMG upload below).
+r2_cp() {
+  AWS_ACCESS_KEY_ID="$R2_KEY" \
+  AWS_SECRET_ACCESS_KEY="$R2_SECRET" \
+  AWS_DEFAULT_REGION=auto \
+  AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+  AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
+  aws s3 cp "$1" "s3://$BUCKET/$2" --endpoint-url "$ENDPOINT" --content-type "$3"
+}
+
 # Map the R2 creds onto the names the AWS CLI actually reads (it ignores
 # CLOUDFLARE_*), scoped to this one command. AWS_*_CHECKSUM_* opt out of the
 # CLI v2 default integrity checksums, which R2 rejects as unimplemented.
@@ -87,5 +97,26 @@ aws s3 cp "$DMG" "s3://$BUCKET/$KEY" \
   --endpoint-url "$ENDPOINT" \
   --content-type application/x-apple-diskimage
 
+# --- Sparkle feed: how EXISTING installs learn about this build ---------------
+# The DMG only serves new downloads. Skipping this ships a build nobody already
+# running Flow will ever be offered, so it's a loud warning, not a silent pass.
+UPDATES_DIR=$(cd "$(dirname "$DMG")" && pwd)/updates
+if [ -f "$UPDATES_DIR/appcast.xml" ]; then
+  # Archives first, then the feed: the feed names them, so publishing it first
+  # opens a window where an update is announced but 404s.
+  for zip in "$UPDATES_DIR"/Flow-*.zip; do
+    [ -e "$zip" ] || continue
+    echo "==> Uploading $(basename "$zip") ($(du -h "$zip" | cut -f1))"
+    r2_cp "$zip" "downloads/mac/$(basename "$zip")" application/zip
+  done
+  echo "==> Uploading appcast.xml"
+  r2_cp "$UPDATES_DIR/appcast.xml" "downloads/mac/appcast.xml" application/xml
+else
+  echo
+  echo "WARNING: no $UPDATES_DIR/appcast.xml — this build ships to new downloads only." >&2
+  echo "         Existing installs will not be offered it. Run dist.sh to generate the feed." >&2
+fi
+
 echo
 echo "Done. Live at: $WEB_URL/download/mac"
+[ -f "$UPDATES_DIR/appcast.xml" ] && echo "      Update feed: $WEB_URL/download/mac/appcast.xml"

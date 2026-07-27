@@ -81,16 +81,18 @@ struct ActivityFeedView: View {
     }
 
     private func row(_ n: NotificationItem) -> some View {
-        let sender = userNames[n.message.userId] ?? "Someone"
+        // Who to show: the reactor on a reaction row, the author otherwise.
+        let actorId = n.actorUserId
+        let sender = userNames[actorId] ?? "Someone"
         return Button {
             app.openNotification(n)
-            Task { await app.engine.markNotificationsRead(upToId: n.id) }
+            Task { await app.engine.markNotificationRead(id: n.id) }
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 AvatarChip(
-                    userId: n.message.userId,
+                    userId: actorId,
                     name: sender,
-                    avatarPath: app.avatarPaths[n.message.userId],
+                    avatarPath: app.avatarPaths[actorId],
                     size: 34,
                     radius: 9
                 )
@@ -127,6 +129,8 @@ struct ActivityFeedView: View {
         case 1: "\(sender) sent you a direct message"
         case 2: "\(sender) replied in a thread"
         case 3: "\(sender) posted"
+        case 4: "\(sender) reacted \(n.reactionEmoji ?? "") to your message"
+            .replacingOccurrences(of: "  ", with: " ")
         default: "\(sender) mentioned you"
         }
     }

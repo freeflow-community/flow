@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
-import type { ArtifactDTO, Event, MessageDTO, NotificationDTO, TypingData, PresenceData } from '@flow/shared';
+import type {
+  ArtifactDTO,
+  Event,
+  MessageDTO,
+  NotificationDTO,
+  NotificationReadData,
+  TypingData,
+  PresenceData,
+} from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { api, getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
@@ -227,10 +235,38 @@ export default function Main() {
       case 'notification.created': {
         const n = event.data as NotificationDTO;
         void qc.invalidateQueries({ queryKey: ['notifications'] });
-        if (n.channelId !== cur.channelId || document.hidden) {
+        // the sidebar badge is this channel's unread-notification count
+        void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
+        // "Looking at it" means the row is actually on screen: this channel,
+        // tab visible, and — when the message lives in a thread (a reply, a
+        // mention in a reply, a reaction on your reply) — that thread open.
+        // Threads are behind a click, same scoping the server's channel-read
+        // path uses (threadRootId IS NULL).
+        const viewing =
+          n.channelId === cur.channelId &&
+          !document.hidden &&
+          (n.message.threadRootId == null || n.message.threadRootId === cur.threadRootId);
+        if (viewing) {
+          // Read it now (issue #63): messages clear via the read cursor, but a
+          // reaction moves no cursor, so without this the row would stay
+          // unread on the server and reappear as a badge on the next load.
+          void api('POST', '/v1/me/notifications/read', { id: n.id }).then(() =>
+            qc.invalidateQueries({ queryKey: ['notifications'] }),
+          );
+        } else {
           setNotificationUnread((v) => v + 1);
           maybeBanner(n);
         }
+        break;
+      }
+      case 'notification.read': {
+        // Another session (or the server, on a channel/thread visit) read rows:
+        // the badge follows the server's count rather than local arithmetic.
+        const d = event.data as NotificationReadData;
+        setNotificationUnread(d.unreadCount);
+        void qc.invalidateQueries({ queryKey: ['notifications'] });
+        // rows can span workspaces (Activity feed) — refresh every channel list
+        void qc.invalidateQueries({ queryKey: ['channels'] });
         break;
       }
       default:
@@ -243,9 +279,13 @@ export default function Main() {
     // phase 10: the server computed the alert decision (prefs + status)
     if (n.suppressAlert) return;
     if (!document.hidden && n.channelId === selRef.current.channelId) return;
-    const sender = namesRef.current[n.message.userId] ?? 'Someone';
+    // The actor is the reactor for kind 4, the author otherwise.
+    const sender = namesRef.current[n.actorId ?? n.message.userId] ?? 'Someone';
     const title =
-      n.kind === 1 ? `${sender} (DM)` : n.kind === 2 ? `${sender} replied in a thread` : `${sender} mentioned you`;
+      n.kind === 1 ? `${sender} (DM)`
+      : n.kind === 2 ? `${sender} replied in a thread`
+      : n.kind === 4 ? `${sender} reacted ${n.reactionEmoji ?? ''}`.trim()
+      : `${sender} mentioned you`;
     try {
       const banner = new Notification(title, {
         body: plainBody(n.message.body, namesRef.current),
@@ -261,7 +301,7 @@ export default function Main() {
         const s = selRef.current;
         if (s.workspaceId !== n.workspaceId) s.selectWorkspace(n.workspaceId);
         s.jumpToMessage(n.channelId, n.messageId, n.message.threadRootId);
-        void api('POST', '/v1/me/notifications/read', { upToId: n.id }).then(() =>
+        void api('POST', '/v1/me/notifications/read', { id: n.id }).then(() =>
           qc.invalidateQueries({ queryKey: ['notifications'] }),
         );
       };

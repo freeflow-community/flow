@@ -28,13 +28,16 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
   per-workspace switch/allowlist) is missing on *every* client — API-only.
 - macOS: phase 10 notification settings — no Notifications section in the
-  profile/settings UI, banner path doesn't consult `suppressAlert` yet, and
-  the status picker doesn't set `status_suppress_alerts` (web shipped
-  2026-07-21). The shared `setStatus(emoji:text:suppressAlerts:)` now carries
-  the flag and iOS sends it; macOS just needs to pass it at the call site.
+  profile/settings UI (including the new per-user **Reactions** toggle), and the
+  status picker doesn't set `status_suppress_alerts` (web shipped 2026-07-21).
+  The shared `setStatus(emoji:text:suppressAlerts:)` now carries the flag and
+  iOS sends it; macOS just needs to pass it at the call site. The banner path
+  itself now honours the server's `suppressAlert` (2026-07-25, #63), so prefs
+  set on web do take effect on macOS — only the settings surface is missing.
 - iOS: no Notifications section in the account/profile UI (web shipped the
-  per-user pref toggles in phase 10). Nothing on-device consumes them yet —
-  iOS has no push notifications — so this closes with the APNs work.
+  per-user pref toggles in phase 10, plus the Reactions toggle 2026-07-25).
+  Nothing on-device consumes them yet — iOS has no push notifications — so this
+  closes with the APNs work.
 - iOS: no Artifacts UI — no nested sidebar rows, artifact side panel, or
   pin-as-artifact action; the `artifact.*` WS events are safely ignored. Now
   the per-channel model (phase 13); server + web + macOS shipped together
@@ -69,7 +72,11 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
 - No syntax highlighting in code blocks (both clients; never scoped).
 - iOS: no push notifications (APNs — deferred to a follow-on phase; needs
   server device-token registry + Apple push key + device testing). Everything
-  else in core messaging + files is now at parity.
+  else in core messaging + files is now at parity. Now designed end-to-end in
+  `docs/design/PUSH_APNS.md` (registry, sender seam, outbox, payload, client
+  work, phasing) — that doc also carries the open operator questions:
+  message body in the payload or not, the Apple Developer key, and
+  sandbox-vs-production.
 - macOS has no in-app registration, password-reset, or passwordless sign-in
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
@@ -123,12 +130,12 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   with the capability enabled on the App ID, and in-app consumption via
   `POST /v1/auth/signin-link/consume`.
 
-- macOS + iOS: the channel header avatar stack is still decorative — web made it
-  open a member-list popover (names, presence, status, tap-through to the user
-  card) on 2026-07-25 (#70). macOS also still fills the stack with the workspace
-  roster for standard channels (`ChannelView.swift` `memberAvatars`) rather than
-  the channel's own membership; `GET /v1/channels/:id/members` is the fix on both
-  clients, and macOS already observes a member list it can reuse.
+- iOS: the channel header avatar stack is still decorative — web and macOS make
+  it open a member list (names, presence, status, tap-through to the profile
+  card) as of 2026-07-25 (#70). iOS's header is a different construction with no
+  stack to hang it on, so it needs a members affordance chosen for the phone
+  (a header button or a row in the channel sheet) plus the
+  `GET /v1/channels/:id/members` fetch both other clients now use.
 
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
@@ -199,7 +206,244 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   empty, 80-char tail keeps the extension), disposition parsing incl. malformed
   escapes. Verified live against `#flow-task-work`: the read line now shows the
   287 MB `V1 Marketing Demo.mov`, and `download_file` fetched it in 7s.
+- `[bridge]` **Published as 0.10.0.** Agents install the bridge with
+  `npx flow-agent-bridge`, so a fix only reaches them once the npm version is
+  bumped and published — the code landing on `main` ships nothing on its own
+  (same reason as `bridge: bump to 0.6.0 to publish the artifact MCP tools`).
+  First double-digit minor; the startup freshness check parses semver
+  numerically, so it orders 0.10.0 above 0.9.0 correctly.
 - `[server]` `[web]` `[macos]` `[ios]` No change.
+
+### 2026-07-26 — macOS auto-update (Sparkle)
+- `[macos]` The app now updates itself: it polls a signed appcast daily (and on
+  demand via **Check for Updates…** under About Flow), downloads in the
+  background and installs on quit. Until now a shipped build was final —
+  users had no way to learn a newer one existed, since `FlowBuild` is a commit
+  SHA (unorderable) and `CFBundleShortVersionString` was hardcoded `2.0.0`.
+- `[macos]` **Versions are comparable at last**: `CFBundleVersion` is the commit
+  count (monotonic, no state to keep — Sparkle orders updates by it) and the
+  marketing string comes from the new `apps/macos/VERSION`. `FlowBuild` stays
+  as the workspace-menu build label.
+- `[macos]` `make-app.sh` embeds and signs `Sparkle.framework` — the XPC
+  services, `Updater.app`, `Autoupdate` and framework signed inside-out, plus
+  the `@executable_path/../Frameworks` rpath SwiftPM doesn't emit. All of it is
+  work Xcode does for you and a hand-rolled bundle doesn't get. `dist.sh`
+  re-signs that nested code with the Developer ID under the hardened runtime,
+  or notarization rejects the bundle.
+- `[server]` `GET /download/mac/:asset` serves the appcast and update archives
+  from `downloads/mac/` in blob storage, allowlisted to `appcast.xml` and
+  `Flow-<ver>-<build>.zip` (no arbitrary key access). Feed is `no-cache` — it
+  *is* the "is there an update" answer; archives are immutable and cache for a
+  year.
+- `[macos]` Release flow: `dist.sh` packages a zip of the stapled app and
+  generates the EdDSA-signed feed (keeping the 5 newest archives so it can't
+  grow unbounded); `publish-dmg.sh` uploads archives **before** the feed, since
+  the feed names them. Publishing without a feed warns loudly rather than
+  silently shipping to new downloads only.
+- `[macos]` Safe by default: the updater stays inert with the menu item
+  disabled unless the build has a real bundle *and* a public key, and
+  `SUFeedURL` derives from the server the build points at — so a dev build can
+  never be offered a production update, and an unverifiable one is never
+  installed. Signature enforcement verified against a tampered archive.
+- Docs: DEPLOYMENT.md § macOS auto-update (trust model, key custody, the
+  one-time keychain authorization, CI key-file path); decision_log records why
+  Sparkle over a hand-rolled updater and what losing the signing key costs.
+
+### 2026-07-26 — Notification review fixes: hidden tabs, closed threads, lost access (#63)
+Adversarial review of the #63 work found three ways unread state could be
+silently consumed or permanently stuck; all fixed.
+- `[web]` The mark-read effects (channel view + thread panel) ran in hidden
+  tabs — the WS keeps the cache fresh there, so a mention arriving while the
+  Flow tab sat behind another window was bannered *and* immediately marked
+  read (the read cursor clears notification rows server-side since #63). Both
+  effects now bail on `document.hidden` and catch up on `visibilitychange` —
+  the web twin of the macOS hidden-window fix.
+- `[web]` `[macos]` The arrive-while-viewing auto-read now honours "threads
+  are behind a click": a notification whose message lives in a thread (reply,
+  mention in a reply, reaction on a reply) is only read on arrival when that
+  thread is open — the same `threadRootId IS NULL` scoping the server's
+  channel-read path uses. Before, having the channel open ate its threads'
+  notifications.
+- `[server]` Losing access retires the unread signal: leaving or being removed
+  from a channel marks all your rows there read (they could never clear by
+  visiting again — the Activity total counted them forever), and archiving a
+  channel does the same for every member, each session told via
+  `notification.read`. Rows are marked read, never deleted — the inbox stays a
+  complete record (phase 10 principle). Covers `removeMember`,
+  `removeMemberDeep` (agents/bots) and `archiveChannel`; 1:1 DM deletion
+  already cascaded.
+- Docs: NOTIFICATIONS.md scopes the badge-sum invariant honestly (per
+  workspace, held up by the losing-access rule; Activity total is user-global
+  across workspaces), documents the strict three-condition "looking at it"
+  rule, and adds the leave/archive rows to the read-path table.
+- `[qa]` +2 cases: self-leave marks rows read (threads included, record
+  survives), archive retires every member's rows. Suite: 220.
+
+### 2026-07-26 — Sidebar badges count notifications, not messages (#63)
+- Operator ruling (decision_log 2026-07-26): **a number always means
+  notifications.** Unread *messages* only embolden a sidebar row; the badge
+  number counts unread *notifications* for that channel — the same thing the
+  Activity row and the dock/app-icon badge count. Before this, a channel showed
+  "12" for twelve unrelated messages, so the number meant something different
+  per row.
+- `[server]` `ChannelDTO` gains `unreadNotifications`, filled by one grouped
+  query in `listChannels` (served by `notifications_unread_channel_idx`) — not
+  a per-channel count. `unreadCount` is unchanged and still shipped; it just
+  stops rendering as a number. Per-channel counts sum to the Activity total.
+- `[web]` `[macos]` `[ios]` Sidebar rows badge `unreadNotifications` and bold
+  on `unreadCount`. DMs keep numbers with no special case (every DM message
+  raises a notification); a muted DM goes bold with no number, which is the one
+  place the two counts visibly differ.
+- `[web]` `notification.created` / `notification.read` now invalidate the
+  channel list too, so the per-channel badge moves live.
+- `[macos]` `[ios]` GRDB migration v11 adds `channel.unreadNotifications`
+  (cached rows read 0 until refetched). A notification bumps its channel's
+  count locally; a read event refetches the list, since the event carries ids
+  rather than a per-channel breakdown.
+- `[qa]` +3 cases: "3 unread messages, 1 mention → bold with badge 1", read
+  clears it without touching another channel, and per-channel counts sum to the
+  Activity total.
+
+### 2026-07-25 — Fix notifications: reactions, and read-on-visit (#63)
+- `[server]` **Reactions on your own messages now notify you** — a new kind 4.
+  `notifyReaction` (services/notifications.ts) runs post-commit from
+  `addReaction`, and never fails the reaction itself. It skips self-reactions,
+  muted channels (`notify_level = 0`) and authors who have left. Migration
+  `0024_reaction_notifications.sql` adds `notifications.actor_id` (who caused
+  it — the reactor for kind 4, the message author for kinds 0-3; backfilled
+  from `messages.user_id`) and `reaction_emoji`, plus a partial unique index on
+  `(user_id, message_id, actor_id, reaction_emoji) WHERE kind = 4` so
+  react → unreact → react notifies exactly once and never resurrects a row the
+  author already read.
+- `[server]` **A notification goes read when you visit where it came from.**
+  `POST /v1/channels/:id/read` now also reads that channel's rows (top-level
+  messages at or before the cursor); the same route with `threadRootId` means
+  "I'm looking at this thread" and reads the thread's rows without moving the
+  channel cursor, which only tracks top-level messages. New partial index
+  `notifications_unread_channel_idx` backs both.
+- `[server]` New `notification.read` event on the per-user notify subject
+  (`{ids, unreadCount, readAt}`) — every read path publishes it, so every
+  session's badge follows the server's count instead of local arithmetic. The
+  no-op case (the common one: a read-cursor bump with nothing unread) publishes
+  nothing and skips the count query.
+- `[server]` `POST /v1/me/notifications/read` accepts `{id}` for a single row
+  alongside `{upToId}` for the cursor, and returns the fresh `unreadCount`.
+  Clicking one Activity row no longer marks everything older read.
+- `[server]` Alert gate covers kind 4 via a new `reaction` pref key. Confirmed
+  and covered by tests: a message in your **personal DM** raises no
+  notification at all (the only member is you, and you're never your own
+  recipient), and a plain channel message still raises nothing unless you set
+  that channel to "All messages".
+- `[web]` Activity rows render reaction notifications ("Bob reacted 🎉 to your
+  message") with the *reactor's* name and avatar — rows now key off `actorId`
+  rather than assuming the message author. Same for OS banners. New
+  **Reactions** toggle in the profile Notifications section.
+- `[web]` The thread panel marks the thread read while it's open, and a
+  notification that lands in the channel you're already looking at is read
+  immediately (a reaction moves no read cursor, so otherwise it would come back
+  as a badge on the next load). `notification.read` drives the sidebar badge.
+- `[macos]` `[ios]` Same reaction rows in the Activity feed (actor name/avatar,
+  emoji in the headline), single-row read on click, and the dock / app-icon
+  badge now follows `notification.read` from any session. Opening a thread marks
+  it read.
+- `[macos]` The banner path finally honours the server's `suppressAlert`
+  (phase-10 parity gap): prefs and a DND status set on web now silence macOS
+  banners, and kind-3 "all messages" activity no longer banners as "mentioned
+  you". Banners for a channel you're actively viewing are suppressed as before.
+- Docs only, no code: `docs/design/PUSH_APNS.md` — how iOS gets real push.
+  Device-token registry, a `PushSender` seam mirroring the email/storage
+  drivers, an outbox + worker on the Events API precedent (a missed push has
+  no socket to backfill from, so this one can't be loss-tolerant), the payload
+  and its `suppressAlert` gate, silent badge-sync pushes off the new
+  `notification.read`, client work, `simctl`-based testing without an Apple
+  account, and the operator questions that block it.
+- `[qa]` `packages/server/test/notifications.test.ts` +10 cases (reaction
+  actor/emoji/idempotence/mute, personal DM silence, channel vs thread read
+  scoping, cross-channel isolation, single-row read). Full suite: 215 pass.
+  Verified end-to-end over the HTTP surface with a throwaway two-user script —
+  all 18 checks (one per bullet in the issue) pass.
+### 2026-07-25 — macOS: the header avatar stack opens the member list too (#70)
+- `[macos]` Ports the web popover from earlier today. `headerAvatars` is a
+  `Button` with a `.popover`: avatar, name, 🤖 badge, status emoji + text and a
+  presence dot per row, online first then alphabetical, and a row opens that
+  member's `MemberProfileSheet` (the sheet and its `profileUserId` binding were
+  already there). Empty stack while the fetch is in flight still gets a
+  `person.2` click target.
+- `[macos]` The stack now shows **this channel's** members for every kind — it
+  used to fall back to the workspace roster for standard channels, which said
+  nothing about the channel. New `SyncEngine.channelMemberIds(channelId:)` wraps
+  `GET /v1/channels/:id/members`; the Channel DTO's DM-only `memberIds` is the
+  fallback when the request fails. Refetched on channel switch and on each
+  popover open, so joins/leaves show up.
+- `[macos]` Collapsed the view's `userNames` + `userStatuses` + workspace-roster
+  `memberIds` observers into one `users: [String: User]` observer, with the two
+  maps derived for `MessageListView`/`TypingIndicatorView`. The rows needed
+  status *text*, which neither old map carried; three overlapping observers
+  became one.
+- `[macos]` The popover sets `.presentationBackground(MC.base)`. Without it a
+  SwiftUI `.popover` uses the system vibrant material, which samples whatever is
+  behind it — gray over the message list, violet over the sidebar — and washed
+  out the ink-on-paper row text. The app's other popovers (status picker,
+  reaction picker, avatar menu) still do this; left alone as out of scope here.
+- `[ios]` Not ported; see Parity.
+- `swift build` clean (no new warnings). `swift test` is unrunnable in this
+  checkout — `no such module 'XCTest'` under the current toolchain, same on
+  `main`, unrelated to this change.
+### 2026-07-25 — Fix: the new-DM button moved to the Direct messages header (#61)
+- `[web]` The ✎ button lived next to the workspace name, where it read as a
+  workspace action and sat nowhere near the DM list it affects. It's now a `+`
+  in the **Direct messages** section header, mirroring the `+` on **Channels**
+  directly above it. Same `sidebar-new-dm` testid, same `NewDmModal`.
+- `[web]` `SectionHeader`'s action had a hardcoded `title="Create a channel"` —
+  correct while Channels was the only caller, wrong the moment DMs reused it.
+  `title` is now part of the `action` object; the DM button reads "New direct
+  message".
+- `[macos]` `[ios]` No change — native already put this in the Direct messages
+  section header (`SidebarView.swift`, `sidebar.newDM`). This closes the gap
+  rather than opening one. Native keeps its pencil glyph and web uses `+` to
+  match its own Channels header: deliberate, not a Parity item.
+- The workspace header is now just the workspace menu, so its name gets the
+  full sidebar width to truncate into.
+
+### 2026-07-25 — Feature: agents can create channels and invite members over MCP (#65)
+- `[bridge]` Two new `flow` MCP tools, bringing the surface to 14:
+  `create_channel` (`name`, optional `topic`/`isPrivate`) and
+  `invite_to_channel` (`channelId` + **`userIds` array**). Agents could already
+  join a public channel but had no way to set one up and pull people in.
+- `[bridge]` `invite_to_channel` takes a list because `addMember` is
+  one-user-per-call server-side — batching moves that loop below the MCP
+  boundary instead of burning an agent turn per person. Adds are independent:
+  the result names who was added and, per failure, why ("invited <@a>, <@b>" +
+  a `failed:` block). `isError` is set only when *nobody* was added, so a
+  partial success doesn't read as a failure. Dedupes ids, caps at 50.
+- `[bridge]` `create_channel` on a duplicate name returns the **existing
+  channel's id** ("use it instead of creating one") by looking it up in
+  `list_channels`, so the agent can proceed instead of retrying blind. Falls
+  back to a plain conflict message when the existing channel isn't visible to
+  the agent (a private one it isn't in).
+- `[bridge]` Private-channel invites report a merged reason. `requireChannelAccess`
+  404s for a private channel the caller isn't in (membership privacy) *before*
+  `addMember`'s `forbidden()` can fire, so the 403 that branch suggests is
+  unreachable from outside — a bare "channel not found" would be misleading.
+  New `inviteErrorText()` maps 404 → "channel not found, or it is private and
+  you are not a member"; every other server code (`dm_channel`,
+  `channel_archived`, `bad_user`) passes through as-is.
+- `[bridge]` Package bumped to `0.9.0` — a published tool-surface change, so
+  existing installs need it to pick the tools up (`currentVersion()` reads
+  package.json, so the startup staleness warning follows automatically).
+- `[bridge]` `FlowApi.createChannel()` / `addChannelMember()` in `api.ts`; the
+  hardcoded tool list in `bridge.ts`'s system prompt learned both tools, or
+  agents would never know they exist.
+- `[server]` No change — `POST /v1/workspaces/:id/channels` and
+  `POST /v1/channels/:id/members` already existed and already enforce this.
+  Agents are ordinary workspace members, so no new authorization model.
+- 4 new cases in `packages/server/test/agents.test.ts` (agent creates a public
+  channel and is a member; agent adds a member, re-add is a no-op; the private
+  channel rejection is asserted as **404, not 403**; duplicate name → 409
+  `channel_exists` with the original id still resolvable). Also verified
+  end-to-end by driving the MCP server over stdio against a live instance.
+- Docs: tool tables in `docs/integrators/AGENT_MEMBERS.md` and
+  `skills/flow-agent-member/SKILL.md`.
 
 ### 2026-07-25 — Fix: the channel header avatar stack now opens the member list (#70)
 - `[web]` The header stack was explicitly decorative — no click handler, and for
@@ -899,3 +1143,5 @@ Phases 1-11 are archived in `CHANGES_ARCHIVE_PHASE1-11.log` (frozen
   re-encode + store pipeline, and the web card loads them via `AuthImg`.
   Trade-off: `.ico` favicons are dropped (sharp can't decode ICO), so those
   cards show the site name without a mark. `[server] [web]`
+
+claude --resume ee57a0b1-262a-473e-9122-f0ba5e2bfc0a

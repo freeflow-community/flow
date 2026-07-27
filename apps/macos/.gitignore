@@ -1,1 +1,7 @@
 dist/
+
+# Sparkle: an exported EdDSA private key must never be committed (keychain is
+# the default source; this file only exists for headless/CI signing).
+sparkle-private-key*.txt
+dist/updates/
+VERSION.local

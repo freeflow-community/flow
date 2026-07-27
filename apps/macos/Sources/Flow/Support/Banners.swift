@@ -23,19 +23,36 @@ enum Banners {
     /// notification-center delegate).
     static func show(_ n: NotificationItem, title: String, body: String) {
         guard available else { return }
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        var userInfo: [AnyHashable: Any] = [
-            "workspaceId": n.workspaceId,
-            "channelId": n.channelId,
-            "messageId": n.messageId,
-        ]
-        if let root = n.message.threadRootId { userInfo["threadRootId"] = root }
-        content.userInfo = userInfo
-        let request = UNNotificationRequest(identifier: n.id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        // Log instead of silently dropping: "banner didn't appear" has too many
+        // OS-level causes (denied permission, Focus, alert style None) to stay
+        // undiagnosable. Console.app / `log stream` filtered on "Flow banners".
+        // The request is built inside the callback so the @Sendable closure
+        // only captures value types (n/title/body).
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized else {
+                NSLog("Flow banners: not posted — authorizationStatus=%d (2=denied, 0=never asked)",
+                      settings.authorizationStatus.rawValue)
+                return
+            }
+            if settings.alertStyle == .none {
+                NSLog("Flow banners: authorized but alert style is None (System Settings > Notifications > Flow)")
+            }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            var userInfo: [AnyHashable: Any] = [
+                "workspaceId": n.workspaceId,
+                "channelId": n.channelId,
+                "messageId": n.messageId,
+            ]
+            if let root = n.message.threadRootId { userInfo["threadRootId"] = root }
+            content.userInfo = userInfo
+            let request = UNNotificationRequest(identifier: n.id, content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(request) { error in
+                if let error { NSLog("Flow banners: add failed: %@", error.localizedDescription) }
+            }
+        }
     }
 
     /// Dock badge with the unread notification count (works bundled or bare).
