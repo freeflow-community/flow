@@ -29,10 +29,6 @@ struct ComposerView: View {
                 mentionInviteBanner
             }
 
-            if let suggestions = autocomplete, !suggestions.items.isEmpty {
-                suggestionBar(suggestions)
-            }
-
             if !attachments.isEmpty || uploading > 0 {
                 attachmentBar
             }
@@ -128,6 +124,20 @@ struct ComposerView: View {
         .onChange(of: autocomplete?.token) { _, _ in suggestionIndex = 0 }
         .padding([.horizontal, .bottom], 22)
         .padding(.top, 4)
+        // The typeahead floats *above* the card (web parity: absolute
+        // bottom-full). Putting it inside the VStack resized the composer on
+        // every keystroke, and a composer height change makes the message
+        // list scroll into empty space and blank the transcript (#97's
+        // remaining trigger).
+        .overlay(alignment: .topLeading) {
+            if let suggestions = autocomplete, !suggestions.items.isEmpty {
+                suggestionBar(suggestions)
+                    .padding(.leading, 22)
+                    // Report the popup's bottom as its top so it hangs above
+                    // the composer instead of covering it.
+                    .alignmentGuide(.top) { $0[.bottom] }
+            }
+        }
         .task(id: workspaceId) {
             guard let wsId = workspaceId else { return }
             members.start(db: app.db, reset: []) { db in
@@ -195,8 +205,9 @@ struct ComposerView: View {
         }
     }
 
-    /// Vertical suggestion list; first match pre-selected so Return inserts it
-    /// (phase-3.5 fixes). ↑/↓ move, Esc dismisses — see handleCommand.
+    /// Vertical suggestion list floating above the composer card; first match
+    /// pre-selected so Return inserts it (phase-3.5 fixes). ↑/↓ move, Esc
+    /// dismisses — see handleCommand.
     private func suggestionBar(_ s: Suggestions) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 1) {
@@ -225,6 +236,13 @@ struct ComposerView: View {
         }
         .frame(maxWidth: 280, maxHeight: 160)
         .fixedSize(horizontal: false, vertical: true)
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(.white)
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(MC.hairline2, lineWidth: 1))
     }
 
     private func selectedSuggestion(_ s: Suggestions) -> Int {
