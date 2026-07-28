@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-27
 
+- **The chat no longer disappears when you start a message.** On the Mac app,
+  attaching a file or typing a draft long enough to wrap onto a second line
+  could make the whole conversation scroll away and leave you staring at an
+  empty panel — you had to scroll back up to find your messages again. The
+  transcript now stays exactly where it was.
 - **Threads stay open when you look at something else.** Popping over to
   another channel used to close whatever thread you had open, so coming back
   meant scrolling for the root message again. Now each channel remembers the

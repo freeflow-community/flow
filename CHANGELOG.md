@@ -99,10 +99,15 @@ closed). Updated with every milestone commit (PM) and interactive-session fix
   "Sponsored by" row). Needs a new `MemberProfileSheet` on iOS plus avatar taps
   wired through `MessageListView`. `UserDTO.sponsorId` (shared) already carries
   the data.
-- iOS: no per-channel scroll-position memory across channel switches (web +
-  macOS added a 5-minute-expiry memory 2026-07-22). The shared
-  `MessageScrollMemory` store is available to iOS; only the SwiftUI wiring in
-  iOS `MessageListView` is missing.
+- macOS + iOS: no per-channel scroll-position memory across channel switches —
+  web only. macOS shipped a `.scrollPosition(id:)` implementation 2026-07-22
+  that never actually tracked anything (the modifier only reports a position
+  when the lazy stack is marked `.scrollTargetLayout()`, which it wasn't), so
+  the memory was always empty and every channel switch landed at the bottom;
+  the dead modifier was removed 2026-07-27 because it was blanking the
+  transcript. Re-doing it on either client means marking the target layout and
+  reconciling it with `.defaultScrollAnchor(.bottom)`, which owns the scroll
+  position today. The shared `MessageScrollMemory` store is still there.
 - iOS: the new channel drawer (2026-07-23) omits several sidebar affordances the
   web + macOS sidebars carry — a "new DM" composer, the virtual agent rows under
   Direct Messages (start a DM with a workspace agent that has no existing 1:1),
@@ -193,6 +198,27 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-07-27 — macOS scroll blanking
+
+- `[macos]` Fix the message list blanking whenever the composer changes height
+  (attachment tray appearing, a draft wrapping to a second line). The list
+  carried two competing scroll drivers — `.defaultScrollAnchor(.bottom)` and a
+  `.scrollPosition(id:)` feeding `MessageScrollMemory`. On a container resize
+  they disagreed, the content height ballooned ~2.6x (measured off the
+  scrollbar thumb in the operator's recording: 391px while blank vs 1009px
+  after recovery) and the bottom anchor followed it into space with no rows in
+  it, so the transcript went blank until the user scrolled back. Removed the
+  `.scrollPosition(id:)` driver. Nothing was lost: it never tracked anything
+  (see the Parity note), so scroll memory on macOS was already inert. The
+  thread panel and both iOS lists only ever used the bottom anchor, which is
+  why the bug was specific to the macOS channel list.
+- `[macos]` Guard the `UNUserNotificationCenter.current()` call in
+  `applicationDidFinishLaunching` with `Banners.available`, the same bundle
+  check every other UserNotifications call site uses. `current()` traps when
+  the process has no bundle identifier, so a bare `swift run Flow` aborted
+  before the window appeared. Nothing is lost unbundled — banners can't be
+  delivered there, so the delegate has no tap to route.
 
 ### 2026-07-27 — macOS 2.2.1
 - `[macos]` Bump `apps/macos/VERSION` to 2.2.1 so the thread-parking fix (#89)

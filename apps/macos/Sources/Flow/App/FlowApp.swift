@@ -52,7 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        UNUserNotificationCenter.current().delegate = self
+        // Same bundle guard every other UserNotifications call site uses (see
+        // `Banners.available`): `current()` traps outright when the process has
+        // no bundle identifier, so a bare `swift run Flow` aborted in
+        // `applicationDidFinishLaunching` before the window ever appeared.
+        // Nothing is lost when unbundled — banners can't be delivered there, so
+        // there is no tap for this delegate to route.
+        if Banners.available { UNUserNotificationCenter.current().delegate = self }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
