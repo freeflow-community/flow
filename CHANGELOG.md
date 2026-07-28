@@ -171,6 +171,10 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 - iOS composer: plain text + @-mention autocomplete only — no live-styled
   fence/code composer (PM ruling per phase7.md recommendation, pending
   operator review). Markdown still renders fully; sugar expands at send time.
+- Mention/emoji typeahead presentation: web + macOS float a vertical list over
+  the transcript above the composer; iOS keeps its inline horizontal chip row
+  (keyboard-driven reflow is native there, and its list never had the macOS
+  scroll-blanking bug).
 - iOS message actions: long-press context menu (no hover on touch).
 - App management UI (Slack-compat apps): web only.
 - Agent-skill download link on the logged-out home: web only — the native
@@ -202,6 +206,12 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-07-28 — Typeahead floats above the composer (macOS)
+
+- `[macos]` The @-mention/emoji typeahead now floats over the transcript
+  (web parity) instead of growing the composer — the resize was #97's
+  surviving trigger for the message list scrolling blank. VERSION → 2.2.5.
 
 ### 2026-07-27 — Activity is per workspace
 

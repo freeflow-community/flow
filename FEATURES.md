@@ -3,6 +3,13 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-28
+
+- **The @-mention menu no longer shoves your conversation off screen (Mac).**
+  Typing `@` (or `:` for emoji) now pops the suggestion list up over the
+  messages instead of stretching the message box — previously the whole
+  transcript could scroll away and leave the channel looking empty.
+
 ## 2026-07-27
 
 - **Activity only shows the workspace you're in.** It used to list mentions,
