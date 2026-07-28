@@ -528,14 +528,25 @@ struct MessageRow: View {
     /// One borderless glyph button in the hover pill. Mirrors the web buttons'
     /// `rounded-md px-1.5 py-1 … hover:bg-daypill`: a rounded daypill highlight
     /// appears under the glyph on hover.
+    ///
+    /// The label is drawn as our own tooltip rather than with `.help()` (#110):
+    /// AppKit help tags never appeared for these buttons — the pill is mounted
+    /// on hover, so it isn't around when AppKit arms its tooltip rects — and
+    /// the system delay is far too long for a menu you're only over for a
+    /// moment. VoiceOver still gets the text as the button's label.
     private struct MenuIconButton<Label: View>: View {
         let help: String
         let action: () -> Void
         @ViewBuilder let label: () -> Label
         @State private var hovering = false
+        @State private var showTip = false
+        @State private var tipWork: DispatchWorkItem?
 
         var body: some View {
-            Button(action: action) {
+            Button {
+                hideTip()
+                action()
+            } label: {
                 label()
                     .font(.system(size: 15))
                     .frame(width: 26, height: 24)
@@ -546,8 +557,44 @@ struct MessageRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(help)
-            .onHover { hovering = $0 }
+            .accessibilityLabel(help)
+            .onHover { inside in
+                hovering = inside
+                if inside { scheduleTip() } else { hideTip() }
+            }
+            .onDisappear { hideTip() }
+            .overlay(alignment: .top) {
+                if showTip { tooltip }
+            }
+            // Lift the tip above the neighbouring buttons in the pill.
+            .zIndex(showTip ? 1 : 0)
+        }
+
+        private var tooltip: some View {
+            Text(help)
+                .font(.system(size: 11))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(MC.ink.opacity(0.92)))
+                .fixedSize()
+                .offset(y: 30)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+                .accessibilityHidden(true)
+        }
+
+        private func scheduleTip() {
+            tipWork?.cancel()
+            let work = DispatchWorkItem { showTip = true }
+            tipWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+        }
+
+        private func hideTip() {
+            tipWork?.cancel()
+            tipWork = nil
+            showTip = false
         }
     }
 
