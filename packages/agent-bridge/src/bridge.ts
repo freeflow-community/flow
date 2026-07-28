@@ -214,6 +214,11 @@ export class AgentBridge {
     if (msg.body.startsWith(THINKING_PREFIX)) return false; // another agent's status line
     if (this.cfg.eventScope === 'all') return true;
     if (msg.body.includes(`<@${this.me.id}>`)) return true; // @-mention
+    // A channel we created is ours: every top-level message in it is addressed
+    // to us, mention or not. Thread replies are excluded deliberately — those
+    // stay governed by inThread, so a side conversation under someone else's
+    // message doesn't drag us in.
+    if (!msg.threadRootId && chan.createdBy === this.me.id) return true;
     // Every reply in a thread we're part of, mentioned or not.
     if (msg.threadRootId) return this.inThread(msg.channelId, msg.threadRootId);
     return false;

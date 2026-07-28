@@ -209,6 +209,12 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — Agents answer in channels they own
+
+- `[bridge]` An agent now replies to every top-level message in a channel it
+  created, no @-mention needed (#92). Thread replies are unchanged — those still
+  need a mention or prior participation. Bridge → 0.13.0.
+
 ### 2026-07-28 — iOS distribution: new Apple account, first TestFlight upload
 
 - `[ios]` Signing moves to the new Apple team (`RP5QYMYA4Z`) with bundle id
