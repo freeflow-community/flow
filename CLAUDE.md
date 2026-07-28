@@ -20,6 +20,24 @@
   notice. Purely internal changes (refactors, tests, infra, bridge plumbing)
   get a CHANGELOG entry but nothing here. Mention a platform only when the
   feature is specific to it (e.g. a Mac- or iPhone-only improvement).
+- **Concurrent-edit protocol for the ledgers** (`CHANGELOG.md`, `FEATURES.md`,
+  `decision_log.md` — union-merged via `.gitattributes`, so overlapping
+  additions concatenate instead of conflicting). The rules that keep that safe:
+  - Every PR adds a **complete, self-contained dated section** (`### YYYY-MM-DD
+    — title` in CHANGELOG, its own `## YYYY-MM-DD` header in FEATURES, its own
+    `##` ruling in decision_log) with a blank line before and after. Never
+    append bullets into a section your PR didn't create. Duplicate same-date
+    headers are by design, not a mess to fix in-PR.
+  - **Never reword, move, or delete existing entries in a PR that adds one** —
+    in-place edits are the one case union merge mangles silently. Tidy-ups and
+    Parity-section edits ride in their own small PRs, merged promptly.
+  - Scatter the insertion point: place your section among the current date's
+    sections by PR-number parity — **even PR → above today's existing sections,
+    odd PR → below them** (but above the previous date).
+  - The PM compacts at QA phase checkpoints (merge duplicate date headers,
+    dedupe, reorder) in one serialized commit.
+  - GitHub's merge button ignores the union driver; if a PR still shows a
+    conflict in a ledger, a local `git merge origin/main` auto-resolves it.
 - Key decisions and operator rulings go in `decision_log.md`.
 - **`BUILD.md` is the release map** — what each artifact is built and shipped
   by, and which ones ship automatically. Two rules worth knowing without

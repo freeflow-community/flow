@@ -209,6 +209,12 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — Ledger files auto-merge concurrent additions
+
+- `[qa]` CHANGELOG/FEATURES/decision_log use the union merge driver
+  (`.gitattributes`) + a section-per-PR editing protocol (CLAUDE.md), so
+  concurrent PRs stop conflicting on the ledgers (see decision_log 2026-07-28).
+
 ### 2026-07-28 — iOS distribution: new Apple account, first TestFlight upload
 
 - `[ios]` Signing moves to the new Apple team (`RP5QYMYA4Z`) with bundle id
