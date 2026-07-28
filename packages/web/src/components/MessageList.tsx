@@ -53,6 +53,25 @@ export default function MessageList({
   const focusRef = useRef<string | null>(focusMessageId);
   focusRef.current = focusMessageId;
   const lastId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
+  // Reading back-scroll → offer a way back to the newest message (#111).
+  // `pinnedRef` is a ref (it's read from scroll/resize handlers), so mirror it
+  // into state for rendering.
+  const [showJump, setShowJump] = useState(false);
+
+  // Raise the jump button once we're both unpinned and visibly short of the
+  // end (the slack keeps a part-scrolled last message from raising it).
+  const syncJump = () => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    setShowJump(!pinnedRef.current && gap > 120);
+  };
+
+  const jumpToLatest = () => {
+    pinnedRef.current = true;
+    setShowJump(false);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  };
 
   // On mount, restore a recent remembered position; otherwise land at the
   // bottom. Runs before paint so the viewport never flashes the bottom first.
@@ -70,6 +89,7 @@ export default function MessageList({
       scroller.scrollTop = mem.top;
       pinnedRef.current = false;
       lastTopRef.current = mem.top;
+      syncJump(); // opened mid-history — offer the way back down right away
     } else {
       bottomRef.current?.scrollIntoView({ behavior: 'auto' });
       pinnedRef.current = true;
@@ -128,11 +148,15 @@ export default function MessageList({
       if (scroller.scrollHeight - top - scroller.clientHeight < 40) pinnedRef.current = true;
       else if (top < lastTopRef.current - 1) pinnedRef.current = false;
       lastTopRef.current = top;
+      syncJump();
       remember();
     };
     scroller.addEventListener('scroll', onScroll);
     const observer = new ResizeObserver(() => {
       if (pinnedRef.current) scroller.scrollTop = scroller.scrollHeight;
+      // A message arriving while we're scrolled up grows the content without a
+      // scroll event — that's when the jump button has to appear (#111).
+      syncJump();
     });
     observer.observe(content);
     return () => {
@@ -144,33 +168,46 @@ export default function MessageList({
   }, []);
 
   return (
-    <div ref={scrollerRef} className="mc-scroll min-h-0 flex-1 overflow-y-auto py-2" data-testid="message-list">
-      <div ref={contentRef}>
-        {hasMore && (
-          <div className="py-1 text-center">
-            <button className="text-sm font-semibold text-accent-soft hover:underline" onClick={onLoadOlder}>
-              Load earlier messages
-            </button>
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <div key={m.id}>
-            {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
-            {m.systemKind ? (
-              <SystemLine message={m} />
-            ) : (
-              <MessageRow
-                message={m}
-                names={names}
-                membersById={membersById}
-                showHeader={showsHeader(messages, i)}
-                showThreadAffordances={showThreadAffordances}
-              />
-            )}
-          </div>
-        ))}
-        <div ref={bottomRef} />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scrollerRef} className="mc-scroll min-h-0 flex-1 overflow-y-auto py-2" data-testid="message-list">
+        <div ref={contentRef}>
+          {hasMore && (
+            <div className="py-1 text-center">
+              <button className="text-sm font-semibold text-accent-soft hover:underline" onClick={onLoadOlder}>
+                Load earlier messages
+              </button>
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={m.id}>
+              {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
+              {m.systemKind ? (
+                <SystemLine message={m} />
+              ) : (
+                <MessageRow
+                  message={m}
+                  names={names}
+                  membersById={membersById}
+                  showHeader={showsHeader(messages, i)}
+                  showThreadAffordances={showThreadAffordances}
+                />
+              )}
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
       </div>
+
+      {showJump && (
+        <button
+          type="button"
+          data-testid="jump-to-latest"
+          className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-full border border-hairline bg-white px-3 py-1.5 text-xs font-semibold text-accent-soft shadow-md hover:border-hairline2"
+          onClick={jumpToLatest}
+        >
+          Latest msgs ↓
+        </button>
+      )}
     </div>
   );
 }

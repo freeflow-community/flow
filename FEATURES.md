@@ -5,6 +5,14 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **A "Latest msgs ↓" button brings you back to the newest message.** Scroll up
+  to read and a pill appears at the bottom of the conversation — one click and
+  you're back at the end. New messages also stop dragging you down to the bottom
+  while you're reading back through history.
+- **Links look clickable on the Mac.** Hovering a link in a message now switches
+  the cursor to the pointing hand, the way it does in the browser.
+- **The message hover menu tells you what its buttons do (Mac).** Rest on react,
+  reply, copy, edit or delete and a small label appears.
 - **The @-mention menu no longer shoves your conversation off screen (Mac).**
   Typing `@` (or `:` for emoji) now pops the suggestion list up over the
   messages instead of stretching the message box — previously the whole
