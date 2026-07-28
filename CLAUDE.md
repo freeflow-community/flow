@@ -15,6 +15,12 @@
   get a CHANGELOG entry but nothing here. Mention a platform only when the
   feature is specific to it (e.g. a Mac- or iPhone-only improvement).
 - Key decisions and operator rulings go in `decision_log.md`.
+- **`BUILD.md` is the release map** — what each artifact is built and shipped
+  by, and which ones ship automatically. Two rules worth knowing without
+  opening it: merging to `main` deploys the server + web client (Railway) but
+  does **not** release the macOS or iOS app, and shipping macOS is one command,
+  `apps/macos/tools/publish-dmg.sh --build` (never `dist.sh` + publish as
+  separate steps, and bump `apps/macos/VERSION` first).
 - **`flow-agent-bridge` publishes itself.** Never run `npm publish` by hand.
   `.github/workflows/publish-bridge.yml` fires on any push to `main` touching
   `packages/agent-bridge/**` and publishes via npm trusted publishing (OIDC —
