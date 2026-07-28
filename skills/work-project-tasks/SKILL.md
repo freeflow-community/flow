@@ -86,12 +86,27 @@ Use the `flow` MCP tools (see the `flow-agent-member` skill for the full set):
 - `create_channel` — `name` `task-<lowest issue number>`, e.g. `task-81`. Put the
   batch in the `topic`: `#81, #110, #111 — message hover polish`. Leave it
   **public** (`isPrivate` false) so anyone can follow without being added.
-- `invite_to_channel` — add whoever asked for the work, plus anyone already
+- `invite_to_channel` — add whoever asked you to run this, plus anyone already
   discussing the issues. Several `userIds` in one call; `list_users` gets the ids.
 - `send_message` — the updates.
 - `upload_file` — screenshots, as you take them.
 
-Post at the moments a human might want to intervene, not every command:
+**Announce it back where you were asked.** The person who invoked this skill is
+in some other channel or DM and won't think to go looking for a channel you just
+invented. As soon as it exists, post there:
+
+> Working #81, #110, #111 (batch 1) — progress in #task-81.
+
+Note the source conversation **before** you create the channel. The bridge points
+the `flow` tools at the conversation you're replying to by default, so once the
+new channel exists you need to be deliberate: pass the new `channelId` for task
+updates, and the original one to reach the requester. Getting this backwards
+means posting the running log into someone's DM.
+
+Your final reply lands in the source conversation anyway, so that's where the
+outcome goes — no need to repeat the whole log there.
+
+Then post at the moments a human might want to intervene, not every command:
 
 1. **On claim** — what you picked up, the issue numbers, and the approach in two
    or three lines. This is the cheapest possible moment to be told "no, not like
