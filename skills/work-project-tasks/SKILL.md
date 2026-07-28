@@ -29,6 +29,7 @@ Every project item has a **Status** and an optional **Batch**.
 | `Todo` | In the backlog. Not yours to take. |
 | `Queued for Dev` | Staged by a human. **This is what you pick up.** |
 | `In Progress` | Claimed — someone (probably you) is working it. |
+| `Blocked` | Started, can't proceed. Needs a human. Not yours to retry. |
 | `Done` | Landed. |
 
 **Batch** is a number field. Items sharing a batch number are **one unit of
@@ -182,15 +183,34 @@ you deliberately left out.
 
 ## If you can't finish
 
-**Put the work back.** An item stuck in `In Progress` with nobody on it is worse
-than one in the queue — the board says it's being handled and it isn't.
+Mark it **`Blocked`** and say why. An item left in `In Progress` with nobody on
+it is worse than one honestly blocked — the board claims it's being handled when
+it isn't.
+
+Both steps are required. The status is the signal, the comment is the reason,
+and a status with no reason just hands a human the same puzzle you had.
 
 ```sh
-bash skills/work-project-tasks/set-status.sh "Queued for Dev" <itemId> ...
+bash skills/work-project-tasks/set-status.sh Blocked <itemId> [<itemId> ...]
+
+gh issue comment <n> --repo freeflow-community/flow --body "$(cat <<'EOF'
+**Blocked:** <the one-line reason>
+
+<what you tried, and what you need — a decision, a credential, a spec answer.>
+EOF
+)"
 ```
 
-Say what blocked you. If the task is underspecified, comment on the issue with
-the specific question rather than guessing — a wrong guess costs more than a
+Block the **whole batch**, and comment on **every issue in it**. Whoever picks it
+up will be looking at one of them, not necessarily the one you chose.
+
+**`Blocked`, not back to `Queued for Dev`.** Re-queueing hides the problem: the
+next agent takes the task and walks into the same wall. A human moves it back to
+`Queued for Dev` once the blocker is resolved — that's their call, not yours.
+
+Write the comment for someone who wasn't there. Name the specific decision or
+missing fact, not "couldn't get it working". If the task is underspecified, ask
+the precise question rather than guessing — a wrong guess costs more than a
 round trip.
 
 ## Rules worth restating
@@ -201,4 +221,7 @@ round trip.
   belongs in one review.
 - **Don't mark Done without a PR.** Done means the change exists and is
   reviewable, not that you finished editing.
+- **Don't leave anything in `In Progress`.** Every task you claim ends the run
+  as `Done` or `Blocked`.
+- **Don't retry a `Blocked` task.** It's blocked on a human, not on effort.
 - **Don't push to `main`.** Everything goes through a PR.
