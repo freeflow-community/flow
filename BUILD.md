@@ -14,7 +14,7 @@ If you only want to run Flow locally, you want
 |---|---|---|---|
 | Server + web client | `pnpm build` | `git push origin main` | **Yes** — Railway builds every push to `main` |
 | macOS app | `apps/macos/tools/make-app.sh` | `apps/macos/tools/publish-dmg.sh --build` | No — run locally, needs signing credentials |
-| iOS app | `xcodegen generate` + Xcode | — | No — no distribution pipeline yet |
+| iOS app | `xcodegen generate` + Xcode | archive + `xcodebuild -exportArchive` (see below) | No — run locally, needs the signing account |
 | `flow-agent-bridge` (npm) | `pnpm --filter flow-agent-bridge build` | bump `version`, merge to `main` | **Yes** — GitHub Actions publishes |
 
 Two of these release themselves when you merge, and two do not. **Merging to
@@ -163,10 +163,29 @@ xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
   -derivedDataPath .build CODE_SIGNING_ALLOWED=NO build
 ```
 
-**There is no release pipeline.** No TestFlight lane, no App Store submission,
-no CI. Getting the app onto a physical device today means running it from Xcode
-with a signing team; on a free personal team the certificate expires after seven
-days and the app stops launching until you reinstall.
+### Release (TestFlight / App Store)
+
+Signing team is `RP5QYMYA4Z`, bundle id `im.freeflow.app` — both live in
+`project.yml` so they survive `xcodegen generate`. Bump
+`CURRENT_PROJECT_VERSION` in `project.yml` first (App Store Connect rejects a
+re-used build number), regenerate, then from `apps/ios`:
+
+```sh
+xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
+  -destination 'generic/platform=iOS' -archivePath build/Flow.xcarchive \
+  -derivedDataPath .build archive -allowProvisioningUpdates
+xcodebuild -exportArchive -archivePath build/Flow.xcarchive \
+  -exportOptionsPlist ExportOptions.plist -allowProvisioningUpdates
+```
+
+The second command signs with an auto-provisioned Apple Distribution
+cert/profile and **uploads straight to App Store Connect** (that's the
+`destination: upload` in `ExportOptions.plist`); the build lands in TestFlight
+after a few minutes of processing. Auth rides the Apple ID session in Xcode →
+Settings → Accounts, so the machine must be signed into the team. Export
+compliance is pre-answered (`ITSAppUsesNonExemptEncryption` in the plist).
+First-time account setup (device registration, app record) is in
+[apps/ios/README.md](apps/ios/README.md).
 
 Simulator, device install, signing, and server selection:
 [docs/design/IOS.md](docs/design/IOS.md).
@@ -193,8 +212,9 @@ gh run list --workflow publish-bridge.yml   # check a release
 
 ## Open gaps
 
-- **iOS has no distribution path.** No TestFlight, no App Store record, no CI.
-  Everything above stops at "runs on a device you own."
+- **iOS releases are manual and local.** TestFlight uploads work (see above)
+  but there's no CI lane, and the App Store listing (screenshots, privacy
+  policy, review) hasn't been submitted yet.
 - **`dist-macos.yml` is unproven.** It exists and is wired for secrets, but has
   never executed, so the macOS release remains a local, single-machine
   operation.

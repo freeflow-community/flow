@@ -1,5 +1,20 @@
 # Decision log
 
+## 2026-07-28 — iOS ships from a clean Apple account (operator)
+
+- The operator created a fresh Apple developer account (Team `RP5QYMYA4Z`);
+  iOS signs and distributes with it as of today's first TestFlight upload.
+- **Supersedes the 2026-07-27 "bundle ids stay `org.flowtoo.*` permanently"
+  ruling, for iOS only**: the iOS bundle id is now `im.freeflow.app` (operator,
+  set in Xcode; persisted to `project.yml`). That ruling protected a live App
+  Store record — nothing ever shipped under `org.flowtoo.app`, so on a clean
+  account the rename cost nothing and was the last free moment to align the id
+  with the domain. *This* id is now the permanent one: the App Store record
+  exists.
+- macOS is untouched — it keeps signing with the BizTrip AI Developer ID
+  certificate (`76NSMTH84G`). Migrating macOS to the new account (new cert,
+  notary profile, Sparkle implications) is a separate decision, not yet taken.
+
 ## 2026-07-27 — Re-domaining to freeflow.im (operator rulings)
 
 - **Backward compatibility is not a concern** (operator, 2026-07-27). The app is

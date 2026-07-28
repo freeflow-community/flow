@@ -1,6 +1,6 @@
 name: FlowiOS
 options:
-  bundleIdPrefix: org.flowtoo
+  bundleIdPrefix: im.freeflow
   createIntermediateGroups: true
   deploymentTarget:
     iOS: "17.0"
@@ -48,7 +48,7 @@ targets:
         # invite links (flow://invite/…) open the app — the intended way to
         # sign in on a phone.
         CFBundleURLTypes:
-          - CFBundleURLName: org.flowtoo.app
+          - CFBundleURLName: im.freeflow.app
             CFBundleURLSchemes: [flow]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -60,8 +60,8 @@ targets:
           NSAllowsLocalNetworking: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.flowtoo.app
-        DEVELOPMENT_TEAM: 76NSMTH84G # BizTrip AI Inc. — App Store signing team
+        PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app
+        DEVELOPMENT_TEAM: RP5QYMYA4Z # App Store signing team (clean 2026-07 account)
         MARKETING_VERSION: "2.0"
         CURRENT_PROJECT_VERSION: "2"
         SWIFT_VERSION: "6.0"
@@ -85,8 +85,8 @@ targets:
       - target: Flow
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.flowtoo.app.uitests
-        DEVELOPMENT_TEAM: 76NSMTH84G
+        PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.uitests
+        DEVELOPMENT_TEAM: RP5QYMYA4Z
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
