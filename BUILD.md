@@ -66,7 +66,7 @@ projects outside it, built by their own toolchains.
 deploy.** `pnpm -r build` writes `packages/web/dist`, and the running server
 serves it.
 
-Production is Railway, connected to `scottpersinger/flow`, so pushing to `main`
+Production is Railway, connected to `freeflow-community/flow`, so pushing to `main`
 builds and ships. The contract is in [`railway.json`](railway.json): Railpack,
 build `pnpm -r build`, start `node packages/server/dist/index.js`, gated on
 `/healthz`.

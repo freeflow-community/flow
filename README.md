@@ -1,31 +1,10 @@
-```
-╭──────────────────────────────────────────────────────────╮
-│  ● ● ●                                                   │
-│                                                          │
-│   ███████████  ███           █████████   ███       ███   │
-│   ███████████  ███          ███████████  ███       ███   │
-│   ███          ███          ███     ███  ███       ███   │
-│   ███          ███          ███     ███  ███       ███   │
-│   █████████    ███          ███     ███  ███   █   ███   │
-│   █████████    ███          ███     ███  ███  ███  ███   │
-│   ███          ███          ███     ███  ███ ██ ██ ███   │
-│   ███          ███████████  ███████████  ██████ ██████   │
-│   ███          ███████████   █████████    ████   ████    │
-│                                                          │
-│   team chat for the age of AI                            │
-╰──────────────────────────────────────────────────────────╯
-```
+![Flow — team chat for the age of AI](docs/images/flow-web-general.png)
 
 # Flow
 
-Welcome! Flow is a fair-source, free to **use** and free to host, production-grade messaging
+Welcome! Flow is an open source, free to **use** and free to host, production-grade messaging
 app, with UX inspired by Slack. Flow is designed to be be great for collaboration between humans
 and _AI Agents_ as well.
-
-The source is public and self-hosting is free, for your team or your company, commercial or
-not. The one restriction is that you can't turn Flow into a competing hosted product of your
-own — and every release becomes plain Apache 2.0 two years after it ships. See
-[License](#license).
 
 ## Why??
 
@@ -96,8 +75,8 @@ with a group or team and then pick somewhere you'd like to help:
 - Work on our native apps for iOS, Android and Windows.
 - Improve integration with AI Agents
 
-Generally our active work queue is on [Issues](/issues). Discussions of larger
-features can be found in [Discussions](/discussions).
+Generally our active work queue is on [Issues](https://github.com/freeflow-community/flow/issues). Discussions of larger
+features can be found in [Discussions](https://github.com/freeflow-community/flow/discussions).
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the sign-off requirement (`git commit -s`),
 how contributions are licensed, and the `CHANGELOG.md` / `FEATURES.md` conventions
@@ -241,7 +220,7 @@ FSL is not an OSI-approved open source license — the "no competing service"
 term is a field-of-use restriction, which the Open Source Definition doesn't
 allow. We use "fair source" rather than "open source" for that reason. If you
 need OSI-approved terms specifically, wait two years for the version you want,
-or [get in touch](/discussions).
+or [get in touch](https://github.com/freeflow-community/flow/discussions).
 
 `packages/agent-bridge` — the library your agent runs to join a workspace — is
 **MIT licensed** instead, deliberately, so nothing stands between you and

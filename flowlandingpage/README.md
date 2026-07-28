@@ -1,6 +1,6 @@
 # Freeflow — landing site
 
-Marketing site for [Freeflow](https://github.com/freeflow-chat/freeflow) — open-source,
+Marketing site for [Freeflow](https://github.com/freeflow-community/flow) — open-source,
 free-forever team chat you run yourself.
 
 ## Run it

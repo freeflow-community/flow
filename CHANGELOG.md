@@ -199,6 +199,31 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — Repo moved to `freeflow-community/flow`
+
+- `[docs]` The canonical repo is now
+  [`freeflow-community/flow`](https://github.com/freeflow-community/flow), not
+  `scottpersinger/flow`. Updated every in-repo reference: the clone command and
+  issue/discussion links in `DEPLOYMENT.md`, the Railway source named in
+  `BUILD.md` and `docs/ops/DEPLOYMENT.md`, the discussions link in
+  `docs/specs/IDEAS.md`, `packages/agent-bridge`'s `repository.url`, the
+  trusted-publisher setup comment in `.github/workflows/publish-bridge.yml`,
+  and the landing site's `site.config.ts` (which pointed at
+  `freeflow-chat/freeflow`, a repo that doesn't exist). Also made the README's
+  Issues/Discussions links absolute — they were root-relative (`/issues`),
+  which GitHub resolves against the *blob* path, so they 404'd at
+  `…/flow/blob/main/issues`. Archive logs keep the old name as history. Two
+  things live outside the repo and still need a human: npm's trusted-publisher
+  config for `flow-agent-bridge` is keyed to the old owner, and Railway's `app`
+  service is still connected to the old GitHub source.
+
+### 2026-07-27 — README screenshot
+
+- `[docs]` Replace the ASCII-art banner at the top of `README.md` with a real
+  screenshot of the web client (`docs/images/flow-web-general.png`) — a
+  workspace with channels, DMs, a threaded conversation and an inline image
+  card, which shows what Flow is in one glance where the wordmark didn't.
+
 ### 2026-07-27 — macOS scroll blanking
 
 - `[macos]` Fix the message list blanking whenever the composer changes height
