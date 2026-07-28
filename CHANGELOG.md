@@ -223,6 +223,11 @@ Entries below start after phase 16.
   screenshot of the web client (`docs/images/flow-web-general.png`) — a
   workspace with channels, DMs, a threaded conversation and an inline image
   card, which shows what Flow is in one glance where the wordmark didn't.
+- `[docs]` Trim the README's License section to a single link to
+  [`LICENSE.md`](LICENSE.md). The terms themselves are unchanged —
+  `FSL-1.1-ALv2` for Flow, MIT for `packages/agent-bridge` — but the README no
+  longer restates them, so `LICENSE.md` and `packages/agent-bridge/LICENSE`
+  are now the only places they're spelled out.
 
 ### 2026-07-27 — macOS scroll blanking
 

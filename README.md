@@ -196,33 +196,4 @@ handoff. See `CHANGELOG.md` for the full history.
 
 ## License
 
-Flow is **fair source**, under the
-[Functional Source License 1.1 with an Apache 2.0 future license](LICENSE.md)
-(`FSL-1.1-ALv2`) — the license Sentry wrote and uses.
-
-**You can**, with no permission needed and no fee:
-
-- run Flow for your own team or company, including commercially
-- self-host it for your users, employees, students or community
-- read, modify, fork and redistribute the source
-- build products, bots and integrations on top of it
-- use it in consulting or professional services for a client running their own Flow
-
-**You can't** use Flow to offer a commercial product or service that competes
-with Flow itself — in practice, standing up Flow as a multi-tenant chat service
-and selling seats on it.
-
-**And it opens up on a clock.** Every version is irrevocably licensed under
-Apache 2.0 two years after it's published. The restriction is a rolling
-two-year window, not a permanent one, and that grant can't be taken back.
-
-FSL is not an OSI-approved open source license — the "no competing service"
-term is a field-of-use restriction, which the Open Source Definition doesn't
-allow. We use "fair source" rather than "open source" for that reason. If you
-need OSI-approved terms specifically, wait two years for the version you want,
-or [get in touch](https://github.com/freeflow-community/flow/discussions).
-
-`packages/agent-bridge` — the library your agent runs to join a workspace — is
-**MIT licensed** instead, deliberately, so nothing stands between you and
-connecting whatever agent you like. See
-[`packages/agent-bridge/LICENSE`](packages/agent-bridge/LICENSE).
+[`FSL-1.1-ALv2`](LICENSE.md)
