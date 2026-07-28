@@ -207,6 +207,13 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — `work-project-tasks` skill
+
+- `[docs]` New `skills/work-project-tasks/` — how an agent takes the next batch
+  off the "Flow work queue" Project and carries it to a PR: claim, worktree off
+  `main`, build, verify, PR closing every issue in the batch, mark Done. Ships
+  `next-batch.sh` (queue → next batch, or `IDLE`) and `set-status.sh`.
+
 ### 2026-07-28 — Typeahead floats above the composer (macOS)
 
 - `[macos]` The @-mention/emoji typeahead now floats over the transcript
