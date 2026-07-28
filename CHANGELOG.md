@@ -203,6 +203,16 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — Activity is per workspace
+
+- `[server]` `[web]` `[macos]` `[ios]` Activity now shows only the selected
+  workspace's rows. `/v1/me/notifications` takes an optional `workspaceId`
+  (absent = the old global feed, so shipped clients keep working), and its
+  `unreadCount` follows that scope; a new `totalUnreadCount` keeps the OS app
+  icon badge counting every workspace.
+- `[server]` A cursor sweep (`upToId`) now takes a `workspaceId` too, so
+  opening Activity in one workspace can't mark another's older rows read.
+
 ### 2026-07-27 — macOS 2.2.3
 
 - `[macos]` Bump `apps/macos/VERSION` to 2.2.3 to ship the mid-session 401

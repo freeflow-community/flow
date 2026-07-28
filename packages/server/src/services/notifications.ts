@@ -286,9 +286,14 @@ export async function listNotifications(
   userId: string,
   before: string | undefined,
   limit: number,
+  workspaceId?: string | undefined,
 ): Promise<NotificationPage> {
   const conds = [eq(notifications.userId, userId)];
   if (before) conds.push(sql`${notifications.id} < ${before}`);
+  // Activity lives inside a workspace's sidebar, so it shows that workspace's
+  // rows only. The notifications table has no workspace column — the channel
+  // join that already hydrates workspaceId carries the predicate too.
+  if (workspaceId) conds.push(eq(channels.workspaceId, workspaceId));
   const me = (await db.select({ prefs: users.notificationPrefs, suppress: users.statusSuppressAlerts }).from(users).where(eq(users.id, userId)).limit(1))[0];
   const ctx: AlertContext = { prefs: me?.prefs ?? {}, statusSuppressAlerts: me?.suppress ?? false };
   const rows = await db
@@ -300,10 +305,12 @@ export async function listNotifications(
     .orderBy(desc(notifications.id))
     .limit(limit + 1);
   const hasMore = rows.length > limit;
-  const unread = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(notifications)
-    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+  // Two counts: the scoped one badges Activity inside this workspace, the total
+  // badges the app icon (which must still speak for other workspaces).
+  const [scopedUnread, totalUnread] = await Promise.all([
+    unreadCount(userId, workspaceId),
+    workspaceId ? unreadCount(userId) : undefined,
+  ]);
   return {
     notifications: rows.slice(0, limit).map((r) => {
       const kind = r.n.kind as NotificationKind;
@@ -325,7 +332,8 @@ export async function listNotifications(
       };
     }),
     hasMore,
-    unreadCount: unread[0]?.n ?? 0,
+    unreadCount: scopedUnread,
+    totalUnreadCount: totalUnread ?? scopedUnread,
   };
 }
 
@@ -388,12 +396,20 @@ export async function notifyReaction(
   });
 }
 
-/** This user's unread total — the number every client badges. */
-async function unreadCount(userId: string): Promise<number> {
-  const rows = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(notifications)
-    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+/**
+ * This user's unread total — across every workspace, or within one when
+ * `workspaceId` is given (the in-workspace Activity badge). Scoping needs the
+ * channel join: notifications carry a channelId, not a workspaceId.
+ */
+async function unreadCount(userId: string, workspaceId?: string | undefined): Promise<number> {
+  const where = and(eq(notifications.userId, userId), isNull(notifications.readAt));
+  const rows = workspaceId
+    ? await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(notifications)
+        .innerJoin(channels, eq(channels.id, notifications.channelId))
+        .where(and(where, eq(channels.workspaceId, workspaceId)))
+    : await db.select({ n: sql<number>`count(*)::int` }).from(notifications).where(where);
   return rows[0]?.n ?? 0;
 }
 
@@ -435,10 +451,23 @@ async function applyRead(
  */
 export async function markNotificationsRead(
   userId: string,
-  body: { upToId?: string | undefined; id?: string | undefined },
+  body: { upToId?: string | undefined; id?: string | undefined; workspaceId?: string | undefined },
 ): Promise<ReadResult> {
-  const where = body.upToId ? lte(notifications.id, body.upToId) : eq(notifications.id, body.id!);
-  return applyRead(userId, where, '', true);
+  if (!body.upToId) return applyRead(userId, eq(notifications.id, body.id!), '', true);
+  // A cursor sweep from a workspace-scoped Activity feed must stay inside that
+  // workspace — otherwise opening Activity in one workspace silently reads
+  // another's older rows, which the user never saw.
+  const cursor = lte(notifications.id, body.upToId);
+  const where = body.workspaceId
+    ? and(
+        cursor,
+        sql`${notifications.channelId} IN (
+          SELECT ${channels.id} FROM ${channels}
+           WHERE ${channels.workspaceId} = ${body.workspaceId}
+        )`,
+      )
+    : cursor;
+  return applyRead(userId, where, body.workspaceId ?? '', true);
 }
 
 /**

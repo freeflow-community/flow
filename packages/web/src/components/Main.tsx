@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type {
@@ -6,7 +6,6 @@ import type {
   Event,
   MessageDTO,
   NotificationDTO,
-  NotificationReadData,
   TypingData,
   PresenceData,
 } from '@flow/shared';
@@ -49,22 +48,34 @@ export default function Main() {
   namesRef.current = names;
 
   useEffect(() => {
-    // initial unread count + browser notification permission
-    void (async () => {
-      try {
-        const r = await fetch('/v1/me/notifications?limit=1', {
-          headers: { authorization: `Bearer ${getToken() ?? ''}` },
-        });
-        const j = (await r.json()) as { unreadCount?: number };
-        setNotificationUnread(j.unreadCount ?? 0);
-      } catch {
-        /* offline */
-      }
-    })();
     if ('Notification' in window && Notification.permission === 'default') {
       void Notification.requestPermission();
     }
   }, []);
+
+  // The Activity badge counts this workspace only — the feed behind it is
+  // scoped the same way. Refetched on every workspace switch, and whenever the
+  // server tells us rows went read (its event carries the cross-workspace
+  // total, which can't drive a per-workspace badge).
+  const refreshNotificationBadge = useCallback(async () => {
+    const workspaceId = selRef.current.workspaceId;
+    if (!workspaceId) return;
+    try {
+      const r = await fetch(`/v1/me/notifications?limit=1&workspaceId=${workspaceId}`, {
+        headers: { authorization: `Bearer ${getToken() ?? ''}` },
+      });
+      const j = (await r.json()) as { unreadCount?: number };
+      // A slower response for a previously selected workspace must not clobber
+      // the badge after a quick switch.
+      if (selRef.current.workspaceId === workspaceId) setNotificationUnread(j.unreadCount ?? 0);
+    } catch {
+      /* offline */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshNotificationBadge();
+  }, [sel.workspaceId, refreshNotificationBadge]);
 
   // Track the mobile breakpoint; leaving mobile always dismisses the drawer.
   useEffect(() => {
@@ -254,17 +265,19 @@ export default function Main() {
             qc.invalidateQueries({ queryKey: ['notifications'] }),
           );
         } else {
-          setNotificationUnread((v) => v + 1);
+          // The badge counts this workspace only — a row from another one
+          // belongs to that workspace's Activity, not this sidebar's.
+          if (n.workspaceId === cur.workspaceId) setNotificationUnread((v) => v + 1);
           maybeBanner(n);
         }
         break;
       }
       case 'notification.read': {
-        // Another session (or the server, on a channel/thread visit) read rows:
-        // the badge follows the server's count rather than local arithmetic.
-        const d = event.data as NotificationReadData;
-        setNotificationUnread(d.unreadCount);
+        // Another session (or the server, on a channel/thread visit) read rows.
+        // The event's count is the cross-workspace total, so it can't drive a
+        // per-workspace badge — refetch the scoped one instead.
         void qc.invalidateQueries({ queryKey: ['notifications'] });
+        void refreshNotificationBadge();
         // rows can span workspaces (Activity feed) — refresh every channel list
         void qc.invalidateQueries({ queryKey: ['channels'] });
         break;

@@ -5,6 +5,10 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-27
 
+- **Activity only shows the workspace you're in.** It used to list mentions,
+  DMs and replies from every workspace you belong to, so a brand-new workspace
+  opened onto a wall of unrelated activity — often from people it couldn't even
+  name. Each workspace now has its own Activity and its own unread count.
 - **An expired session now just asks you to sign in again.** On the Mac and
   iPhone apps, if your session ran out while the app was open, it kept looking
   signed in — but pasting an image or creating a workspace would fail with a

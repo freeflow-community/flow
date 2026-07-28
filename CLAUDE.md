@@ -27,6 +27,11 @@
   does **not** release the macOS or iOS app, and shipping macOS is one command,
   `apps/macos/tools/publish-dmg.sh --build` (never `dist.sh` + publish as
   separate steps, and bump `apps/macos/VERSION` first).
+- **ALWAYS bump `apps/macos/VERSION` in any PR that modifies the macOS app**
+  (`apps/macos/**`, including the shared Swift core iOS reuses). The bump rides
+  the same PR so the next `publish-dmg.sh` run can't reuse a released version's
+  number — release notes are keyed to the short version, and reusing one puts
+  two identically-titled items in the Sparkle feed.
 - **`flow-agent-bridge` publishes itself.** Never run `npm publish` by hand.
   `.github/workflows/publish-bridge.yml` fires on any push to `main` touching
   `packages/agent-bridge/**` and publishes via npm trusted publishing (OIDC —

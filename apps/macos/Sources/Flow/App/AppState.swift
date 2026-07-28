@@ -52,8 +52,12 @@ final class AppState: ObservableObject {
     @Published private(set) var typing: [String: [String: Date]] = [:]
     /// channelId -> more history available on the server
     @Published private(set) var hasMore: [String: Bool] = [:]
-    /// Unread in-app notification count (bell badge + dock badge).
+    /// Unread notifications in the *selected* workspace — the sidebar Activity
+    /// badge, matching the workspace-scoped feed behind it.
     @Published private(set) var notificationUnread: Int = 0
+    /// Unread across every workspace — the dock badge, which has to keep
+    /// speaking for the workspaces you aren't looking at.
+    @Published private(set) var notificationUnreadTotal: Int = 0
     /// Is the app frontmost? See `isViewing(channelId:)` — a selection in a
     /// backgrounded window must not count as "the user has seen this".
     @Published private(set) var isAppActive: Bool = true
@@ -191,13 +195,21 @@ final class AppState: ObservableObject {
         }
     }
 
-    func setNotificationUnread(_ n: Int) {
+    /// `total` nil = the server didn't send one (pre-scoping build): fall back
+    /// to the scoped number so the dock badge still shows something sane.
+    func setNotificationUnread(_ n: Int, total: Int? = nil) {
         notificationUnread = n
-        Banners.setBadge(n)
+        notificationUnreadTotal = total ?? n
+        Banners.setBadge(notificationUnreadTotal)
     }
 
+    /// A row for another workspace still counts on the dock, but not in this
+    /// workspace's sidebar — its Activity feed will never show it.
     func notificationReceived(_ n: NotificationItem) {
-        setNotificationUnread(notificationUnread + 1)
+        setNotificationUnread(
+            n.workspaceId == selectedWorkspaceId ? notificationUnread + 1 : notificationUnread,
+            total: notificationUnreadTotal + 1
+        )
     }
 
     /// Is the user actually looking at this channel *right now*? A selected

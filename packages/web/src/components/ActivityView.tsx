@@ -27,7 +27,7 @@ export default function ActivityView() {
   const sel = useSelection();
   const live = useLive();
   const qc = useQueryClient();
-  const notifications = useNotifications(true);
+  const notifications = useNotifications(true, sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const rows = notifications.data?.notifications ?? [];
@@ -35,15 +35,22 @@ export default function ActivityView() {
   // Opening the feed marks everything up to the newest row read (channel
   // semantics), clearing the sidebar badge. Guarded by a ref so a re-render
   // doesn't re-POST; re-runs only when a newer row arrives while we're open.
+  // workspaceId keeps the sweep inside this workspace — the cursor is a plain
+  // id comparison server-side, so without it older rows in other workspaces
+  // (which this feed never showed) would go read too.
+  // The guard key carries the workspace too: a switch re-marks the new feed
+  // (a different workspace is a different feed) without re-POSTing this one.
   const markedRef = useRef<string | null>(null);
   const newestId = rows[0]?.id ?? null;
+  const workspaceId = sel.workspaceId;
   useEffect(() => {
-    if (!newestId || markedRef.current === newestId) return;
-    markedRef.current = newestId;
+    const markKey = workspaceId && newestId ? `${workspaceId}:${newestId}` : null;
+    if (!markKey || markedRef.current === markKey) return;
+    markedRef.current = markKey;
     live.setNotificationUnread(0);
-    void api('POST', '/v1/me/notifications/read', { upToId: newestId })
+    void api('POST', '/v1/me/notifications/read', { upToId: newestId, workspaceId })
       .then(() => qc.invalidateQueries({ queryKey: ['notifications'] }));
-  }, [newestId, live, qc]);
+  }, [newestId, workspaceId, live, qc]);
 
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-base">

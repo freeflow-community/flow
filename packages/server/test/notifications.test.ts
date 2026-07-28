@@ -366,3 +366,61 @@ describe('implicit read: visiting the channel or thread', () => {
     expect((await notificationFor(bobId, older.id))?.readAt).toBeNull();
   });
 });
+
+// Activity is a row inside a workspace's sidebar, so the feed behind it must
+// only ever show that workspace's rows — and its cursor sweep must not reach
+// across into a workspace the user wasn't looking at.
+describe('workspace scoping', () => {
+  let otherWorkspaceId = '';
+  let otherChannelId = '';
+
+  beforeAll(async () => {
+    const w = await ws.createWorkspace(aliceId, 'Other Space', `other-${randomUUID().slice(0, 8)}`);
+    otherWorkspaceId = w.id;
+    await db.insert(schema.workspaceMembers).values({ workspaceId: otherWorkspaceId, userId: bobId, role: 'member' });
+    const chan = await ch.createChannel(otherWorkspaceId, aliceId, 'elsewhere');
+    otherChannelId = chan.id;
+    await ch.addMember(otherChannelId, aliceId, bobId);
+  });
+
+  it('lists only the requested workspace rows', async () => {
+    const here = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> here`, undefined, undefined, [bobId]);
+    const there = await msg.sendMessage(otherChannelId, aliceId, randomUUID(), `<@${bobId}> there`, undefined, undefined, [bobId]);
+
+    const scoped = await nt.listNotifications(bobId, undefined, 200, workspaceId);
+    const ids = scoped.notifications.map((n) => n.messageId);
+    expect(ids).toContain(here.id);
+    expect(ids).not.toContain(there.id);
+    expect(scoped.notifications.every((n) => n.workspaceId === workspaceId)).toBe(true);
+
+    // No workspaceId = the old cross-workspace feed, for clients built before
+    // the scoping.
+    const global = await nt.listNotifications(bobId, undefined, 200);
+    expect(global.notifications.map((n) => n.messageId)).toEqual(expect.arrayContaining([here.id, there.id]));
+  });
+
+  it('counts unread per workspace, and the total across all of them', async () => {
+    const scoped = await nt.listNotifications(bobId, undefined, 1, otherWorkspaceId);
+    const global = await nt.listNotifications(bobId, undefined, 1);
+    expect(scoped.unreadCount).toBeGreaterThan(0);
+    expect(scoped.totalUnreadCount).toBe(global.unreadCount);
+    expect(scoped.totalUnreadCount).toBeGreaterThan(scoped.unreadCount);
+    // Unscoped: the two counts are the same number.
+    expect(global.totalUnreadCount).toBe(global.unreadCount);
+  });
+
+  it('a scoped cursor sweep leaves other workspaces unread', async () => {
+    const here = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> sweep here`, undefined, undefined, [bobId]);
+    const there = await msg.sendMessage(otherChannelId, aliceId, randomUUID(), `<@${bobId}> sweep there`, undefined, undefined, [bobId]);
+    const newest = await latestNotification(bobId);
+
+    // Opening Activity in the first workspace: cursor covers both rows by id,
+    // but only this workspace's may flip.
+    await nt.markNotificationsRead(bobId, { upToId: newest!.id, workspaceId });
+    expect((await notificationFor(bobId, here.id))?.readAt).not.toBeNull();
+    expect((await notificationFor(bobId, there.id))?.readAt).toBeNull();
+
+    await nt.markNotificationsRead(bobId, { upToId: newest!.id, workspaceId: otherWorkspaceId });
+    expect((await notificationFor(bobId, there.id))?.readAt).not.toBeNull();
+  });
+});
