@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
 import { api, getToken, setToken } from './lib/api';
-import { parseJoinPath } from './lib/joinLink';
+import { clearJoinToken, parseJoinPath, readJoinToken, stashJoinToken } from './lib/joinLink';
 import { createThreadMemory } from './lib/threadMemory';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
+import JoinScreen from './components/JoinScreen';
 import NativeSignIn from './components/NativeSignIn';
 import WorkspaceChooser from './components/WorkspaceChooser';
 import Main from './components/Main';
@@ -13,7 +14,6 @@ import Main from './components/Main';
 const ACTIVE_WS_KEY = 'flow.activeWorkspace';
 const ADMIN_PANEL_KEY = 'flow.adminPanelOpen';
 export const PENDING_INVITE_KEY = 'flow.pendingInvite';
-export const PENDING_JOIN_KEY = 'flow.pendingJoinLink';
 
 /** Pull ?signup= / ?reset= / ?signin= (emailed links) and ?native= (the native
  * Google handoff, phase16 §9) off the URL before rendering. */
@@ -32,11 +32,13 @@ function consumeEmailLinkParams(): {
     history.replaceState(null, '', '/');
   }
   // /join/<workspace-slug>/<token> (issue #85): the persistent join link. Same
-  // stash-and-redeem trick as the emailed invite — the slug is decoration for
-  // the human reading the URL, the token is what the server matches on.
+  // stash trick as the emailed invite — it has to survive the sign-in round
+  // trip — but the token drives a real join page rather than being redeemed
+  // in the background. The slug is decoration for the human reading the URL;
+  // the token is what the server matches on.
   const joinToken = parseJoinPath(location.pathname);
   if (joinToken) {
-    localStorage.setItem(PENDING_JOIN_KEY, joinToken);
+    stashJoinToken(joinToken);
     history.replaceState(null, '', '/');
   }
   const params = new URLSearchParams(location.search);
@@ -115,27 +117,14 @@ export default function App() {
     })();
   }, [user, qc]);
 
-  // Same dance for a stashed join link (issue #85). Redeeming is idempotent,
-  // so someone who follows the link while already a member simply lands in the
-  // workspace.
-  useEffect(() => {
-    if (!user) return;
-    const token = localStorage.getItem(PENDING_JOIN_KEY);
-    if (!token) return;
-    void (async () => {
-      try {
-        const ws = await api<WorkspaceDTO>('POST', '/v1/join-links/redeem', { token });
-        localStorage.setItem(ACTIVE_WS_KEY, ws.id);
-        setWorkspaceId(ws.id);
-        await qc.invalidateQueries({ queryKey: ['workspaces'] });
-      } catch (err) {
-        setNotice('That join link is no longer valid — ask for a fresh one.');
-        console.warn(`join link redeem failed: ${(err as Error).message}`);
-      } finally {
-        localStorage.removeItem(PENDING_JOIN_KEY);
-      }
-    })();
-  }, [user, qc]);
+  // A stashed join link (issue #85) takes over the whole screen until it's
+  // resolved — see JoinScreen. Read once at boot so the token is picked up
+  // both on the first visit and on the way back from a confirmation email.
+  const [pendingJoin, setPendingJoin] = useState<string | null>(readJoinToken);
+  const resolveJoin = useCallback(() => {
+    clearJoinToken();
+    setPendingJoin(null);
+  }, []);
 
   // Google sign-in can enroll the user into workspaces that opened their doors
   // to their email domain (phase16 §4). Land them in one instead of the empty
@@ -187,6 +176,28 @@ export default function App() {
   // to the handoff rather than dropping into the workspace.
   if (nativeHandoff) {
     return <NativeSignIn signedIn={!!user} />;
+  }
+
+  // A join link owns the screen until it's joined, declined, or found dead —
+  // signed out it wraps the auth card so that names the workspace too.
+  if (pendingJoin) {
+    return (
+      <JoinScreen
+        token={pendingJoin}
+        user={user}
+        onSignedIn={signIn}
+        signupToken={signupToken}
+        resetToken={resetToken}
+        signinToken={signinToken}
+        onJoined={(ws, alreadyMember) => {
+          localStorage.setItem(ACTIVE_WS_KEY, ws.id);
+          setWorkspaceId(ws.id);
+          setNotice(alreadyMember ? `You're already in ${ws.name}.` : `You've joined ${ws.name}.`);
+          resolveJoin();
+        }}
+        onDismiss={resolveJoin}
+      />
+    );
   }
 
   if (!user) {
