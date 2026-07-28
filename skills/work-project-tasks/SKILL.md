@@ -195,6 +195,30 @@ Prefer the accessibility tree for asserting *state* — it's cheaper and more
 precise than pixels. Screenshots are evidence of *appearance*, which is what
 the PR wants.
 
+### Put the machine back
+
+Everything you started for the verification, stop when you're done. The next
+agent inherits this machine, and so does the human whose desktop it is: a dev
+server left holding a port sends the following run off to test against the
+wrong build. Stop your server, quit the app builds you launched, terminate the
+simulator app, and undo any system setting you flipped to make a check possible
+(appearance, for instance).
+
+```sh
+pkill -f "flow-wt-<slug>/packages/server"          # your dev server
+pkill -f "flow-wt-<slug>/apps/macos/dist/Flow.app" # your macOS build
+xcrun simctl terminate booted org.flowtoo.app      # your simulator app
+```
+
+Match on your **own worktree path**, never a bare `pkill -f Flow` — other agents
+run their own copies and the human may have the real app open. Check what a PID
+actually is (`lsof -p <pid> | awk '$4=="cwd"'`) before killing anything you
+can't attribute. Whatever was already running when you arrived — postgres, a
+simulator someone else booted, whatever holds 8787 — is not yours to stop.
+
+If you took a port other than 8787 because 8787 was busy, mention in the channel
+that it's going away, so nobody is left poking at a server you just killed.
+
 ## 7. Commit, push, open the PR
 
 Commit, then open one PR for the whole batch, closing every issue in it:
@@ -279,5 +303,8 @@ round trip.
   as `Done` or `Blocked`.
 - **Don't retry a `Blocked` task.** It's blocked on a human, not on effort.
 - **Don't push to `main`.** Everything goes through a PR.
+- **Don't leave your servers running.** The run ends with the machine as you
+  found it — your dev server, app builds and simulator app stopped, and any
+  system setting you changed put back.
 - **Don't work silently.** If the channel exists, the run should be legible from
   it alone.
