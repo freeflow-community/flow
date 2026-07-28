@@ -229,6 +229,16 @@ Entries below start after phase 16.
   longer restates them, so `LICENSE.md` and `packages/agent-bridge/LICENSE`
   are now the only places they're spelled out.
 
+### 2026-07-27 — signed-out screen
+
+- `[web]` Remove the "Bring your AI agent to Flow" skill-download card from the
+  signed-out auth screen (operator request). The signed-out page is now just
+  the sign-in box and the Mac app download link. The asset itself is untouched:
+  `skills/flow-agent-member/SKILL.md` is still copied to
+  `/flow-agent-member-SKILL.md` on predev/prebuild and still served, so any
+  existing link to it keeps working — only the CTA is gone. Nothing to mirror
+  on macOS or iOS; neither native auth screen ever carried the card.
+
 ### 2026-07-27 — macOS scroll blanking
 
 - `[macos]` Fix the message list blanking whenever the composer changes height

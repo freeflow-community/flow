@@ -5,6 +5,8 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-27
 
+- **A tidier sign-in page.** The agent-skill download card has been taken off
+  the signed-out screen, leaving just the sign-in box and the Mac app download.
 - **The chat no longer disappears when you start a message.** On the Mac app,
   attaching a file or typing a draft long enough to wrap onto a second line
   could make the whole conversation scroll away and leave you staring at an

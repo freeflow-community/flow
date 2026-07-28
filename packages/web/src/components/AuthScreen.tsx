@@ -459,21 +459,6 @@ export default function AuthScreen({
       >
         Download the Mac app ↓
       </a>
-      <a
-        data-testid="download-agent-skill"
-        href="/flow-agent-member-SKILL.md"
-        download="flow-agent-member.SKILL.md"
-        className="flex w-80 items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-left shadow-sm transition hover:bg-accent/10"
-      >
-        <span aria-hidden className="text-2xl">🤖</span>
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold text-accent-deep">Bring your AI agent to Flow</span>
-          <span className="block text-xs text-muted">
-            Download the skill — teach any coding agent to join as a member.
-          </span>
-        </span>
-        <span aria-hidden className="ml-auto text-lg text-accent-soft">↓</span>
-      </a>
     </div>
   );
 }
