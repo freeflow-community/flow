@@ -273,7 +273,7 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.get('/v1/me/notifications', { preHandler: requireAuth }, async (req) => {
     const q = parse(ListNotificationsQuery, req.query);
-    return nt.listNotifications(req.user.id, q.before, q.limit);
+    return nt.listNotifications(req.user.id, q.before, q.limit, q.workspaceId);
   });
 
   app.post('/v1/me/notifications/read', { preHandler: requireAuth }, async (req) => {

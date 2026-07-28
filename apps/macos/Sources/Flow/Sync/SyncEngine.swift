@@ -258,6 +258,9 @@ actor SyncEngine {
         await refreshChannels(workspaceId: id)
         await refreshMembers(workspaceId: id)
         await refreshArtifacts(workspaceId: id)
+        // The Activity badge counts this workspace only, so it changes meaning
+        // the moment the workspace does.
+        await refreshNotificationBadge()
     }
 
     func createWorkspace(name: String, slug: String) async throws -> Workspace {
@@ -1011,21 +1014,30 @@ actor SyncEngine {
 
     // MARK: - Notifications (phase2.md §4)
 
-    func fetchNotifications(before: String? = nil) async throws -> NotificationsResponse {
+    /// Activity is a row inside a workspace, so the feed is scoped to one —
+    /// `workspaceId` nil only for the badge refresh before a workspace is
+    /// selected. The response's `unreadCount` is that workspace's; the dock
+    /// badge follows `totalUnreadCount`.
+    func fetchNotifications(
+        workspaceId: String? = nil,
+        before: String? = nil
+    ) async throws -> NotificationsResponse {
         let query: [URLQueryItem] = [
             URLQueryItem(name: "limit", value: "50"),
+            workspaceId.map { URLQueryItem(name: "workspaceId", value: $0) },
             before.map { URLQueryItem(name: "before", value: $0) },
         ].compactMap(\.self)
         let resp: NotificationsResponse = try await api.get("/v1/me/notifications", query: query)
-        await appState?.setNotificationUnread(resp.unreadCount)
+        await appState?.setNotificationUnread(resp.unreadCount, total: resp.totalUnreadCount)
         return resp
     }
 
-    /// Everything up to a cursor (opening the Activity feed).
-    func markNotificationsRead(upToId: String) async {
+    /// Everything up to a cursor (opening the Activity feed). Scoped to the
+    /// feed's workspace so it can't read rows the user never saw.
+    func markNotificationsRead(upToId: String, workspaceId: String?) async {
         let _: OkResponse? = try? await api.post(
             "/v1/me/notifications/read",
-            body: MarkNotificationsReadBody(upToId: upToId)
+            body: MarkNotificationsReadBody(upToId: upToId, workspaceId: workspaceId)
         )
         await refreshNotificationBadge()
     }
@@ -1040,11 +1052,16 @@ actor SyncEngine {
         await refreshNotificationBadge()
     }
 
-    private func refreshNotificationBadge() async {
+    /// Both badges in one call: the selected workspace's count and the total.
+    func refreshNotificationBadge() async {
+        var query = [URLQueryItem(name: "limit", value: "1")]
+        if let workspaceId = await appState?.selectedWorkspaceId {
+            query.append(URLQueryItem(name: "workspaceId", value: workspaceId))
+        }
         guard let resp: NotificationsResponse = try? await api.get(
-            "/v1/me/notifications", query: [URLQueryItem(name: "limit", value: "1")]
+            "/v1/me/notifications", query: query
         ) else { return }
-        await appState?.setNotificationUnread(resp.unreadCount)
+        await appState?.setNotificationUnread(resp.unreadCount, total: resp.totalUnreadCount)
     }
 
     func editMessage(id: String, body: String) async {
@@ -1280,10 +1297,11 @@ actor SyncEngine {
                 Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body, names: names))
             }
 
-        case .notificationRead(let data):
+        case .notificationRead:
             // Another session (or the server, on a channel/thread visit) read
-            // rows — the badge follows the server's count.
-            await appState?.setNotificationUnread(data.unreadCount)
+            // rows. The event's count is the cross-workspace total, so it can't
+            // drive the workspace-scoped sidebar badge — refetch both.
+            await refreshNotificationBadge()
             // The rows can span channels (and workspaces, from the Activity
             // feed), and the event carries ids rather than a per-channel
             // breakdown — refetch the list rather than guess at the deltas.

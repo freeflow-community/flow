@@ -43,10 +43,13 @@ struct ActivityFeedView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(MC.base)
         // task(id:) → refetches whenever a new notification arrives while we're
-        // open; marking read below bumps the count to 0, which settles here.
-        .task(id: app.notificationUnread) {
+        // open, or the workspace changes; marking read below bumps the count to
+        // 0, which settles here.
+        .task(id: FeedKey(unread: app.notificationUnread, workspaceId: app.selectedWorkspaceId)) {
             defer { loading = false }
-            if let resp = try? await app.engine.fetchNotifications() {
+            if let resp = try? await app.engine.fetchNotifications(
+                workspaceId: app.selectedWorkspaceId
+            ) {
                 items = resp.notifications
             }
             userNames = (try? await app.db.reader.read { db in
@@ -58,9 +61,18 @@ struct ActivityFeedView: View {
             // (channel semantics), clearing the sidebar badge.
             if let newest = items.first, markedNewestId != newest.id {
                 markedNewestId = newest.id
-                await app.engine.markNotificationsRead(upToId: newest.id)
+                await app.engine.markNotificationsRead(
+                    upToId: newest.id, workspaceId: app.selectedWorkspaceId
+                )
             }
         }
+    }
+
+    /// Refetch trigger: a new notification, or a workspace switch (a different
+    /// workspace is a different feed).
+    private struct FeedKey: Equatable {
+        let unread: Int
+        let workspaceId: String?
     }
 
     private var header: some View {

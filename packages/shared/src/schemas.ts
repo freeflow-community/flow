@@ -259,17 +259,30 @@ export const EmojiParam = z
   .refine((s) => /^\p{RGI_Emoji}$/v.test(s), 'must be a single unicode emoji');
 
 // ---- notifications ---------------------------------------------
+/**
+ * `workspaceId` scopes the feed to one workspace — Activity is a row inside a
+ * workspace's sidebar, so it must only show that workspace's rows. Optional so
+ * clients built before the scoping (shipped macOS builds) still get the old
+ * cross-workspace feed rather than an error.
+ */
 export const ListNotificationsQuery = z.object({
+  workspaceId: z.string().uuid().optional(),
   before: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type ListNotificationsQuery = z.infer<typeof ListNotificationsQuery>;
 
-/** Either a cursor (everything up to it) or a single row (one Activity click). */
+/**
+ * Either a cursor (everything up to it) or a single row (one Activity click).
+ * `workspaceId` scopes a cursor sweep, so opening Activity in one workspace
+ * can't mark another workspace's older rows read. Ignored alongside `id`,
+ * which already names a single row.
+ */
 export const MarkNotificationsReadBody = z
   .object({
     upToId: z.string().uuid().optional(),
     id: z.string().uuid().optional(),
+    workspaceId: z.string().uuid().optional(),
   })
   .refine((b) => b.upToId !== undefined || b.id !== undefined, 'upToId or id required');
 export type MarkNotificationsReadBody = z.infer<typeof MarkNotificationsReadBody>;

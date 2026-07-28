@@ -180,18 +180,22 @@ export function useThread(rootId: string | null) {
   });
 }
 
-export function useNotifications(enabled: boolean) {
+// Activity is a row inside a workspace, so both the feed and its badge are
+// scoped to that workspace — the workspaceId is part of the query key so a
+// switch refetches rather than showing the previous workspace's rows.
+export function useNotifications(enabled: boolean, workspaceId: string | null) {
   return useQuery({
-    queryKey: ['notifications'],
-    queryFn: () => api<NotificationPage>('GET', '/v1/me/notifications?limit=50'),
-    enabled,
+    queryKey: ['notifications', workspaceId],
+    queryFn: () => api<NotificationPage>('GET', `/v1/me/notifications?limit=50&workspaceId=${workspaceId!}`),
+    enabled: enabled && workspaceId !== null,
   });
 }
 
-export function useNotificationUnread() {
+export function useNotificationUnread(workspaceId: string | null) {
   return useQuery({
-    queryKey: ['notificationUnread'],
-    queryFn: () => api<NotificationPage>('GET', '/v1/me/notifications?limit=1'),
+    queryKey: ['notificationUnread', workspaceId],
+    queryFn: () => api<NotificationPage>('GET', `/v1/me/notifications?limit=1&workspaceId=${workspaceId!}`),
+    enabled: workspaceId !== null,
     select: (d) => d.unreadCount,
   });
 }

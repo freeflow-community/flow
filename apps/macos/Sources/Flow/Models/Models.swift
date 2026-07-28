@@ -560,7 +560,12 @@ struct NotificationReadData: Decodable, Sendable {
 struct NotificationsResponse: Decodable, Sendable {
     let notifications: [NotificationItem]
     let hasMore: Bool
+    /// Unread in the workspace we asked for — the sidebar Activity badge.
     let unreadCount: Int
+    /// Unread across every workspace — the app icon badge, which still has to
+    /// speak for the workspaces you aren't looking at. Optional so a client
+    /// pointed at a server predating the field still decodes.
+    let totalUnreadCount: Int?
 }
 
 struct RegisterBody: Encodable, Sendable {
@@ -652,6 +657,9 @@ struct PatchMeBody: Encodable, Sendable {
 struct MarkNotificationsReadBody: Encodable, Sendable {
     var upToId: String?
     var id: String?
+    /// Keeps an `upToId` sweep inside one workspace (the cursor is a plain id
+    /// comparison server-side). Ignored alongside `id`.
+    var workspaceId: String?
 }
 struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String }
 /// POST /v1/artifacts — pin a file as a shared artifact in a channel. nil name

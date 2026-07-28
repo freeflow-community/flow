@@ -298,7 +298,17 @@ export interface NotificationDTO {
 export interface NotificationPage {
   notifications: NotificationDTO[];
   hasMore: boolean;
+  /**
+   * Unread rows in the requested scope — this workspace when the query carried
+   * a `workspaceId`, every workspace otherwise. Drives the in-workspace
+   * Activity badge.
+   */
   unreadCount: number;
+  /**
+   * Unread rows across every workspace, regardless of scope. Drives the OS app
+   * icon badge, which must still speak for workspaces you aren't looking at.
+   */
+  totalUnreadCount: number;
 }
 
 export interface AuthResponse {
