@@ -213,6 +213,9 @@ Entries below start after phase 16.
   off the "Flow work queue" Project and carries it to a PR: claim, worktree off
   `main`, build, verify, PR closing every issue in the batch, mark Done. Ships
   `next-batch.sh` (queue → next batch, or `IDLE`) and `set-status.sh`.
+- `[docs]` Drop the Developer Certificate of Origin section from
+  `CONTRIBUTING.md` — sign-off was never enforced and most of `main` lacks it.
+  Source-attribution guidance moves under Licensing, where it belongs.
 
 ### 2026-07-28 — Typeahead floats above the composer (macOS)
 

@@ -2,7 +2,7 @@
 
 Thanks for wanting to help. Start with the **Contributing** section of
 `README.md` for what's most useful to work on and how PRs are reviewed; this
-file covers the legal side — licensing and sign-off — plus the repo
+file covers the legal side — how contributions are licensed — plus the repo
 conventions every change has to satisfy.
 
 ## Licensing of contributions
@@ -19,28 +19,10 @@ terms as the rest of the repository — FSL-1.1-ALv2 for the project, MIT for
 `packages/agent-bridge`, which is licensed separately so integrators can embed
 it without restriction.
 
-## Developer Certificate of Origin
-
-Every commit must be signed off, certifying that you wrote the change or
-otherwise have the right to submit it under the project's license. This is the
-[Developer Certificate of Origin 1.1](https://developercertificate.org/) —
-the same mechanism the Linux kernel uses. It is a statement about provenance,
-not a copyright assignment; you keep the copyright in your contribution.
-
-Add the sign-off with `git commit -s`, which appends:
-
-```
-Signed-off-by: Your Name <your.email@example.com>
-```
-
-Use your real name and an email you can be reached at. To fix a commit you
-already made, `git commit --amend -s`; for a whole branch,
-`git rebase --signoff main`.
-
 If any part of your contribution is copied or adapted from elsewhere, say so in
 the PR description and name the source and its license. AI-assisted changes are
-welcome — Flow is largely built that way — but you are certifying the result,
-so review it before you sign off on it.
+welcome — Flow is largely built that way — but you are responsible for the
+result, so review it before you open the PR.
 
 ## Repo conventions
 

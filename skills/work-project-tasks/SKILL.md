@@ -145,18 +145,7 @@ the PR wants.
 
 ## 6. Commit, push, open the PR
 
-`CONTRIBUTING.md` asks every commit to be **signed off** (DCO), so use `-s`:
-
-```sh
-git commit -s -m "fix(web): ..."
-```
-
-Sign-off is a provenance claim — it says a person vouches for this change. If
-you are an agent committing under a bot identity, sign off under the human who
-asked for the work, or leave it to them at merge time; don't certify on their
-behalf without being told to. (In practice `main` is a mix of both.)
-
-Push and open one PR for the whole batch, closing every issue in it:
+Commit, then open one PR for the whole batch, closing every issue in it:
 
 ```sh
 git push -u origin fix/issue-<n>-<slug>
