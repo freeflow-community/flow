@@ -209,6 +209,13 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — iOS distribution: new Apple account, first TestFlight upload
+
+- `[ios]` Signing moves to the new Apple team (`RP5QYMYA4Z`) with bundle id
+  `im.freeflow.app` (supersedes the org.flowtoo.* ruling — nothing had shipped
+  under the old id; see decision_log 2026-07-28). First build uploaded to App
+  Store Connect; release lane recorded in BUILD.md + `ExportOptions.plist`.
+
 ### 2026-07-28 — Jump to latest, link cursor, hover-menu tooltips
 
 - `[web]` `[macos]` `[ios]` A "Latest msgs ↓" pill appears while you're reading

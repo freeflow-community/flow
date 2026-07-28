@@ -98,7 +98,7 @@ Config, following the `FLOW_EMAIL_*` shape in `config.ts`:
 | `FLOW_APNS_KEY` | base64 of the `.p8` APNs Auth Key |
 | `FLOW_APNS_KEY_ID` | 10-char key id |
 | `FLOW_APNS_TEAM_ID` | Apple Developer team id |
-| `FLOW_APNS_TOPIC` | bundle id — `org.flowtoo.ios` |
+| `FLOW_APNS_TOPIC` | bundle id — `im.freeflow.app` |
 | `FLOW_APNS_ENV` | `sandbox` \| `production` (per-device column wins) |
 
 ### 3. Delivery: outbox, not fire-and-forget
@@ -195,7 +195,7 @@ header comment already describes itself as a stub awaiting this phase.
 
 ### Testing without Apple infrastructure
 
-`xcrun simctl push <device> org.flowtoo.ios payload.json` delivers a payload
+`xcrun simctl push <device> im.freeflow.app payload.json` delivers a payload
 straight to a simulator app — enough to verify rendering, grouping, badge
 maths, foreground suppression and tap-routing end to end, which is the bulk of
 the client work. The dev `PushSender` can write exactly that file format, so
