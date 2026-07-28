@@ -190,6 +190,8 @@ native character palette). QA verifies parity at each phase checkpoint.
 
 Living process files stay at the repo root; everything else is under `docs/`.
 
+- `BUILD.md` — how each artifact (server + web, macOS, iOS, agent bridge) is
+  built and released, and which ones ship automatically on merge
 - `DEPLOYMENT.md` — self-hosting guide: requirements, configuration, storage,
   reverse proxy, backups
 - `CHANGELOG.md` — per-platform history (`[server]` `[web]` `[macos]` `[ios]`
