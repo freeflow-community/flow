@@ -209,6 +209,21 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — `work-project-tasks` skill
+
+- `[docs]` New `skills/work-project-tasks/` — how an agent takes the next batch
+  off the "Flow work queue" Project and carries it to a PR: claim, worktree off
+  `main`, build, verify, PR closing every issue in the batch, mark Done. Ships
+  `next-batch.sh` (queue → next batch, or `IDLE`) and `set-status.sh`.
+- `[docs]` The agent opens a Flow channel per batch (`#task-<n>`), announces it
+  back in the conversation that invoked the skill, and reports claim, surprises,
+  screenshots, PR and outcome there; PR and channel cross-link.
+- `[docs]` A task that can't proceed goes to `Blocked` with the reason as an
+  issue comment — not back to `Queued for Dev`, which would send the next agent
+  into the same wall.
+- `[docs]` Drop the Developer Certificate of Origin section from
+  `CONTRIBUTING.md` — sign-off was never enforced and most of `main` lacks it.
+  Source-attribution guidance moves under Licensing, where it belongs.
 ### 2026-07-28 — Agents answer in channels they own
 
 - `[bridge]` An agent now replies to every top-level message in a channel it

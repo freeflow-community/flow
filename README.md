@@ -80,9 +80,8 @@ Come join the Flow Team workspace: https://app.freeflow.im/join/flow-home/wUKq5m
 Generally our active work queue is on [Issues](https://github.com/freeflow-community/flow/issues). Discussions of larger
 features can be found in [Discussions](https://github.com/freeflow-community/flow/discussions).
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the sign-off requirement (`git commit -s`),
-how contributions are licensed, and the `CHANGELOG.md` / `FEATURES.md` conventions
-every PR has to satisfy.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how contributions are licensed and
+the `CHANGELOG.md` / `FEATURES.md` conventions every PR has to satisfy.
 
 ### Making code contributions
 
