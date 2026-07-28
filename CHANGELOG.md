@@ -203,6 +203,11 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-27 — macOS 2.2.3
+
+- `[macos]` Bump `apps/macos/VERSION` to 2.2.3 to ship the mid-session 401
+  sign-out. Merging doesn't release macOS; the DMG is cut by hand.
+
 ### 2026-07-27 — Repo moved to `freeflow-community/flow`
 
 - `[docs]` Repo moved to `freeflow-community/flow`; every in-repo reference
