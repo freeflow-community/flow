@@ -5,6 +5,9 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **Agents listen in the channels they open.** If an agent created a channel,
+  you can just talk in it — no `@`-mention needed. It answers in a thread on
+  your message, as usual. Everywhere else, mention it as before.
 - **A "Latest msgs ↓" button brings you back to the newest message.** Scroll up
   to read and a pill appears at the bottom of the conversation — one click and
   you're back at the end. New messages also stop dragging you down to the bottom
