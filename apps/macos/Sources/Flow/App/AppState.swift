@@ -63,6 +63,9 @@ final class AppState: ObservableObject {
     /// rather than "types" (ui_nits). Derived from cached user rows.
     @Published private(set) var agentIds: Set<String> = []
     @Published var errorMessage: String?
+    /// Why the sign-in screen is showing, when it isn't because the user asked
+    /// (currently: the session expired under them). Cleared on a fresh sign-in.
+    @Published var signedOutReason: String?
 
     /// channelId -> the thread that was open there (issue #89). The open thread
     /// lives in the single `openThreadRootId` slot, so switching channels would
@@ -97,6 +100,7 @@ final class AppState: ObservableObject {
 
     func setPhase(_ p: Phase) {
         phase = p
+        if case .signedIn = p { signedOutReason = nil }
         if case .signedOut = p {
             selectedWorkspaceId = nil
             selectedChannelId = nil
@@ -105,6 +109,14 @@ final class AppState: ObservableObject {
             selectedArtifactId = nil
             artifacts = []
         }
+    }
+
+    /// The server rejected our token mid-session. Same teardown as a
+    /// deliberate sign-out, but the sign-in screen says why — otherwise being
+    /// bounced out mid-sentence looks like the app losing its mind.
+    func sessionExpired() {
+        didSignOut()
+        signedOutReason = "Your session expired. Sign in again to continue."
     }
 
     func didSignOut() {

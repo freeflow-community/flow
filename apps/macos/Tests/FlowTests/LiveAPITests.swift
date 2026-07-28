@@ -119,4 +119,44 @@ final class LiveAPITests: XCTestCase {
             XCTAssertFalse(e.code.isEmpty)
         }
     }
+
+    /// A session that dies while the app is running must be *noticed*, not just
+    /// thrown. Before the handler existed, the 401 surfaced as the server's raw
+    /// message in whatever sheet made the call ("Couldn't paste image: invalid
+    /// or expired token") while the app went on looking signed in.
+    func testUnauthorizedHandlerFiresOnceForADeadToken() async throws {
+        let api = APIClient(baseURL: baseURL)
+        let fired = Counter()
+        await api.setUnauthorizedHandler { await fired.bump() }
+        await api.setToken("not-a-real-session-token")
+
+        for _ in 0..<3 {
+            do {
+                let _: User = try await api.get("/v1/me")
+                XCTFail("expected 401")
+            } catch let e as APIError {
+                XCTAssertEqual(e.status, 401)
+            }
+        }
+        // Once per session, however many requests fail together.
+        let count = await fired.value
+        XCTAssertEqual(count, 1)
+
+        // A new token arms it again — signing back in must not be permanently
+        // deaf to a later expiry.
+        await api.setToken("still-not-a-real-token")
+        do {
+            let _: User = try await api.get("/v1/me")
+            XCTFail("expected 401")
+        } catch let e as APIError {
+            XCTAssertEqual(e.status, 401)
+        }
+        let after = await fired.value
+        XCTAssertEqual(after, 2)
+    }
+}
+
+private actor Counter {
+    private(set) var value = 0
+    func bump() { value += 1 }
 }

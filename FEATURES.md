@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-27
 
+- **An expired session now just asks you to sign in again.** On the Mac and
+  iPhone apps, if your session ran out while the app was open, it kept looking
+  signed in — but pasting an image or creating a workspace would fail with a
+  baffling "invalid or expired token". Now the app notices, takes you to the
+  sign-in screen and tells you your session expired.
 - **Invite links now tell you where you're going.** Clicking a workspace join
   link used to drop you straight onto the app home page with no explanation —
   you couldn't tell whether it had worked, or even which workspace it was for.

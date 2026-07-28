@@ -229,6 +229,33 @@ Entries below start after phase 16.
   longer restates them, so `LICENSE.md` and `packages/agent-bridge/LICENSE`
   are now the only places they're spelled out.
 
+### 2026-07-27 — An expired session signs you out instead of breaking one action
+
+- `[macos]` `[ios]` A 401 arriving mid-session is now handled. It only ever was
+  at launch (`SyncEngine.bootstrap()`), so a session that died while the app
+  was running went unnoticed: reads kept coming from the local GRDB cache, the
+  app still looked signed in, and every *write* failed with the server's raw
+  message in whatever sheet triggered it — reported from the field as
+  "Couldn't paste image: invalid or expired token" and a Create Workspace
+  dialog saying the same. Neither is an upload bug or a workspace bug; both are
+  one dead session with nowhere to report itself.
+  `APIClient` now takes an unauthorized handler, fired from the four places
+  that build an authenticated request (`request`, `putRaw`, `downloadToFile`,
+  `getData`) when a request that *carried our token* comes back 401 — a
+  presigned R2 PUT goes out unauthenticated and its 401 says nothing about our
+  session, so it's excluded. `SyncEngine` installs a handler that clears the
+  Keychain, stops the socket and drops to the sign-in screen, which now states
+  why. Fired once per session (several in-flight requests fail together on a
+  dead token) and re-armed by `setToken`, so signing back in isn't permanently
+  deaf to a later expiry.
+- This also closes the hole the offline-start path left open: `bootstrap()`
+  deliberately starts from the cache with an *unvalidated* token when the
+  server is unreachable, which is the other way to end up signed-in with a dead
+  session. The first 401 now resolves it either way.
+- iOS gets the fix for free — it compiles the same `Networking`, `Sync` and
+  `AppState.swift` sources — and its sign-in screen carries the same reason
+  line, so no parity gap.
+
 ### 2026-07-27 — A real join page behind a join link (#85)
 
 - `[web]` Following `/join/<slug>/<token>` now lands on a page that names the

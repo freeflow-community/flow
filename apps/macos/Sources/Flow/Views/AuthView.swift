@@ -22,6 +22,16 @@ struct AuthView: View {
             Text("Flow")
                 .font(.largeTitle.bold())
 
+            // Set when the server rejected our token mid-session, so being
+            // bounced to this screen has a stated reason.
+            if let reason = app.signedOutReason {
+                Text(reason)
+                    .font(.callout)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("auth.signedOutReason")
+            }
+
             // In-app registration uses the dev-only autoVerify path, so it only
             // exists against the local dev server. Real servers register via the
             // web (email-first flow) + "Open the desktop app" handoff.
