@@ -213,6 +213,8 @@ Entries below start after phase 16.
   off the "Flow work queue" Project and carries it to a PR: claim, worktree off
   `main`, build, verify, PR closing every issue in the batch, mark Done. Ships
   `next-batch.sh` (queue → next batch, or `IDLE`) and `set-status.sh`.
+- `[docs]` The agent opens a Flow channel per batch (`#task-<n>`) and reports
+  claim, surprises, screenshots, PR and outcome there; PR and channel cross-link.
 - `[docs]` A task that can't proceed goes to `Blocked` with the reason as an
   issue comment — not back to `Queued for Dev`, which would send the next agent
   into the same wall.

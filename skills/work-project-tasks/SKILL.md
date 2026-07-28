@@ -5,9 +5,9 @@ description: >
   all the way to a pull request. Use when asked to "work on the next task from the
   active queue", "work on the next batch", "take the next queued task", "what's
   next in the queue", or "pick up the next Project task". Covers finding the next
-  queued batch, claiming it, building it in an isolated worktree, verifying it with
-  screenshots, opening a PR that closes every issue in the batch, and marking the
-  Project items Done.
+  queued batch, claiming it, reporting progress in a Flow channel, building it in
+  an isolated worktree, verifying it with screenshots, opening a PR that closes
+  every issue in the batch, and marking the Project items Done.
 ---
 
 # Working tasks from the Project queue
@@ -18,7 +18,7 @@ Work is queued on the GitHub Project **"Flow work queue"**
 *what to do next*; issues are the source of truth for *what the task is*.
 
 Invoking this skill means: **take the next batch off the queue and finish it.**
-One batch → one worktree → one branch → one PR.
+One batch → one Flow channel → one worktree → one branch → one PR.
 
 ## The queue model
 
@@ -76,7 +76,43 @@ Claim the **whole batch in one go**. `next-batch.sh` only lists members that are
 still `Queued for Dev`, so claiming them one at a time leaves the rest looking
 available — and the next agent along will take half your batch.
 
-## 3. Branch in a fresh worktree
+## 3. Open a Flow channel and report there
+
+Work in the open. Create one channel per batch and use it as the running record,
+so a human can see what you're doing and interrupt before you've gone too far.
+
+Use the `flow` MCP tools (see the `flow-agent-member` skill for the full set):
+
+- `create_channel` — `name` `task-<lowest issue number>`, e.g. `task-81`. Put the
+  batch in the `topic`: `#81, #110, #111 — message hover polish`. Leave it
+  **public** (`isPrivate` false) so anyone can follow without being added.
+- `invite_to_channel` — add whoever asked for the work, plus anyone already
+  discussing the issues. Several `userIds` in one call; `list_users` gets the ids.
+- `send_message` — the updates.
+- `upload_file` — screenshots, as you take them.
+
+Post at the moments a human might want to intervene, not every command:
+
+1. **On claim** — what you picked up, the issue numbers, and the approach in two
+   or three lines. This is the cheapest possible moment to be told "no, not like
+   that".
+2. **On a surprise** — the issue was wrong, the fix is bigger than described, two
+   issues in the batch conflict. Say so when you find it, not in the summary.
+3. **Screenshots** — as evidence accumulates.
+4. **On PR** — the link.
+5. **At the end** — `Done` with the PR, or `Blocked` with the reason.
+
+Keep it readable. A channel that narrates every file read is one nobody reads;
+the test is whether someone skimming it later can tell what happened and why.
+
+Cross-link both ways: put the channel in the PR body, and the PR link in the
+channel.
+
+**If the `flow` tools aren't available** — no bridge, no MCP server — carry on
+without them and say so in your final report. Losing the progress channel is not
+a reason to abandon the task.
+
+## 4. Branch in a fresh worktree
 
 Never build in the main checkout — it may be mid-edit, and other worktrees exist.
 
@@ -90,7 +126,7 @@ pnpm install
 Branch off **`origin/main`**, never off whatever is checked out. Name the branch
 after the lowest issue number in the batch.
 
-## 4. Build it
+## 5. Build it
 
 Read `CLAUDE.md` first — it is the working-conventions contract and several of
 its rules block a merge. The ones that bite most often:
@@ -113,7 +149,7 @@ pnpm dev                                                    # 127.0.0.1:8787
 > The dev server binds **127.0.0.1:8787**. If something else already holds that
 > port, stop it or set `PORT` — don't assume the page you're looking at is Flow.
 
-## 5. Test, then verify for real
+## 6. Test, then verify for real
 
 ```sh
 pnpm test          # whole workspace
@@ -144,7 +180,7 @@ Prefer the accessibility tree for asserting *state* — it's cheaper and more
 precise than pixels. Screenshots are evidence of *appearance*, which is what
 the PR wants.
 
-## 6. Commit, push, open the PR
+## 7. Commit, push, open the PR
 
 Commit, then open one PR for the whole batch, closing every issue in it:
 
@@ -157,6 +193,8 @@ Closes #81
 Closes #110
 Closes #111
 
+Progress log: #task-81 in Flow.
+
 ## Verification
 <screenshots, and what you asserted>
 EOF
@@ -168,7 +206,7 @@ Attach screenshots by uploading them to the PR body (drag-and-drop equivalent:
 `Closes #n` line **per issue in the batch** — that is what makes merging the PR
 close all of them.
 
-## 7. Mark the batch Done
+## 8. Mark the batch Done
 
 Only after the PR is open (and merged, if you were asked to merge):
 
@@ -176,8 +214,8 @@ Only after the PR is open (and merged, if you were asked to merge):
 bash skills/work-project-tasks/set-status.sh Done <itemId> [<itemId> ...]
 ```
 
-Then report: the PR URL, the issues it closes, what you verified, and anything
-you deliberately left out.
+Post the same in the channel, then report: the PR URL, the issues it closes,
+what you verified, and anything you deliberately left out.
 
 ---
 
@@ -202,7 +240,8 @@ EOF
 ```
 
 Block the **whole batch**, and comment on **every issue in it**. Whoever picks it
-up will be looking at one of them, not necessarily the one you chose.
+up will be looking at one of them, not necessarily the one you chose. Post the
+reason in the Flow channel as well — that's where someone is watching.
 
 **`Blocked`, not back to `Queued for Dev`.** Re-queueing hides the problem: the
 next agent takes the task and walks into the same wall. A human moves it back to
@@ -225,3 +264,5 @@ round trip.
   as `Done` or `Blocked`.
 - **Don't retry a `Blocked` task.** It's blocked on a human, not on effort.
 - **Don't push to `main`.** Everything goes through a PR.
+- **Don't work silently.** If the channel exists, the run should be legible from
+  it alone.
