@@ -45,6 +45,22 @@ actor APIClient {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
+    /// Fired when a request that carried our bearer token comes back 401 — the
+    /// session is gone server-side (expired, revoked, or the row no longer
+    /// exists). SyncEngine installs a handler that tears the session down and
+    /// drops to the sign-in screen.
+    ///
+    /// Without this, a dead session was only ever noticed at launch, in
+    /// `SyncEngine.bootstrap()`. A 401 arriving mid-session propagated to
+    /// whichever view made the call, so "your session expired" reached the
+    /// user as "Couldn't paste image: invalid or expired token" while the rest
+    /// of the app carried on looking signed in, reading from the local cache.
+    private var onUnauthorized: (@Sendable () async -> Void)?
+    /// One teardown per session: a dead token usually fails several in-flight
+    /// requests at once (sync, thumbnails, presence) and they must not each
+    /// trigger their own sign-out.
+    private var reportedUnauthorized = false
+
     init(baseURL: URL) {
         self.baseURL = baseURL
         let config = URLSessionConfiguration.default
@@ -55,6 +71,20 @@ actor APIClient {
 
     func setToken(_ token: String?) {
         self.token = token
+        reportedUnauthorized = false
+    }
+
+    func setUnauthorizedHandler(_ handler: (@Sendable () async -> Void)?) {
+        onUnauthorized = handler
+    }
+
+    /// Report a 401 on an authenticated request, once. `sentToken` is false for
+    /// requests that deliberately go out unauthenticated (a presigned R2 PUT),
+    /// where a 401 says nothing about our session.
+    private func reportIfUnauthorized(status: Int, sentToken: Bool) async {
+        guard status == 401, sentToken, !reportedUnauthorized, let onUnauthorized else { return }
+        reportedUnauthorized = true
+        await onUnauthorized()
     }
 
     // MARK: Convenience verbs
@@ -117,8 +147,10 @@ actor APIClient {
         var req = URLRequest(url: url)
         req.httpMethod = "PUT"
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        var sentToken = false
         if target.hasPrefix("/"), let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            sentToken = true
         }
         let response: URLResponse
         do {
@@ -128,6 +160,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
+            await reportIfUnauthorized(status: status, sentToken: sentToken)
             throw APIError(status: status, code: "upload_failed", message: "upload failed (HTTP \(status))")
         }
     }
@@ -137,6 +170,7 @@ actor APIClient {
     /// temp file before it's cleaned up.
     func downloadToFile(_ path: String) async throws -> URL {
         var req = URLRequest(url: baseURL.appending(path: path))
+        let sentToken = token != nil
         if let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -149,6 +183,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
+            await reportIfUnauthorized(status: status, sentToken: sentToken)
             throw APIError(status: status, code: "http_\(status)", message: "HTTP \(status)")
         }
         return tmp
@@ -157,6 +192,7 @@ actor APIClient {
     /// Authenticated raw-byte GET (file downloads, thumbnails, avatars).
     func getData(_ path: String) async throws -> Data {
         var req = URLRequest(url: baseURL.appending(path: path))
+        let sentToken = token != nil
         if let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -168,6 +204,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
+            await reportIfUnauthorized(status: status, sentToken: sentToken)
             throw APIError(status: status, code: "http_\(status)", message: "HTTP \(status)")
         }
         return data
@@ -194,6 +231,7 @@ actor APIClient {
         }
         var req = URLRequest(url: url)
         req.httpMethod = method
+        let sentToken = token != nil
         if let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -211,6 +249,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
+            await reportIfUnauthorized(status: status, sentToken: sentToken)
             if let env = try? decoder.decode(ErrorEnvelope.self, from: data) {
                 throw APIError(status: status, code: env.error.code, message: env.error.message)
             }

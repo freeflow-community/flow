@@ -11,6 +11,8 @@ packages/server/.keys/
 # swift / xcode
 .build/
 DerivedData/
+# xcodebuild without -derivedDataPath writes here when building the iOS target
+apps/ios/build/
 *.xcuserstate
 xcuserdata/
 .claude/worktrees/

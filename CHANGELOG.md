@@ -6,6 +6,10 @@ but not the others MUST add a line to **Parity** below (and remove it when
 closed). Updated with every milestone commit (PM) and interactive-session fix
 (coordinator).
 
+Keep entries very succinct — one or two lines each: what changed, plus the why
+only when it isn't obvious. Reasoning, investigation notes and file lists go in
+the commit message, not here. This is a ledger to scan, not a narrative.
+
 ## Parity
 
 ### Gaps to close
@@ -201,64 +205,43 @@ Entries below start after phase 16.
 
 ### 2026-07-27 — Repo moved to `freeflow-community/flow`
 
-- `[docs]` The canonical repo is now
-  [`freeflow-community/flow`](https://github.com/freeflow-community/flow), not
-  `scottpersinger/flow`. Updated every in-repo reference: the clone command and
-  issue/discussion links in `DEPLOYMENT.md`, the Railway source named in
-  `BUILD.md` and `docs/ops/DEPLOYMENT.md`, the discussions link in
-  `docs/specs/IDEAS.md`, `packages/agent-bridge`'s `repository.url`, the
-  trusted-publisher setup comment in `.github/workflows/publish-bridge.yml`,
-  and the landing site's `site.config.ts` (which pointed at
-  `freeflow-chat/freeflow`, a repo that doesn't exist). Also made the README's
-  Issues/Discussions links absolute — they were root-relative (`/issues`),
-  which GitHub resolves against the *blob* path, so they 404'd at
-  `…/flow/blob/main/issues`. Archive logs keep the old name as history. Two
-  things live outside the repo and still need a human: npm's trusted-publisher
-  config for `flow-agent-bridge` is keyed to the old owner, and Railway's `app`
-  service is still connected to the old GitHub source.
+- `[docs]` Repo moved to `freeflow-community/flow`; every in-repo reference
+  follows (docs, `agent-bridge`'s `repository.url`, workflow comment, landing
+  site). Archive logs keep the old name as history.
+- `[docs]` README's Issues/Discussions links are absolute — root-relative
+  `/issues` resolved against the blob path and 404'd.
+- Still owed outside the repo: npm's trusted-publisher config and Railway's
+  GitHub source both still name the old owner.
 
 ### 2026-07-27 — README screenshot
 
-- `[docs]` Replace the ASCII-art banner at the top of `README.md` with a real
-  screenshot of the web client (`docs/images/flow-web-general.png`) — a
-  workspace with channels, DMs, a threaded conversation and an inline image
-  card, which shows what Flow is in one glance where the wordmark didn't.
-- `[docs]` Trim the README's License section to a single link to
-  [`LICENSE.md`](LICENSE.md). The terms themselves are unchanged —
-  `FSL-1.1-ALv2` for Flow, MIT for `packages/agent-bridge` — but the README no
-  longer restates them, so `LICENSE.md` and `packages/agent-bridge/LICENSE`
-  are now the only places they're spelled out.
+- `[docs]` README banner is now a screenshot of the web client
+  (`docs/images/flow-web-general.png`) instead of the ASCII wordmark.
+- `[docs]` README's License section trimmed to a link to `LICENSE.md`. Terms
+  unchanged; they're just no longer restated in two places.
+
+### 2026-07-27 — An expired session signs you out instead of breaking one action
+
+- `[macos]` `[ios]` A 401 mid-session now signs you out with a reason, instead
+  of failing whatever action hit it. 401 was only handled at launch, so a dead
+  session showed up as "Couldn't paste image: invalid or expired token" while
+  the app read on from cache. `APIClient` gained an unauthorized handler;
+  `SyncEngine` tears the session down. Also covers the offline-start path,
+  which begins from cache with an unvalidated token.
+- No parity gap: iOS compiles the same `Networking`/`Sync`/`AppState` sources.
 
 ### 2026-07-27 — A real join page behind a join link (#85)
 
-- `[web]` Following `/join/<slug>/<token>` now lands on a page that names the
-  workspace and asks. Before, the client stashed the token, rewrote the URL to
-  `/` and redeemed in the background, so the whole experience was "the link
-  bounced me to the app home page": nothing said which workspace was on the
-  other side, nothing confirmed the join, and someone who was already a member
-  couldn't tell the link had done anything at all. The unauthenticated preview
-  endpoint (`GET /v1/join-links/:token`) was built for exactly this page in the
-  first place — its comment says "so the join page can name the workspace
-  before the visitor signs in" — and nothing had ever called it. Now:
-  - signed out, `JoinScreen` wraps `AuthScreen` so the card reads "You've been
-    invited to join **Acme**" and defaults to Register, the same nudge an
-    emailed invite already gets;
-  - signed in, it asks before joining, showing which account it would join as
-    — and for someone who is already a member it says so and offers to open the
-    workspace instead of a pointless "Join";
-  - a revoked or mistyped token gets "this join link is no longer valid" with a
-    way into the app, rather than a silent failure notice on the home screen;
-  - joining lands in the workspace with a "You've joined Acme" confirmation.
-- `[web]` Expire the pending-join stash after 24 hours. The token has to
-  outlive the register→confirm-email→sign-in round trip, which is why it's in
-  `localStorage` at all, but now that it drives a full-screen page a token left
-  by someone who wandered off would hijack their next visit. Stored as
-  `{token, at}`; a bare string (the old format) is still honoured once so
-  anyone mid-flow across the deploy still lands in their workspace.
-- No parity gap: macOS and iOS have no join screen of their own because
-  following a join link on either opens the web app, which is what this
-  changes. Managing the link (create/copy/regenerate/revoke) is a separate
-  surface and iOS still lacks it — that entry stands.
+- `[web]` `/join/<slug>/<token>` now lands on a page that names the workspace
+  and asks, instead of redeeming silently and dropping you on the app home
+  page. New `JoinScreen`: signed out it wraps `AuthScreen` with the workspace
+  name; signed in it confirms, or offers to open the workspace if you're
+  already a member; a dead token says so. First caller of the preview endpoint
+  `GET /v1/join-links/:token`, which existed for this.
+- `[web]` The pending-join stash expires after 24h — it now drives a
+  full-screen page, so a forgotten token would hijack the next visit.
+- No parity gap: macOS and iOS follow join links by opening the web app. (iOS
+  still lacks join-link *management* — that entry stands.)
 
 ### 2026-07-27 — signed-out screen
 

@@ -33,7 +33,33 @@ actor SyncEngine {
 
     // MARK: - Auth
 
+    /// Local teardown for a session the server has already rejected. Same as
+    /// `logout()` minus the `/v1/auth/logout` call — the token is dead, so
+    /// there is nothing to revoke — and it leaves the cache in place so the
+    /// next sign-in on the same account doesn't re-download everything.
+    ///
+    /// Installed as APIClient's 401 handler in `bootstrap()`. Before this, a
+    /// session that died while the app was running was never noticed: reads
+    /// came from the local cache and every write failed with the server's raw
+    /// message ("invalid or expired token") in whatever sheet triggered it.
+    func sessionExpired() async {
+        guard currentUser != nil else { return }
+        Keychain.deleteToken()
+        await api.setToken(nil)
+        await socket.stop()
+        socketConsumer?.cancel()
+        socketConsumer = nil
+        currentUser = nil
+        activeWorkspaceId = nil
+        activeChannelId = nil
+        openThreadRootId = nil
+        await appState?.sessionExpired()
+    }
+
     func bootstrap() async {
+        await api.setUnauthorizedHandler { [weak self] in
+            await self?.sessionExpired()
+        }
         guard let token = Keychain.loadToken() else {
             await appState?.setPhase(.signedOut)
             return

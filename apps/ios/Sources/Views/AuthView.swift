@@ -29,6 +29,17 @@ struct AuthView: View {
                 .foregroundStyle(MC.accent)
             Text("Flow").font(.largeTitle.bold()).foregroundStyle(MC.ink)
 
+            // Set when the server rejected our token mid-session, so being
+            // bounced to this screen has a stated reason.
+            if let reason = app.signedOutReason {
+                Text(reason)
+                    .font(.callout)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 24)
+                    .accessibilityIdentifier("auth.signedOutReason")
+            }
+
             if linkSent {
                 linkSentCard
             } else {
