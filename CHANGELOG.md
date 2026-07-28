@@ -229,7 +229,6 @@ Entries below start after phase 16.
   (#110): AppKit help tags never appeared on a pill that only exists while
   hovered, and the system delay outlasts the hover anyway.
 - VERSION → 2.2.6.
->>>>>>> origin/main
 
 ### 2026-07-28 — Typeahead floats above the composer (macOS)
 
