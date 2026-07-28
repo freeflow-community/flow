@@ -111,6 +111,7 @@ struct AuthView: View {
                 }
                 .buttonStyle(.link)
                 .font(.callout)
+                .pointingHandCursor()
             }
 
             Text("Server: \(Server.displayName)")

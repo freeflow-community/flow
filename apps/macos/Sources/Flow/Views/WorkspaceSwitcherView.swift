@@ -62,6 +62,7 @@ struct WorkspaceSwitcherView: View {
                 Task { await app.engine.logout() }
             }
             .buttonStyle(.link)
+            .pointingHandCursor()
             .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

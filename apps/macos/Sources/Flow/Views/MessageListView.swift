@@ -38,6 +38,7 @@ struct MessageListView: View {
                             Button("Load earlier messages", action: onLoadOlder)
                                 .buttonStyle(.link)
                                 .font(.callout)
+                                .pointingHandCursor()
                             Spacer()
                         }
                         .padding(.vertical, 8)
@@ -355,11 +356,8 @@ struct MessageRow: View {
                         }
                     }
                     .buttonStyle(.link)
-                    // Hand cursor on hover (ui_nits) — same push/pop pattern as
-                    // the sidebar/thread resize handles in MainView.
-                    .onHover { inside in
-                        if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                    }
+                    // Hand cursor on hover (ui_nits).
+                    .pointingHandCursor()
                 }
             }
             Spacer(minLength: 0)
@@ -648,9 +646,15 @@ struct MessageRow: View {
     }
 
     private func paragraphText(_ text: String) -> some View {
-        Text(MentionRendering.attributed(text, names: userNames, currentUserId: currentUserId))
+        let attributed = MentionRendering.attributed(
+            text, names: userNames, currentUserId: currentUserId
+        )
+        return Text(attributed)
             .font(.callout)
             .textSelection(.enabled)
+            // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
+            // inside a Text, so linkCursor re-lays the string to find them.
+            .linkCursor(attributed)
     }
 
     @ViewBuilder
@@ -676,10 +680,12 @@ struct MessageRow: View {
             Button("Retry") { Task { await app.engine.retrySend(message) } }
                 .buttonStyle(.link)
                 .font(.caption.weight(.semibold))
+                .pointingHandCursor()
             Button("Discard") { Task { await app.engine.discardFailed(message) } }
                 .buttonStyle(.link)
                 .font(.caption)
                 .foregroundStyle(MC.muted)
+                .pointingHandCursor()
         }
         .padding(.top, 1)
     }
