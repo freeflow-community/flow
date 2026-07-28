@@ -180,6 +180,7 @@ struct TextAttachmentView: View {
                 Button(expanded ? "Collapse" : "Expand") { expanded.toggle() }
                     .buttonStyle(.link)
                     .font(.caption)
+                    .pointingHandCursor()
                     .accessibilityIdentifier("msg.file.expand.\(file.name)")
             }
         }

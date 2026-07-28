@@ -33,14 +33,14 @@ xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
   -derivedDataPath .build CODE_SIGNING_ALLOWED=NO build
 APP=$(find .build/Build/Products -name Flow.app -path '*iphonesimulator*' | head -1)
 xcrun simctl boot 'iPhone 17 Pro' 2>/dev/null; xcrun simctl install 'iPhone 17 Pro' "$APP"
-xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
+xcrun simctl launch 'iPhone 17 Pro' im.freeflow.app
 ```
 
 ## Upload to TestFlight (manual, Xcode GUI)
 
 There's no release script yet — do it from Xcode for now. Prerequisites, all
 one-time: an **Apple Developer Program** membership on the team that owns
-`org.flowtoo.app`; an **app record** for that bundle id in App Store Connect
+`im.freeflow.app`; an **app record** for that bundle id in App Store Connect
 (Apps → +); and your **Team ID** (Xcode → Settings → Accounts, or
 developer.apple.com → Membership). You do *not* need to create a distribution
 certificate by hand — automatic signing provisions it.
@@ -59,8 +59,8 @@ certificate by hand — automatic signing provisions it.
    GUI** (GUI edits are wiped on the next `xcodegen generate`, and a literal in
    the plist would silently pin every archive to its value). Increment
    `CURRENT_PROJECT_VERSION` and re-run `xcodegen generate` for every upload.
-3. Signing is already wired: `project.yml` sets `DEVELOPMENT_TEAM` (BizTrip AI
-   Inc., `76NSMTH84G`) with automatic signing, so the team survives
+3. Signing is already wired: `project.yml` sets `DEVELOPMENT_TEAM`
+   (`RP5QYMYA4Z`) with automatic signing, so the team survives
    `xcodegen generate`. Just confirm **Signing & Capabilities** shows that team
    with no errors (you must be signed into an Xcode account that belongs to it).
 4. Set the run destination to **Any iOS Device (arm64)** — not a simulator;
@@ -110,7 +110,7 @@ SIMCTL_CHILD_FLOW_SERVER_URL=http://127.0.0.1:8787 \
 SIMCTL_CHILD_FLOW_DEBUG_EMAIL=alice@qa.local \
 SIMCTL_CHILD_FLOW_DEBUG_PASSWORD=qa-password-1 \
 SIMCTL_CHILD_FLOW_DEBUG_OPEN_CHANNEL=general \
-xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
+xcrun simctl launch 'iPhone 17 Pro' im.freeflow.app
 ```
 
 (Local HTTP is allowed via an `NSAllowsLocalNetworking` ATS exception; prod

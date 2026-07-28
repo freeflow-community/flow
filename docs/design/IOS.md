@@ -96,7 +96,7 @@ xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
 APP=$(find .build/Build/Products -name Flow.app -path '*iphonesimulator*' | head -1)
 xcrun simctl boot 'iPhone 17 Pro' 2>/dev/null
 xcrun simctl install 'iPhone 17 Pro' "$APP"
-xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
+xcrun simctl launch 'iPhone 17 Pro' im.freeflow.app
 ```
 
 `CODE_SIGNING_ALLOWED=NO` is passed on the command line (not baked into the
@@ -109,7 +109,7 @@ project) so the committed project stays device-ready.
    signing** → choose your **Team** (your personal Apple ID is fine — add it
    in Xcode ▸ Settings ▸ Accounts if needed).
 
-2. **Make the bundle id unique if required.** The default is `org.flowtoo.ios`.
+2. **Make the bundle id unique if required.** The default is `im.freeflow.app`.
    Free/personal signing needs a bundle id no one else has registered; if
    Xcode complains, change it (target settings, or `PRODUCT_BUNDLE_IDENTIFIER`
    in `project.yml` → re-`xcodegen generate`) to e.g. `com.<you>.flow`.
@@ -190,7 +190,7 @@ SIMCTL_CHILD_FLOW_SERVER_URL=http://127.0.0.1:8787 \
 SIMCTL_CHILD_FLOW_DEBUG_EMAIL=alice@qa.local \
 SIMCTL_CHILD_FLOW_DEBUG_PASSWORD=qa-password-1 \
 SIMCTL_CHILD_FLOW_DEBUG_OPEN_CHANNEL=general \
-xcrun simctl launch 'iPhone 17 Pro' org.flowtoo.ios
+xcrun simctl launch 'iPhone 17 Pro' im.freeflow.app
 ```
 
 ## Known limitations

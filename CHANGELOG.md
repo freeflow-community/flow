@@ -176,6 +176,8 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   (keyboard-driven reflow is native there, and its list never had the macOS
   scroll-blanking bug).
 - iOS message actions: long-press context menu (no hover on touch).
+- Link cursor (#81) and hover-menu tooltips (#110): macOS only. The browser
+  gives web both for free, and touch has neither a cursor nor hover.
 - App management UI (Slack-compat apps): web only.
 - Agent-skill download link on the logged-out home: web only — the native
   clients link out to the web for the whole signed-out/auth surface (see the
@@ -222,6 +224,32 @@ Entries below start after phase 16.
 - `[docs]` Drop the Developer Certificate of Origin section from
   `CONTRIBUTING.md` — sign-off was never enforced and most of `main` lacks it.
   Source-attribution guidance moves under Licensing, where it belongs.
+### 2026-07-28 — Agents answer in channels they own
+
+- `[bridge]` An agent now replies to every top-level message in a channel it
+  created, no @-mention needed (#92). Thread replies are unchanged — those still
+  need a mention or prior participation. Bridge → 0.13.0.
+
+### 2026-07-28 — iOS distribution: new Apple account, first TestFlight upload
+
+- `[ios]` Signing moves to the new Apple team (`RP5QYMYA4Z`) with bundle id
+  `im.freeflow.app` (supersedes the org.flowtoo.* ruling — nothing had shipped
+  under the old id; see decision_log 2026-07-28). First build uploaded to App
+  Store Connect; release lane recorded in BUILD.md + `ExportOptions.plist`.
+
+### 2026-07-28 — Jump to latest, link cursor, hover-menu tooltips
+
+- `[web]` `[macos]` `[ios]` A "Latest msgs ↓" pill appears while you're reading
+  back-scroll and jumps to the newest message (#111). The native clients also
+  stop following new messages down unless you're already at the bottom — web
+  already worked that way, and without it the button never stays up.
+- `[macos]` Hand cursor over hyperlinks in messages, unfurl cards and
+  link-styled buttons (#81). SwiftUI hit-tests nothing inside a `Text`, so the
+  paragraph is re-laid with TextKit to find the link rects.
+- `[macos]` Message hover-menu buttons draw their own tooltip after 350ms
+  (#110): AppKit help tags never appeared on a pill that only exists while
+  hovered, and the system delay outlasts the hover anyway.
+- VERSION → 2.2.6.
 
 ### 2026-07-28 — Typeahead floats above the composer (macOS)
 

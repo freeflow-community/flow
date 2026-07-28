@@ -27,6 +27,20 @@ struct MessageListView: View {
     @State private var appliedKey: String?
     /// The row currently flashing after a jump (fades out on a timer).
     @State private var flashId: String?
+    /// Bottom edge of the content and height of the viewport, both in the
+    /// scroll view's own space — their difference is how far we are above the
+    /// newest message (#111).
+    @State private var contentBottom: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
+
+    private static let scrollSpace = "messageScroll"
+    /// Slack-style slack: within this much of the end still counts as "at the
+    /// bottom", so a part-scrolled last message doesn't raise the button.
+    private static let bottomSlack: CGFloat = 120
+
+    /// False once the reader has scrolled up far enough that following new
+    /// messages down would yank them away from what they're reading.
+    private var atBottom: Bool { contentBottom - viewportHeight <= Self.bottomSlack }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -38,6 +52,7 @@ struct MessageListView: View {
                             Button("Load earlier messages", action: onLoadOlder)
                                 .buttonStyle(.link)
                                 .font(.callout)
+                                .pointingHandCursor()
                             Spacer()
                         }
                         .padding(.vertical, 8)
@@ -69,7 +84,27 @@ struct MessageListView: View {
                     }
                 }
                 .padding(.vertical, 8)
+                // Read-only scroll tracking (#111). Deliberately not a second
+                // scroll *driver* — see the note below on what one costs.
+                .background(
+                    GeometryReader { geo in
+                        let bottom = geo.frame(in: .named(Self.scrollSpace)).maxY
+                        Color.clear
+                            .onAppear { contentBottom = bottom }
+                            .onChange(of: bottom) { _, new in contentBottom = new }
+                    }
+                )
             }
+            .coordinateSpace(name: Self.scrollSpace)
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { viewportHeight = geo.size.height }
+                        .onChange(of: geo.size.height) { _, new in viewportHeight = new }
+                }
+            )
+            .overlay(alignment: .bottom) { jumpToLatest(proxy) }
+            .animation(.easeOut(duration: 0.15), value: atBottom)
             // NOTE (scroll-blanking fix): there used to be a
             // `.scrollPosition(id: $topVisibleId, anchor: .top)` here feeding
             // MessageScrollMemory. It never actually tracked anything —
@@ -98,8 +133,10 @@ struct MessageListView: View {
                     } else {
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
-                } else {
-                    // A genuinely new message in the current channel → follow it down.
+                } else if atBottom {
+                    // A genuinely new message in the current channel → follow it
+                    // down, but only from the bottom: someone reading back-scroll
+                    // keeps their place and gets the jump button instead (#111).
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
@@ -114,6 +151,32 @@ struct MessageListView: View {
             // A jump target may arrive only after older history pages in.
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
             .onAppear { tryFocus(proxy) }
+        }
+    }
+
+    /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
+    /// of the transcript (#111). Tapping it returns to the newest message.
+    @ViewBuilder
+    private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
+        if !atBottom, let lastId = messages.last?.id {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(lastId, anchor: .bottom)
+                }
+            } label: {
+                Text("Latest msgs ↓")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(MC.accentSoft)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.white).shadow(color: MC.ink.opacity(0.14), radius: 4, y: 1))
+                    .overlay(Capsule().strokeBorder(MC.hairline, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .padding(.bottom, 10)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .accessibilityIdentifier("msg.jumpToLatest")
         }
     }
 
@@ -355,11 +418,8 @@ struct MessageRow: View {
                         }
                     }
                     .buttonStyle(.link)
-                    // Hand cursor on hover (ui_nits) — same push/pop pattern as
-                    // the sidebar/thread resize handles in MainView.
-                    .onHover { inside in
-                        if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                    }
+                    // Hand cursor on hover (ui_nits).
+                    .pointingHandCursor()
                 }
             }
             Spacer(minLength: 0)
@@ -530,14 +590,25 @@ struct MessageRow: View {
     /// One borderless glyph button in the hover pill. Mirrors the web buttons'
     /// `rounded-md px-1.5 py-1 … hover:bg-daypill`: a rounded daypill highlight
     /// appears under the glyph on hover.
+    ///
+    /// The label is drawn as our own tooltip rather than with `.help()` (#110):
+    /// AppKit help tags never appeared for these buttons — the pill is mounted
+    /// on hover, so it isn't around when AppKit arms its tooltip rects — and
+    /// the system delay is far too long for a menu you're only over for a
+    /// moment. VoiceOver still gets the text as the button's label.
     private struct MenuIconButton<Label: View>: View {
         let help: String
         let action: () -> Void
         @ViewBuilder let label: () -> Label
         @State private var hovering = false
+        @State private var showTip = false
+        @State private var tipWork: DispatchWorkItem?
 
         var body: some View {
-            Button(action: action) {
+            Button {
+                hideTip()
+                action()
+            } label: {
                 label()
                     .font(.system(size: 15))
                     .frame(width: 26, height: 24)
@@ -548,8 +619,44 @@ struct MessageRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(help)
-            .onHover { hovering = $0 }
+            .accessibilityLabel(help)
+            .onHover { inside in
+                hovering = inside
+                if inside { scheduleTip() } else { hideTip() }
+            }
+            .onDisappear { hideTip() }
+            .overlay(alignment: .top) {
+                if showTip { tooltip }
+            }
+            // Lift the tip above the neighbouring buttons in the pill.
+            .zIndex(showTip ? 1 : 0)
+        }
+
+        private var tooltip: some View {
+            Text(help)
+                .font(.system(size: 11))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(MC.ink.opacity(0.92)))
+                .fixedSize()
+                .offset(y: 30)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+                .accessibilityHidden(true)
+        }
+
+        private func scheduleTip() {
+            tipWork?.cancel()
+            let work = DispatchWorkItem { showTip = true }
+            tipWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+        }
+
+        private func hideTip() {
+            tipWork?.cancel()
+            tipWork = nil
+            showTip = false
         }
     }
 
@@ -648,9 +755,15 @@ struct MessageRow: View {
     }
 
     private func paragraphText(_ text: String) -> some View {
-        Text(MentionRendering.attributed(text, names: userNames, currentUserId: currentUserId))
+        let attributed = MentionRendering.attributed(
+            text, names: userNames, currentUserId: currentUserId
+        )
+        return Text(attributed)
             .font(.callout)
             .textSelection(.enabled)
+            // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
+            // inside a Text, so linkCursor re-lays the string to find them.
+            .linkCursor(attributed)
     }
 
     @ViewBuilder
@@ -676,10 +789,12 @@ struct MessageRow: View {
             Button("Retry") { Task { await app.engine.retrySend(message) } }
                 .buttonStyle(.link)
                 .font(.caption.weight(.semibold))
+                .pointingHandCursor()
             Button("Discard") { Task { await app.engine.discardFailed(message) } }
                 .buttonStyle(.link)
                 .font(.caption)
                 .foregroundStyle(MC.muted)
+                .pointingHandCursor()
         }
         .padding(.top, 1)
     }

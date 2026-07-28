@@ -122,6 +122,49 @@ describe('replyRoot — where the answer goes', () => {
   });
 });
 
+describe('inScope — channels the agent created', () => {
+  const mine = () => channel({ createdBy: AGENT });
+
+  it('answers a top-level message with no mention', async () => {
+    const b = bridge(config(), [mine()]);
+    expect(await b.inScope(message({ body: 'no mention here' }))).toBe(true);
+  });
+
+  it('still ignores a top-level message in a channel someone else created', async () => {
+    const b = bridge(); // createdBy: HUMAN
+    expect(await b.inScope(message({ body: 'no mention here' }))).toBe(false);
+  });
+
+  it('does not answer a thread reply just because we own the channel', async () => {
+    // The thread belongs to whoever is in it; owning the room is not owning
+    // every side conversation in it.
+    const b = bridge(config(), [mine()]);
+    b.api.listThread = async () => [message({ id: 'root-1', userId: HUMAN })];
+    expect(await b.inScope(message({ threadRootId: 'root-1', body: 'plain' }))).toBe(false);
+  });
+
+  it('answers a thread reply in our channel once we have spoken in that thread', async () => {
+    const b = bridge(config(), [mine()]);
+    b.conversations.set('chan-1|root-1', { sessionId: 's', started: true, queue: [], running: false });
+    expect(await b.inScope(message({ threadRootId: 'root-1', body: 'plain' }))).toBe(true);
+  });
+
+  it('never answers its own message in its own channel', async () => {
+    const b = bridge(config(), [mine()]);
+    expect(await b.inScope(message({ userId: AGENT, body: 'mine' }))).toBe(false);
+  });
+
+  it('still skips another agent in our channel unless respondToAgents', async () => {
+    const b = bridge(config(), [mine()]);
+    expect(await b.inScope(message({ userId: OTHER_AGENT, body: 'hi' }))).toBe(false);
+  });
+
+  it('opens a thread on the message it answers, as usual', () => {
+    const b = bridge(config(), [mine()]);
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBe('msg-9');
+  });
+});
+
 describe('inScope — thread participation', () => {
   it('answers an un-mentioned reply in a thread it has a live session for', async () => {
     const b = bridge();
