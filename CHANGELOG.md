@@ -209,6 +209,11 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — Ledger files auto-merge concurrent additions
+
+- `[qa]` CHANGELOG/FEATURES/decision_log use the union merge driver
+  (`.gitattributes`) + a section-per-PR editing protocol (CLAUDE.md), so
+  concurrent PRs stop conflicting on the ledgers (see decision_log 2026-07-28).
 ### 2026-07-28 — `work-project-tasks` skill
 
 - `[docs]` New `skills/work-project-tasks/` — how an agent takes the next batch

@@ -1,5 +1,26 @@
 # Decision log
 
+## 2026-07-28 — Ledgers merge by union; sections are the unit of edit
+
+- `CHANGELOG.md`, `FEATURES.md` and `decision_log.md` now use git's union merge
+  driver (`.gitattributes`): overlapping additions from concurrent PRs
+  concatenate instead of conflicting. Chosen over per-PR changelog fragments
+  (compile step deemed not worth it at current PR volume) and over generating
+  entries from PR titles (gives up the curated ledger). Trigger: PR #115 and
+  #114 both added a same-date section and collided.
+- The driver is only safe for *additions*, so the editing protocol in CLAUDE.md
+  is part of the decision: self-contained dated sections per PR, duplicate
+  same-date headers allowed, no in-place edits in a PR that adds an entry,
+  insertion point scattered by PR parity, PM compaction at QA checkpoints.
+- **Accepted risk (operator): the Parity section stays in CHANGELOG.md** even
+  though its edit-in-place style is what union merge handles worst. Concurrent
+  Parity edits may interleave silently; QA's checkpoint audit is the backstop.
+  Splitting Parity into its own normally-merged file is the upgrade if it ever
+  bites.
+- GitHub's merge UI doesn't honor merge attributes, so a PR can still *show* a
+  ledger conflict — the fix is mechanical (local `git merge origin/main`), and
+  the scatter rule makes it rare.
+
 ## 2026-07-28 — iOS ships from a clean Apple account (operator)
 
 - The operator created a fresh Apple developer account (Team `RP5QYMYA4Z`);
