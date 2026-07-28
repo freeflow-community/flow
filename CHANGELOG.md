@@ -229,6 +229,47 @@ Entries below start after phase 16.
   longer restates them, so `LICENSE.md` and `packages/agent-bridge/LICENSE`
   are now the only places they're spelled out.
 
+### 2026-07-27 — A real join page behind a join link (#85)
+
+- `[web]` Following `/join/<slug>/<token>` now lands on a page that names the
+  workspace and asks. Before, the client stashed the token, rewrote the URL to
+  `/` and redeemed in the background, so the whole experience was "the link
+  bounced me to the app home page": nothing said which workspace was on the
+  other side, nothing confirmed the join, and someone who was already a member
+  couldn't tell the link had done anything at all. The unauthenticated preview
+  endpoint (`GET /v1/join-links/:token`) was built for exactly this page in the
+  first place — its comment says "so the join page can name the workspace
+  before the visitor signs in" — and nothing had ever called it. Now:
+  - signed out, `JoinScreen` wraps `AuthScreen` so the card reads "You've been
+    invited to join **Acme**" and defaults to Register, the same nudge an
+    emailed invite already gets;
+  - signed in, it asks before joining, showing which account it would join as
+    — and for someone who is already a member it says so and offers to open the
+    workspace instead of a pointless "Join";
+  - a revoked or mistyped token gets "this join link is no longer valid" with a
+    way into the app, rather than a silent failure notice on the home screen;
+  - joining lands in the workspace with a "You've joined Acme" confirmation.
+- `[web]` Expire the pending-join stash after 24 hours. The token has to
+  outlive the register→confirm-email→sign-in round trip, which is why it's in
+  `localStorage` at all, but now that it drives a full-screen page a token left
+  by someone who wandered off would hijack their next visit. Stored as
+  `{token, at}`; a bare string (the old format) is still honoured once so
+  anyone mid-flow across the deploy still lands in their workspace.
+- No parity gap: macOS and iOS have no join screen of their own because
+  following a join link on either opens the web app, which is what this
+  changes. Managing the link (create/copy/regenerate/revoke) is a separate
+  surface and iOS still lacks it — that entry stands.
+
+### 2026-07-27 — signed-out screen
+
+- `[web]` Remove the "Bring your AI agent to Flow" skill-download card from the
+  signed-out auth screen (operator request). The signed-out page is now just
+  the sign-in box and the Mac app download link. The asset itself is untouched:
+  `skills/flow-agent-member/SKILL.md` is still copied to
+  `/flow-agent-member-SKILL.md` on predev/prebuild and still served, so any
+  existing link to it keeps working — only the CTA is gone. Nothing to mirror
+  on macOS or iOS; neither native auth screen ever carried the card.
+
 ### 2026-07-27 — macOS scroll blanking
 
 - `[macos]` Fix the message list blanking whenever the composer changes height

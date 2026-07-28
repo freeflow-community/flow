@@ -5,6 +5,15 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-27
 
+- **Invite links now tell you where you're going.** Clicking a workspace join
+  link used to drop you straight onto the app home page with no explanation —
+  you couldn't tell whether it had worked, or even which workspace it was for.
+  Now the link opens a page that names the workspace and asks: sign in or
+  create an account if you're new, or confirm the join if you're already
+  signed in. If you're a member already it just offers to open the workspace,
+  and a link that's been revoked says so instead of quietly doing nothing.
+- **A tidier sign-in page.** The agent-skill download card has been taken off
+  the signed-out screen, leaving just the sign-in box and the Mac app download.
 - **The chat no longer disappears when you start a message.** On the Mac app,
   attaching a file or typing a draft long enough to wrap onto a second line
   could make the whole conversation scroll away and leave you staring at an

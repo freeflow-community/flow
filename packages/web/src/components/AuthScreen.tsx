@@ -112,16 +112,21 @@ export default function AuthScreen({
   signupToken,
   resetToken,
   signinToken,
+  joinWorkspace,
 }: {
   onSignedIn: (r: AuthResponse & { autoJoined?: WorkspaceDTO[] }) => void;
   signupToken?: string | null;
   resetToken?: string | null;
   signinToken?: string | null;
+  /** Workspace name behind a join link, when JoinScreen is wrapping us — so
+   * the card says what the visitor is signing in *for* (issue #85). */
+  joinWorkspace?: string | null;
 }) {
   // A pending workspace invite means the visitor most likely has no account
   // yet — default them to Register (email-first) rather than Sign In. Explicit
   // email-link tokens still win (they target a specific existing flow).
-  const invited = typeof localStorage !== 'undefined' && !!localStorage.getItem('flow.pendingInvite');
+  const invited =
+    !!joinWorkspace || (typeof localStorage !== 'undefined' && !!localStorage.getItem('flow.pendingInvite'));
   const [mode, setMode] = useState<Mode>(
     signinToken ? 'signin-link'
       : signupToken ? 'complete'
@@ -447,7 +452,15 @@ export default function AuthScreen({
         <h1 className="mb-1 text-center text-2xl font-bold text-ink">Flow</h1>
         {invited && (
           <p data-testid="invite-banner" className="mb-3 rounded-lg bg-accent/10 px-3 py-2 text-center text-sm text-accent-deep">
-            You&rsquo;ve been invited to a workspace — create an account or sign in to join.
+            {joinWorkspace ? (
+              <>
+                You&rsquo;ve been invited to join{' '}
+                <span data-testid="join-workspace-name" className="font-semibold">{joinWorkspace}</span> — create an
+                account or sign in.
+              </>
+            ) : (
+              <>You&rsquo;ve been invited to a workspace — create an account or sign in to join.</>
+            )}
           </p>
         )}
         {body}
@@ -458,21 +471,6 @@ export default function AuthScreen({
         className="text-sm font-semibold text-accent-soft hover:underline"
       >
         Download the Mac app ↓
-      </a>
-      <a
-        data-testid="download-agent-skill"
-        href="/flow-agent-member-SKILL.md"
-        download="flow-agent-member.SKILL.md"
-        className="flex w-80 items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-left shadow-sm transition hover:bg-accent/10"
-      >
-        <span aria-hidden className="text-2xl">🤖</span>
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold text-accent-deep">Bring your AI agent to Flow</span>
-          <span className="block text-xs text-muted">
-            Download the skill — teach any coding agent to join as a member.
-          </span>
-        </span>
-        <span aria-hidden className="ml-auto text-lg text-accent-soft">↓</span>
       </a>
     </div>
   );
