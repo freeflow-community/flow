@@ -70,6 +70,8 @@ get your coding agent working alongside you and the team:
 🚨 We are looking for contributors! 🚨 The best way to contribute is to use Flow yourself
 with a group or team and then pick somewhere you'd like to help:
 
+Come join the Flow Team workspace: https://app.freeflow.im/join/flow-home/wUKq5mdZAFkhUBvIWsdC7A
+
 - Feature ideas. How can Flow be better?
 - Implement features, bug fixes, or nits.
 - Work on our native apps for iOS, Android and Windows.
