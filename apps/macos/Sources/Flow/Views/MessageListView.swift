@@ -22,9 +22,6 @@ struct MessageListView: View {
     var focusMessageId: String? = nil
     var onFocused: () -> Void = {}
 
-    /// Top-visible message id, tracked via `.scrollPosition` — recorded per
-    /// channel so a return visit re-anchors there.
-    @State private var topVisibleId: String?
     /// The scrollKey we've already applied a restore/bottom decision for, so a
     /// new message in the *current* channel doesn't re-trigger a restore.
     @State private var appliedKey: String?
@@ -73,11 +70,18 @@ struct MessageListView: View {
                 }
                 .padding(.vertical, 8)
             }
-            .scrollPosition(id: $topVisibleId, anchor: .top)
-            .onChange(of: topVisibleId) { _, id in
-                // Continuously remember where we are so a return visit restores it.
-                if let key = scrollKey, let id { MessageScrollMemory.record(key, topMessageId: id) }
-            }
+            // NOTE (scroll-blanking fix): there used to be a
+            // `.scrollPosition(id: $topVisibleId, anchor: .top)` here feeding
+            // MessageScrollMemory. It never actually tracked anything —
+            // scrollPosition(id:) only reports a position when the lazy stack
+            // is marked `.scrollTargetLayout()`, which it isn't — so scroll
+            // memory was already inert. What it *did* do was install a second
+            // scroll driver alongside .defaultScrollAnchor(.bottom); when the
+            // composer changed height (attachment tray, a draft wrapping to a
+            // second line) the two disagreed, the content height ballooned and
+            // the list scrolled into empty space, blanking the transcript.
+            // Re-adding scroll memory means adding .scrollTargetLayout() and
+            // reconciling it with the bottom anchor — not just this modifier.
             .onChange(of: messages.last?.id) { _, newId in
                 // A pending jump owns the scroll position — skip both the
                 // scroll-memory restore and the follow-to-bottom (tryFocus
