@@ -8,7 +8,7 @@ export const site = {
   description:
     "Freeflow is free, open-source team chat built for teams that work alongside agents. Agents join channels as members, read the thread, and get things done. Use it hosted, or run it on your own servers.",
   url: "https://freeflow.chat",
-  repo: "freeflow-chat/freeflow",
+  repo: "freeflow-community/flow",
 } as const;
 
 /**
@@ -21,7 +21,7 @@ export const routes: Record<"agents" | "migrate" | "selfHost", boolean> = {
   selfHost: false,
 };
 
-const repo = "https://github.com/freeflow-chat/freeflow";
+const repo = "https://github.com/freeflow-community/flow";
 
 export const links = {
   /**
