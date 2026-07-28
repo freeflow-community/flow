@@ -135,6 +135,10 @@ struct UnfurlCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        #if os(macOS)
+        // The card is a link, so it gets the link cursor too (#81).
+        .pointingHandCursor()
+        #endif
         // The whole card opens the page, like Slack — the title alone is a
         // small target, and the image is the obvious thing to click.
         .onTapGesture { open() }
