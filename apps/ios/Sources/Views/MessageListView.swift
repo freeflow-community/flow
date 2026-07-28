@@ -24,6 +24,20 @@ struct MessageListView: View {
 
     /// The row currently flashing after a jump (fades out on a timer).
     @State private var flashId: String?
+    /// Bottom edge of the content and height of the viewport, both in the
+    /// scroll view's own space — their difference is how far we are above the
+    /// newest message (#111).
+    @State private var contentBottom: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
+
+    private static let scrollSpace = "messageScroll"
+    /// Within this much of the end still counts as "at the bottom", so a
+    /// part-scrolled last message doesn't raise the button.
+    private static let bottomSlack: CGFloat = 120
+
+    /// False once the reader has scrolled up far enough that following new
+    /// messages down would yank them away from what they're reading.
+    private var atBottom: Bool { contentBottom - viewportHeight <= Self.bottomSlack }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -65,10 +79,31 @@ struct MessageListView: View {
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.vertical, 8)
+                .background(
+                    GeometryReader { geo in
+                        let bottom = geo.frame(in: .named(Self.scrollSpace)).maxY
+                        Color.clear
+                            .onAppear { contentBottom = bottom }
+                            .onChange(of: bottom) { _, new in contentBottom = new }
+                    }
+                )
             }
+            .coordinateSpace(name: Self.scrollSpace)
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { viewportHeight = geo.size.height }
+                        .onChange(of: geo.size.height) { _, new in viewportHeight = new }
+                }
+            )
+            .overlay(alignment: .bottom) { jumpToLatest(proxy) }
+            .animation(.easeOut(duration: 0.15), value: atBottom)
             .onChange(of: messages.last?.id) { _, newId in
                 // A pending jump owns the scroll position — don't yank to bottom.
                 guard focusMessageId == nil, newId != nil else { return }
+                // Follow new messages down only from the bottom: someone reading
+                // back-scroll keeps their place and gets the jump button (#111).
+                guard atBottom else { return }
                 withAnimation(.easeOut(duration: 0.15)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
@@ -79,7 +114,10 @@ struct MessageListView: View {
             // initial layout, so settle-scroll once shortly after the list
             // populates or changes — unless a jump owns the scroll position.
             .task(id: messages.count) {
-                guard focusMessageId == nil else { return }
+                // Decided *before* the wait: the settle-scroll exists to catch up
+                // with content that grows underneath us, and that growth is what
+                // would otherwise make this look like back-scroll (#111).
+                guard focusMessageId == nil, atBottom else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
@@ -92,6 +130,31 @@ struct MessageListView: View {
             .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
             .onAppear { tryFocus(proxy) }
+        }
+    }
+
+    /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
+    /// of the transcript (#111). Tapping it returns to the newest message.
+    @ViewBuilder
+    private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
+        if !atBottom, !messages.isEmpty {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            } label: {
+                Text("Latest msgs ↓")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MC.accentSoft)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(.white).shadow(color: MC.ink.opacity(0.16), radius: 5, y: 1))
+                    .overlay(Capsule().strokeBorder(MC.hairline, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 12)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .accessibilityIdentifier("msg.jumpToLatest")
         }
     }
 
