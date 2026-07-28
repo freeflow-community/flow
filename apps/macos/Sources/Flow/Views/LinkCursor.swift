@@ -5,13 +5,18 @@ extension View {
     /// Pointing-hand cursor while the mouse is over a hyperlink inside a
     /// `Text` rendering `attributed` (#81).
     ///
-    /// SwiftUI renders markdown links but offers no hover hit-testing *inside*
-    /// laid-out text, and `.textSelection(.enabled)` puts an I-beam over the
-    /// whole paragraph — so a link reads as plain text under the cursor. We
-    /// re-lay the same string with TextKit at the width SwiftUI gave the view
-    /// and hit-test the hovered point against the link runs. Line breaking can
-    /// differ from SwiftUI's by a hair at wrap points; for a cursor affordance
-    /// that isn't observable.
+    /// Two problems to solve. SwiftUI offers no hover hit-testing *inside*
+    /// laid-out text, so the link's on-screen rectangles are recovered by
+    /// re-laying the same string with TextKit at the width SwiftUI gave the
+    /// view. And a selectable `Text` re-asserts its own cursor as the mouse
+    /// moves — an `NSCursor.push()` or `set()` driven from `.onContinuousHover`
+    /// is overwritten by the next mouse-moved event (verified in the running
+    /// app) — so the cursor is claimed the way AppKit expects instead: cursor
+    /// rects on a transparent overlay view above the text, which never takes a
+    /// mouse event itself.
+    ///
+    /// TextKit's line breaking can differ from SwiftUI's by a hair at wrap
+    /// points; for a cursor affordance that isn't observable.
     func linkCursor(_ attributed: AttributedString) -> some View {
         modifier(LinkCursorModifier(attributed: attributed))
     }
@@ -28,43 +33,61 @@ extension View {
 private struct LinkCursorModifier: ViewModifier {
     let attributed: AttributedString
 
-    @State private var width: CGFloat = 0
-    /// Link rectangles for the current width, laid out on first hover.
-    @State private var rects: [CGRect]?
-    @State private var overLink = false
+    /// Link rectangles at the current width, in the text's own coordinates.
+    /// Empty — and free — for the overwhelming majority of messages, which
+    /// carry no links at all.
+    @State private var rects: [CGRect] = []
 
     func body(content: Content) -> some View {
         content
             .background(
                 GeometryReader { geo in
                     Color.clear
-                        .onAppear { width = geo.size.width }
-                        .onChange(of: geo.size.width) { _, new in width = new }
+                        .onAppear { measure(geo.size.width) }
+                        .onChange(of: geo.size.width) { _, new in measure(new) }
+                        .onChange(of: attributed) { _, _ in measure(geo.size.width) }
                 }
             )
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let point): setOverLink(hits(point))
-                case .ended: setOverLink(false)
-                }
-            }
-            .onChange(of: width) { _, _ in rects = nil }
-            .onChange(of: attributed) { _, _ in rects = nil }
-            .onDisappear { setOverLink(false) }
+            .overlay(LinkCursorOverlay(rects: rects).allowsHitTesting(false))
     }
 
-    private func hits(_ point: CGPoint) -> Bool {
-        guard width > 0 else { return false }
-        let boxes = rects ?? LinkHitTest.linkRects(in: attributed, width: width)
-        if rects == nil { rects = boxes }
-        return boxes.contains { $0.contains(point) }
+    private func measure(_ width: CGFloat) {
+        let next = LinkHitTest.linkRects(in: attributed, width: width)
+        if next != rects { rects = next }
+    }
+}
+
+/// Transparent AppKit layer whose only job is owning the cursor over the link
+/// rectangles. `hitTest` returns nil, so clicks, drags and text selection go
+/// to the text underneath exactly as they did before.
+private struct LinkCursorOverlay: NSViewRepresentable {
+    let rects: [CGRect]
+
+    func makeNSView(context: Context) -> LinkCursorNSView { LinkCursorNSView() }
+
+    func updateNSView(_ view: LinkCursorNSView, context: Context) {
+        view.linkRects = rects
+    }
+}
+
+private final class LinkCursorNSView: NSView {
+    var linkRects: [CGRect] = [] {
+        didSet {
+            guard linkRects != oldValue else { return }
+            window?.invalidateCursorRects(for: self)
+        }
     }
 
-    /// push/pop have to stay balanced — a stray pop unwinds someone else's cursor.
-    private func setOverLink(_ over: Bool) {
-        guard over != overLink else { return }
-        overLink = over
-        if over { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+    /// SwiftUI hands out top-left-origin rects; match them.
+    override var isFlipped: Bool { true }
+
+    /// Never intercept a mouse event — this view exists only for its cursor.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func resetCursorRects() {
+        for rect in linkRects {
+            addCursorRect(rect, cursor: .pointingHand)
+        }
     }
 }
 
