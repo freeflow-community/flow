@@ -49,7 +49,9 @@ so review it before you sign off on it.
 - **`CHANGELOG.md`** — every feature or fix adds an entry with platform tags
   (`[server]` `[web]` `[macos]` `[ios]` `[bridge]` `[qa]`). If a change lands on
   one client but not the others, add a line to the **Parity** section saying
-  whether that's a deliberate divergence or a gap to close.
+  whether that's a deliberate divergence or a gap to close. Keep entries very
+  succinct — one or two lines each. Reasoning goes in the commit message, not
+  here.
 - **`FEATURES.md`** — if the change is user-visible, add a friendly one-line
   entry under today's date, written for users: no platform tags, file names, or
   internals. Purely internal changes skip this file.

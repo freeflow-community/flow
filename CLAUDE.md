@@ -6,6 +6,12 @@
   (deliberate divergence vs gap to close) — that section is the client-sync
   mechanism and should trend toward empty. QA verifies this at phase
   checkpoints; a shipped change with no entry fails the close-out.
+- **Keep CHANGELOG entries very succinct** — one or two lines per bullet:
+  what changed, and the *why* only when it isn't obvious from the what. No
+  narrating the investigation, no restating the diff, no listing every file
+  touched. The commit message is where reasoning belongs; the changelog is a
+  scannable ledger. If an entry needs more than three lines, that's a sign it
+  belongs in the commit body or `decision_log.md` instead.
 - **Keep FEATURES.md up to date, alongside CHANGELOG.md.** When a change is
   user-visible, add a friendly one-line entry under the current date (reverse
   chronological, newest date on top; add a new `## YYYY-MM-DD` separator when
