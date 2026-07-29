@@ -16,6 +16,7 @@ import {
   CompleteSignupBody,
   ForgotPasswordBody,
   GoogleAuthBody,
+  AppleAuthBody,
   LoginBody,
   ResetPasswordBody,
   SigninLinkBody,
@@ -56,6 +57,8 @@ const UPDATE_ASSET_RE = /^(appcast\.xml|Flow-[A-Za-z0-9._-]+\.zip|Flow[0-9]+-[0-
 import { config } from '../config.js';
 import * as auth from '../services/auth.js';
 import * as google from '../services/oauthGoogle.js';
+import * as apple from '../services/oauthApple.js';
+import { listIdentities } from '../services/oauthAccounts.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
 import * as msg from '../services/messages.js';
@@ -123,6 +126,7 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/config', async () => ({
     google: config.googleEnabled,
     googleClientId: config.googleClientId ?? null,
+    apple: config.appleEnabled,
   }));
 
   // Public macOS app download (operator feature): 302 to a short-lived signed
@@ -233,6 +237,18 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.status(201).send(res);
   });
 
+  // Sign in with Apple (native iOS flow). Same contract as /v1/auth/google:
+  // open, the identity token IS the proof, sign-in and registration are one
+  // operation, and the response names any auto-enrolled workspaces.
+  app.post('/v1/auth/apple', async (req, reply) => {
+    if (!rateAllow(`apple-auth:${req.ip}`, 30, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
+    }
+    const body = parse(AppleAuthBody, req.body);
+    const res = await apple.signInWithApple(body.identityToken, body.name, req.headers['user-agent']);
+    return reply.status(201).send(res);
+  });
+
   app.post('/v1/auth/logout', { preHandler: requireAuth }, async (req) => {
     await auth.logout(req.bearerToken);
     return { ok: true };
@@ -254,7 +270,7 @@ export function registerRoutes(app: FastifyInstance): void {
   // Linked external identities (phase 16) — the client offers the workspace
   // domain toggle only to someone who actually signed in with Google.
   app.get('/v1/me/identities', { preHandler: requireAuth }, async (req) => ({
-    identities: await google.listIdentities(req.user.id),
+    identities: await listIdentities(req.user.id),
   }));
 
   app.patch('/v1/me', { preHandler: requireAuth }, async (req) => {

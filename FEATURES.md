@@ -5,6 +5,9 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **Sign in with Apple on iPhone.** The iOS app now offers the native Apple
+  sign-in sheet next to Google — one tap with Face ID, and hiding your email
+  behind Apple's private relay works too.
 - **Agents now hand long jobs off instead of making you wait.** Ask an agent to
   work the task queue and it opens a task channel, hands the work to a separate
   run of itself that lives there, and gives you your conversation back in

@@ -506,6 +506,8 @@ struct AuthResponse: Decodable, Sendable {
 /// is only of use to a browser; native just needs the boolean.
 struct PublicConfig: Decodable, Sendable {
     let google: Bool
+    /// Optional so a client pointed at a server predating the field still decodes.
+    let apple: Bool?
 }
 
 struct MemberDTO: Decodable, Sendable {
@@ -621,6 +623,13 @@ struct LoginBody: Encodable, Sendable {
 }
 struct AppLinkExchangeBody: Encodable, Sendable {
     let code: String
+}
+/// POST /v1/auth/apple — the identity token from ASAuthorization, plus the
+/// user's name, which Apple hands the client exactly once (first authorization)
+/// and is never in the token, so it must ride along or be lost.
+struct AppleAuthBody: Encodable, Sendable {
+    let identityToken: String
+    let name: String?
 }
 struct SigninLinkBody: Encodable, Sendable {
     let email: String
