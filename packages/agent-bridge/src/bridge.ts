@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { ChannelDTO, Event, MessageDTO, UserDTO, WorkspaceDTO, WorkspaceMemberDTO } from '@flow/shared';
 import type { BridgeConfig } from './config.js';
@@ -39,9 +39,13 @@ export function failureReply(result: RunResult): string {
 }
 
 /** Per-agent scratch dir (0700) for the bridge's own runtime state: the task
- * IPC socket and the relaunch note a restart posts back from. */
+ * IPC socket and the relaunch note a restart posts back from. The agent id is
+ * *hashed short* deliberately: a unix socket path tops out at ~104 bytes on
+ * macOS (`sun_path`), and tmpdir there is already ~50 (`/var/folders/…`) — a
+ * full uuid in the dir name pushed `task.sock` over the limit (EINVAL). */
 export function bridgeStateDir(agentId: string): string {
-  return path.join(os.tmpdir(), `flow-bridge-${agentId}`);
+  const short = createHash('sha256').update(agentId).digest('hex').slice(0, 12);
+  return path.join(os.tmpdir(), `flow-bridge-${short}`);
 }
 
 /** Where the task-handoff IPC listens: a per-agent unix socket (named pipe on

@@ -317,6 +317,10 @@ Entries below start after phase 16.
   where asked) and `/restart` drive it via exit codes. Crashes respawn with
   backoff; source-checkout installs restart but skip the npm step. Commands
   (incl. `/reset`) now accept a leading @-mention. Bridge → 0.16.0.
+- `[bridge]` Fix: the task IPC socket failed to listen on macOS (EINVAL) —
+  tmpdir + a full uuid overran the 104-byte `sun_path` cap, so 0.15.0's
+  `start_task` never actually came up there. State dir now uses a hashed
+  short agent id.
 
 ### 2026-07-27 — Activity is per workspace
 

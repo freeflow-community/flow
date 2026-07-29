@@ -138,8 +138,13 @@ function bridge(latest: string | null, chans: ChannelDTO[] = [channel()]): any {
   return b;
 }
 
-/** handleRelaunch defers the exit ~300ms; wait for it. */
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 400));
+/** handleRelaunch defers the exit ~300ms; poll rather than race a fixed sleep. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function settle(b: any): Promise<void> {
+  for (let i = 0; i < 60 && b.exitProcess.mock.calls.length === 0; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 describe('/update and /restart', () => {
   it('does nothing but say so when already on the latest version', async () => {
@@ -154,7 +159,7 @@ describe('/update and /restart', () => {
   it('acknowledges, stops, and exits with the update code when behind', async () => {
     const b = bridge('999.0.0');
     await b.handleMessage(message());
-    await settle();
+    await settle(b);
     expect(b.api.sendMessage.mock.calls[0][1]).toMatch(/updating from v.* and restarting/);
     expect(b.stop).toHaveBeenCalled();
     expect(b.exitProcess).toHaveBeenCalledWith(EXIT_UPDATE);
@@ -163,7 +168,7 @@ describe('/update and /restart', () => {
   it('restarts without consulting the registry', async () => {
     const b = bridge(null);
     await b.handleMessage(message({ body: '/restart' }));
-    await settle();
+    await settle(b);
     expect(b.fetchLatestVersion).not.toHaveBeenCalled();
     expect(b.exitProcess).toHaveBeenCalledWith(EXIT_RESTART);
   });
@@ -171,7 +176,7 @@ describe('/update and /restart', () => {
   it('works mention-prefixed in a channel — the mention is what put it in scope', async () => {
     const b = bridge(null, [channel({ id: 'chan-1', kind: 'standard', name: 'general', isPrivate: false })]);
     await b.handleMessage(message({ channelId: 'chan-1', body: `<@${AGENT}> /restart` }));
-    await settle();
+    await settle(b);
     expect(b.exitProcess).toHaveBeenCalledWith(EXIT_RESTART);
     expect(b.enqueue).not.toHaveBeenCalled();
   });
