@@ -38,6 +38,22 @@ final class AppState: ObservableObject {
     /// <ActivityFeedView>; the selected channel stays put behind it (like an
     /// artifact) so picking a channel returns to a normal conversation.
     @Published var showActivity: Bool = false
+    /// Whether a channel or DM sidebar row should draw the selected pill (#113).
+    ///
+    /// The artifact panel and the Activity feed each sit *over* the channel
+    /// selection rather than replacing it — `selectedChannelId` deliberately
+    /// stays put behind both — so a row is only highlighted when neither is
+    /// showing. Miss one of those terms and two rows light up at once.
+    ///
+    /// Static and pure so the rule is one testable thing rather than a
+    /// condition retyped at every call site; `nonisolated` because it touches
+    /// no state and the tests are not on the main actor.
+    nonisolated static func channelRowHighlighted(
+        rowId: String, selectedChannelId: String?, selectedArtifactId: String?, showActivity: Bool
+    ) -> Bool {
+        selectedChannelId == rowId && selectedArtifactId == nil && !showActivity
+    }
+
     /// Jump-to-message target (phase 12): a message id the channel/thread view
     /// should scroll to and flash after navigation (set when a notification is
     /// tapped in the Activity feed). Cleared once reached (or given up on).

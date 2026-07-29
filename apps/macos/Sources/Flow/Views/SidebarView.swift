@@ -323,9 +323,10 @@ struct SidebarView: View {
     }
 
     private func channelRow(_ channel: Channel) -> some View {
-        // An open artifact panel takes the highlight (the channel selection
-        // stays put behind it).
-        let active = app.selectedChannelId == channel.id && app.selectedArtifactId == nil
+        let active = AppState.channelRowHighlighted(
+            rowId: channel.id, selectedChannelId: app.selectedChannelId,
+            selectedArtifactId: app.selectedArtifactId, showActivity: app.showActivity
+        )
         return Button {
             app.selectChannel(channel.id)
         } label: {
@@ -373,7 +374,10 @@ struct SidebarView: View {
         let title = channel.displayTitle(
             userNames: userNames.value, currentUserId: app.currentUser?.id
         )
-        let active = app.selectedChannelId == channel.id && app.selectedArtifactId == nil
+        let active = AppState.channelRowHighlighted(
+            rowId: channel.id, selectedChannelId: app.selectedChannelId,
+            selectedArtifactId: app.selectedArtifactId, showActivity: app.showActivity
+        )
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }
         return Button {
