@@ -83,9 +83,8 @@ struct ThreadScreen: View {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
                 .defaultScrollAnchor(.bottom)
-                .scrollDismissesKeyboard(.interactively)
-                .dismissesKeyboardOnTap()
             }
+            .dismissesKeyboardOnChatInteraction()
             if let chId = channelId.value {
                 TypingIndicatorView(channelId: chId, threadRootId: rootId, userNames: userNames)
                 Divider()

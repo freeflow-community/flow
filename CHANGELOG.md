@@ -251,6 +251,15 @@ Entries below start after phase 16.
 - `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
   after 19 productive minutes. Bridge 0.17.0.
 
+### 2026-07-29 — iOS keyboard closes on any chat tap or scroll (#139)
+
+- `[ios]` The transcript now dismisses the keyboard `.immediately` on scroll,
+  not `.interactively` — the old mode only fired when the drag crossed the
+  keyboard, so scrolling back through history left it covering half the screen.
+  Tap dismissal and the drawer-open resign (#69) are unchanged. Touch-only by
+  nature; no macOS/web counterpart exists.
+- `[qa]` `KeyboardDismissTests` gains a scroll case; server URL and channel are
+  now overridable (`FLOW_TEST_SERVER_URL` / `FLOW_TEST_CHANNEL`).
 ### 2026-07-29 — Interrupt an agent turn (#67)
 
 - `[web]` `[macos]` `[ios]` `[bridge]` An **Interrupt** button on the agent's
