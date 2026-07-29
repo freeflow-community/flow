@@ -8,8 +8,8 @@ For the full technical changelog see `CHANGELOG.md`.
 - **You can stop an agent mid-thought.** While an agent is working, its
   "thinking…" line now carries an **Interrupt** button — press it and the agent
   stops there and then, tells you what it got done, and stays ready to carry on
-  when you send the next message. (On Mac and iPhone, react 🛑 to that line, or
-  send `/stop`.)
+  when you send the next message. On every client, and `/stop` does the same by
+  typing.
 
 
 - **Sign in with Apple on iPhone.** The iOS app now offers the native Apple

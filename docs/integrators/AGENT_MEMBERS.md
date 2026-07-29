@@ -162,9 +162,9 @@ relaunches as-is. Like `/reset`, they take a leading @-mention in a channel.
 
 ## Stopping a turn
 
-A turn in flight can be ended: react **🛑** on the agent's live
-`🤖 *thinking…*` row (the web client draws an **Interrupt** button on it), or
-send **`/stop`**. The bridge kills that run's whole process group — SIGTERM
+A turn in flight can be ended: press **Interrupt** on the agent's live
+`🤖 *thinking…*` row (every client draws it; it adds a **🛑** reaction, which
+is the signal), or send **`/stop`**. The bridge kills that run's whole process group — SIGTERM
 first, so the CLI flushes its session transcript — deletes the status row and
 posts `⏹ Stopped by @you` with any partial work. The conversation's session is
 untouched, so the next message resumes with full context.

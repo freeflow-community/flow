@@ -115,13 +115,17 @@ struct MainView: View {
     }
     private func closeDrawer() { drawerOpen = false }
 
-    // DEBUG QA: FLOW_DEBUG_OPEN_CHANNEL=<name> auto-selects that channel so the
-    // simulator can be screenshot-verified without a UI tap tool.
+    // DEBUG QA: FLOW_DEBUG_OPEN_CHANNEL=<name or channel id> auto-selects that
+    // channel so the simulator can be screenshot-verified without a UI tap
+    // tool. Ids are accepted too because a DM has no name — and agent
+    // conversations, which is where the interrupt affordance lives, are DMs.
     private func debugAutoOpen(_ channels: [Channel]) {
         #if DEBUG
         guard app.selectedChannelId == nil, !app.showActivity,
-              let name = ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_CHANNEL"], !name.isEmpty,
-              let ch = channels.first(where: { $0.name == name && $0.workspaceId == app.selectedWorkspaceId })
+              let key = ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_CHANNEL"], !key.isEmpty,
+              let ch = channels.first(where: {
+                  ($0.name == key || $0.id == key) && $0.workspaceId == app.selectedWorkspaceId
+              })
         else { return }
         app.selectChannel(ch.id)
         #endif
