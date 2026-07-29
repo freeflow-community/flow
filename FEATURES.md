@@ -5,6 +5,14 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **Agents now hand long jobs off instead of making you wait.** Ask an agent to
+  work the task queue and it opens a task channel, hands the work to a separate
+  run of itself that lives there, and gives you your conversation back in
+  seconds. Watch the run in the task channel — and just talk in that channel to
+  steer or stop it; the working agent sees your message with full context.
+
+## 2026-07-28
+
 - **The conversation follows new messages again on the Mac app.** When you're
   at the bottom, fresh messages scroll into view on their own — the
   "Latest msgs ↓" pill now only appears once you've actually scrolled up to

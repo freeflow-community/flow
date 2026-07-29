@@ -215,6 +215,19 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — start_task: hand work off to a run homed in a channel
+
+- `[bridge]` New `start_task` MCP tool: queue a fresh run of the agent in
+  another channel, seeded only by a self-contained prompt, via a local IPC
+  socket to the daemon. The target becomes a *task channel*: the bridge
+  converses there DM-style (top-level, one session), so the run's progress,
+  replies and human steering share context. Bridge → 0.15.0.
+- `[docs]` `work-project-tasks` reworked around the handoff: the invoked run
+  claims + opens the channel + hands off + returns a one-line pointer; the
+  handed-off run builds the batch. Inline is now the no-daemon fallback.
+  Task channels stay top-level (see decision_log 2026-07-28); a verbose log
+  may go in a sub-channel of the task channel.
+
 ### 2026-07-28 — Auto-scroll follows new messages again (macOS)
 
 - `[macos]` The follow now uses the web client's pinned model (#111 follow-up):

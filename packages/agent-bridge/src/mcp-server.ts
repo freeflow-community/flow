@@ -9,6 +9,7 @@
 // fixed tool surface; no SDK dependency needed. Conversation context
 // (channel/thread) arrives via env from the bridge's per-run --mcp-config.
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -131,6 +132,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'start_task',
+    description:
+      'Hand off long-running work (a ticket, a build, a multi-step job) to a separate run of yourself homed in another channel, and return immediately — use it when a requester should not have to wait in this conversation. The new run starts fresh with your prompt as its ONLY instructions: it inherits nothing from here, so make the prompt self-contained (the goal, ids, who asked and their <@userId>, where to report back). The target channel becomes the run’s conversation — its progress indicator, messages and final reply post there top-level, and anyone who talks in that channel is talking to the run with its full context. Typical shape: create_channel + invite_to_channel first, then start_task, then reply here with a one-line pointer to the channel. Do NOT do the work yourself after a successful handoff.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channelId: {
+          type: 'string',
+          description: 'Channel to home the run in — you must be a member (typically one you just created).',
+        },
+        prompt: {
+          type: 'string',
+          description: 'Complete, self-contained instructions for the run. It does not see this conversation.',
+        },
+      },
+      required: ['channelId', 'prompt'],
+    },
+  },
+  {
     name: 'invite_to_channel',
     description:
       'Add workspace members to a channel. Pass several userIds to invite a group in one call — each is added independently and the result reports any that failed. Get ids from list_users.',
@@ -245,6 +265,33 @@ function inviteErrorText(err: unknown): string {
     return 'channel not found, or it is private and you are not a member (only members can invite to a private channel)';
   }
   return err.message;
+}
+
+/** POST JSON to the bridge daemon over its local task socket (FLOW_BRIDGE_SOCK). */
+function bridgeIpcPost(
+  socketPath: string,
+  payload: unknown,
+): Promise<{ ok: true; note: string } | { error: string }> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const req = http.request(
+      { socketPath, path: '/task', method: 'POST', headers: { 'content-type': 'application/json' } },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => (data += chunk));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data) as { ok: true; note: string } | { error: string });
+          } catch {
+            reject(new Error(`bad bridge response (status ${res.statusCode})`));
+          }
+        });
+      },
+    );
+    req.setTimeout(10_000, () => req.destroy(new Error('bridge did not answer within 10s')));
+    req.on('error', reject);
+    req.end(body);
+  });
 }
 
 export async function runMcpServer(): Promise<void> {
@@ -399,6 +446,35 @@ export async function runMcpServer(): Promise<void> {
             );
           }
           throw err;
+        }
+      }
+      case 'start_task': {
+        const sock = process.env.FLOW_BRIDGE_SOCK || '';
+        if (!sock) {
+          return toolText(
+            'start_task is unavailable (no bridge daemon behind this run) — do the work in this conversation instead',
+            true,
+          );
+        }
+        const target = String(args.channelId ?? '').trim();
+        const prompt = String(args.prompt ?? '').trim();
+        if (!target || !prompt) return toolText('start_task needs channelId and prompt', true);
+        try {
+          const out = await bridgeIpcPost(sock, {
+            channelId: target,
+            prompt,
+            userId: process.env.FLOW_USER_ID || '',
+            sourceChannelId: defaultChannelId,
+          });
+          if ('error' in out) return toolText(`start_task failed: ${out.error}`, true);
+          return toolText(
+            `${out.note}. The run works there on its own — post a one-line pointer for the requester here and end this turn; don't do the task yourself.`,
+          );
+        } catch (err) {
+          return toolText(
+            `start_task failed: ${(err as Error).message} — do the work in this conversation instead`,
+            true,
+          );
         }
       }
       case 'invite_to_channel': {

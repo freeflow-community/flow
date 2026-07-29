@@ -1,5 +1,20 @@
 # Decision log
 
+## 2026-07-28 — Task channels are top-level; sub-channels are for logs (operator)
+
+- A `start_task` work channel (`#task-N`) represents the **task**, not the
+  agent: it stays a top-level public channel — cross-linked from the PR,
+  findable in Browse, and it outlives any one run (a `Blocked` batch gets
+  picked up by someone else in the same channel). Operator ruling, on the
+  question of whether the new sub-channels feature (#118) should house them.
+- Sub-channels slot in *underneath* the task channel when a run wants a
+  verbose command-by-command trace — the task channel stays the skimmable
+  record. Never the reverse: nesting the task under the invoking conversation
+  couples it to an arbitrary location, and a DM parent would force it private.
+- Mechanically necessary too: the task channel is the handed-off run's home
+  conversation (its front door for steering), which must be a plain public
+  channel.
+
 ## 2026-07-28 — Ledgers merge by union; sections are the unit of edit
 
 - `CHANGELOG.md`, `FEATURES.md` and `decision_log.md` now use git's union merge
