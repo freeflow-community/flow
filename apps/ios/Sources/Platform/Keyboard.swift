@@ -29,7 +29,7 @@ extension View {
     /// `.immediately` rather than `.interactively` (#69) because reading
     /// back-scroll is the common case and the keyboard covers half the phone
     /// while you do it; interactive dismissal only completed when the drag
-    /// happened to pull down across the keyboard itself, so scrolling *up*
+    /// happened to pull down across the keyboard itself, so scrolling back
     /// through history left it standing.
     func dismissesKeyboardOnChatInteraction() -> some View {
         scrollDismissesKeyboard(.immediately)

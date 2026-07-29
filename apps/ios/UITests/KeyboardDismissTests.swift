@@ -19,6 +19,13 @@ final class KeyboardDismissTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLOW_TEST_SERVER_URL"] ?? "http://127.0.0.1:8787"
     }
 
+    /// The channel to land in. Override when `#general` is unusable — old QA-Lab
+    /// rows are encrypted with a dev key a fresh server doesn't hold, and the
+    /// scroll case wants a transcript long enough to actually scroll.
+    private var channelName: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_CHANNEL"] ?? "general"
+    }
+
     /// The keyboard is gone within a few seconds.
     private func assertKeyboardDismissed(_ app: XCUIApplication) {
         let gone = expectation(for: NSPredicate(format: "exists == false"),
@@ -34,7 +41,7 @@ final class KeyboardDismissTests: XCTestCase {
             "FLOW_SERVER_URL": serverURL,
             "FLOW_DEBUG_EMAIL": "alice@qa.local",
             "FLOW_DEBUG_PASSWORD": "qa-password-1",
-            "FLOW_DEBUG_OPEN_CHANNEL": "general",
+            "FLOW_DEBUG_OPEN_CHANNEL": channelName,
         ]
         app.launch()
 
