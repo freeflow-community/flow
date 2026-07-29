@@ -161,6 +161,11 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   message can silently stop the follow. Needs the same pinned-follow port
   (web and macOS now share the model; iOS's `MessageListView` is a separate
   copy with a settle-scroll timer to reconcile).
+- iOS: no inline video player at all — video attachments render as a file chip,
+  so the #96 aspect-ratio fix (macOS 2026-07-28) has nothing to land on there.
+  Web was already correct: its `<video>` carries only max-width/max-height and
+  CSS replaced-element sizing keeps the intrinsic ratio. Closes when iOS gets an
+  inline player (AVKit, same sizing rule as macOS).
 
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
@@ -344,6 +349,14 @@ Entries below start after phase 16.
   tmpdir + a full uuid overran the 104-byte `sun_path` cap, so 0.15.0's
   `start_task` never actually came up there. State dir now uses a hashed
   short agent id.
+
+### 2026-07-28 — Chat video player respects the clip's aspect ratio (#96)
+
+- `[macos]` The inline video card and its lightbox size to the clip's real
+  presentation size instead of a fixed 16:9 frame, so portrait and square video
+  no longer play as a sliver between black pillars. `preferredTransform` is
+  applied, which is what makes rotated phone video read as portrait.
+- `[macos]` macOS 2.2.10.
 
 ### 2026-07-27 — Activity is per workspace
 
