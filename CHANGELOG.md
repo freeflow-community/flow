@@ -237,12 +237,13 @@ Entries below start after phase 16.
   "agent exceeded max turns (200)". Other subtypes pass through by name.
 - `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
   after 19 productive minutes. Bridge 0.17.0.
+
 ### 2026-07-29 — Interrupt an agent turn (#67)
 
 - `[web]` `[macos]` `[ios]` `[bridge]` An **Interrupt** button on the agent's
   live "thinking…" row stops the turn: 🛑 on that row (or `/stop`) kills the
   runtime's process group and posts "⏹ Stopped by @you" with any partial work.
-  SIGTERM first, so the session stays resumable. Bridge 0.17.0, macOS 2.2.11.
+  SIGTERM first, so the session stays resumable. Bridge 0.18.0, macOS 2.2.11.
 - `[bridge]` 🛑 on a status row no run owns reaps it — the orphan a bridge that
   died mid-turn leaves behind.
 - `[qa]` `[ios]` `FLOW_DEBUG_OPEN_CHANNEL` accepts a channel id as well as a
