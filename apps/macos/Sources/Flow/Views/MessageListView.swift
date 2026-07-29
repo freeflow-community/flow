@@ -439,6 +439,10 @@ struct MessageRow: View {
                         sendFailedFooter
                     }
 
+                    if isThinkingRow {
+                        interruptButton
+                    }
+
                     if !message.reactions.isEmpty {
                         reactionChips
                     }
@@ -856,6 +860,43 @@ struct MessageRow: View {
                 .pointingHandCursor()
         }
         .padding(.top, 1)
+    }
+
+    /// An agent's live "thinking…" row carries its own stop control (#67).
+    private var isThinkingRow: Bool {
+        app.agentIds.contains(message.userId) && AgentStatus.isThinkingRow(message.body)
+    }
+
+    /// True once we've asked: the reaction is already ours, so the bridge has
+    /// the signal and the turn is on its way down.
+    private var stopping: Bool {
+        guard let me = currentUserId else { return false }
+        return message.reactions.contains { $0.emoji == AgentStatus.interruptEmoji && $0.userIds.contains(me) }
+    }
+
+    /// Interrupt: adds the 🛑 reaction the bridge maps back to the running turn.
+    private var interruptButton: some View {
+        Button {
+            guard !stopping else { return }
+            Task { await app.engine.toggleReaction(messageId: message.id, emoji: AgentStatus.interruptEmoji) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "stop.circle")
+                Text(stopping ? "Stopping…" : "Interrupt")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(stopping ? MC.faint : MC.inkSoft)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(.white))
+            .overlay(Capsule().strokeBorder(MC.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(stopping)
+        .pointingHandCursor()
+        .help(stopping ? "Stopping…" : "Stop this agent turn")
+        .accessibilityIdentifier("msg.interrupt.\(message.id)")
+        .padding(.top, 2)
     }
 
     private var reactionChips: some View {
