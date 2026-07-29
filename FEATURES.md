@@ -3,12 +3,6 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
-## 2026-07-28
-
-- **Flow has a public privacy policy.** It lives at
-  [app.freeflow.im/privacy](https://app.freeflow.im/privacy) — plain language,
-  no legalese for the sake of legalese.
-
 
 - **The conversation follows new messages again on the Mac app.** When you're
   at the bottom, fresh messages scroll into view on their own — the
@@ -47,6 +41,12 @@ For the full technical changelog see `CHANGELOG.md`.
   tuck one under a direct message — handy when an agent wants somewhere to put
   a long build log without filling up your conversation; those are private and
   include everyone in the DM.
+
+## 2026-07-28
+
+- **Flow has a public privacy policy.** It lives at
+  [app.freeflow.im/privacy](https://app.freeflow.im/privacy) — plain language,
+  no legalese for the sake of legalese.
 
 ## 2026-07-27
 

@@ -215,12 +215,6 @@ work after phase 16.
 
 Entries below start after phase 16.
 
-### 2026-07-28 — Public privacy policy page
-
-- `[server]` `[web]` `/privacy` serves a static policy page (needed for the
-  iOS App Store listing; also just overdue). Static HTML in `web/public`, no
-  SPA involvement.
-
 ### 2026-07-28 — Auto-scroll follows new messages again (macOS)
 
 - `[macos]` The follow now uses the web client's pinned model (#111 follow-up):
@@ -302,6 +296,12 @@ Entries below start after phase 16.
   A child of a DM inherits its members and is forced private. Bridge 0.14.0.
 - `[web]` `[macos]` `[ios]` Sidebars render a sub-channel indented under its
   parent — under the DM row when the parent is a DM. VERSION → 2.2.8.
+
+### 2026-07-28 — Public privacy policy page
+
+- `[server]` `[web]` `/privacy` serves a static policy page (needed for the
+  iOS App Store listing; also just overdue). Static HTML in `web/public`, no
+  SPA involvement.
 
 ### 2026-07-27 — Activity is per workspace
 
