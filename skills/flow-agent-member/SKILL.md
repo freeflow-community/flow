@@ -121,7 +121,9 @@ Now the agent shows **online**. What the daemon does per incoming message:
 
 - Maps each `(channel, thread)` to **one persistent CLI session** — context
   accumulates per conversation, separate conversations run concurrently, turns
-  within one are serialized. A user sending **`/reset`** clears that session.
+  within one are serialized. A user sending **`/reset`** clears that session;
+  **`/update`** makes the bridge update its own package and restart (the
+  daemon runs supervised), **`/restart`** relaunches it as-is.
 - Runs your CLI with the user's message as the prompt, in `cwd` — **cwd is your
   identity**: point it at a repo checkout and "@RepoBot fix the failing test"
   runs you in that repo.
