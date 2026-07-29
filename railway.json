@@ -8,6 +8,8 @@
     "startCommand": "node packages/server/dist/index.js",
     "healthcheckPath": "/healthz",
     "healthcheckTimeout": 120,
+    "overlapSeconds": 60,
+    "drainingSeconds": 30,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
   }

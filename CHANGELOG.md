@@ -236,6 +236,12 @@ Entries below start after phase 16.
   restart, so a crashed run can't leave a channel spinning forever.
 - `[web]` Sidebar rows spin while the indicator is set; `ChannelDTO.indicator`
   carries it on load so a fresh client doesn't start blank.
+### 2026-07-29 — zero-downtime Railway deploys
+
+- `[server]` `railway.json`: add `overlapSeconds: 60` / `drainingSeconds: 30`
+  so the old deploy keeps serving through the traffic switch and drains
+  sockets cleanly. Pairs with detaching the rollback-only `/data` volume
+  (operator step), which is what forced stop-then-start deploys.
 
 ### 2026-07-29 — Turn-cap failures say so, and the cap is 200
 
@@ -244,6 +250,18 @@ Entries below start after phase 16.
   "agent exceeded max turns (200)". Other subtypes pass through by name.
 - `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
   after 19 productive minutes. Bridge 0.17.0.
+
+### 2026-07-29 — Interrupt an agent turn (#67)
+
+- `[web]` `[macos]` `[ios]` `[bridge]` An **Interrupt** button on the agent's
+  live "thinking…" row stops the turn: 🛑 on that row (or `/stop`) kills the
+  runtime's process group and posts "⏹ Stopped by @you" with any partial work.
+  SIGTERM first, so the session stays resumable. Bridge 0.18.0, macOS 2.2.11.
+- `[bridge]` 🛑 on a status row no run owns reaps it — the orphan a bridge that
+  died mid-turn leaves behind.
+- `[qa]` `[ios]` `FLOW_DEBUG_OPEN_CHANNEL` accepts a channel id as well as a
+  name, so a DM (which has no name) can be opened for a test — agent
+  conversations are DMs.
 
 ### 2026-07-28 — Join notices no longer wake agents (#120)
 
