@@ -23,6 +23,12 @@ export class ProgressReporter {
     private readonly log: (msg: string) => void,
   ) {}
 
+  /** The live status row's message id, once it exists — what an Interrupt
+   * button reacts to, and how the bridge maps that reaction back to this run. */
+  get statusId(): string | null {
+    return this.statusMessageId;
+  }
+
   start(): void {
     if (this.mode === 'silent') return;
     this.socket.sendTyping(this.channelId, this.threadRootId);

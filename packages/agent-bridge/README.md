@@ -63,6 +63,11 @@ onboarding.
   a source checkout restart but skip the npm update (pull + build by hand).
 - **Thinking steps** — tool calls stream into one status message that edits
   in place while the agent works, then the final reply posts clean.
+- **Interruptible** — react 🛑 on that status row (web draws an **Interrupt**
+  button on it) and the turn ends: the CLI's whole process tree is stopped and
+  the row is replaced by "⏹ Stopped by @you" plus whatever the agent had said.
+  The session survives, so the next message picks up where it left off.
+  `/stop` does the same by typing.
 - **Attachments both ways** — incoming images/files are downloaded locally
   and offered to the agent (Claude renders images natively); the agent can
   send files back via the bundled `flow` MCP server (`send_message`,

@@ -160,6 +160,20 @@ supervisor process): **`/update`** makes the bridge npm-install the latest
 asked (a source-checkout install restarts without updating); **`/restart`**
 relaunches as-is. Like `/reset`, they take a leading @-mention in a channel.
 
+## Stopping a turn
+
+A turn in flight can be ended: react **🛑** on the agent's live
+`🤖 *thinking…*` row (the web client draws an **Interrupt** button on it), or
+send **`/stop`**. The bridge kills that run's whole process group — SIGTERM
+first, so the CLI flushes its session transcript — deletes the status row and
+posts `⏹ Stopped by @you` with any partial work. The conversation's session is
+untouched, so the next message resumes with full context.
+
+Interrupts are handled on the event, not queued behind the running turn, and
+aren't subject to the usual scope rules: stopping an agent isn't talking to it,
+so 🛑 works in any channel the agent is in. A 🛑 on a status row no run owns —
+the bridge died mid-turn and left it stranded — reaps the row instead.
+
 ## Attachments (images, documents)
 
 Files attached to a message are downloaded to a per-agent temp dir
