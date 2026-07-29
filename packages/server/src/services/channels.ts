@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
-import type { ChannelDTO, ChannelKind, NotifyLevel } from '@flow/shared';
+import type { ChannelDTO, ChannelIndicatorState, ChannelKind, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -13,6 +13,7 @@ import {
   markThreadNotificationsRead,
 } from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
+import { channelIndicators } from '../indicators.js';
 
 const { channels, channelMembers, messages, notifications, workspaceMembers } = schema;
 
@@ -27,6 +28,7 @@ export function toChannelDTO(
     unreadNotifications?: number | undefined;
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
+    indicator?: ChannelIndicatorState | null | undefined;
   },
 ): ChannelDTO {
   const dto: ChannelDTO = {
@@ -47,6 +49,9 @@ export function toChannelDTO(
     parentId: c.parentId,
   };
   if (opts.memberIds) dto.memberIds = opts.memberIds;
+  // Only sent when something is actually showing: absent means "no spinner",
+  // and every other DTO path (create, patch, join…) leaves it out entirely.
+  if (opts.indicator) dto.indicator = opts.indicator;
   return dto;
 }
 
@@ -291,6 +296,11 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     .groupBy(notifications.channelId);
   const notifByChannel = new Map(notifRows.map((r) => [r.channelId, r.n]));
 
+  // Live activity spinners (#137) — in-memory, so this is a map lookup, not a
+  // query. Riding the channel list means a client that just loaded (or came
+  // back from a refresh) starts in the right state without a second call.
+  const indicators = channelIndicators(visible.map((r) => r.c.id));
+
   const result: ChannelDTO[] = [];
   for (const r of visible) {
     let unreadCount = 0;
@@ -318,6 +328,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
+        indicator: indicators.get(r.c.id) ?? null,
       }),
     );
   }

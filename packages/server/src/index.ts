@@ -9,6 +9,7 @@ import { attachSocketMode } from './gateway/socketMode.js';
 import { purgeExpiredSessions } from './services/auth.js';
 import { startOrphanSweep } from './services/files.js';
 import { startAppEventsWorker } from './services/appEvents.js';
+import { startIndicatorSweeper } from './services/channelIndicators.js';
 
 async function main(): Promise<void> {
   initCrypto();
@@ -31,8 +32,10 @@ async function main(): Promise<void> {
   void purgeExpiredSessions().catch(() => {});
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
   startAppEventsWorker(app.log); // Events API outbox drain (phase 4)
+  const indicatorSweeper = startIndicatorSweeper(); // retract lapsed channel spinners (#137)
 
   const shutdown = async () => {
+    indicatorSweeper.stop();
     gateway.close();
     socketMode.close();
     await app.close();
