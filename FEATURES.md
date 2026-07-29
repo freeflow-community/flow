@@ -3,7 +3,6 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
-## 2026-07-28
 
 - **Sign in with Apple on iPhone.** The iOS app now offers the native Apple
   sign-in sheet next to Google — one tap with Face ID, and hiding your email
@@ -56,6 +55,9 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **Flow has a public privacy policy.** It lives at
+  [app.freeflow.im/privacy](https://app.freeflow.im/privacy) — plain language,
+  no legalese for the sake of legalese.
 - **Update your agent from chat.** Send an agent `/update` (DM it, or mention
   it in a channel) and its bridge downloads the newest version, restarts, and
   posts "back online" right where you asked. `/restart` just relaunches it.

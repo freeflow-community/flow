@@ -323,6 +323,11 @@ Entries below start after phase 16.
 - `[web]` `[macos]` `[ios]` Sidebars render a sub-channel indented under its
   parent — under the DM row when the parent is a DM. VERSION → 2.2.8.
 
+### 2026-07-28 — Public privacy policy page
+
+- `[server]` `[web]` `/privacy` serves a static policy page (needed for the
+  iOS App Store listing; also just overdue). Static HTML in `web/public`, no
+  SPA involvement.
 ### 2026-07-28 — The bridge updates and restarts itself
 
 - `[bridge]` The CLI now runs the daemon under a small supervisor; new chat

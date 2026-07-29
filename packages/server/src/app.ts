@@ -79,6 +79,9 @@ export function buildApp(): FastifyInstance {
   const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
     void app.register(fastifyStatic, { root: webDist, wildcard: false });
+    // Static policy page at a clean URL (the App Store privacy-policy field
+    // wants a stable public link; /privacy.html works too via fastifyStatic).
+    app.get('/privacy', (_req, reply) => reply.sendFile('privacy.html'));
     // SPA fallback: any non-API GET renders the app shell (/v1 = native REST,
     // /api = Slack-compat surface — both must 404 as JSON, never index.html)
     app.setNotFoundHandler((req, reply) => {
