@@ -152,6 +152,12 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   (a header button or a row in the channel sheet) plus the
   `GET /v1/channels/:id/members` fetch both other clients now use.
 
+- iOS: auto-scroll has the follow latch fixed on macOS 2026-07-28 — its
+  jump-pill at-bottom check unpins on content growth, so a tall arriving
+  message can silently stop the follow. Needs the same pinned-follow port
+  (web and macOS now share the model; iOS's `MessageListView` is a separate
+  copy with a settle-scroll timer to reconcile).
+
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
   SDK: the native button opens the system browser at `/?native=google`, which
@@ -208,6 +214,14 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-07-28 — Auto-scroll follows new messages again (macOS)
+
+- `[macos]` The follow now uses the web client's pinned model (#111 follow-up):
+  a tall incoming message flipped the geometric at-bottom check false before
+  the follow scroll settled, latching auto-scroll off with only the jump pill
+  up. Content growth re-glues instead of unpinning; only an upward scroll
+  unpins. VERSION → 2.2.8.
 
 ### 2026-07-28 — Ledger files auto-merge concurrent additions
 
