@@ -224,6 +224,13 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-29 — zero-downtime Railway deploys
+
+- `[server]` `railway.json`: add `overlapSeconds: 60` / `drainingSeconds: 30`
+  so the old deploy keeps serving through the traffic switch and drains
+  sockets cleanly. Pairs with detaching the rollback-only `/data` volume
+  (operator step), which is what forced stop-then-start deploys.
+
 ### 2026-07-29 — Turn-cap failures say so, and the cap is 200
 
 - `[bridge]` A failed run reported "runtime reported an error" for every cause;
