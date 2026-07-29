@@ -1,5 +1,22 @@
 # Decision log
 
+## 2026-07-29 — Replica scaling is scheduled work; presence gossips over NATS, not Redis (operator)
+
+- The operator wants the `app` service able to run `replicas > 1` on Railway
+  for availability. This **overrides the 2026-07-18 scale-trigger ruling for
+  replica scaling of the existing monolith only** — the full phase-4
+  Appendix A split (API/gateway pools, JetStream, pgbouncer) remains
+  scale-triggered, not scheduled.
+- **Redis considered and rejected for presence**: a new service, client, and
+  failure mode to buy an authoritative view we don't need — presence is soft
+  state, and the local-fallback you'd build for a Redis outage *is* the
+  NATS-gossip design. Nothing else in the replica-readiness set needs Redis
+  either (Postgres advisory locks + `SKIP LOCKED` cover the hard-state
+  cases). Revisit only if a future feature independently justifies Redis.
+- Design: `docs/design/DISTRIBUTED_PRESENCE.md` — heartbeat/merge presence,
+  Postgres locking for migrations/outbox/sweeps, Socket Mode routing over
+  NATS, then flip to 2 replicas.
+
 ## 2026-07-28 — Task channels are top-level; sub-channels are for logs (operator)
 
 - A `start_task` work channel (`#task-N`) represents the **task**, not the
