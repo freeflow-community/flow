@@ -21,6 +21,13 @@ For the full technical changelog see `CHANGELOG.md`.
   messages instead of stretching the message box — previously the whole
   transcript could scroll away and leave the channel looking empty.
 
+## 2026-07-28
+
+- **Only one thing looks selected at a time in the sidebar (Mac).** Opening
+  Activity used to leave the channel you came from highlighted as well, so two
+  rows looked current at once. Closing Activity still returns you to that
+  channel.
+
 ## 2026-07-27
 
 - **Activity only shows the workspace you're in.** It used to list mentions,
