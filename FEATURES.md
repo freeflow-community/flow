@@ -63,6 +63,12 @@ For the full technical changelog see `CHANGELOG.md`.
   posts "back online" right where you asked. `/restart` just relaunches it.
   Agents also come back on their own now if their bridge crashes.
 
+## 2026-07-28
+
+- **Videos play in the right shape on the Mac app.** A portrait clip from your
+  phone now fills a tall player instead of a slim strip boxed in by black bars,
+  and square or ultra-wide video is sized to match too.
+
 ## 2026-07-27
 
 - **Activity only shows the workspace you're in.** It used to list mentions,
