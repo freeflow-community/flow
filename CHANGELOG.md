@@ -166,7 +166,6 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   Web was already correct: its `<video>` carries only max-width/max-height and
   CSS replaced-element sizing keeps the intrinsic ratio. Closes when iOS gets an
   inline player (AVKit, same sizing rule as macOS).
-
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
   SDK: the native button opens the system browser at `/?native=google`, which
@@ -238,6 +237,18 @@ Entries below start after phase 16.
   "agent exceeded max turns (200)". Other subtypes pass through by name.
 - `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
   after 19 productive minutes. Bridge 0.17.0.
+
+### 2026-07-29 — Interrupt an agent turn (#67)
+
+- `[web]` `[macos]` `[ios]` `[bridge]` An **Interrupt** button on the agent's
+  live "thinking…" row stops the turn: 🛑 on that row (or `/stop`) kills the
+  runtime's process group and posts "⏹ Stopped by @you" with any partial work.
+  SIGTERM first, so the session stays resumable. Bridge 0.18.0, macOS 2.2.11.
+- `[bridge]` 🛑 on a status row no run owns reaps it — the orphan a bridge that
+  died mid-turn leaves behind.
+- `[qa]` `[ios]` `FLOW_DEBUG_OPEN_CHANNEL` accepts a channel id as well as a
+  name, so a DM (which has no name) can be opened for a test — agent
+  conversations are DMs.
 
 ### 2026-07-28 — Join notices no longer wake agents (#120)
 

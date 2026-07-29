@@ -4,6 +4,7 @@ import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
+import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
 import { useSendMessage, useToggleReaction } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
@@ -330,6 +331,12 @@ function MessageRow({
   // Optimistic row whose POST errored out: kept in place with Retry/discard.
   const failed = (message as LocalMessage).failed === true;
   const send = useSendMessage(message.channelId);
+  // The agent's live "thinking…" row carries its own stop control (issue #67):
+  // reacting 🛑 is what tells the bridge to end that turn.
+  const thinking = !message.deletedAt && member?.isAgent === true && isThinkingStatus(message.body);
+  const stopping = message.reactions.some(
+    (r) => r.emoji === INTERRUPT_EMOJI && r.userIds.includes(auth.user.id),
+  );
 
   // Pin the message's file(s) as shared artifacts in this channel (phase 13);
   // the new artifact opens in the side panel automatically.
@@ -399,6 +406,24 @@ function MessageRow({
                   {renderBlocks(message.body, names, auth.user.id)}
                 </InlineLinkContext.Provider>
                 {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
+              </div>
+            )}
+            {thinking && (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  data-testid={`interrupt-${message.id}`}
+                  disabled={stopping || pending}
+                  title={stopping ? 'Stopping…' : 'Stop this agent turn'}
+                  className={`rounded-[20px] border px-[9px] py-[2px] text-xs font-[650] ${
+                    stopping
+                      ? 'border-hairline text-faint'
+                      : 'border-hairline bg-white text-ink-soft hover:border-hairline2 hover:text-ink'
+                  }`}
+                  onClick={() => toggle.mutate({ message, emoji: INTERRUPT_EMOJI, mine: false })}
+                >
+                  {stopping ? '⏹ Stopping…' : '⏹ Interrupt'}
+                </button>
               </div>
             )}
             {message.files.map((f) => (
