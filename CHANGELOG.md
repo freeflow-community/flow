@@ -215,6 +215,12 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — iOS QA hook: open Activity on launch
+
+- `[qa]` `FLOW_DEBUG_SHOW_ACTIVITY=1` lands the signed-in app on the Activity
+  feed (DEBUG-only, same family as `FLOW_DEBUG_OPEN_DRAWER`). Used for App
+  Store screenshot capture.
+
 ### 2026-07-28 — Auto-scroll follows new messages again (macOS)
 
 - `[macos]` The follow now uses the web client's pinned model (#111 follow-up):
