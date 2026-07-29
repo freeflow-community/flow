@@ -33,31 +33,36 @@ struct ChannelScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MessageListView(
-                messages: messages.value,
-                userNames: usersById.mapValues { $0.displayNameWithBadge },
-                userStatuses: statusesById,
-                currentUserId: app.currentUser?.id,
-                hasMore: app.hasMore[channelId] ?? false,
-                showThreadAffordances: true,
-                onLoadOlder: {
-                    Task { await app.engine.loadOlder(channelId: channelId) }
-                },
-                onOpenThread: { rootId in
-                    threadRoute = ThreadRoute(rootId: rootId)
-                },
-                onEdit: { editingMessage = $0 },
-                onDelete: { msg in
-                    Task { await app.engine.deleteMessage(id: msg.id) }
-                },
-                // Jump-to-message (phase 12): the Activity feed only sets a
-                // target for top-level messages on iOS (thread replies live in
-                // a separate pushed screen — see CHANGELOG Parity).
-                focusMessageId: app.focusMessageId,
-                onFocused: { app.focusMessageId = nil }
-            )
-            .dismissesKeyboardOnTap()
-            TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
+            // The chat area — everything above the composer. Tapping or
+            // scrolling any of it puts the keyboard away (#139); the composer
+            // is deliberately outside, since tapping it means "type".
+            VStack(spacing: 0) {
+                MessageListView(
+                    messages: messages.value,
+                    userNames: usersById.mapValues { $0.displayNameWithBadge },
+                    userStatuses: statusesById,
+                    currentUserId: app.currentUser?.id,
+                    hasMore: app.hasMore[channelId] ?? false,
+                    showThreadAffordances: true,
+                    onLoadOlder: {
+                        Task { await app.engine.loadOlder(channelId: channelId) }
+                    },
+                    onOpenThread: { rootId in
+                        threadRoute = ThreadRoute(rootId: rootId)
+                    },
+                    onEdit: { editingMessage = $0 },
+                    onDelete: { msg in
+                        Task { await app.engine.deleteMessage(id: msg.id) }
+                    },
+                    // Jump-to-message (phase 12): the Activity feed only sets a
+                    // target for top-level messages on iOS (thread replies live
+                    // in a separate pushed screen — see CHANGELOG Parity).
+                    focusMessageId: app.focusMessageId,
+                    onFocused: { app.focusMessageId = nil }
+                )
+                TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
+            }
+            .dismissesKeyboardOnChatInteraction()
             Divider()
             ComposerView(channelId: channelId)
         }
