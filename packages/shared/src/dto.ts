@@ -324,14 +324,17 @@ export interface AuthResponse {
 }
 
 /**
- * Response of POST /v1/auth/google. A normal session plus the workspaces the
- * sign-in auto-enrolled the user into via domain self-registration (phase16
- * §4) — the client uses it to route straight in instead of showing the empty
- * create-workspace screen.
+ * Response of POST /v1/auth/google and /v1/auth/apple. A normal session plus
+ * the workspaces the sign-in auto-enrolled the user into via domain
+ * self-registration (phase16 §4) — the client uses it to route straight in
+ * instead of showing the empty create-workspace screen.
  */
-export interface GoogleAuthResponse extends AuthResponse {
+export interface OAuthSignInResponse extends AuthResponse {
   autoJoined: WorkspaceDTO[];
 }
+
+/** Historical name from when Google was the only OAuth provider. */
+export type GoogleAuthResponse = OAuthSignInResponse;
 
 /** GET /v1/config — the small public bootstrap payload the signed-out web app
  * reads so it knows which auth options to render. No secrets: a Google OAuth
@@ -341,15 +344,17 @@ export interface PublicConfigDTO {
   google: boolean;
   /** OAuth 2.0 Web client id for Google Identity Services; null when disabled. */
   googleClientId: string | null;
+  /** Sign in with Apple is configured server-side (native iOS flow). */
+  apple: boolean;
 }
 
 /** GET /v1/me/identities — external identities linked to the signed-in user.
  * Drives the "offer the domain toggle" decision on the client (phase16 §5a). */
 export interface OAuthIdentityDTO {
-  provider: 'google';
-  /** The verified email Google asserted at the last sign-in. */
+  provider: 'google' | 'apple';
+  /** The verified email the provider asserted at the last sign-in. */
   email: string;
-  /** Google Workspace hosted domain, when the account has one. */
+  /** Google Workspace hosted domain, when the account has one (Google only). */
   hostedDomain: string | null;
   linkedAt: string;
 }

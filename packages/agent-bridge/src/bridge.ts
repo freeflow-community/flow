@@ -5,9 +5,10 @@
 // `--session-id` on the first turn, `--resume` after. Conversations run
 // concurrently (cap N), messages within one conversation run serially.
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { ChannelDTO, Event, MessageDTO, UserDTO, WorkspaceDTO, WorkspaceMemberDTO } from '@flow/shared';
 import type { BridgeConfig } from './config.js';
@@ -16,6 +17,7 @@ import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
 import { ProgressReporter } from './progress.js';
 import { killAllRuntimes, runRuntime, type RunResult } from './runtime.js';
+import { EXIT_RESTART, EXIT_UPDATE } from './supervisor.js';
 import { currentVersion, isOutdated, latestPublishedVersion } from './version.js';
 
 const THINKING_PREFIX = '🤖 *thinking…*';
@@ -34,6 +36,33 @@ export function failureReply(result: RunResult): string {
   const capped =
     salvaged.length > SALVAGE_LIMIT ? `${salvaged.slice(0, SALVAGE_LIMIT - 1).trimEnd()}…` : salvaged;
   return `${note}\n\nWhere I got to:\n\n${capped}`;
+}
+
+/** Per-agent scratch dir (0700) for the bridge's own runtime state: the task
+ * IPC socket and the relaunch note a restart posts back from. The agent id is
+ * *hashed short* deliberately: a unix socket path tops out at ~104 bytes on
+ * macOS (`sun_path`), and tmpdir there is already ~50 (`/var/folders/…`) — a
+ * full uuid in the dir name pushed `task.sock` over the limit (EINVAL). */
+export function bridgeStateDir(agentId: string): string {
+  const short = createHash('sha256').update(agentId).digest('hex').slice(0, 12);
+  return path.join(os.tmpdir(), `flow-bridge-${short}`);
+}
+
+/** Where the task-handoff IPC listens: a per-agent unix socket (named pipe on
+ * Windows). The per-run MCP env carries it as FLOW_BRIDGE_SOCK. */
+export function taskSocketPath(agentId: string): string {
+  if (process.platform === 'win32') return `\\\\.\\pipe\\flow-bridge-${agentId}`;
+  return path.join(bridgeStateDir(agentId), 'task.sock');
+}
+
+/** Written before a `/update` or `/restart` exit; read on the next startup so
+ * the relaunched daemon can report back where it was asked. */
+interface RelaunchNote {
+  channelId: string;
+  threadRootId?: string;
+  fromVersion: string | null;
+  update: boolean;
+  at: string;
 }
 
 interface Conversation {
@@ -69,10 +98,17 @@ export class AgentBridge {
   private channels = new Map<string, ChannelDTO>();
   private members = new Map<string, WorkspaceMemberDTO>();
   private conversations = new Map<string, Conversation>();
+  /** Channels homing a start_task run. The bridge converses in them DM-style —
+   * top-level, one session — so the run and human interjections share context.
+   * In-memory: a bridge restart kills the run anyway (killAllRuntimes), after
+   * which the channel reverts to ordinary owned-channel threading. */
+  private taskChannels = new Set<string>();
   /** threadRootId → "we've spoken in this thread" (see inThread). */
   private threadParticipation = new Map<string, boolean>();
   private readonly sem: Semaphore;
   private refreshTimer: NodeJS.Timeout | null = null;
+  private ipcServer: http.Server | null = null;
+  private taskSock: string | null = null;
 
   private logStream: fs.WriteStream | null = null;
 
@@ -120,8 +156,139 @@ export class AgentBridge {
       log: (m) => this.log(m),
     });
     this.socket.connect();
+    this.startTaskIpc();
     // Best-effort staleness check — never blocks startup or crashes on failure.
     void this.checkVersion();
+    void this.reportRelaunch();
+  }
+
+  /** After a `/update` / `/restart` relaunch, confirm we're back — in the
+   * conversation that asked, with the version the update actually landed on. */
+  private async reportRelaunch(): Promise<void> {
+    const notePath = path.join(bridgeStateDir(this.me.id), 'relaunch.json');
+    let note: RelaunchNote;
+    try {
+      note = JSON.parse(fs.readFileSync(notePath, 'utf8')) as RelaunchNote;
+    } catch {
+      return; // no note, or unreadable — nothing to report
+    }
+    fs.rmSync(notePath, { force: true });
+    // A stale note (the relaunch happened long ago, e.g. the machine slept
+    // through it) would post into a conversation that has moved on.
+    if (Date.now() - Date.parse(note.at) > 15 * 60_000) return;
+    let now: string | null = null;
+    try {
+      now = currentVersion();
+    } catch {
+      /* version unknown — still report we're back */
+    }
+    const version =
+      note.update && note.fromVersion && now === note.fromVersion
+        ? `still v${now} — the update didn't take; check the supervisor log`
+        : `v${now ?? 'unknown'}${note.update && note.fromVersion ? ` (was v${note.fromVersion})` : ''}`;
+    await this.api
+      .sendMessage(note.channelId, `🔄 back online — ${version}.`, note.threadRootId || undefined)
+      .catch((err: Error) => this.log(`relaunch report failed: ${err.message}`));
+  }
+
+  /**
+   * Local IPC for `start_task`: the flow MCP server (a subprocess of the
+   * runtime CLI, so always on this machine) POSTs { channelId, prompt } here
+   * to hand long-running work off to a run homed in that channel, freeing the
+   * conversation it was asked in. A unix socket in a 0700 directory (named
+   * pipe on Windows) — the same local trust boundary as agent.json. Failure to
+   * listen only loses the tool, never the bridge.
+   */
+  private startTaskIpc(): void {
+    const sock = taskSocketPath(this.me.id);
+    try {
+      if (process.platform !== 'win32') {
+        fs.mkdirSync(path.dirname(sock), { recursive: true, mode: 0o700 });
+        fs.rmSync(sock, { force: true }); // stale socket from a previous run
+      }
+      const server = http.createServer((req, res) => {
+        if (req.method !== 'POST' || req.url !== '/task') {
+          res.writeHead(404).end();
+          return;
+        }
+        let body = '';
+        req.on('data', (chunk: Buffer) => {
+          body += chunk;
+          if (body.length > 256 * 1024) req.destroy(); // a prompt, not a payload
+        });
+        req.on('end', () => {
+          void (async () => {
+            let out: { ok: true; note: string } | { error: string };
+            try {
+              out = await this.startTask(JSON.parse(body) as Record<string, unknown>);
+            } catch (err) {
+              out = { error: (err as Error).message };
+            }
+            res.writeHead('error' in out ? 400 : 200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify(out));
+          })();
+        });
+      });
+      server.on('error', (err: Error) => this.log(`task ipc error: ${err.message}`));
+      server.listen(sock, () => this.log(`task ipc listening on ${sock}`));
+      server.unref();
+      this.ipcServer = server;
+      this.taskSock = sock;
+    } catch (err) {
+      this.log(`task ipc unavailable: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Hand work off to a run of the agent homed in `channelId`, seeded with
+   * `prompt` as its entire instructions (it inherits nothing from the calling
+   * conversation). The channel becomes a task channel — see `taskChannels` —
+   * so the run's progress, its replies, and anything humans say there all
+   * share one top-level session. Returns as soon as the turn is queued.
+   */
+  async startTask(params: Record<string, unknown>): Promise<{ ok: true; note: string } | { error: string }> {
+    const channelId = typeof params.channelId === 'string' ? params.channelId : '';
+    const prompt = typeof params.prompt === 'string' ? params.prompt.trim() : '';
+    if (!channelId || !prompt) return { error: 'start_task needs channelId and prompt' };
+    if (!this.channels.has(channelId)) {
+      await this.refreshDirectory().catch((err: Error) => this.log(`directory refresh failed: ${err.message}`));
+    }
+    const chan = this.channels.get(channelId);
+    if (!chan) return { error: 'no such channel' };
+    if (!chan.isMember) return { error: 'you are not a member of that channel — create or join it first' };
+    const requester =
+      typeof params.userId === 'string' && this.members.has(params.userId) ? params.userId : this.me.id;
+    const sourceChannelId = typeof params.sourceChannelId === 'string' ? params.sourceChannelId : '';
+    this.taskChannels.add(channelId);
+    // Provenance for the record: the channel says where the run came from.
+    if (sourceChannelId && sourceChannelId !== channelId) {
+      await this.api
+        .sendMessage(
+          channelId,
+          `⚙️ starting a task run here — handed off from ${this.channelLabel(sourceChannelId)}` +
+            `${requester !== this.me.id ? ` for <@${requester}>` : ''}.`,
+        )
+        .catch((err: Error) => this.log(`task kickoff post failed: ${err.message}`));
+    }
+    this.enqueue({
+      id: `task-${randomUUID()}`,
+      channelId,
+      userId: requester,
+      threadRootId: null,
+      clientMsgId: `task-${randomUUID()}`,
+      body: prompt,
+      createdAt: new Date().toISOString(),
+      editedAt: null,
+      deletedAt: null,
+      systemKind: null,
+      replyCount: 0,
+      lastReplyAt: null,
+      replyParticipantUserIds: [],
+      reactions: [],
+      files: [],
+      unfurls: [],
+    });
+    return { ok: true, note: `task run queued in ${this.channelLabel(channelId)}` };
   }
 
   /**
@@ -149,13 +316,17 @@ export class AgentBridge {
       .sendMessage(
         chan.id,
         `⚠️ I'm running flow-agent-bridge v${current}, but v${latest} is available on npm. ` +
-          `Update the package and restart me to get the latest.`,
+          `Send \`/update\` (mention me in a channel, or DM it) and I'll update and restart myself.`,
       )
       .catch((err: Error) => this.log(`version notice post failed: ${err.message}`));
   }
 
   stop(): void {
     this.socket?.close();
+    this.ipcServer?.close();
+    this.ipcServer = null;
+    if (this.taskSock && process.platform !== 'win32') fs.rmSync(this.taskSock, { force: true });
+    this.taskSock = null;
     // Runtimes run detached (own process group) so expiry can kill their whole
     // subprocess tree — the flip side is they outlive us unless we end them.
     killAllRuntimes();
@@ -197,8 +368,72 @@ export class AgentBridge {
       await this.refreshDirectory().catch((err: Error) => this.log(`directory refresh failed: ${err.message}`));
     }
     if (!(await this.inScope(msg))) return;
-    if (msg.body.trim() === '/reset') return this.handleReset(msg);
+    // Bridge commands, not runtime turns. A leading mention of us is stripped
+    // first, so "@Bot /update" works in a channel (where the mention is what
+    // put the message in scope at all).
+    const command = msg.body.replace(new RegExp(`^\\s*<@${this.me.id}>\\s*`), '').trim();
+    if (command === '/reset') return this.handleReset(msg);
+    if (command === '/update' || command === '/restart') {
+      return this.handleRelaunch(msg, command === '/update');
+    }
     this.enqueue(msg);
+  }
+
+  /** Swappable in tests — the real thing takes the process down. */
+  exitProcess: (code: number) => void = (code) => process.exit(code);
+  /** Swappable in tests — the real thing asks the npm registry. */
+  fetchLatestVersion: () => Promise<string | null> = latestPublishedVersion;
+
+  /**
+   * `/update` and `/restart`: acknowledge, leave a note to report back from,
+   * and exit with the code the supervisor reads (see supervisor.ts). Without a
+   * supervisor (FLOW_BRIDGE_SUPERVISED unset means we *are* the supervisor's
+   * child in the normal topology — but a bare `run` under an external process
+   * manager also lands here) the exit still behaves: most managers restart on
+   * a nonzero exit, and a plain terminal run just stops.
+   */
+  private async handleRelaunch(msg: MessageDTO, update: boolean): Promise<void> {
+    const replyRoot = this.replyRoot(msg);
+    const say = (text: string): Promise<unknown> =>
+      this.api.sendMessage(msg.channelId, text, replyRoot).catch((err: Error) => this.log(`relaunch ack failed: ${err.message}`));
+    let current: string | null = null;
+    try {
+      current = currentVersion();
+    } catch {
+      /* unknown version — update can still proceed */
+    }
+    if (update) {
+      const latest = await this.fetchLatestVersion();
+      if (current && latest && !isOutdated(current, latest)) {
+        await say(`🤖 already running the latest flow-agent-bridge (v${current}) — nothing to update. (\`/restart\` relaunches without updating.)`);
+        return;
+      }
+    }
+    const busy = [...this.conversations.values()].filter((c) => c.running).length;
+    const cutShort = busy > 0 ? ` ${busy} in-flight run${busy === 1 ? '' : 's'} will be cut short.` : '';
+    await say(
+      update
+        ? `🤖 updating${current ? ` from v${current}` : ''} and restarting — back in a minute.${cutShort}`
+        : `🤖 restarting — back in a moment.${cutShort}`,
+    );
+    try {
+      const dir = bridgeStateDir(this.me.id);
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const note: RelaunchNote = {
+        channelId: msg.channelId,
+        ...(replyRoot ? { threadRootId: replyRoot } : {}),
+        fromVersion: current,
+        update,
+        at: new Date().toISOString(),
+      };
+      fs.writeFileSync(path.join(dir, 'relaunch.json'), JSON.stringify(note), { mode: 0o600 });
+    } catch (err) {
+      this.log(`relaunch note not written: ${(err as Error).message}`);
+    }
+    this.log(update ? 'update requested — exiting for the supervisor' : 'restart requested — exiting for the supervisor');
+    this.stop();
+    // A beat for the WS close + log flush, mirroring the signal path.
+    setTimeout(() => this.exitProcess(update ? EXIT_UPDATE : EXIT_RESTART), 300);
   }
 
   /** Sender gating + self/agent loop guard + event-scope filter. */
@@ -215,10 +450,11 @@ export class AgentBridge {
     if (this.cfg.eventScope === 'all') return true;
     if (msg.body.includes(`<@${this.me.id}>`)) return true; // @-mention
     // A channel we created is ours: every top-level message in it is addressed
-    // to us, mention or not. Thread replies are excluded deliberately — those
-    // stay governed by inThread, so a side conversation under someone else's
-    // message doesn't drag us in.
-    if (!msg.threadRootId && chan.createdBy === this.me.id) return true;
+    // to us, mention or not. Same for a channel homing a start_task run,
+    // whoever created it — talking there is talking to the run. Thread replies
+    // are excluded deliberately — those stay governed by inThread, so a side
+    // conversation under someone else's message doesn't drag us in.
+    if (!msg.threadRootId && (chan.createdBy === this.me.id || this.taskChannels.has(chan.id))) return true;
     // Every reply in a thread we're part of, mentioned or not.
     if (msg.threadRootId) return this.inThread(msg.channelId, msg.threadRootId);
     return false;
@@ -235,6 +471,11 @@ export class AgentBridge {
    */
   private replyRoot(msg: MessageDTO): string | undefined {
     if (msg.threadRootId) return msg.threadRootId;
+    // A task channel converses DM-style: the channel *is* the conversation.
+    // Top-level replies keep the run's log linear, and — via convKey — route
+    // every top-level message into the run's own session, which is what lets
+    // a human interject with the run's full context.
+    if (this.taskChannels.has(msg.channelId)) return undefined;
     const chan = this.channels.get(msg.channelId);
     if (!chan || chan.kind === 'dm' || chan.kind === 'group_dm') return undefined;
     return msg.id;
@@ -401,7 +642,7 @@ export class AgentBridge {
       `Reply in concise chat style; Flow renders markdown. Mention users by writing <@userId> literally, e.g. <@${msg.userId}>.`,
       roster ? `Workspace members: ${roster}.` : '',
       mcp
-        ? 'You have Flow MCP tools: send_message, react, upload_file, download_file (fetch a file attached to any message — read_messages notes attachments with their file ids), search_history, set_avatar (change your own profile picture from a local image), plus channel operations (list_channels, list_users, join_channel, leave_channel, create_channel, invite_to_channel — add several userIds in one call, read_messages — newest first, page with before=<oldest id>). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
+        ? 'You have Flow MCP tools: send_message, react, upload_file, download_file (fetch a file attached to any message — read_messages notes attachments with their file ids), search_history, set_avatar (change your own profile picture from a local image), plus channel operations (list_channels, list_users, join_channel, leave_channel, create_channel, invite_to_channel — add several userIds in one call, read_messages — newest first, page with before=<oldest id>), and start_task — hand long-running work off to a separate run of yourself homed in another channel (that channel becomes the run’s conversation: progress, replies and human steering all live there; the prompt must be self-contained, and after handing off you reply here with a one-line pointer instead of doing the work). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
         : 'Your final response text is posted to the conversation as your reply.',
       this.cfg.runtime.systemPromptExtra ?? '',
     ];
@@ -487,6 +728,8 @@ export class AgentBridge {
             // Who the agent is working for this run — the author of the
             // message it's responding to. Default recipient for create_artifact.
             FLOW_USER_ID: msg.userId,
+            // Where start_task reaches the daemon; empty when IPC failed to start.
+            FLOW_BRIDGE_SOCK: this.taskSock ?? '',
           },
         },
       },

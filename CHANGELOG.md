@@ -13,6 +13,10 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- Sign in with Apple is iOS-only (#124): web + macOS still offer only
+  Google/password. `/v1/auth/apple` is client-agnostic; macOS can use the same
+  native ASAuthorization flow, web needs Apple's JS flow (Services ID +
+  redirect setup — more than a pure port).
 - iOS: no join-link management (#85). Web + macOS can create/copy/regenerate/
   revoke the workspace's persistent join link from the invite surface; iOS has
   no invite surface at all to hang it on. Server API is done and client-agnostic
@@ -220,6 +224,27 @@ Entries below start after phase 16.
 - `[qa]` `FLOW_DEBUG_SHOW_ACTIVITY=1` lands the signed-in app on the Activity
   feed (DEBUG-only, same family as `FLOW_DEBUG_OPEN_DRAWER`). Used for App
   Store screenshot capture.
+### 2026-07-28 — Sign in with Apple (iOS)
+
+- `[server]` `POST /v1/auth/apple` verifies a native Apple identity token
+  (jose/JWKS, `aud` = `APPLE_BUNDLE_ID`) and reuses the Google account
+  match/create + domain self-registration, now extracted to `oauthAccounts.ts`.
+  `/v1/config` gains `apple`.
+- `[ios]` Native Sign in with Apple button on the sign-in screen (App Store
+  guideline 4.8: required alongside Google). Entitlement via project.yml.
+  macOS VERSION → 2.2.9 (shared core: `AppleAuthBody`, `signInWithApple`).
+### 2026-07-28 — start_task: hand work off to a run homed in a channel
+
+- `[bridge]` New `start_task` MCP tool: queue a fresh run of the agent in
+  another channel, seeded only by a self-contained prompt, via a local IPC
+  socket to the daemon. The target becomes a *task channel*: the bridge
+  converses there DM-style (top-level, one session), so the run's progress,
+  replies and human steering share context. Bridge → 0.15.0.
+- `[docs]` `work-project-tasks` reworked around the handoff: the invoked run
+  claims + opens the channel + hands off + returns a one-line pointer; the
+  handed-off run builds the batch. Inline is now the no-daemon fallback.
+  Task channels stay top-level (see decision_log 2026-07-28); a verbose log
+  may go in a sub-channel of the task channel.
 
 ### 2026-07-28 — Auto-scroll follows new messages again (macOS)
 
@@ -302,6 +327,23 @@ Entries below start after phase 16.
   A child of a DM inherits its members and is forced private. Bridge 0.14.0.
 - `[web]` `[macos]` `[ios]` Sidebars render a sub-channel indented under its
   parent — under the DM row when the parent is a DM. VERSION → 2.2.8.
+
+### 2026-07-28 — Public privacy policy page
+
+- `[server]` `[web]` `/privacy` serves a static policy page (needed for the
+  iOS App Store listing; also just overdue). Static HTML in `web/public`, no
+  SPA involvement.
+### 2026-07-28 — The bridge updates and restarts itself
+
+- `[bridge]` The CLI now runs the daemon under a small supervisor; new chat
+  commands `/update` (npm-install latest, restart, post "back online — vX"
+  where asked) and `/restart` drive it via exit codes. Crashes respawn with
+  backoff; source-checkout installs restart but skip the npm step. Commands
+  (incl. `/reset`) now accept a leading @-mention. Bridge → 0.16.0.
+- `[bridge]` Fix: the task IPC socket failed to listen on macOS (EINVAL) —
+  tmpdir + a full uuid overran the 104-byte `sun_path` cap, so 0.15.0's
+  `start_task` never actually came up there. State dir now uses a hashed
+  short agent id.
 
 ### 2026-07-27 — Activity is per workspace
 
