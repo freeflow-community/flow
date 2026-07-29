@@ -487,7 +487,7 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/workspaces/:id/channels', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(CreateChannelBody, req.body);
-    const dto = await ch.createChannel(id, req.user.id, body.name, body.topic, body.isPrivate);
+    const dto = await ch.createChannel(id, req.user.id, body.name, body.topic, body.isPrivate, body.parentId);
     return reply.status(201).send(dto);
   });
 

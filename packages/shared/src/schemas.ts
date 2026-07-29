@@ -176,6 +176,8 @@ export const CreateChannelBody = z.object({
   name: z.string().regex(CHANNEL_NAME_RE, 'channel name must be lowercase [a-z0-9-_], max 80 chars'),
   topic: z.string().max(250).optional(),
   isPrivate: z.boolean().optional(),
+  /** Nest under an existing channel or DM you're a member of, one level (#118). */
+  parentId: z.string().uuid().optional(),
 });
 export type CreateChannelBody = z.infer<typeof CreateChannelBody>;
 

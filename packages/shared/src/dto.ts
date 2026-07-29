@@ -131,6 +131,13 @@ export interface ChannelDTO {
    */
   unreadNotifications: number;
   notifyLevel: NotifyLevel;
+  /**
+   * Parent channel (#118) — set at creation, one level deep, so clients can
+   * render this channel indented under its parent. Null for a top-level
+   * channel, and for every DM. A child is an ordinary channel in every other
+   * respect: its own membership, privacy and unreads.
+   */
+  parentId: string | null;
   /** Member user ids — populated for dm/group_dm channels only (clients render DM names from these). */
   memberIds?: string[];
 }

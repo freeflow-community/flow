@@ -38,8 +38,34 @@ struct SidebarDrawer: View {
         SidebarPalette.palette(for: currentWorkspace?.sidebarColor)
     }
 
-    private var standard: [Channel] {
-        channels.value.filter { $0.isMember && !$0.isDM && $0.archivedAt == nil }
+    /// Joined standard channels in sidebar order — sub-channels (#118) follow
+    /// their parent and render indented.
+    private var standard: [(channel: Channel, isNested: Bool)] {
+        let dmIds = joinedDmIds
+        return Channel.nested(
+            channels.value.filter {
+                $0.isMember && !$0.isDM && $0.archivedAt == nil
+                    && !($0.parentId.map(dmIds.contains) ?? false)
+            }
+        )
+    }
+
+    /// Ids of the DMs I'm in — a sub-channel of one belongs to that conversation,
+    /// so it renders under the DM row and never in Channels (#118).
+    private var joinedDmIds: Set<String> {
+        Set(channels.value.filter { $0.isMember && $0.isDM }.map(\.id))
+    }
+
+    /// Sub-channels hanging off a DM, keyed by that DM's id.
+    private var dmChildren: [String: [Channel]] {
+        let dmIds = joinedDmIds
+        return Dictionary(
+            grouping: channels.value.filter {
+                $0.isMember && !$0.isDM && $0.archivedAt == nil
+                    && ($0.parentId.map(dmIds.contains) ?? false)
+            },
+            by: { $0.parentId! }
+        )
     }
     private var dms: [Channel] {
         // Direct messages sort alphabetically by display title, case-insensitive
@@ -131,11 +157,14 @@ struct SidebarDrawer: View {
                         .accessibilityIdentifier("channel.create")
                         .accessibilityLabel("New channel")
                     }
-                    ForEach(standard) { channelRow($0) }
+                    ForEach(standard, id: \.channel.id) { channelRow($0.channel, isNested: $0.isNested) }
 
                     if !dms.isEmpty {
                         sectionHeader("Direct Messages") { EmptyView() }
-                        ForEach(dms) { dmRow($0) }
+                        ForEach(dms) { dm in
+                            dmRow(dm)
+                            ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
+                        }
                     }
 
                     if !browsable.isEmpty {
@@ -245,7 +274,7 @@ struct SidebarDrawer: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
-    private func channelRow(_ channel: Channel) -> some View {
+    private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
         let active = app.selectedChannelId == channel.id && !app.showActivity
         return Button {
             open(channel.id)
@@ -281,6 +310,8 @@ struct SidebarDrawer: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Indent outside the background, so the pill insets with the row.
+        .padding(.leading, isNested ? 12 : 0)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
         .accessibilityValue(

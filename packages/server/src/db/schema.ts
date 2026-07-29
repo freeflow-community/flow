@@ -187,6 +187,8 @@ export const channels = pgTable(
     createdBy: uuid('created_by').notNull().references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
+    // Sub-channels (#118) — one level deep, enforced in the service.
+    parentId: uuid('parent_id').references((): AnyPgColumn => channels.id, { onDelete: 'set null' }),
   },
   (t) => [
     uniqueIndex().on(t.workspaceId, t.name),

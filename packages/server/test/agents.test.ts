@@ -369,6 +369,124 @@ describe('agent channel creation + invites', () => {
   });
 });
 
+// Sub-channels (issue #118). Creation is MCP-only for now, so these back the
+// `parentId` argument on the `create_channel` tool. Every rule lives in the
+// service — the column is a bare self-reference with no FK-level constraints.
+describe('sub-channels', () => {
+  const uniq = () => `${Date.now()}-${randomBytes(3).toString('hex')}`;
+
+  it('a channel created with a parent carries it through to the DTO', async () => {
+    const parent = await ch.createChannel(workspaceId, ownerId, `parent-${uniq()}`);
+    const child = await ch.createChannel(workspaceId, ownerId, `child-${uniq()}`, 'nested', false, parent.id);
+
+    expect(child.parentId).toBe(parent.id);
+    expect(parent.parentId).toBeNull();
+    // and it survives the round trip through the list endpoint clients read
+    const listed = (await ch.listChannels(workspaceId, ownerId)).find((c) => c.id === child.id);
+    expect(listed?.parentId).toBe(parent.id);
+  });
+
+  it('a channel created without a parent has a null parentId', async () => {
+    const chan = await ch.createChannel(workspaceId, ownerId, `top-${uniq()}`);
+    expect(chan.parentId).toBeNull();
+  });
+
+  it('nesting is one level deep — a sub-channel cannot be a parent', async () => {
+    const parent = await ch.createChannel(workspaceId, ownerId, `depth-a-${uniq()}`);
+    const child = await ch.createChannel(workspaceId, ownerId, `depth-b-${uniq()}`, undefined, false, parent.id);
+
+    await expect(
+      ch.createChannel(workspaceId, ownerId, `depth-c-${uniq()}`, undefined, false, child.id),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'parent_is_child' });
+  });
+
+  it('an unknown parent is a 404', async () => {
+    await expect(
+      ch.createChannel(workspaceId, ownerId, `orphan-${uniq()}`, undefined, false, crypto.randomUUID()),
+    ).rejects.toMatchObject({ statusCode: 404, code: 'not_found' });
+  });
+
+  it("a parent in another workspace is a 404, not a leak that the id exists", async () => {
+    const slug = `other-${uniq()}`;
+    const other = await ws.createWorkspace(ownerId, `Other ${slug}`, slug);
+    const elsewhere = await ch.createChannel(other.id, ownerId, `elsewhere-${uniq()}`);
+
+    await expect(
+      ch.createChannel(workspaceId, ownerId, `cross-${uniq()}`, undefined, false, elsewhere.id),
+    ).rejects.toMatchObject({ statusCode: 404, code: 'not_found' });
+  });
+
+  it('you must be a member of the parent to nest under it', async () => {
+    const a = await registerAgent('NestBot');
+    const theirs = await ch.createChannel(workspaceId, ownerId, `theirs-${uniq()}`);
+
+    // Visible to the whole workspace, but nesting under it is a write to it.
+    await expect(
+      ch.createChannel(workspaceId, a.user.id, `uninvited-${uniq()}`, undefined, false, theirs.id),
+    ).rejects.toMatchObject({ statusCode: 403, code: 'forbidden' });
+  });
+
+  // The motivating case: an agent parks its logs beside the DM it shares with
+  // you, rather than in the workspace channel list.
+  describe('under a DM', () => {
+    it('seeds the DM members and forces the child private', async () => {
+      const dm = await ch.createDm(workspaceId, ownerId, [memberId]);
+      const child = await ch.createChannel(workspaceId, ownerId, `dm-logs-${uniq()}`, undefined, false, dm.id);
+
+      expect(child.parentId).toBe(dm.id);
+      // isPrivate: false was asked for and deliberately overridden — a
+      // two-person side-channel must not show up in Browse.
+      expect(child.isPrivate).toBe(true);
+
+      const members = await db
+        .select({ userId: channelMembers.userId })
+        .from(channelMembers)
+        .where(eq(channelMembers.channelId, child.id));
+      expect(members.map((m) => m.userId).sort()).toEqual([ownerId, memberId].sort());
+    });
+
+    it('the other DM participant sees it in their channel list', async () => {
+      const dm = await ch.createDm(workspaceId, ownerId, [memberId]);
+      const child = await ch.createChannel(workspaceId, ownerId, `dm-shared-${uniq()}`, undefined, false, dm.id);
+
+      // Without the seeded membership this is invisible to them: it's private.
+      const theirs = (await ch.listChannels(workspaceId, memberId)).find((c) => c.id === child.id);
+      expect(theirs?.isMember).toBe(true);
+      expect(theirs?.parentId).toBe(dm.id);
+    });
+
+    it('a non-participant cannot nest under someone else\'s DM', async () => {
+      const a = await registerAgent('EavesBot');
+      const dm = await ch.createDm(workspaceId, ownerId, [memberId]);
+
+      await expect(
+        ch.createChannel(workspaceId, a.user.id, `intrude-${uniq()}`, undefined, false, dm.id),
+      ).rejects.toMatchObject({ statusCode: 403, code: 'forbidden' });
+    });
+  });
+
+  it('an archived channel cannot be a parent', async () => {
+    const parent = await ch.createChannel(workspaceId, ownerId, `gone-${uniq()}`);
+    await ch.archiveChannel(parent.id, ownerId);
+
+    await expect(
+      ch.createChannel(workspaceId, ownerId, `late-${uniq()}`, undefined, false, parent.id),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'parent_archived' });
+  });
+
+  it('a child outlives a deleted parent as an ordinary top-level channel', async () => {
+    const parent = await ch.createChannel(workspaceId, ownerId, `doomed-${uniq()}`);
+    const child = await ch.createChannel(workspaceId, ownerId, `survivor-${uniq()}`, undefined, false, parent.id);
+
+    // ON DELETE SET NULL — the conversation is not collateral damage.
+    await db.delete(channels).where(eq(channels.id, parent.id));
+
+    const row = (await db.select().from(channels).where(eq(channels.id, child.id)))[0]!;
+    expect(row.id).toBe(child.id);
+    expect(row.parentId).toBeNull();
+  });
+});
+
 describe('sponsor departure cascade', () => {
   it('removing the sponsor from a workspace removes the agents they sponsor there', async () => {
     const sponsor = await registerHuman(`sponsor-${Date.now()}@example.test`, 'Sponsor');

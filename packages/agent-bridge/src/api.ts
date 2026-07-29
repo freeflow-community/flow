@@ -131,7 +131,7 @@ export class FlowApi {
    * name in the workspace → 409 `channel_exists`. */
   createChannel(
     workspaceId: string,
-    body: { name: string; topic?: string; isPrivate?: boolean },
+    body: { name: string; topic?: string; isPrivate?: boolean; parentId?: string },
   ): Promise<ChannelDTO> {
     return this.req('POST', `/v1/workspaces/${workspaceId}/channels`, body);
   }

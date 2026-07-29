@@ -44,6 +44,7 @@ export function toChannelDTO(
     unreadCount: opts.unreadCount ?? 0,
     unreadNotifications: opts.unreadNotifications ?? 0,
     notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
+    parentId: c.parentId,
   };
   if (opts.memberIds) dto.memberIds = opts.memberIds;
   return dto;
@@ -65,14 +66,62 @@ async function dmMemberIds(channelIds: string[]): Promise<Map<string, string[]>>
   return out;
 }
 
+/**
+ * Sub-channels (#118): validate a proposed parent, or throw.
+ *
+ * None of this is expressible as a foreign key, which is why the column is a
+ * bare self-reference and the rules live here. One level only — a child cannot
+ * itself be a parent, because arbitrary depth turns the sidebar into a file
+ * tree and nothing in the feature asks for that.
+ *
+ * A DM is a legitimate parent: the motivating case is an agent parking its logs
+ * in a sub-channel of the DM it shares with you, so the noise stays next to the
+ * conversation instead of in the workspace's channel list.
+ */
+async function requireValidParent(workspaceId: string, callerId: string, parentId: string): Promise<ChannelRow> {
+  const parent = (await db.select().from(channels).where(eq(channels.id, parentId)).limit(1))[0];
+  // Same 404 for "no such channel" and "channel in someone else's workspace" —
+  // the caller is not a member there and shouldn't learn the id exists.
+  if (!parent || parent.workspaceId !== workspaceId) throw notFound('parent channel not found');
+  if (parent.archivedAt) throw badRequest('parent_archived', 'cannot nest under an archived channel');
+  if (parent.parentId) throw badRequest('parent_is_child', 'sub-channels can only be one level deep');
+  // Membership in the parent, not mere visibility: nesting under a channel is a
+  // write to it, and for a DM the id alone must not be enough to attach to it.
+  const mine = await db
+    .select({ userId: channelMembers.userId })
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, parentId), eq(channelMembers.userId, callerId)))
+    .limit(1);
+  if (!mine.length) throw forbidden('you must be a member of the parent channel');
+  return parent;
+}
+
 export async function createChannel(
   workspaceId: string,
   userId: string,
   name: string,
   topic?: string,
   isPrivate?: boolean,
+  parentId?: string,
 ): Promise<ChannelDTO> {
   await requireMembership(workspaceId, userId);
+  const parent = parentId ? await requireValidParent(workspaceId, userId, parentId) : undefined;
+
+  // A child of a DM inherits that DM's membership and privacy. Both follow from
+  // the same fact: the sub-channel belongs to the conversation, not to the
+  // workspace. Seeding members is what makes the agent-logs case work at all —
+  // otherwise the agent is alone in the channel it created for your benefit —
+  // and forcing private keeps a two-person side-channel out of Browse.
+  const underDm = !!parent && parent.kind !== 'standard';
+  let memberIds = [userId];
+  if (underDm) {
+    const rows = await db
+      .select({ userId: channelMembers.userId })
+      .from(channelMembers)
+      .where(eq(channelMembers.channelId, parent!.id));
+    memberIds = [...new Set([userId, ...rows.map((r) => r.userId)])].sort();
+  }
+
   const id = newId();
   try {
     await db.transaction(async (tx) => {
@@ -81,10 +130,11 @@ export async function createChannel(
         workspaceId,
         name,
         topic: topic ?? null,
-        isPrivate: isPrivate ?? false,
+        isPrivate: underDm ? true : (isPrivate ?? false),
         createdBy: userId,
+        parentId: parentId ?? null,
       });
-      await tx.insert(channelMembers).values({ channelId: id, userId });
+      await tx.insert(channelMembers).values(memberIds.map((uid) => ({ channelId: id, userId: uid })));
       const created = (await tx.select().from(channels).where(eq(channels.id, id)).limit(1))[0]!;
       await enqueueChannelEvent(tx, created, 'channel_created', userId);
     });
@@ -94,13 +144,28 @@ export async function createChannel(
   }
   const created = (await db.select().from(channels).where(eq(channels.id, id)).limit(1))[0]!;
   const dto = toChannelDTO(created, { isMember: true });
+  const ts = new Date().toISOString();
   publishEvent(subjectMeta(workspaceId), {
     type: 'channel.created',
     workspaceId,
     channelId: id,
-    ts: new Date().toISOString(),
+    ts,
     data: dto,
   });
+  // Same contract as createDm: member.joined refreshes each participant's
+  // gateway membership cache and their channel list. Only the seeded case has
+  // anyone but the creator to tell.
+  if (underDm) {
+    for (const uid of memberIds) {
+      publishEvent(subjectMeta(workspaceId), {
+        type: 'member.joined',
+        workspaceId,
+        channelId: id,
+        ts,
+        data: { userId: uid, channelId: id, workspaceId },
+      });
+    }
+  }
   return dto;
 }
 

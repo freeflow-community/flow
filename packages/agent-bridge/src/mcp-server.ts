@@ -22,6 +22,10 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
+/** How a channel is named in tool output — DMs have no name, only a kind. */
+const channelLabel = (c: { name: string | null; kind: string }): string =>
+  c.name ? `#${c.name}` : `(${c.kind})`;
+
 const TOOLS = [
   {
     name: 'send_message',
@@ -116,6 +120,11 @@ const TOOLS = [
         isPrivate: {
           type: 'boolean',
           description: 'Private channel — visible only to its members (default false).',
+        },
+        parentId: {
+          type: 'string',
+          description:
+            'Nest the new channel under this existing channel or DM — it shows indented beneath it in the sidebar. You must be a member of the parent, it must not be archived, and it must not already be a sub-channel (one level only). Nesting under a DM makes the new channel private and adds everyone in that DM, so it is the place to put a long build log or working notes without filling the conversation. Get ids from list_channels.',
         },
       },
       required: ['name'],
@@ -322,12 +331,16 @@ export async function runMcpServer(): Promise<void> {
       }
       case 'list_channels': {
         const channels = await api.listChannels(workspaceId);
+        const labelById = new Map(channels.map((c) => [c.id, channelLabel(c)]));
         const lines = channels
           .filter((c) => !c.archivedAt)
           .map((c) => {
             const flags = [c.isPrivate ? 'private' : 'public', c.isMember ? 'member' : 'not-member'].join(', ');
-            const label = c.name ? `#${c.name}` : `(${c.kind})`;
-            return `${c.id}  ${label}  [${flags}]${c.topic ? ` — ${c.topic}` : ''}`;
+            const label = channelLabel(c);
+            // Show the parent by name so an agent can see the nesting without
+            // cross-referencing ids itself.
+            const under = c.parentId ? `  under ${labelById.get(c.parentId) ?? c.parentId}` : '';
+            return `${c.id}  ${label}  [${flags}]${under}${c.topic ? ` — ${c.topic}` : ''}`;
           });
         return toolText(lines.length ? lines.join('\n') : 'no channels');
       }
@@ -354,9 +367,22 @@ export async function runMcpServer(): Promise<void> {
             name,
             ...(args.topic ? { topic: String(args.topic) } : {}),
             ...(args.isPrivate === true ? { isPrivate: true } : {}),
+            ...(args.parentId ? { parentId: String(args.parentId) } : {}),
           });
+          // Name the parent rather than echo its id back — the agent passed the
+          // id in, so repeating it says nothing about whether nesting worked.
+          const parentLabel = created.parentId
+            ? await api
+                .listChannels(workspaceId)
+                .then((cs) => {
+                  const p = cs.find((c) => c.id === created.parentId);
+                  return p ? channelLabel(p) : undefined;
+                })
+                .catch(() => undefined)
+            : undefined;
+          const nested = created.parentId ? ` — under ${parentLabel ?? created.parentId}` : '';
           return toolText(
-            `created #${created.name} (id ${created.id})${created.isPrivate ? ' — private' : ''}; you are a member`,
+            `created #${created.name} (id ${created.id})${created.isPrivate ? ' — private' : ''}${nested}; you are a member`,
           );
         } catch (err) {
           if (err instanceof FlowApiError && err.code === 'channel_exists') {
