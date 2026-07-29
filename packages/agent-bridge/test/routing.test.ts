@@ -65,6 +65,7 @@ function message(over: Partial<MessageDTO> = {}): MessageDTO {
     threadRootId: null,
     clientMsgId: 'c-1',
     body: 'hello',
+    systemKind: null,
     createdAt: '2026-07-22T00:00:00Z',
     editedAt: null,
     deletedAt: null,
@@ -162,6 +163,43 @@ describe('inScope — channels the agent created', () => {
   it('opens a thread on the message it answers, as usual', () => {
     const b = bridge(config(), [mine()]);
     expect(b.replyRoot(message({ id: 'msg-9' }))).toBe('msg-9');
+  });
+});
+
+describe('inScope — channel event lines (#120)', () => {
+  // The server posts joins/leaves as real messages with a `systemKind`
+  // ("Alice joined the channel"). In a channel the agent owns, every top-level
+  // message counts as addressed to it — which used to spawn a whole runtime
+  // turn for someone walking in the door. A notice is not a request.
+  const joined = (over: Partial<MessageDTO> = {}) =>
+    message({ body: 'Alice joined the channel', systemKind: 'member_joined', ...over });
+
+  it('does not answer a join notice in a channel the agent created', async () => {
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(await b.inScope(joined())).toBe(false);
+  });
+
+  it('does not answer a leave notice either', async () => {
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(await b.inScope(joined({ body: 'Alice left the channel', systemKind: 'member_left' }))).toBe(
+      false,
+    );
+  });
+
+  it('does not answer a join notice in a start_task channel', async () => {
+    const b = bridge();
+    b.taskChannels.add('chan-1');
+    expect(await b.inScope(joined())).toBe(false);
+  });
+
+  it('does not answer a join notice under eventScope "all"', async () => {
+    const b = bridge(config({ eventScope: 'all' }));
+    expect(await b.inScope(joined())).toBe(false);
+  });
+
+  it('still answers a real message in the same channel', async () => {
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(await b.inScope(message({ body: 'now that you are here, status?' }))).toBe(true);
   });
 });
 
