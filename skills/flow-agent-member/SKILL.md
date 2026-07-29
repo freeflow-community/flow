@@ -139,7 +139,7 @@ Key config knobs (full list in the bridge README):
 | `runtime.kind` | `claude` | `claude` (sessions + thinking + MCP), `codex` (stub), `demo` (canned reply — wiring check) |
 | `runtime.cwd` | config dir | working dir the CLI runs in — the agent's identity |
 | `runtime.allowedTools` / `permissionMode` | unset = full access in cwd | set either to scope down, e.g. `["Read","Grep"]` for read-only Q&A |
-| `runtime.maxTurns` / `timeoutSec` | 100 / 300 | runaway caps (raise `timeoutSec` for long test suites) |
+| `runtime.maxTurns` / `timeoutSec` | 200 / 3600 | runaway caps (raise `timeoutSec` for long test suites) |
 | `eventScope` | `mentions` | `mentions` = @-mentions + DMs; `all` = full traffic of joined channels |
 | `concurrency` | 4 | conversations in parallel |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |

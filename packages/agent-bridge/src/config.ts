@@ -105,7 +105,10 @@ export function loadConfig(configPath: string): BridgeConfig {
     cwd: path.resolve(path.dirname(abs), expandHome(r.cwd ?? '.')),
     permissionMode: r.permissionMode,
     allowedTools: r.allowedTools ?? [],
-    maxTurns: r.maxTurns ?? 100, // real coding tasks blow past small caps — 25 wedged first turns via max-turns errors
+    // Real coding tasks blow past small caps: 25 wedged first turns, and 100 cut
+    // a build off mid-tool-loop after 19 productive minutes. Silence, not turn
+    // count, is what idleTimeoutSec is for — this is only a runaway backstop.
+    maxTurns: r.maxTurns ?? 200,
     // A run dies when it goes *quiet*, not when it gets long. stream-json
     // narrates every tool call, so silence — not elapsed time — is what
     // distinguishes a wedged turn from a productive one; a fixed wall-clock cap
