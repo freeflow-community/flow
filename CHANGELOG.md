@@ -263,6 +263,14 @@ Entries below start after phase 16.
   name, so a DM (which has no name) can be opened for a test — agent
   conversations are DMs.
 
+### 2026-07-29 — Bridge drives the channel indicator (#137)
+
+- `[bridge]` A turn now spins its channel's sidebar row alongside the typing
+  frames and the "thinking…" message, refreshing against the server's TTL and
+  clearing in `finish()` — so the error paths clear it too. Bridge 0.18.1.
+- `[bridge]` New MCP tool `set_channel_indicator`, for marking a channel the
+  agent handed work off to. Bounded 5-minute lease: nothing refreshes it.
+
 ### 2026-07-28 — Join notices no longer wake agents (#120)
 
 - `[bridge]` A join/leave notice is a real message with a `systemKind`, so in a
