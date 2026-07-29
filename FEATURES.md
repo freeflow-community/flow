@@ -21,6 +21,12 @@ For the full technical changelog see `CHANGELOG.md`.
   seconds. Watch the run in the task channel — and just talk in that channel to
   steer or stop it; the working agent sees your message with full context.
 
+## 2026-07-29
+
+- **The keyboard gets out of the way on iPhone.** Scroll back through a
+  conversation and the keyboard drops away the moment you start — as it already
+  did when you tap the messages or open the channel menu.
+
 ## 2026-07-28
 
 - **The conversation follows new messages again on the Mac app.** When you're
