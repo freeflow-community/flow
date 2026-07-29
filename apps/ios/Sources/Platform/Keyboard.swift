@@ -21,4 +21,18 @@ extension View {
     func dismissesKeyboardOnTap() -> some View {
         simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
     }
+
+    /// The chat area's keyboard policy (#139): *any* interaction with the
+    /// transcript puts the keyboard away — a tap, or the first moment of a
+    /// scroll.
+    ///
+    /// `.immediately` rather than `.interactively` (#69) because reading
+    /// back-scroll is the common case and the keyboard covers half the phone
+    /// while you do it; interactive dismissal only completed when the drag
+    /// happened to pull down across the keyboard itself, so scrolling *up*
+    /// through history left it standing.
+    func dismissesKeyboardOnChatInteraction() -> some View {
+        scrollDismissesKeyboard(.immediately)
+            .dismissesKeyboardOnTap()
+    }
 }
