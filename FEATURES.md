@@ -13,6 +13,13 @@ For the full technical changelog see `CHANGELOG.md`.
   seconds. Watch the run in the task channel — and just talk in that channel to
   steer or stop it; the working agent sees your message with full context.
 
+## 2026-07-29
+
+- **See at a glance which channels an agent is working in.** A small spinner
+  appears at the end of a channel's name in the sidebar while an agent is busy
+  in there, and stops when it's done — so you can tell a run is still going
+  without opening the channel.
+
 ## 2026-07-28
 
 - **The conversation follows new messages again on the Mac app.** When you're
