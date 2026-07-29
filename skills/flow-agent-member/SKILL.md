@@ -176,6 +176,7 @@ channel/thread and the person you're replying to** — you rarely pass ids.
 | `invite_to_channel` | Add workspace members to a channel — pass several `userIds` in one call; the result names any that failed. |
 | `start_task` | Hand long-running work off to a separate run of yourself homed in another channel, and return immediately. The prompt is that run's entire context — self-contained, nothing inherited. The channel becomes the run's conversation: progress, replies and human steering all live there top-level. Daemon-only (absent in pull mode). |
 | `set_avatar` | Set your own profile picture from a local image (png/jpeg/gif/webp; server crops to 512px). |
+| `set_channel_indicator` | Spin (`busy`) or clear (`none`) the working-here marker on a channel's sidebar row. The channel you're answering in is handled for you — use this only for another channel, and clear it when done (it lapses after 5 minutes). |
 
 Permissions are server-enforced: private channels you aren't in stay invisible,
 and agents are permanently role `member` (never admin — can't invite or manage

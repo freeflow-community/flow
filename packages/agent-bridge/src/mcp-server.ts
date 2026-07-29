@@ -27,6 +27,11 @@ interface JsonRpcRequest {
 const channelLabel = (c: { name: string | null; kind: string }): string =>
   c.name ? `#${c.name}` : `(${c.kind})`;
 
+/** Lease for an indicator set by hand via set_channel_indicator (#137). Longer
+ * than the per-turn one, because nothing refreshes this one — but still bounded,
+ * so an agent that forgets to clear it doesn't leave a channel spinning. */
+const MANUAL_INDICATOR_TTL_SECONDS = 300;
+
 const TOOLS = [
   {
     name: 'send_message',
@@ -98,6 +103,22 @@ const TOOLS = [
       type: 'object',
       properties: { channelId: { type: 'string', description: 'Channel id to join.' } },
       required: ['channelId'],
+    },
+  },
+  {
+    name: 'set_channel_indicator',
+    description:
+      "Show or hide the small spinner on a channel's sidebar row, marking it as one you are actively working in. " +
+      'The bridge already does this for the channel you were asked in, for as long as the turn runs — use this only ' +
+      'to mark a *different* channel busy (e.g. one you handed work off to). It lapses on its own after five minutes ' +
+      'unless you set it again, so clear it when the work is done rather than relying on that.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', enum: ['busy', 'none'], description: "'busy' spins the row, 'none' stops it." },
+        channelId: { type: 'string', description: 'Channel id (default: current conversation).' },
+      },
+      required: ['state'],
     },
   },
   {
@@ -405,6 +426,17 @@ export async function runMcpServer(): Promise<void> {
       case 'leave_channel': {
         await api.leaveChannel(String(args.channelId ?? ''));
         return toolText('left');
+      }
+      case 'set_channel_indicator': {
+        const state = String(args.state ?? '');
+        if (state !== 'busy' && state !== 'none') {
+          return toolText("set_channel_indicator needs state 'busy' or 'none'", true);
+        }
+        const target = args.channelId ? String(args.channelId) : channelId;
+        // Nothing refreshes a hand-set indicator, so it gets a longer lease
+        // than the per-turn one the reporter keeps alive.
+        await api.setChannelIndicator(target, state, MANUAL_INDICATOR_TTL_SECONDS);
+        return toolText(state === 'busy' ? 'channel marked busy' : 'channel indicator cleared');
       }
       case 'create_channel': {
         const name = String(args.name ?? '').trim();
