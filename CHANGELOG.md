@@ -166,6 +166,11 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   Web was already correct: its `<video>` carries only max-width/max-height and
   CSS replaced-element sizing keeps the intrinsic ratio. Closes when iOS gets an
   inline player (AVKit, same sizing rule as macOS).
+- macOS/iOS: no **Interrupt** button on the agent's "thinking…" row (#67) — web
+  draws one. The capability is client-agnostic (the button just adds a 🛑
+  reaction, which the bridge maps back to the running turn), so both can stop an
+  agent today via the reaction picker or `/stop`; what's missing is the
+  affordance. Pure client port — `toggleReaction` already exists in both.
 
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
@@ -238,6 +243,14 @@ Entries below start after phase 16.
   "agent exceeded max turns (200)". Other subtypes pass through by name.
 - `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
   after 19 productive minutes. Bridge 0.17.0.
+### 2026-07-29 — Interrupt an agent turn (#67)
+
+- `[web]` `[bridge]` An **Interrupt** button on the agent's live "thinking…"
+  row stops the turn: 🛑 on that row (or `/stop`) kills the runtime's process
+  group and posts "⏹ Stopped by @you" with any partial work. SIGTERM first, so
+  the session stays resumable. Bridge 0.17.0.
+- `[bridge]` 🛑 on a status row no run owns reaps it — the orphan a bridge that
+  died mid-turn leaves behind.
 
 ### 2026-07-28 — Join notices no longer wake agents (#120)
 
