@@ -228,6 +228,12 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-29 — macOS channel activity spinner (#137)
+
+- `[macos]` Sidebar rows (channels and DMs) spin while an agent is working
+  there. Transient state alongside presence, never written to the local DB — a
+  spinner must not survive a relaunch. macOS 2.2.12.
+
 ### 2026-07-29 — Channel activity indicator (#137)
 
 - `[server]` `PUT /v1/channels/:id/indicator` sets a channel's "an agent is

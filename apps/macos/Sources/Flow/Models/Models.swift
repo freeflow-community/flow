@@ -523,7 +523,31 @@ struct MemberDTO: Decodable, Sendable {
 }
 
 struct WorkspacesResponse: Decodable, Sendable { let workspaces: [Workspace] }
-struct ChannelsResponse: Decodable, Sendable { let channels: [Channel] }
+struct ChannelsResponse: Decodable, Sendable {
+    let channels: [Channel]
+    /// Channels with an activity spinner showing right now (#137). Read off the
+    /// same rows but kept out of `Channel` on purpose: channel rows are cached
+    /// on disk, and a spinner must never survive a relaunch — it's a claim
+    /// about what an agent is doing this second.
+    let busyChannelIds: Set<String>
+
+    private struct IndicatorRow: Decodable { let id: String; let indicator: String? }
+    private enum CodingKeys: String, CodingKey { case channels }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        channels = try c.decode([Channel].self, forKey: .channels)
+        let rows = try c.decode([IndicatorRow].self, forKey: .channels)
+        busyChannelIds = Set(rows.filter { $0.indicator != nil }.map(\.id))
+    }
+}
+
+/// `channel.indicator` payload (#137): the channel's aggregate state after a
+/// change, so a client only ever sets or clears — `state` nil means quiet.
+struct ChannelIndicatorData: Decodable, Sendable {
+    let channelId: String
+    let state: String?
+}
 struct MembersResponse: Decodable, Sendable { let members: [MemberDTO] }
 struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
 
@@ -766,6 +790,7 @@ enum EventPayload: Sendable {
     case message(Message)
     case typing(TypingData)
     case presence(PresenceData)
+    case channelIndicator(ChannelIndicatorData)
     case channel(Channel)
     case channelUpdated(Channel)
     case channelArchived(Channel)
@@ -807,6 +832,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .typing(try c.decode(TypingData.self, forKey: .data))
         case "presence":
             payload = .presence(try c.decode(PresenceData.self, forKey: .data))
+        case "channel.indicator":
+            payload = .channelIndicator(try c.decode(ChannelIndicatorData.self, forKey: .data))
         case "channel.created":
             payload = .channel(try c.decode(Channel.self, forKey: .data))
         case "channel.updated":

@@ -396,6 +396,10 @@ actor SyncEngine {
         guard let resp: ChannelsResponse = try? await api.get("/v1/workspaces/\(workspaceId)/channels")
         else { return }
         let channels = resp.channels
+        // Activity spinners (#137) are transient and never hit the local DB —
+        // this snapshot is also how a client that missed events while asleep
+        // gets back in step.
+        await appState?.setBusyChannelIds(resp.busyChannelIds)
         try? await db.writer.write { db in
             let ids = channels.map(\.id)
             try Channel
@@ -1195,6 +1199,12 @@ actor SyncEngine {
 
         case .presence(let p):
             await appState?.presenceReceived(userId: p.userId, online: p.status == "online")
+
+        case .channelIndicator(let ind):
+            // Any non-nil state spins the row — an added state later shouldn't
+            // leave this client rendering nothing.
+            await appState?.channelIndicatorReceived(
+                channelId: ind.channelId, busy: ind.state != nil)
 
         case .channel(let dto):
             // The broadcast DTO claims isMember from the creator's perspective;

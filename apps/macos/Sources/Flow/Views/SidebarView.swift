@@ -311,6 +311,34 @@ struct SidebarView: View {
 
     // MARK: - Rows
 
+    /// "Someone is working in here" (#137) — a small ring after the channel
+    /// label while an agent has this channel's indicator set. Quiet on purpose:
+    /// no colour of its own, and it stops turning when the system is set to
+    /// reduce motion (the ring alone still reads as busy).
+    private struct ActivitySpinner: View {
+        let active: Bool
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var spinning = false
+
+        var body: some View {
+            Circle()
+                .trim(from: 0, to: 0.7)
+                .stroke(
+                    (active ? MC.accentDeep : Color.white).opacity(0.55),
+                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                )
+                .frame(width: 11, height: 11)
+                .rotationEffect(.degrees(spinning ? 360 : 0))
+                .animation(
+                    reduceMotion ? nil : .linear(duration: 1).repeatForever(autoreverses: false),
+                    value: spinning
+                )
+                .onAppear { spinning = true }
+                .help("an agent is working in this channel")
+                .accessibilityHidden(true) // the row's own label already says enough
+        }
+    }
+
     private func rowBackground(_ active: Bool) -> some View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
@@ -371,6 +399,11 @@ struct SidebarView: View {
                 Text(channel.name ?? "")
                     .font(.system(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular))
                     .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
+                // An agent working here (#137) — DMs included: talking to an
+                // agent one-to-one is the common case.
+                if app.busyChannelIds.contains(channel.id) {
+                    ActivitySpinner(active: active)
+                }
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
                         .font(.caption2)
@@ -432,6 +465,11 @@ struct SidebarView: View {
                     Text(emoji)
                         .font(.system(size: 14))
                         .help(otherStatus?.statusText ?? "")
+                }
+                // An agent working here (#137) — DMs included: talking to an
+                // agent one-to-one is the common case.
+                if app.busyChannelIds.contains(channel.id) {
+                    ActivitySpinner(active: active)
                 }
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
