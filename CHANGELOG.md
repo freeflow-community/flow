@@ -262,6 +262,12 @@ Entries below start after phase 16.
   (web parity) instead of growing the composer — the resize was #97's
   surviving trigger for the message list scrolling blank. VERSION → 2.2.5.
 
+### 2026-07-28 — Activity takes the sidebar highlight (macOS)
+
+- `[macos]` Opening Activity no longer leaves the previous channel drawing the
+  selected pill as well (#113) — the row predicate excluded an open artifact
+  panel but not the feed. VERSION → 2.2.7.
+
 ### 2026-07-27 — Activity is per workspace
 
 - `[server]` `[web]` `[macos]` `[ios]` Activity now shows only the selected
