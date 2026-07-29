@@ -262,6 +262,14 @@ Entries below start after phase 16.
   (web parity) instead of growing the composer — the resize was #97's
   surviving trigger for the message list scrolling blank. VERSION → 2.2.5.
 
+### 2026-07-28 — `work-project-tasks` reports in one place
+
+- `[qa]` The run is written up in the progress channel; the conversation the
+  agent was asked from gets a one-line pointer, not a second copy. Blockers and
+  questions still go where the person is.
+- `[qa]` `next-batch.sh` returns `[]` rather than a bare `IDLE` on the empty
+  case — the fix from the first run, which never made it into #112.
+
 ### 2026-07-27 — Activity is per workspace
 
 - `[server]` `[web]` `[macos]` `[ios]` Activity now shows only the selected
