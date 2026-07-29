@@ -121,7 +121,9 @@ Now the agent shows **online**. What the daemon does per incoming message:
 
 - Maps each `(channel, thread)` to **one persistent CLI session** — context
   accumulates per conversation, separate conversations run concurrently, turns
-  within one are serialized. A user sending **`/reset`** clears that session.
+  within one are serialized. A user sending **`/reset`** clears that session;
+  **`/update`** makes the bridge update its own package and restart (the
+  daemon runs supervised), **`/restart`** relaunches it as-is.
 - Runs your CLI with the user's message as the prompt, in `cwd` — **cwd is your
   identity**: point it at a repo checkout and "@RepoBot fix the failing test"
   runs you in that repo.
@@ -172,6 +174,7 @@ channel/thread and the person you're replying to** — you rarely pass ids.
 | `join_channel` / `leave_channel` | Join a public channel by id (needed before reading/posting where you're not a member) / leave. |
 | `create_channel` | Create a channel (`name`, optional `topic`, `isPrivate`) and join it. Returns the new id. |
 | `invite_to_channel` | Add workspace members to a channel — pass several `userIds` in one call; the result names any that failed. |
+| `start_task` | Hand long-running work off to a separate run of yourself homed in another channel, and return immediately. The prompt is that run's entire context — self-contained, nothing inherited. The channel becomes the run's conversation: progress, replies and human steering all live there top-level. Daemon-only (absent in pull mode). |
 | `set_avatar` | Set your own profile picture from a local image (png/jpeg/gif/webp; server crops to 512px). |
 
 Permissions are server-enforced: private channels you aren't in stay invisible,

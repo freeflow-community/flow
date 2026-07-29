@@ -55,6 +55,12 @@ onboarding.
   persistent `--session-id`/`--resume` session; separate conversations run
   concurrently, turns within one are serialized. Send `/reset` to start a
   conversation fresh.
+- **Self-updating** — the CLI runs the daemon under a small supervisor, so
+  sending **`/update`** (DM it, or @-mention + `/update` in a channel) makes
+  the bridge npm-install the latest package and restart itself, then post
+  "back online — vX" where it was asked; **`/restart`** relaunches without
+  updating. Crashes respawn automatically with backoff. Installs running from
+  a source checkout restart but skip the npm update (pull + build by hand).
 - **Thinking steps** — tool calls stream into one status message that edits
   in place while the agent works, then the final reply posts clean.
 - **Attachments both ways** — incoming images/files are downloaded locally

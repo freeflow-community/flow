@@ -17,8 +17,15 @@ Work is queued on the GitHub Project **"Flow work queue"**
 `github.com/orgs/freeflow-community/projects/1` is the source of truth for
 *what to do next*; issues are the source of truth for *what the task is*.
 
-Invoking this skill means: **take the next batch off the queue and finish it.**
-One batch → one Flow channel → one worktree → one branch → one PR.
+Invoking this skill means: **take the next batch off the queue and see it
+finished.** One batch → one Flow channel → one worktree → one branch → one PR.
+
+Two runs share that sentence. **You** (the run that was asked) find the batch,
+claim it, open the channel and hand off; a **separate run of you, homed in the
+task channel via `start_task`**, builds it. The conversation you were asked in
+gets a one-line pointer and its agent back within a minute — not a multi-hour
+"thinking…". If the handoff tool isn't available you do it all yourself
+(§3, *If start_task is unavailable*), which is the fallback, not the design.
 
 ## The queue model
 
@@ -77,37 +84,61 @@ Claim the **whole batch in one go**. `next-batch.sh` only lists members that are
 still `Queued for Dev`, so claiming them one at a time leaves the rest looking
 available — and the next agent along will take half your batch.
 
-## 3. Open a Flow channel and report there
+## 3. Open a Flow channel and hand the work off
 
-Work in the open. Create one channel per batch and use it as the running record,
-so a human can see what you're doing and interrupt before you've gone too far.
+Work in the open. Create one channel per batch: it is the batch's running
+record and — once you hand off — the working run's *home conversation*, where a
+human can watch and steer it before it's gone too far.
 
 Use the `flow` MCP tools (see the `flow-agent-member` skill for the full set):
 
 - `create_channel` — `name` `task-<lowest issue number>`, e.g. `task-81`. Put the
   batch in the `topic`: `#81, #110, #111 — message hover polish`. Leave it
-  **public** (`isPrivate` false) so anyone can follow without being added.
+  **public** (`isPrivate` false) and **top-level** (no `parentId`) — the channel
+  represents the *task*, which outlives any one run and must be findable in
+  Browse. (A verbose command-by-command log, if one is wanted, can go in a
+  sub-channel *of the task channel* later — never the other way around.)
 - `invite_to_channel` — add whoever asked you to run this, plus anyone already
   discussing the issues. Several `userIds` in one call; `list_users` gets the ids.
-- `send_message` — the updates.
-- `upload_file` — screenshots, as you take them.
+- `start_task` — the handoff itself, below.
 
-**Announce it back where you were asked — once, in one line.** The person who
-invoked this skill is in some other channel or DM and won't think to go looking
-for a channel you just invented. As soon as it exists, post there:
+### The handoff
 
-> Working #81, #110, #111 (batch 1) — progress in #task-81.
+Call `start_task` with the new channel's id and a **self-contained brief**. The
+new run starts from nothing but your prompt — it has not seen this
+conversation, the queue JSON, or anything you know unless you put it in:
 
-That pointer is the *whole* of what the source conversation gets until the run
-ends. See **Report in one place** below.
+```
+You are working a batch from the Flow work queue, handed off by another run of
+yourself. This channel is your conversation and the batch's running record —
+anyone posting here is steering you; treat their word as the operator's.
 
-Note the source conversation **before** you create the channel. The bridge points
-the `flow` tools at the conversation you're replying to by default, so once the
-new channel exists you need to be deliberate: pass the new `channelId` for task
-updates, and the original one to reach the requester. Getting this backwards
-means posting the running log into someone's DM.
+Batch (ALREADY claimed In Progress — do not re-claim):
+<the JSON array from next-batch.sh, verbatim>
 
-Then post at the moments a human might want to intervene, not every command:
+Requested by: <display name> <@userId>. Source conversation channelId: <id>.
+
+Follow skills/work-project-tasks/SKILL.md §4–§8: fresh worktree off
+origin/main, build, test, verify in the running app with screenshots, one PR
+closing every issue, then set the items Done — or Blocked per "If you can't
+finish". Post here at the moments §3's reporting list names (claim + approach
+first — before you build anything); upload screenshots as you take them. If
+you are Blocked or need a decision, ALSO send_message the question to the
+source conversation channelId above — the requester is there, not here.
+```
+
+Then reply **one line** and end your turn — the bridge posts your final text
+back where you were asked, so the reply *is* the announcement:
+
+> Working #81, #110, #111 (batch 1) — handed off to a run in #task-81.
+
+**Do not do the work yourself after a successful handoff**, and don't wait for
+the run — it reports in the channel, and that pointer is the whole of what the
+source conversation gets.
+
+### Reporting (governs whichever run does the work)
+
+Post at the moments a human might want to intervene, not every command:
 
 1. **On claim** — what you picked up, the issue numbers, and the approach in two
    or three lines. This is the cheapest possible moment to be told "no, not like
@@ -126,22 +157,16 @@ channel.
 
 ### Report in one place
 
-**The channel is the report. The source conversation gets a pointer.** Writing
-the run up twice is the failure mode here: the requester reads the same thing in
-two places, and the channel stops being the record because everything important
-also lands in a DM.
+**The channel is the report. The source conversation got its pointer at
+handoff and hears nothing more until the end.** Writing the run up twice is
+the failure mode here: the requester reads the same thing in two places, and
+the channel stops being the record because everything important also lands in
+a DM. For a handed-off run this mostly takes care of itself — the task channel
+is its home conversation, so its replies (including the final one) land there.
 
-You cannot post *nothing* back — the bridge posts your final reply into the
-conversation you were invoked from, whatever you write. So the target is one or
-two lines, not zero:
-
-> #113 done — PR #119. Details in #task-113.
-
-Everything else — the approach, the surprises, the test counts, the screenshots,
-what you deliberately left out — goes in the channel and stays there.
-
-Two things still belong in that short reply, because a channel nobody has opened
-yet is a bad place to put them:
+Two things still go to the *source* conversation (`send_message` with the
+source channelId from your brief), because a channel nobody has opened yet is
+a bad place to put them:
 
 - **A decision you need.** If you're `Blocked`, or you stopped to ask something,
   the question goes where the person actually is. A pointer to a question is not
@@ -151,10 +176,20 @@ yet is a bad place to put them:
 
 Otherwise: link, don't repeat.
 
-**If the `flow` tools aren't available** — no bridge, no MCP server — carry on
-without them and say so in your final report. Losing the progress channel is not
-a reason to abandon the task, and with no channel to point at, that final reply
-*is* the report — write it in full.
+### If start_task is unavailable
+
+No daemon behind this run, or the tool errors: **do the work yourself, in this
+turn**, reporting into the channel per the list above. The requester's
+conversation shows "thinking…" until you finish — the price of the fallback.
+The bridge posts your final reply into the conversation you were invoked from
+whatever you write, so keep it to one or two lines, not zero:
+
+> #113 done — PR #119. Details in #task-113.
+
+**If the `flow` tools aren't available at all** — no bridge, no MCP server —
+carry on without them and say so in your final report. Losing the progress
+channel is not a reason to abandon the task, and with no channel to point at,
+that final reply *is* the report — write it in full.
 
 ## 4. Branch in a fresh worktree
 
@@ -283,10 +318,11 @@ bash skills/work-project-tasks/set-status.sh Done <itemId> [<itemId> ...]
 ```
 
 Then close out **in the channel**: the PR URL, the issues it closes, what you
-verified, and anything you deliberately left out.
-
-Back where you were asked, one line — the outcome, the PR, and the channel to
-read. Not a second copy of the close-out (§3, *Report in one place*).
+verified, and anything you deliberately left out. A handed-off run's final
+reply lands there automatically — make it the close-out and you're done. An
+inline (fallback) run instead posts one line back where it was asked — the
+outcome, the PR, and the channel to read. Not a second copy of the close-out
+(§3, *Report in one place*).
 
 ---
 
@@ -314,9 +350,11 @@ Block the **whole batch**, and comment on **every issue in it**. Whoever picks i
 up will be looking at one of them, not necessarily the one you chose. Post the
 reason in the Flow channel as well — that's where someone is watching.
 
-Blocking is the one case where the short reply back to the requester carries the
-substance: state what you need in it, don't just point at the channel. Nobody
-unblocks a question they haven't read.
+Blocking is the one case where the requester's conversation carries the
+substance: state what you need there — a handed-off run `send_message`s the
+source conversation channelId from its brief; an inline run puts it in its
+reply. Don't just point at the channel: nobody unblocks a question they
+haven't read.
 
 **`Blocked`, not back to `Queued for Dev`.** Re-queueing hides the problem: the
 next agent takes the task and walks into the same wall. A human moves it back to
@@ -342,6 +380,10 @@ round trip.
 - **Don't leave your servers running.** The run ends with the machine as you
   found it — your dev server, app builds and simulator app stopped, and any
   system setting you changed put back.
+- **Don't work the batch in the conversation you were asked in** when
+  `start_task` is available. Claim, open the channel, hand off, reply one line,
+  end your turn. The inline path is the fallback for a missing daemon, not a
+  choice.
 - **Don't work silently.** If the channel exists, the run should be legible from
   it alone.
 - **Don't report twice.** The channel gets the write-up; where you were asked

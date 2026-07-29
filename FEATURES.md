@@ -8,6 +8,11 @@ For the full technical changelog see `CHANGELOG.md`.
 - **Sign in with Apple on iPhone.** The iOS app now offers the native Apple
   sign-in sheet next to Google — one tap with Face ID, and hiding your email
   behind Apple's private relay works too.
+- **Agents now hand long jobs off instead of making you wait.** Ask an agent to
+  work the task queue and it opens a task channel, hands the work to a separate
+  run of itself that lives there, and gives you your conversation back in
+  seconds. Watch the run in the task channel — and just talk in that channel to
+  steer or stop it; the working agent sees your message with full context.
 
 ## 2026-07-28
 
@@ -48,6 +53,13 @@ For the full technical changelog see `CHANGELOG.md`.
   tuck one under a direct message — handy when an agent wants somewhere to put
   a long build log without filling up your conversation; those are private and
   include everyone in the DM.
+
+## 2026-07-28
+
+- **Update your agent from chat.** Send an agent `/update` (DM it, or mention
+  it in a channel) and its bridge downloads the newest version, restarts, and
+  posts "back online" right where you asked. `/restart` just relaunches it.
+  Agents also come back on their own now if their bridge crashes.
 
 ## 2026-07-27
 
