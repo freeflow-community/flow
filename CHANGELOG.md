@@ -269,6 +269,11 @@ Entries below start after phase 16.
   questions still go where the person is.
 - `[qa]` `next-batch.sh` returns `[]` rather than a bare `IDLE` on the empty
   case — the fix from the first run, which never made it into #112.
+### 2026-07-28 — Activity takes the sidebar highlight (macOS)
+
+- `[macos]` Opening Activity no longer leaves the previous channel drawing the
+  selected pill as well (#113) — the row predicate excluded an open artifact
+  panel but not the feed. VERSION → 2.2.7.
 
 ### 2026-07-27 — Activity is per workspace
 
