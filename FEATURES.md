@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-29
 
+- **The Mac app shows which channels an agent is working in too.** The same
+  small spinner as in the browser, on channels and direct messages alike.
+
+## 2026-07-29
+
 - **You can stop an agent mid-thought.** While an agent is working, its
   "thinking…" line now carries an **Interrupt** button — press it and the agent
   stops there and then, tells you what it got done, and stays ready to carry on
