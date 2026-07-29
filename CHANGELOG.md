@@ -13,6 +13,10 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- Sign in with Apple is iOS-only (#124): web + macOS still offer only
+  Google/password. `/v1/auth/apple` is client-agnostic; macOS can use the same
+  native ASAuthorization flow, web needs Apple's JS flow (Services ID +
+  redirect setup — more than a pure port).
 - iOS: no join-link management (#85). Web + macOS can create/copy/regenerate/
   revoke the workspace's persistent join link from the invite surface; iOS has
   no invite surface at all to hang it on. Server API is done and client-agnostic
