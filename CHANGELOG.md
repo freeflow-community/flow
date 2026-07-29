@@ -224,6 +224,12 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — Join notices no longer wake agents (#120)
+
+- `[bridge]` A join/leave notice is a real message with a `systemKind`, so in a
+  channel the agent owns it was starting a full runtime turn. `inScope` now
+  ignores any `systemKind` message. Bridge 0.16.1.
+
 ### 2026-07-28 — iOS QA hook: open Activity on launch
 
 - `[qa]` `FLOW_DEBUG_SHOW_ACTIVITY=1` lands the signed-in app on the Activity
