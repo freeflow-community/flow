@@ -66,6 +66,8 @@ final class AppState: ObservableObject {
     @Published private(set) var presence: [String: Bool] = [:]
     /// channelId -> (userId -> last typing event time)
     @Published private(set) var typing: [String: [String: Date]] = [:]
+    /// Channels an agent is working in right now (#137) — the sidebar spinner.
+    @Published private(set) var busyChannelIds: Set<String> = []
     /// channelId -> more history available on the server
     @Published private(set) var hasMore: [String: Bool] = [:]
     /// Unread notifications in the *selected* workspace — the sidebar Activity
@@ -151,6 +153,7 @@ final class AppState: ObservableObject {
         artifacts = []
         presence = [:]
         typing = [:]
+        busyChannelIds = []
         hasMore = [:]
         setNotificationUnread(0)
     }
@@ -189,6 +192,24 @@ final class AppState: ObservableObject {
 
     func presenceReceived(userId: String, online: Bool) {
         presence[userId] = online
+    }
+
+    /// A channel's activity spinner turned on or off (#137). Purely in-memory,
+    /// like presence: the server expires these and clears them when the agent
+    /// that set one disconnects, so there is nothing worth persisting.
+    func channelIndicatorReceived(channelId: String, busy: Bool) {
+        if busy {
+            busyChannelIds.insert(channelId)
+        } else {
+            busyChannelIds.remove(channelId)
+        }
+    }
+
+    /// Replace the whole set from a channel-list fetch — the server's snapshot
+    /// is authoritative, and a refresh is how a client that missed events
+    /// (asleep, reconnecting) gets back in step.
+    func setBusyChannelIds(_ ids: Set<String>) {
+        busyChannelIds = ids
     }
 
     func setAvatarPaths(_ paths: [String: String]) {
