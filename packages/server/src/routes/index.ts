@@ -33,6 +33,7 @@ import {
   RedeemAgentInviteBody,
   RedeemJoinLinkBody,
   SendMessageBody,
+  SetChannelIndicatorBody,
   SetMemberRoleBody,
   SetNotifyLevelBody,
   UpdateAppBody,
@@ -61,6 +62,7 @@ import * as apple from '../services/oauthApple.js';
 import { listIdentities } from '../services/oauthAccounts.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
+import * as ci from '../services/channelIndicators.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
 import * as fl from '../services/files.js';
@@ -560,6 +562,14 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/channels/:id/archive', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return ch.archiveChannel(id, req.user.id);
+  });
+
+  // Activity indicator (#137): agents spin the sidebar row while they work.
+  // Transient — see services/channelIndicators.ts for how it can't get stuck on.
+  app.put('/v1/channels/:id/indicator', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SetChannelIndicatorBody, req.body);
+    return ci.setChannelIndicator(id, req.user.id, body.state, body.ttlSeconds);
   });
 
   app.put('/v1/channels/:id/notify', { preHandler: requireAuth }, async (req) => {

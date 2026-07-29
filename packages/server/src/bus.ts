@@ -37,6 +37,12 @@ export function subjectMeta(workspaceId: string): string {
 export function subjectArtifact(workspaceId: string, channelId: string): string {
   return `ws.${workspaceId}.chan.${channelId}.artifact`;
 }
+/** Per-channel activity-indicator stream (#137). Same shape and reasoning as
+ * subjectArtifact: under the workspace wildcard so the gateway forwards it, not
+ * a `.meta` subject, and channel-scoped so visible() handles privacy. */
+export function subjectIndicator(workspaceId: string, channelId: string): string {
+  return `ws.${workspaceId}.chan.${channelId}.indicator`;
+}
 export function subjectWorkspaceAll(workspaceId: string): string {
   return `ws.${workspaceId}.>`;
 }

@@ -213,6 +213,18 @@ export const AddChannelMemberBody = z.object({
 });
 export type AddChannelMemberBody = z.infer<typeof AddChannelMemberBody>;
 
+/**
+ * PUT /v1/channels/:id/indicator (#137) — an agent turning its "working here"
+ * spinner on or off. `ttlSeconds` bounds how long a set survives without a
+ * refresh; the cap is deliberately short, since the whole point is that a
+ * crashed run can't leave a channel spinning forever.
+ */
+export const SetChannelIndicatorBody = z.object({
+  state: z.union([z.literal('busy'), z.literal('none')]),
+  ttlSeconds: z.number().int().min(5).max(600).optional(),
+});
+export type SetChannelIndicatorBody = z.infer<typeof SetChannelIndicatorBody>;
+
 export const SetNotifyLevelBody = z.object({
   level: z.union([z.literal(0), z.literal(1), z.literal(2)]), // 0=mute 1=mentions 2=all
 });

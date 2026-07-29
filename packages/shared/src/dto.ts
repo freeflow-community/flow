@@ -106,6 +106,14 @@ export type ChannelKind = 'standard' | 'dm' | 'group_dm';
 /** channel_members.notify_level: 0=mute, 1=mentions (default), 2=all */
 export type NotifyLevel = 0 | 1 | 2;
 
+/**
+ * What a channel's activity indicator is showing (#137). One state today —
+ * `busy`, a spinner, set by an agent while it works on a turn. Clients render
+ * any non-null state as the spinner, so adding a state later doesn't strand
+ * older clients on a blank row.
+ */
+export type ChannelIndicatorState = 'busy';
+
 export interface ChannelDTO {
   id: string;
   workspaceId: string;
@@ -140,6 +148,14 @@ export interface ChannelDTO {
   parentId: string | null;
   /** Member user ids — populated for dm/group_dm channels only (clients render DM names from these). */
   memberIds?: string[];
+  /**
+   * Live activity indicator (#137) — an agent working in this channel spins a
+   * small icon on its sidebar row. Transient server state, never a DB column
+   * (see `indicators.ts`): it expires, and clears when its setter disconnects.
+   * Present on the channel list so a fresh client starts in the right state;
+   * `channel.indicator` events carry every change after that.
+   */
+  indicator?: ChannelIndicatorState | null;
 }
 
 export interface ReactionAggDTO {

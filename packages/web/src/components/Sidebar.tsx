@@ -602,6 +602,24 @@ function SectionHeader({
   );
 }
 
+/**
+ * "Someone is working in here" (#137) — a small ring at the end of the channel
+ * label while an agent has this channel's indicator set. Deliberately quiet: no
+ * colour of its own, no layout shift, and it stops moving under
+ * prefers-reduced-motion (the ring alone still reads as busy).
+ */
+export function ActivitySpinner({ active }: { active: boolean }) {
+  return (
+    <span
+      data-testid="channel-indicator"
+      title="an agent is working in this channel"
+      className={`h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none ${
+        active ? 'opacity-50' : 'text-white/60'
+      }`}
+    />
+  );
+}
+
 function ChannelRow({
   channel,
   label,
@@ -658,6 +676,7 @@ function ChannelRow({
         >
           {label}
         </span>
+        {channel.indicator && <ActivitySpinner active={active} />}
         {statusEmoji && (
           <span className="ml-0.5 shrink-0 text-sm" title={statusTitle}>{statusEmoji}</span>
         )}

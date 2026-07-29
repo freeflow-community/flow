@@ -166,6 +166,11 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   Web was already correct: its `<video>` carries only max-width/max-height and
   CSS replaced-element sizing keeps the intrinsic ratio. Closes when iOS gets an
   inline player (AVKit, same sizing rule as macOS).
+- macOS + iOS: no channel activity spinner (#137) — web spins a channel's
+  sidebar row while an agent works there. Server API and the `channel.indicator`
+  event are client-agnostic and `ChannelDTO.indicator` carries the initial
+  state, so this is a pure client port.
+
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
   SDK: the native button opens the system browser at `/?native=google`, which
@@ -223,6 +228,14 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-29 — Channel activity indicator (#137)
+
+- `[server]` `PUT /v1/channels/:id/indicator` sets a channel's "an agent is
+  working here" spinner, fanned out as `channel.indicator`. State is in-memory
+  like presence — it expires, clears on the setter's disconnect, and dies with a
+  restart, so a crashed run can't leave a channel spinning forever.
+- `[web]` Sidebar rows spin while the indicator is set; `ChannelDTO.indicator`
+  carries it on load so a fresh client doesn't start blank.
 ### 2026-07-29 — zero-downtime Railway deploys
 
 - `[server]` `railway.json`: add `overlapSeconds: 60` / `drainingSeconds: 30`

@@ -23,6 +23,10 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-29
 
+- **See at a glance which channels an agent is working in.** A small spinner
+  appears at the end of a channel's name in the sidebar while an agent is busy
+  in there, and stops when it's done — so you can tell a run is still going
+  without opening the channel.
 - **The keyboard gets out of the way on iPhone.** Scroll back through a
   conversation and the keyboard drops away the moment you start — as it already
   did when you tap the messages or open the channel menu.
