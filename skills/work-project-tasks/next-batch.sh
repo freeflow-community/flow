@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Print the next batch of work from the Flow work queue as a JSON array, or the
-# bare string IDLE when nothing is staged.
+# Print the next batch of work from the Flow work queue as a JSON array —
+# empty when nothing is staged. Always valid JSON, so it is safe to pipe into
+# a parser.
 #
 # The next batch is the topmost "Queued for Dev" item in the project's own item
 # order, together with every other queued item sharing its Batch number. Items
@@ -31,7 +32,7 @@ query($owner:String!, $number:Int!) {
         status: (.status.name // null), batch: (.batch.number // null) } ]
   | . as $all
   | ( [ $all[] | select(.status == "Queued for Dev") ] | first ) as $head
-  | if   $head == null       then "IDLE"
+  | if   $head == null       then []          # nothing queued
     elif $head.batch == null then [ $head ]
     else [ $all[] | select(.status == "Queued for Dev" and .batch == $head.batch) ]
     end'

@@ -54,10 +54,11 @@ bash skills/work-project-tasks/next-batch.sh
 ```
 
 It prints a JSON array of the batch members (`itemId`, `number`, `title`,
-`repo`, `body`, `status`, `batch`), or the string `IDLE`.
+`repo`, `body`, `status`, `batch`) — **empty when nothing is queued**. Always
+valid JSON, so you can pipe it straight into a parser.
 
-**If it prints `IDLE`, stop.** Nothing is queued. Say so and do not go looking
-for work in the backlog — `Todo` items are deliberately not yours to start.
+**If the array is empty, stop.** Say so, and do not go looking for work in the
+backlog — `Todo` items are deliberately not yours to start.
 
 Read every member's `body` before planning. A batch is grouped because the
 issues are related; the shape of the fix usually only makes sense across all of
@@ -91,20 +92,20 @@ Use the `flow` MCP tools (see the `flow-agent-member` skill for the full set):
 - `send_message` — the updates.
 - `upload_file` — screenshots, as you take them.
 
-**Announce it back where you were asked.** The person who invoked this skill is
-in some other channel or DM and won't think to go looking for a channel you just
-invented. As soon as it exists, post there:
+**Announce it back where you were asked — once, in one line.** The person who
+invoked this skill is in some other channel or DM and won't think to go looking
+for a channel you just invented. As soon as it exists, post there:
 
 > Working #81, #110, #111 (batch 1) — progress in #task-81.
+
+That pointer is the *whole* of what the source conversation gets until the run
+ends. See **Report in one place** below.
 
 Note the source conversation **before** you create the channel. The bridge points
 the `flow` tools at the conversation you're replying to by default, so once the
 new channel exists you need to be deliberate: pass the new `channelId` for task
 updates, and the original one to reach the requester. Getting this backwards
 means posting the running log into someone's DM.
-
-Your final reply lands in the source conversation anyway, so that's where the
-outcome goes — no need to repeat the whole log there.
 
 Then post at the moments a human might want to intervene, not every command:
 
@@ -123,9 +124,37 @@ the test is whether someone skimming it later can tell what happened and why.
 Cross-link both ways: put the channel in the PR body, and the PR link in the
 channel.
 
+### Report in one place
+
+**The channel is the report. The source conversation gets a pointer.** Writing
+the run up twice is the failure mode here: the requester reads the same thing in
+two places, and the channel stops being the record because everything important
+also lands in a DM.
+
+You cannot post *nothing* back — the bridge posts your final reply into the
+conversation you were invoked from, whatever you write. So the target is one or
+two lines, not zero:
+
+> #113 done — PR #119. Details in #task-113.
+
+Everything else — the approach, the surprises, the test counts, the screenshots,
+what you deliberately left out — goes in the channel and stays there.
+
+Two things still belong in that short reply, because a channel nobody has opened
+yet is a bad place to put them:
+
+- **A decision you need.** If you're `Blocked`, or you stopped to ask something,
+  the question goes where the person actually is. A pointer to a question is not
+  a question.
+- **Anything outside the task they should know now** — you found the batch was
+  mis-scoped, or a shared machine is in a state that will bite the next run.
+
+Otherwise: link, don't repeat.
+
 **If the `flow` tools aren't available** — no bridge, no MCP server — carry on
 without them and say so in your final report. Losing the progress channel is not
-a reason to abandon the task.
+a reason to abandon the task, and with no channel to point at, that final reply
+*is* the report — write it in full.
 
 ## 4. Branch in a fresh worktree
 
@@ -253,8 +282,11 @@ Only after the PR is open (and merged, if you were asked to merge):
 bash skills/work-project-tasks/set-status.sh Done <itemId> [<itemId> ...]
 ```
 
-Post the same in the channel, then report: the PR URL, the issues it closes,
-what you verified, and anything you deliberately left out.
+Then close out **in the channel**: the PR URL, the issues it closes, what you
+verified, and anything you deliberately left out.
+
+Back where you were asked, one line — the outcome, the PR, and the channel to
+read. Not a second copy of the close-out (§3, *Report in one place*).
 
 ---
 
@@ -282,6 +314,10 @@ Block the **whole batch**, and comment on **every issue in it**. Whoever picks i
 up will be looking at one of them, not necessarily the one you chose. Post the
 reason in the Flow channel as well — that's where someone is watching.
 
+Blocking is the one case where the short reply back to the requester carries the
+substance: state what you need in it, don't just point at the channel. Nobody
+unblocks a question they haven't read.
+
 **`Blocked`, not back to `Queued for Dev`.** Re-queueing hides the problem: the
 next agent takes the task and walks into the same wall. A human moves it back to
 `Queued for Dev` once the blocker is resolved — that's their call, not yours.
@@ -308,3 +344,6 @@ round trip.
   system setting you changed put back.
 - **Don't work silently.** If the channel exists, the run should be legible from
   it alone.
+- **Don't report twice.** The channel gets the write-up; where you were asked
+  gets a line pointing at it. The exception is something they must act on — a
+  blocker, a question, a decision.
