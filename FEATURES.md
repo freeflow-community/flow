@@ -5,6 +5,12 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **Sign in with Apple on iPhone.** The iOS app now offers the native Apple
+  sign-in sheet next to Google — one tap with Face ID, and hiding your email
+  behind Apple's private relay works too.
+
+## 2026-07-28
+
 - **The conversation follows new messages again on the Mac app.** When you're
   at the bottom, fresh messages scroll into view on their own — the
   "Latest msgs ↓" pill now only appears once you've actually scrolled up to

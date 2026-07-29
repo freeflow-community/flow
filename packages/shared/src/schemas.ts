@@ -65,6 +65,17 @@ export const GoogleAuthBody = z.object({
 });
 export type GoogleAuthBody = z.infer<typeof GoogleAuthBody>;
 
+/** POST /v1/auth/apple — an Apple identity token (a signed JWT from Sign in
+ * with Apple). `name` rides alongside because Apple delivers the user's name
+ * to the client exactly once, on first authorization — it is never in the
+ * token, so the client must forward it or it is lost. Used only when the
+ * sign-in creates a new account. */
+export const AppleAuthBody = z.object({
+  identityToken: z.string().min(1).max(8192),
+  name: z.string().trim().min(1).max(200).optional(),
+});
+export type AppleAuthBody = z.infer<typeof AppleAuthBody>;
+
 /**
  * Domains that may never be opened up by the workspace self-register toggle
  * (phase16 §5a/§7): "anyone with a gmail" is the whole internet. This list is

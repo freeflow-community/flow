@@ -105,6 +105,16 @@ export const config = {
   get googleRequireHostedDomain(): boolean {
     return process.env.FLOW_GOOGLE_REQUIRE_HD !== '0';
   },
+  // ---- Sign in with Apple --------------------------------------
+  /** The iOS app's bundle id — the `aud` we require on Apple identity tokens
+   * from the native flow (Apple uses the bundle id as the client id there). */
+  get appleBundleId(): string | undefined {
+    return process.env.APPLE_BUNDLE_ID || undefined;
+  },
+  /** Sign in with Apple is available. When false the endpoint 503s and clients hide the button. */
+  get appleEnabled(): boolean {
+    return !!process.env.APPLE_BUNDLE_ID;
+  },
   verifyTokenTtlHours: 48,
   resetTokenTtlMinutes: 60,
   signinTokenTtlMinutes: 15, // passwordless sign-in link — short-lived by design

@@ -215,6 +215,16 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — Sign in with Apple (iOS)
+
+- `[server]` `POST /v1/auth/apple` verifies a native Apple identity token
+  (jose/JWKS, `aud` = `APPLE_BUNDLE_ID`) and reuses the Google account
+  match/create + domain self-registration, now extracted to `oauthAccounts.ts`.
+  `/v1/config` gains `apple`.
+- `[ios]` Native Sign in with Apple button on the sign-in screen (App Store
+  guideline 4.8: required alongside Google). Entitlement via project.yml.
+  macOS VERSION → 2.2.9 (shared core: `AppleAuthBody`, `signInWithApple`).
+
 ### 2026-07-28 — Auto-scroll follows new messages again (macOS)
 
 - `[macos]` The follow now uses the web client's pinned model (#111 follow-up):

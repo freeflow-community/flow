@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 /// Sign-in only (registration is web-first on real servers — the email-first
@@ -14,6 +15,8 @@ struct AuthView: View {
     /// Whether this server offers Google sign-in (GET /v1/config). A failed
     /// check leaves it false, so the button is absent rather than broken.
     @State private var googleEnabled = false
+    /// Same for Sign in with Apple — native flow, no Safari roundtrip.
+    @State private var appleEnabled = false
     /// True after a sign-in link was requested — swaps the form for a neutral
     /// "check your email" confirmation.
     @State private var linkSent = false
@@ -58,7 +61,9 @@ struct AuthView: View {
         .padding()
         .background(MC.base.ignoresSafeArea())
         .task {
-            googleEnabled = (try? await app.engine.publicConfig())?.google ?? false
+            let cfg = try? await app.engine.publicConfig()
+            googleEnabled = cfg?.google ?? false
+            appleEnabled = cfg?.apple ?? false
         }
     }
 
@@ -67,7 +72,6 @@ struct AuthView: View {
     /// flow://signin?code=… — the deep link the app already handles.
     private var googleButton: some View {
         VStack(spacing: 6) {
-            Divider().frame(maxWidth: 320)
             Button {
                 openURL(Server.nativeGoogleSignInURL)
             } label: {
@@ -124,8 +128,56 @@ struct AuthView: View {
             .tint(MC.accent)
             .disabled(busy || !emailValid)
 
+            if appleEnabled || googleEnabled {
+                Divider().frame(maxWidth: 320)
+            }
+            if appleEnabled { appleButton }
             if googleEnabled { googleButton }
         }
+    }
+
+    /// Native Sign in with Apple: the OS sheet hands back an identity token the
+    /// server verifies against Apple's JWKS — no browser roundtrip. The name
+    /// only arrives on the very first authorization, so it's forwarded then.
+    private var appleButton: some View {
+        SignInWithAppleButton(.signIn) { request in
+            request.requestedScopes = [.fullName, .email]
+        } onCompletion: { result in
+            switch result {
+            case .success(let authorization):
+                guard
+                    let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                    let tokenData = credential.identityToken,
+                    let token = String(data: tokenData, encoding: .utf8)
+                else {
+                    error = "Apple sign-in returned no identity token."
+                    return
+                }
+                let name = credential.fullName.flatMap {
+                    let formatted = PersonNameComponentsFormatter.localizedString(from: $0, style: .default)
+                    return formatted.isEmpty ? nil : formatted
+                }
+                busy = true
+                error = nil
+                Task {
+                    defer { busy = false }
+                    do {
+                        try await app.engine.signInWithApple(identityToken: token, fullName: name)
+                    } catch {
+                        self.error = (error as? APIError)?.message ?? error.localizedDescription
+                    }
+                }
+            case .failure(let err):
+                // Cancelling the sheet is not an error worth showing.
+                if (err as? ASAuthorizationError)?.code != .canceled {
+                    error = err.localizedDescription
+                }
+            }
+        }
+        .signInWithAppleButtonStyle(.black)
+        .frame(maxWidth: 320)
+        .frame(height: 44)
+        .disabled(busy)
     }
 
     private var linkSentCard: some View {
