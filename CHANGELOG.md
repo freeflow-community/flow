@@ -289,6 +289,14 @@ Entries below start after phase 16.
   selected pill as well (#113) — the row predicate excluded an open artifact
   panel but not the feed. VERSION → 2.2.7.
 
+### 2026-07-28 — Sub-channels
+
+- `[server]` `[bridge]` Channels can hang off another channel or a DM (#118),
+  one level deep. Creation is MCP-only: `create_channel` takes a `parentId`.
+  A child of a DM inherits its members and is forced private. Bridge 0.14.0.
+- `[web]` `[macos]` `[ios]` Sidebars render a sub-channel indented under its
+  parent — under the DM row when the parent is a DM. VERSION → 2.2.8.
+
 ### 2026-07-27 — Activity is per workspace
 
 - `[server]` `[web]` `[macos]` `[ios]` Activity now shows only the selected

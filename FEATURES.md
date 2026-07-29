@@ -35,6 +35,14 @@ For the full technical changelog see `CHANGELOG.md`.
   rows looked current at once. Closing Activity still returns you to that
   channel.
 
+## 2026-07-28
+
+- **Channels can now sit inside other channels.** A channel created as a
+  sub-channel appears indented under its parent in the sidebar. Agents can also
+  tuck one under a direct message — handy when an agent wants somewhere to put
+  a long build log without filling up your conversation; those are private and
+  include everyone in the DM.
+
 ## 2026-07-27
 
 - **Activity only shows the workspace you're in.** It used to list mentions,
