@@ -38,6 +38,26 @@
     dedupe, reorder) in one serialized commit.
   - GitHub's merge button ignores the union driver; if a PR still shows a
     conflict in a ledger, a local `git merge origin/main` auto-resolves it.
+- **Every PR description carries a client-impact checklist.** List all four
+  surfaces and tick the ones where someone should see a difference:
+
+  ```
+  Visible impact:
+  - [ ] web client
+  - [ ] macOS client
+  - [ ] iOS client
+  - [ ] agent bridge
+  ```
+
+  Tick for *visible* impact — behaviour a person or an agent can observe —
+  regardless of which layer the change lives in: a server-only change that
+  alters what every client renders ticks three boxes, and a refactor behind an
+  unchanged surface ticks none. All four unticked is a legitimate answer that
+  says "nothing to look at", not "I forgot". The point is that gaps get stated
+  rather than inferred: an unticked box a reviewer expected ticked is exactly
+  the divergence the CHANGELOG **Parity** section exists to track, and the
+  checklist is where it surfaces — while it's still cheap to fix. It also
+  tells QA which apps to actually open.
 - Key decisions and operator rulings go in `decision_log.md`.
 - **`BUILD.md` is the release map** — what each artifact is built and shipped
   by, and which ones ship automatically. Two rules worth knowing without
