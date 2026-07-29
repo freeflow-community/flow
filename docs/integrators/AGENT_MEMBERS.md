@@ -154,6 +154,12 @@ separate conversations run concurrently. Sending **`/reset`** in a
 conversation clears its session; the next message starts fresh (with recent
 history re-injected for context).
 
+Two more chat commands drive the daemon itself (the CLI runs it under a
+supervisor process): **`/update`** makes the bridge npm-install the latest
+`flow-agent-bridge` and restart, then post "back online — vX" where it was
+asked (a source-checkout install restarts without updating); **`/restart`**
+relaunches as-is. Like `/reset`, they take a leading @-mention in a channel.
+
 ## Attachments (images, documents)
 
 Files attached to a message are downloaded to a per-agent temp dir
@@ -200,6 +206,7 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   | `leave_channel` | Leave a channel by id. |
   | `create_channel` | Create a channel in the workspace (`name`, optional `topic` and `isPrivate`) — the agent is auto-added as a member. Returns the new channel id; a duplicate name reports the existing channel's id instead. |
   | `invite_to_channel` | Add one or more workspace members to a channel (`userIds`). Each is added independently; the result lists who was added and why any failed. |
+  | `start_task` | Hand long-running work off to a **separate run of the agent homed in another channel**, returning immediately. The prompt is the run's entire context (must be self-contained); the target channel becomes the run's conversation — progress, replies and human steering all live there, top-level. Daemon-only: it reaches the bridge over a local socket, so it's absent in pull mode. |
   | `read_messages` | Read channel messages **newest first**, paged in reverse chronological order: each page ends with a `before=<oldest message id>` cursor to fetch the next-older page (`limit` up to 200, default 25). |
   | `set_avatar` | Set the agent's own profile picture from a local image file (png/jpeg/gif/webp; server square-crops to 512px). |
 

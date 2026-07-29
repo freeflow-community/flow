@@ -6,21 +6,21 @@
 // against Google's rotating JWKS (which it caches), the issuer, the audience
 // and the expiry. See phase16.md §2/§8 for why ID-token beats the auth-code
 // flow here: no client secret, no redirect URI, no server-side exchange.
+//
+// The provider-agnostic account matching / self-registration lives in
+// oauthAccounts.ts (shared with Apple); this file is the Google-specific rim:
+// token verification and avatar seeding.
 import { OAuth2Client } from 'google-auth-library';
-import { and, eq, sql } from 'drizzle-orm';
-import { emailDomain, type GoogleAuthResponse, type OAuthIdentityDTO, type WorkspaceDTO } from '@flow/shared';
+import { eq } from 'drizzle-orm';
+import type { OAuthSignInResponse } from '@flow/shared';
 import { db, schema } from '../db/index.js';
-import { newId } from '../lib/ids.js';
-import { newToken } from '../lib/tokens.js';
-import { ApiError, conflict } from '../lib/errors.js';
+import { ApiError } from '../lib/errors.js';
 import { config } from '../config.js';
 import { issueSession, toUserDTO } from './auth.js';
 import { setAvatar } from './users.js';
-import { announceJoin, enrollInWorkspace, toWorkspaceDTO } from './workspaces.js';
+import { resolveOAuthUser, selfRegisterByDomain } from './oauthAccounts.js';
 
-const { users, workspaces, workspaceMembers, oauthIdentities } = schema;
-
-const PROVIDER = 'google';
+const { users } = schema;
 
 /** The subset of the verified ID-token payload we act on (phase16 §2). */
 export interface GoogleClaims {
@@ -66,7 +66,7 @@ export async function verifyGoogleIdToken(idToken: string): Promise<GoogleClaims
 }
 
 /** Sign in (or register — with Google they're the same act) and auto-enroll. */
-export async function signInWithGoogle(idToken: string, clientInfo?: string): Promise<GoogleAuthResponse> {
+export async function signInWithGoogle(idToken: string, clientInfo?: string): Promise<OAuthSignInResponse> {
   return signInWithGoogleClaims(await verifyGoogleIdToken(idToken), clientInfo);
 }
 
@@ -77,7 +77,7 @@ export async function signInWithGoogle(idToken: string, clientInfo?: string): Pr
 export async function signInWithGoogleClaims(
   claims: GoogleClaims,
   clientInfo?: string,
-): Promise<GoogleAuthResponse> {
+): Promise<OAuthSignInResponse> {
   // An unverified Google email proves nothing: it can neither link to an
   // existing Flow account nor satisfy the domain self-register rule.
   if (!claims.emailVerified) {
@@ -86,78 +86,20 @@ export async function signInWithGoogleClaims(
   const email = claims.email.toLowerCase();
   const hd = claims.hd?.toLowerCase() ?? null;
 
-  const userId = await resolveUser(claims, email, hd);
+  const userId = await resolveOAuthUser({
+    provider: 'google',
+    sub: claims.sub,
+    email,
+    hostedDomain: hd,
+    name: claims.name,
+  });
+  await backfillProfile(userId, claims);
   const autoJoined = await selfRegisterByDomain(userId, email);
 
   const row = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0];
   if (!row) throw new ApiError(500, 'internal', 'user vanished during sign-in');
   const token = await issueSession(userId, clientInfo);
   return { token, user: toUserDTO(row), autoJoined };
-}
-
-/**
- * Match order (phase16 §3): `(provider, sub)` first — a returning user, robust
- * to email changes — then the verified email against an existing `users` row (a
- * password user adding Google, or someone invited by email signing in with
- * Google for the first time), else create a Google-first account.
- */
-async function resolveUser(claims: GoogleClaims, email: string, hd: string | null): Promise<string> {
-  const identity = (
-    await db
-      .select()
-      .from(oauthIdentities)
-      .where(and(eq(oauthIdentities.provider, PROVIDER), eq(oauthIdentities.providerSubject, claims.sub)))
-      .limit(1)
-  )[0];
-  if (identity) {
-    // Refresh the recorded email/hd — Google is the source of truth for both.
-    await db
-      .update(oauthIdentities)
-      .set({ email, hostedDomain: hd })
-      .where(and(eq(oauthIdentities.provider, PROVIDER), eq(oauthIdentities.providerSubject, claims.sub)));
-    await backfillProfile(identity.userId, claims);
-    return identity.userId;
-  }
-
-  const existing = (await db.select().from(users).where(eq(users.email, email)).limit(1))[0];
-  if (existing) {
-    // Never merge a human Google login into a service account (phase16 §4).
-    if (existing.isBot || existing.isAgent) {
-      throw conflict('email_reserved', 'that email belongs to a bot or agent account');
-    }
-    if (existing.deletedAt) {
-      throw conflict('email_reserved', 'that account has been removed');
-    }
-    await db
-      .insert(oauthIdentities)
-      .values({ provider: PROVIDER, providerSubject: claims.sub, userId: existing.id, email, hostedDomain: hd });
-    // Linking proves address ownership, so a legacy unverified account becomes
-    // verified here (same reasoning as the sign-in-link redeem).
-    if (!existing.emailVerifiedAt) {
-      await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, existing.id));
-    }
-    await backfillProfile(existing.id, claims);
-    return existing.id;
-  }
-
-  // Google-first account: a real verified email, no usable password. The
-  // sentinel hash mirrors the `!agent:` / `!bot:` trick so `password_hash`
-  // stays NOT NULL while argon2.verify can never succeed.
-  const id = newId();
-  await db.transaction(async (tx) => {
-    await tx.insert(users).values({
-      id,
-      email,
-      passwordHash: `!google:${newToken()}`,
-      displayName: claims.name?.trim() || email.split('@')[0]!,
-      emailVerifiedAt: new Date(),
-    });
-    await tx
-      .insert(oauthIdentities)
-      .values({ provider: PROVIDER, providerSubject: claims.sub, userId: id, email, hostedDomain: hd });
-  });
-  await backfillProfile(id, claims);
-  return id;
 }
 
 /** Google serves profile pictures from this host only — the URL rides inside a
@@ -187,48 +129,4 @@ async function backfillProfile(userId: string, claims: GoogleClaims): Promise<vo
   } catch (err) {
     console.warn(`google avatar seed failed for ${userId}: ${(err as Error).message}`);
   }
-}
-
-/**
- * Domain self-registration (phase16 §4 step 3): every workspace that opened its
- * doors to this email's domain gains the user as a member. Best-effort per
- * workspace — one failure must not sink the sign-in.
- */
-async function selfRegisterByDomain(userId: string, email: string): Promise<WorkspaceDTO[]> {
-  const domain = emailDomain(email);
-  if (!domain) return [];
-  const candidates = await db
-    .select()
-    .from(workspaces)
-    .where(eq(workspaces.googleSelfRegisterDomain, domain));
-  const joined: WorkspaceDTO[] = [];
-  for (const ws of candidates) {
-    try {
-      const already = await db
-        .select({ one: sql`1` })
-        .from(workspaceMembers)
-        .where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.userId, userId)))
-        .limit(1);
-      if (already.length > 0) continue;
-      const isNew = await db.transaction((tx) => enrollInWorkspace(tx, ws.id, userId));
-      if (!isNew) continue;
-      await announceJoin(ws.id, userId);
-      joined.push(toWorkspaceDTO(ws, 'member'));
-    } catch (err) {
-      console.error(`google self-register failed for ${userId} → ${ws.slug}: ${(err as Error).message}`);
-    }
-  }
-  return joined;
-}
-
-/** GET /v1/me/identities — what the client needs to decide whether to offer
- * the domain toggle (phase16 §5a). */
-export async function listIdentities(userId: string): Promise<OAuthIdentityDTO[]> {
-  const rows = await db.select().from(oauthIdentities).where(eq(oauthIdentities.userId, userId));
-  return rows.map((r) => ({
-    provider: r.provider as 'google',
-    email: r.email,
-    hostedDomain: r.hostedDomain,
-    linkedAt: r.createdAt.toISOString(),
-  }));
 }

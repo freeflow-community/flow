@@ -117,6 +117,19 @@ actor SyncEngine {
         await didSignIn(user: resp.user, token: resp.token)
     }
 
+    /// Sign in with Apple (native flow): posts the ASAuthorization identity
+    /// token; the server verifies it against Apple's JWKS. Sign-in and
+    /// registration are the same act. `fullName` is only delivered by Apple on
+    /// the first authorization, so it's forwarded when present.
+    func signInWithApple(identityToken: String, fullName: String?) async throws {
+        let resp: AuthResponse = try await api.post(
+            "/v1/auth/apple",
+            body: AppleAuthBody(identityToken: identityToken, name: fullName)
+        )
+        await api.setToken(resp.token)
+        await didSignIn(user: resp.user, token: resp.token)
+    }
+
     /// Which auth options this server offers (phase 16). Open endpoint — safe
     /// to call from the signed-out screen. Callers treat a failure as "no
     /// Google" so an unreachable server just means one less button.

@@ -32,6 +32,13 @@ targets:
         excludes: [Banners.swift, Updater.swift]
     dependencies:
       - package: GRDB
+    # Sign in with Apple. XcodeGen writes the entitlements file; the App ID's
+    # capability must also be enabled in the developer portal (automatic
+    # signing handles this when archiving in Xcode).
+    entitlements:
+      path: Sources/Flow.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
     info:
       path: Sources/Generated-Info.plist
       properties:
