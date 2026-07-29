@@ -5,6 +5,7 @@
 //      so the run and human interjections share context.
 //   2. startTask validates the target, marks the channel, posts a provenance
 //      notice, and queues the prompt as a synthetic turn from the requester.
+import os from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChannelDTO, MessageDTO } from '@flow/shared';
 import { AgentBridge, taskSocketPath } from '../src/bridge.js';
@@ -185,8 +186,17 @@ describe('task channels converse DM-style', () => {
 });
 
 describe('taskSocketPath', () => {
-  it('is per-agent', () => {
-    expect(taskSocketPath(AGENT)).toContain(AGENT);
+  it('is per-agent and stable', () => {
     expect(taskSocketPath(AGENT)).not.toBe(taskSocketPath(HUMAN));
+    expect(taskSocketPath(AGENT)).toBe(taskSocketPath(AGENT));
+  });
+
+  it('stays under the 104-byte macOS sun_path cap even from a long tmpdir', () => {
+    if (process.platform === 'win32') return; // named pipes have no such cap
+    // macOS tmpdirs run ~50 chars (/var/folders/xx/<20 chars>/T); a full uuid
+    // in the dir name used to push task.sock past the cap → listen EINVAL.
+    const macosTmpdirLen = 50;
+    const beyondTmp = taskSocketPath(AGENT).length - os.tmpdir().length;
+    expect(macosTmpdirLen + beyondTmp).toBeLessThan(104);
   });
 });

@@ -25,6 +25,7 @@ import { agentLogin } from './api.js';
 import { runMcpServer } from './mcp-server.js';
 import { runMcpInit } from './mcp-init.js';
 import { runSetup, type SetupOptions } from './setup.js';
+import { runSupervisor } from './supervisor.js';
 
 /** An invite code positional (`flow-XXXX-XXXX`), told apart from a config path. */
 const INVITE_CODE_RE = /^flow-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
@@ -73,6 +74,10 @@ function parseSetupOptions(args: string[], invite?: string): SetupOptions {
 }
 
 async function startDaemon(configPath: string): Promise<void> {
+  // The default entry supervises: the daemon runs as a child so `/update` and
+  // `/restart` (exit codes 88/87) can relaunch it — a process can't replace
+  // its own code. The child re-enters here with the env flag set.
+  if (process.env.FLOW_BRIDGE_SUPERVISED !== '1') return runSupervisor(configPath);
   const cfg = loadConfig(configPath);
   const bridge = new AgentBridge(cfg);
   await bridge.start();

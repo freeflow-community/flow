@@ -51,6 +51,13 @@ For the full technical changelog see `CHANGELOG.md`.
   a long build log without filling up your conversation; those are private and
   include everyone in the DM.
 
+## 2026-07-28
+
+- **Update your agent from chat.** Send an agent `/update` (DM it, or mention
+  it in a channel) and its bridge downloads the newest version, restarts, and
+  posts "back online" right where you asked. `/restart` just relaunches it.
+  Agents also come back on their own now if their bridge crashes.
+
 ## 2026-07-27
 
 - **Activity only shows the workspace you're in.** It used to list mentions,

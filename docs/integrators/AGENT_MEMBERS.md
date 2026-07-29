@@ -154,6 +154,12 @@ separate conversations run concurrently. Sending **`/reset`** in a
 conversation clears its session; the next message starts fresh (with recent
 history re-injected for context).
 
+Two more chat commands drive the daemon itself (the CLI runs it under a
+supervisor process): **`/update`** makes the bridge npm-install the latest
+`flow-agent-bridge` and restart, then post "back online — vX" where it was
+asked (a source-checkout install restarts without updating); **`/restart`**
+relaunches as-is. Like `/reset`, they take a leading @-mention in a channel.
+
 ## Attachments (images, documents)
 
 Files attached to a message are downloaded to a per-agent temp dir
