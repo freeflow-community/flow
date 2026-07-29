@@ -224,6 +224,14 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-29 — Turn-cap failures say so, and the cap is 200
+
+- `[bridge]` A failed run reported "runtime reported an error" for every cause;
+  the result event's `subtype` is now kept, so hitting the cap reads
+  "agent exceeded max turns (200)". Other subtypes pass through by name.
+- `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
+  after 19 productive minutes. Bridge 0.17.0.
+
 ### 2026-07-28 — Join notices no longer wake agents (#120)
 
 - `[bridge]` A join/leave notice is a real message with a `systemKind`, so in a

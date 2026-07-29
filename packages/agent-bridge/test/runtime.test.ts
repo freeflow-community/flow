@@ -2,7 +2,14 @@ import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEMO_REPLY, StreamJsonParser, buildClaudeArgs, formatToolStep, runRuntime } from '../src/runtime.js';
+import {
+  DEMO_REPLY,
+  StreamJsonParser,
+  buildClaudeArgs,
+  describeResultError,
+  formatToolStep,
+  runRuntime,
+} from '../src/runtime.js';
 import type { RuntimeConfig } from '../src/config.js';
 import { expandHome, loadConfig } from '../src/config.js';
 
@@ -54,7 +61,30 @@ describe('StreamJsonParser', () => {
     p.feed(`${JSON.stringify({ type: 'result', subtype: 'error_max_turns', result: 'ran out' })}\n`);
     expect(p.sawResult).toBe(true);
     expect(p.isError).toBe(true);
+    expect(p.errorSubtype).toBe('error_max_turns');
     expect(p.finalText).toBe('ran out');
+  });
+
+  it('keeps no subtype for a successful result', () => {
+    const p = new StreamJsonParser(() => {});
+    p.feed(`${JSON.stringify({ type: 'result', subtype: 'success', result: 'fine', is_error: false })}\n`);
+    expect(p.errorSubtype).toBe('');
+  });
+});
+
+describe('describeResultError', () => {
+  // The turn cap is the common failure and the one an operator can fix, so it
+  // has to be nameable from the chat message alone.
+  it('names the turn cap and carries its value', () => {
+    expect(describeResultError('error_max_turns', 200)).toBe('agent exceeded max turns (200)');
+  });
+
+  it('passes any other subtype through rather than swallowing it', () => {
+    expect(describeResultError('error_during_execution', 200)).toBe('runtime reported error_during_execution');
+  });
+
+  it('falls back when the runtime flagged an error with no subtype', () => {
+    expect(describeResultError('', 200)).toBe('runtime reported an error');
   });
 });
 
@@ -136,6 +166,16 @@ describe('run expiry', () => {
 
   afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+  // The whole point of the subtype: the reply has to name the cap, and the cap
+  // it names has to be the one this run was actually given.
+  it('reports a turn-cap failure by name, with the run’s own cap', async () => {
+    const capped = '{"type":"result","subtype":"error_max_turns","result":"Now a unit test:","is_error":true}';
+    const res = await run(cfg(script('capped', `echo '${TICK}'; echo '${capped}'`), { maxTurns: 200 }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('agent exceeded max turns (200)');
+    expect(res.text).toBe('Now a unit test:'); // partial work still rides along as salvage
+  });
+
   it('kills a run that goes silent', async () => {
     const res = await run(cfg(script('silent', 'sleep 30')));
     expect(res.ok).toBe(false);
@@ -213,6 +253,7 @@ describe('loadConfig', () => {
     expect(cfg.respondToAgents).toBe(false);
     expect(cfg.concurrency).toBe(4);
     expect(cfg.runtime.mcp).toBe(true);
+    expect(cfg.runtime.maxTurns).toBe(200); // a runaway backstop, not a work limit
     expect(cfg.runtime.idleTimeoutSec).toBe(120);
     expect(cfg.runtime.timeoutSec).toBe(3600); // backstop only — idle is the real limit
     fs.rmSync(dir, { recursive: true, force: true });
