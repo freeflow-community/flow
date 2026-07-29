@@ -14,6 +14,41 @@ import { FeaturesModal } from './FeaturesModal';
 import StatusFooter from './StatusPicker';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
+/**
+ * Sub-channels (#118): flatten the channel list into display order — each
+ * parent immediately followed by its children, indented one level.
+ *
+ * Membership is per channel, so you can be in a child without being in its
+ * parent. Such a child has nowhere to nest under, and hiding it would lose a
+ * channel you belong to, so it renders at top level instead. That is also what
+ * happens when the parent is archived.
+ *
+ * Input order is preserved (the server sorts by name), so parents stay
+ * alphabetical and so do children within a parent.
+ *
+ * Only a top-level channel can host children. The server rejects grandchildren,
+ * but one arriving anyway (an old row, a future rule change) renders at top
+ * level rather than being indented twice or — worse — silently dropped.
+ */
+export function nestChannels(list: ChannelDTO[]): { channel: ChannelDTO; nested: boolean }[] {
+  const byId = new Map(list.map((c) => [c.id, c]));
+  const parentOf = (c: ChannelDTO) => (c.parentId ? byId.get(c.parentId) : undefined);
+  const childrenOf = new Map<string, ChannelDTO[]>();
+  const roots: ChannelDTO[] = [];
+  for (const c of list) {
+    const parent = parentOf(c);
+    if (parent && !parentOf(parent)) {
+      childrenOf.set(parent.id, [...(childrenOf.get(parent.id) ?? []), c]);
+    } else {
+      roots.push(c);
+    }
+  }
+  return roots.flatMap((c) => [
+    { channel: c, nested: false },
+    ...(childrenOf.get(c.id) ?? []).map((k) => ({ channel: k, nested: true })),
+  ]);
+}
+
 const WIDTH_KEY = 'flow.sidebarWidth';
 const DEFAULT_WIDTH = 240;
 const clampWidth = (w: number) => Math.min(360, Math.max(180, w));
@@ -118,8 +153,20 @@ export default function Sidebar() {
     sel.selectChannel(ch.id);
   };
   const all = channels.data ?? [];
-  const joined = all.filter((c) => c.isMember && c.kind === 'standard');
   const dms = all.filter((c) => c.isMember && c.kind !== 'standard');
+  // A sub-channel of a DM (an agent's log channel, say) belongs to that
+  // conversation, not to the workspace — so it renders under its DM row down in
+  // Direct Messages and is kept out of Channels entirely.
+  const dmIds = new Set(dms.map((c) => c.id));
+  const dmChildren = new Map<string, ChannelDTO[]>();
+  for (const c of all) {
+    if (c.isMember && c.kind === 'standard' && c.parentId && dmIds.has(c.parentId)) {
+      dmChildren.set(c.parentId, [...(dmChildren.get(c.parentId) ?? []), c]);
+    }
+  }
+  const joined = nestChannels(
+    all.filter((c) => c.isMember && c.kind === 'standard' && !(c.parentId && dmIds.has(c.parentId))),
+  );
   // The self-DM ("<you> (you)") is a personal scratchpad — it never carries an
   // unread badge (ui_nits): you can't have unread messages from yourself.
   const isSelfDm = (c: ChannelDTO) =>
@@ -246,9 +293,9 @@ export default function Sidebar() {
             onClick: () => setShowCreateChannel(true),
           }}
         />
-        {joined.map((c) => (
+        {joined.map(({ channel: c, nested }) => (
           <div key={c.id}>
-            <ChannelRow channel={c} label={c.name ?? ''} onMenu={() => setMenuChannel(c)} />
+            <ChannelRow channel={c} label={c.name ?? ''} nested={nested} onMenu={() => setMenuChannel(c)} />
             {(artifactsByChannel.get(c.id) ?? []).map((a) => (
               <ArtifactRow key={a.id} artifact={a} />
             ))}
@@ -307,6 +354,14 @@ export default function Sidebar() {
               />
               {(artifactsByChannel.get(c.id) ?? []).map((a) => (
                 <ArtifactRow key={a.id} artifact={a} />
+              ))}
+              {(dmChildren.get(c.id) ?? []).map((k) => (
+                <div key={k.id}>
+                  <ChannelRow channel={k} label={k.name ?? ''} nested onMenu={() => setMenuChannel(k)} />
+                  {(artifactsByChannel.get(k.id) ?? []).map((a) => (
+                    <ArtifactRow key={a.id} artifact={a} />
+                  ))}
+                </div>
               ))}
             </div>
           );
@@ -555,6 +610,7 @@ function ChannelRow({
   statusTitle,
   testid,
   hideUnread,
+  nested,
   onMenu,
 }: {
   channel: ChannelDTO;
@@ -564,6 +620,8 @@ function ChannelRow({
   statusTitle?: string;
   testid?: string;
   hideUnread?: boolean;
+  /** Sub-channel (#118) — indented under its parent, same as ArtifactRow. */
+  nested?: boolean;
   onMenu: () => void;
 }) {
   const sel = useSelection();
@@ -578,7 +636,8 @@ function ChannelRow({
   const notifications = hideUnread ? 0 : channel.unreadNotifications;
   return (
     <div
-      className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
+      data-nested={nested ? 'true' : undefined}
+      className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${nested ? 'ml-3' : ''} ${
         active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
       }`}
     >

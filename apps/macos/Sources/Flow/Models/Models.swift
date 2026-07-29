@@ -266,6 +266,9 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// badge shows. Mentions, thread replies, reactions; every message in a DM.
     var unreadNotifications: Int
     var notifyLevel: Int // 0=mute 1=mentions 2=all
+    /// Parent channel (#118) — set at creation, one level deep. The sidebar
+    /// draws this channel indented under it. nil for a top-level channel.
+    var parentId: String?
     var memberIds: [String]? // dm/group_dm only
 
     var isDM: Bool { kind != "standard" }
@@ -281,14 +284,14 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
         case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
-        case notifyLevel, memberIds
+        case notifyLevel, parentId, memberIds
     }
 
     init(
         id: String, workspaceId: String, name: String?, kind: String = "standard", topic: String?,
         isPrivate: Bool, createdBy: String, createdAt: String, archivedAt: String?,
         isMember: Bool, lastReadMsgId: String?, unreadCount: Int, unreadNotifications: Int = 0,
-        notifyLevel: Int = 1, memberIds: [String]? = nil
+        notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil
     ) {
         self.id = id
         self.workspaceId = workspaceId
@@ -304,6 +307,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.unreadCount = unreadCount
         self.unreadNotifications = unreadNotifications
         self.notifyLevel = notifyLevel
+        self.parentId = parentId
         self.memberIds = memberIds
     }
 
@@ -323,7 +327,42 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         unreadNotifications = try c.decodeIfPresent(Int.self, forKey: .unreadNotifications) ?? 0
         notifyLevel = try c.decodeIfPresent(Int.self, forKey: .notifyLevel) ?? 1
+        parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
         memberIds = try c.decodeIfPresent([String].self, forKey: .memberIds)
+    }
+}
+
+extension Channel {
+    /// Sub-channels (#118): flatten a channel list into sidebar display order —
+    /// each parent immediately followed by its children, which draw indented.
+    ///
+    /// Membership is per channel, so you can be in a child without being in its
+    /// parent. That child has nothing to nest under, and dropping it would hide
+    /// a channel you belong to, so it renders at top level instead — same when
+    /// the parent is archived and filtered out before this is called.
+    ///
+    /// Input order is preserved, so callers keep whatever sort they applied.
+    /// Shared by the macOS and iOS sidebars, which both compile this file.
+    ///
+    /// Only a top-level channel can host children. The server rejects
+    /// grandchildren, but one arriving anyway renders at top level rather than
+    /// being indented twice or silently dropped.
+    static func nested(_ list: [Channel]) -> [(channel: Channel, isNested: Bool)] {
+        let byId = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        func parentOf(_ c: Channel) -> Channel? { c.parentId.flatMap { byId[$0] } }
+        var childrenOf: [String: [Channel]] = [:]
+        var roots: [Channel] = []
+        for c in list {
+            if let parent = parentOf(c), parentOf(parent) == nil {
+                childrenOf[parent.id, default: []].append(c)
+            } else {
+                roots.append(c)
+            }
+        }
+        return roots.flatMap { root in
+            [(channel: root, isNested: false)]
+                + (childrenOf[root.id] ?? []).map { (channel: $0, isNested: true) }
+        }
     }
 }
 

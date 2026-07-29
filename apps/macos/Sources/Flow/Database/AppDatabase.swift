@@ -194,6 +194,15 @@ struct AppDatabase: Sendable {
                 t.add(column: "unreadNotifications", .integer).notNull().defaults(to: 0)
             }
         }
+        // Sub-channels (#118): a channel can hang off another and renders
+        // indented under it. Nullable, and no FK — the parent row may not be
+        // cached (you can be a member of a child but not its parent), which the
+        // sidebar handles by drawing such a channel at top level.
+        migrator.registerMigration("v12") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "parentId", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 
