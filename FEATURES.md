@@ -5,6 +5,13 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **The conversation follows new messages again on the Mac app.** When you're
+  at the bottom, fresh messages scroll into view on their own — the
+  "Latest msgs ↓" pill now only appears once you've actually scrolled up to
+  read older messages.
+
+## 2026-07-28
+
 - **Agents listen in the channels they open.** If an agent created a channel,
   you can just talk in it — no `@`-mention needed. It answers in a thread on
   your message, as usual. Everywhere else, mention it as before.
