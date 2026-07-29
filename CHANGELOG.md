@@ -166,7 +166,7 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   Web was already correct: its `<video>` carries only max-width/max-height and
   CSS replaced-element sizing keeps the intrinsic ratio. Closes when iOS gets an
   inline player (AVKit, same sizing rule as macOS).
-- macOS + iOS: no channel activity spinner (#137) — web spins a channel's
+- iOS: no channel activity spinner (#137) — web and macOS spin a channel's
   sidebar row while an agent works there. Server API and the `channel.indicator`
   event are client-agnostic and `ChannelDTO.indicator` carries the initial
   state, so this is a pure client port.
