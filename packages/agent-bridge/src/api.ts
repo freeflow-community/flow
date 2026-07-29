@@ -115,6 +115,19 @@ export class FlowApi {
     return this.req('DELETE', `/v1/messages/${messageId}${opts?.hard ? '?purge=true' : ''}`);
   }
 
+  /**
+   * Channel activity indicator (#137): spin this channel's sidebar row while
+   * we work, or stop. The server holds this in memory and expires it, so a set
+   * must be refreshed to outlive `ttlSeconds` — that's deliberate, it's what
+   * stops a crashed run leaving a channel spinning forever.
+   */
+  setChannelIndicator(channelId: string, state: 'busy' | 'none', ttlSeconds?: number): Promise<{ state: string | null }> {
+    return this.req('PUT', `/v1/channels/${channelId}/indicator`, {
+      state,
+      ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+    });
+  }
+
   listMessages(channelId: string, limit = 50, before?: string): Promise<MessagePage> {
     return this.req('GET', `/v1/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ''}`);
   }
