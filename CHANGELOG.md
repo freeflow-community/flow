@@ -13,6 +13,10 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- Sign in with Apple is iOS-only (#124): web + macOS still offer only
+  Google/password. `/v1/auth/apple` is client-agnostic; macOS can use the same
+  native ASAuthorization flow, web needs Apple's JS flow (Services ID +
+  redirect setup — more than a pure port).
 - iOS: no join-link management (#85). Web + macOS can create/copy/regenerate/
   revoke the workspace's persistent join link from the invite surface; iOS has
   no invite surface at all to hang it on. Server API is done and client-agnostic
@@ -157,6 +161,11 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   message can silently stop the follow. Needs the same pinned-follow port
   (web and macOS now share the model; iOS's `MessageListView` is a separate
   copy with a settle-scroll timer to reconcile).
+- iOS: no inline video player at all — video attachments render as a file chip,
+  so the #96 aspect-ratio fix (macOS 2026-07-28) has nothing to land on there.
+  Web was already correct: its `<video>` carries only max-width/max-height and
+  CSS replaced-element sizing keeps the intrinsic ratio. Closes when iOS gets an
+  inline player (AVKit, same sizing rule as macOS).
 
 ### Deliberate divergences (ruled)
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
@@ -222,6 +231,34 @@ Entries below start after phase 16.
   sockets cleanly. Pairs with detaching the rollback-only `/data` volume
   (operator step), which is what forced stop-then-start deploys.
 
+### 2026-07-29 — Turn-cap failures say so, and the cap is 200
+
+- `[bridge]` A failed run reported "runtime reported an error" for every cause;
+  the result event's `subtype` is now kept, so hitting the cap reads
+  "agent exceeded max turns (200)". Other subtypes pass through by name.
+- `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
+  after 19 productive minutes. Bridge 0.17.0.
+
+### 2026-07-28 — Join notices no longer wake agents (#120)
+
+- `[bridge]` A join/leave notice is a real message with a `systemKind`, so in a
+  channel the agent owns it was starting a full runtime turn. `inScope` now
+  ignores any `systemKind` message. Bridge 0.16.1.
+
+### 2026-07-28 — iOS QA hook: open Activity on launch
+
+- `[qa]` `FLOW_DEBUG_SHOW_ACTIVITY=1` lands the signed-in app on the Activity
+  feed (DEBUG-only, same family as `FLOW_DEBUG_OPEN_DRAWER`). Used for App
+  Store screenshot capture.
+### 2026-07-28 — Sign in with Apple (iOS)
+
+- `[server]` `POST /v1/auth/apple` verifies a native Apple identity token
+  (jose/JWKS, `aud` = `APPLE_BUNDLE_ID`) and reuses the Google account
+  match/create + domain self-registration, now extracted to `oauthAccounts.ts`.
+  `/v1/config` gains `apple`.
+- `[ios]` Native Sign in with Apple button on the sign-in screen (App Store
+  guideline 4.8: required alongside Google). Entitlement via project.yml.
+  macOS VERSION → 2.2.9 (shared core: `AppleAuthBody`, `signInWithApple`).
 ### 2026-07-28 — start_task: hand work off to a run homed in a channel
 
 - `[bridge]` New `start_task` MCP tool: queue a fresh run of the agent in
@@ -317,6 +354,11 @@ Entries below start after phase 16.
 - `[web]` `[macos]` `[ios]` Sidebars render a sub-channel indented under its
   parent — under the DM row when the parent is a DM. VERSION → 2.2.8.
 
+### 2026-07-28 — Public privacy policy page
+
+- `[server]` `[web]` `/privacy` serves a static policy page (needed for the
+  iOS App Store listing; also just overdue). Static HTML in `web/public`, no
+  SPA involvement.
 ### 2026-07-28 — The bridge updates and restarts itself
 
 - `[bridge]` The CLI now runs the daemon under a small supervisor; new chat
@@ -328,6 +370,14 @@ Entries below start after phase 16.
   tmpdir + a full uuid overran the 104-byte `sun_path` cap, so 0.15.0's
   `start_task` never actually came up there. State dir now uses a hashed
   short agent id.
+
+### 2026-07-28 — Chat video player respects the clip's aspect ratio (#96)
+
+- `[macos]` The inline video card and its lightbox size to the clip's real
+  presentation size instead of a fixed 16:9 frame, so portrait and square video
+  no longer play as a sliver between black pillars. `preferredTransform` is
+  applied, which is what makes rotated phone video read as portrait.
+- `[macos]` macOS 2.2.10.
 
 ### 2026-07-27 — Activity is per workspace
 

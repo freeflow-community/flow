@@ -89,6 +89,12 @@ export class StreamJsonParser {
   finalText = '';
   isError = false;
   sawResult = false;
+  /**
+   * The failing result's `subtype` (`error_max_turns`, `error_during_execution`,
+   * …). Kept because the boolean alone can't tell an operator whether to raise a
+   * cap or go read a stack trace.
+   */
+  errorSubtype = '';
   /** Any well-formed event — see RunResult.sawSession. */
   sawEvent = false;
   /**
@@ -128,6 +134,7 @@ export class StreamJsonParser {
     } else if (ev.type === 'result') {
       this.sawResult = true;
       this.isError = ev.is_error === true || (ev.subtype !== undefined && ev.subtype !== 'success');
+      this.errorSubtype = this.isError ? (ev.subtype ?? '') : '';
       this.finalText = ev.result ?? '';
     }
   }
@@ -199,6 +206,17 @@ function killGroup(pid: number, graceMs: number): void {
 export function killAllRuntimes(): void {
   for (const pid of liveGroups) killGroup(pid, 0);
   liveGroups.clear();
+}
+
+/**
+ * Turn a failing `result` event into something an operator can act on. The turn
+ * cap is by far the most common failure and its fix is a config change, so it
+ * says so by name — and carries the cap, because "raise it" needs a number.
+ */
+export function describeResultError(subtype: string, maxTurns: number): string {
+  if (subtype === 'error_max_turns') return `agent exceeded max turns (${maxTurns})`;
+  if (subtype) return `runtime reported ${subtype}`;
+  return 'runtime reported an error';
 }
 
 export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<RunResult> {
@@ -283,9 +301,10 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       if (cfg.kind === 'claude') {
         if (parser.sawResult && !parser.isError) return resolve({ ok: true, text: parser.finalText, sawSession: true });
         // Error text stays short: the runtime's own words ride along as
-        // salvage instead of being spliced in truncated at 300 chars.
+        // salvage instead of being spliced in truncated at 300 chars. The
+        // subtype is the exception — it's the one word that says what to do.
         const error = parser.sawResult
-          ? 'runtime reported an error'
+          ? describeResultError(parser.errorSubtype, cfg.maxTurns)
           : `runtime exited ${code} without a result${stderr ? `: ${stderr.slice(-300)}` : ''}`;
         return resolve({
           ok: false,

@@ -133,7 +133,7 @@ channel it's a member of (invite it to channels like any member).
 | `runtime.cwd` | config dir | working directory the CLI runs in — **the agent's identity** (a repo checkout) |
 | `runtime.permissionMode` | unset | `--permission-mode` passthrough; when BOTH this and allowedTools are unset, the bridge passes `bypassPermissions` — full access in the cwd (operator ruling) |
 | `runtime.allowedTools` | `[]` (= allow everything) | set to scope the agent, e.g. `["Read", "Bash(pnpm test:*)"]` — disables the bypass default |
-| `runtime.maxTurns` | 100 | `--max-turns` runaway cap |
+| `runtime.maxTurns` | 200 | `--max-turns` runaway cap |
 | `runtime.idleTimeoutSec` | 120 | kill a run after this many seconds with **no output at all**. stream-json narrates every tool call, so a run that is still working keeps rearming this and never expires — silence is what marks a wedged run |
 | `runtime.timeoutSec` | 3600 | absolute wall-clock backstop per run — the runaway cap, not the normal limit |
 | `runtime.mcp` | true (claude) | rich mode: expose the `flow` MCP server to the runtime |

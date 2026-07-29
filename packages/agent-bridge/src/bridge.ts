@@ -445,6 +445,11 @@ export class AgentBridge {
     if (sender.isAgent && !this.cfg.respondToAgents) return false; // agent-to-agent loop guard
     const chan = this.channels.get(msg.channelId);
     if (!chan?.isMember) return false; // only channels we're in
+    // Channel event lines ("Alice joined the channel") are notices for humans,
+    // not something addressed to us — someone joining a room we own is not a
+    // request. Filtered before the DM branch so no systemKind can ever wake a
+    // run, whatever channel kind the server posts it in.
+    if (msg.systemKind) return false;
     if (chan.kind === 'dm' || chan.kind === 'group_dm') return true;
     if (msg.body.startsWith(THINKING_PREFIX)) return false; // another agent's status line
     if (this.cfg.eventScope === 'all') return true;

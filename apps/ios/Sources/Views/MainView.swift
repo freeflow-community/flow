@@ -49,6 +49,11 @@ struct MainView: View {
             if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_DRAWER"] == "1" {
                 drawerOpen = true
             }
+            // QA: FLOW_DEBUG_SHOW_ACTIVITY=1 lands on the Activity feed, same
+            // screenshot-without-a-tap-tool rationale as the hooks above.
+            if ProcessInfo.processInfo.environment["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" {
+                app.showActivity = true
+            }
             #endif
         }
         .onChange(of: workspaces.value) { _, list in

@@ -390,10 +390,47 @@ struct PdfReaderView: View {
 
 // MARK: - Video preview + lightbox (ui_nits)
 
+/// Presentation size of a video's first video track — `naturalSize` with its
+/// `preferredTransform` applied. The transform matters: a portrait iPhone clip
+/// is stored as a 1920x1080 landscape buffer plus a 90° rotation, so
+/// `naturalSize` alone would report it the wrong way round.
+/// Returns nil for audio-only or undecodable assets; callers keep their default.
+func videoPresentationSize(of asset: AVAsset) async -> CGSize? {
+    guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+          let (natural, transform) = try? await track.load(.naturalSize, .preferredTransform)
+    else { return nil }
+    let oriented = natural.applying(transform)
+    let size = CGSize(width: abs(oriented.width), height: abs(oriented.height))
+    guard size.width > 1, size.height > 1 else { return nil }
+    return size
+}
+
+/// Largest box with `size`'s aspect ratio fitting inside the given bounds.
+/// Mirrors the inline-image rule (MessageListView.displaySize): never upscale
+/// past the source's own pixels, so a small clip stays small rather than
+/// rendering soft — pass `allowUpscale` for the lightbox, where filling the
+/// sheet is the point of expanding.
+func aspectFittedSize(
+    _ size: CGSize, maxWidth: CGFloat, maxHeight: CGFloat, allowUpscale: Bool = false
+) -> CGSize {
+    guard size.width > 0, size.height > 0 else {
+        return CGSize(width: maxWidth, height: maxHeight)
+    }
+    var scale = min(maxWidth / size.width, maxHeight / size.height)
+    if !allowUpscale { scale = min(1, scale) }
+    // Floor keeps AVKit's transport controls usable for postage-stamp clips.
+    return CGSize(
+        width: max(200, (size.width * scale).rounded()),
+        height: max(120, (size.height * scale).rounded()))
+}
+
 /// Inline video card: preview-card chrome (collapse chevron, hover Download)
 /// around an AVKit player. A film-icon play placeholder defers the download
 /// (up to 20 MB) until the user hits play — no server-side poster (ruled);
 /// the expand button opens a larger sheet, consistent with the image lightbox.
+/// The player box tracks the clip's real aspect ratio once the asset is loaded
+/// (#96) — the placeholder can't, since nothing is downloaded yet and the
+/// server only records pixel dimensions for images.
 struct VideoAttachmentView: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
@@ -404,10 +441,20 @@ struct VideoAttachmentView: View {
     @State private var hovering = false
     @State private var showLightbox = false
     @State private var collapsed: Bool
+    /// nil until the asset's tracks load; the card shows `Self.defaultSize` meanwhile.
+    @State private var naturalSize: CGSize?
+
+    /// 16:9 placeholder box, the historical fixed size of this card.
+    static let defaultSize = CGSize(width: 480, height: 270)
 
     init(file: FileAttachment) {
         self.file = file
         _collapsed = State(initialValue: CollapsedImages.contains(file.id))
+    }
+
+    private var displaySize: CGSize {
+        guard let naturalSize else { return Self.defaultSize }
+        return aspectFittedSize(naturalSize, maxWidth: 480, maxHeight: 480)
     }
 
     var body: some View {
@@ -428,9 +475,10 @@ struct VideoAttachmentView: View {
                     placeholder
                 }
             }
-            .frame(width: 480, height: 270)
+            .frame(width: displaySize.width, height: displaySize.height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+            .animation(.easeOut(duration: 0.15), value: displaySize)
             .accessibilityIdentifier("msg.file.video.\(file.name)")
 
             if hovering {
@@ -500,7 +548,10 @@ struct VideoAttachmentView: View {
             do {
                 let url = try await app.engine.downloadFile(file)
                 localURL = url
-                let p = AVPlayer(url: url)
+                let asset = AVURLAsset(url: url)
+                // Size the box before the player appears, so it lays out once.
+                naturalSize = await videoPresentationSize(of: asset)
+                let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
                 player = p
                 p.play()
             } catch {
@@ -521,6 +572,16 @@ struct VideoLightboxView: View {
     @State private var player: AVPlayer?
     @State private var failed = false
     @State private var busy = false
+    @State private var naturalSize: CGSize?
+
+    /// 16:9 sheet, the historical fixed size, used while the asset loads.
+    static let defaultSize = CGSize(width: 860, height: 484)
+
+    /// Upscaling is allowed here: filling the sheet is the point of expanding.
+    private var displaySize: CGSize {
+        guard let naturalSize else { return Self.defaultSize }
+        return aspectFittedSize(naturalSize, maxWidth: 860, maxHeight: 620, allowUpscale: true)
+    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -561,7 +622,7 @@ struct VideoLightboxView: View {
                     ProgressView()
                 }
             }
-            .frame(width: 860, height: 484)
+            .frame(width: displaySize.width, height: displaySize.height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .padding(14)
@@ -573,7 +634,9 @@ struct VideoLightboxView: View {
     private func load() async {
         do {
             let url = try await resolveLocalURL()
-            let p = AVPlayer(url: url)
+            let asset = AVURLAsset(url: url)
+            naturalSize = await videoPresentationSize(of: asset)
+            let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             player = p
             p.play()
         } catch {
