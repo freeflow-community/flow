@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-28
 
+- **Flow has a public privacy policy.** It lives at
+  [app.freeflow.im/privacy](https://app.freeflow.im/privacy) — plain language,
+  no legalese for the sake of legalese.
+
+
 - **The conversation follows new messages again on the Mac app.** When you're
   at the bottom, fresh messages scroll into view on their own — the
   "Latest msgs ↓" pill now only appears once you've actually scrolled up to

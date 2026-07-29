@@ -215,6 +215,12 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-28 — Public privacy policy page
+
+- `[server]` `[web]` `/privacy` serves a static policy page (needed for the
+  iOS App Store listing; also just overdue). Static HTML in `web/public`, no
+  SPA involvement.
+
 ### 2026-07-28 — Auto-scroll follows new messages again (macOS)
 
 - `[macos]` The follow now uses the web client's pinned model (#111 follow-up):
