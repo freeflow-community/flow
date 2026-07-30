@@ -15,6 +15,7 @@ struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable
 /// Design 3a column 2: violet gradient channel/DM list with the profile footer.
 struct SidebarView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.textZoom) private var textZoom
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
@@ -698,12 +699,15 @@ struct SidebarView: View {
             .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
             HStack(spacing: 4) {
+                // Native .font here, not .flowFont: the borderless Menu label is
+                // rendered by AppKit, which only understands built-in modifiers —
+                // a custom ViewModifier makes it drop the white foregroundStyle.
                 Text(currentWorkspace?.name ?? "Workspace")
-                    .flowFont(size: 16, weight: .bold)
+                    .font(ZoomedFont.system(size: 16, weight: .bold, scale: textZoom))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .flowFont(.caption)
+                    .font(ZoomedFont.system(.caption, scale: textZoom))
                     .foregroundStyle(.white.opacity(0.55))
             }
             .contentShape(Rectangle())
