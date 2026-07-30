@@ -1,6 +1,6 @@
 # Building and releasing Flow
 
-Flow ships as four separate things on four different schedules. This page is the
+Flow ships as five separate things on different schedules. This page is the
 index: what each one is, the single command that builds it, and the single
 command that releases it. Details live in the linked docs — this file stays a
 map, not a duplicate.
@@ -16,8 +16,9 @@ If you only want to run Flow locally, you want
 | macOS app | `apps/macos/tools/make-app.sh` | `apps/macos/tools/publish-dmg.sh --build` | No — run locally, needs signing credentials |
 | iOS app | `xcodegen generate` + Xcode | archive + `xcodebuild -exportArchive` (see below) | No — run locally, needs the signing account |
 | `flow-agent-bridge` (npm) | `pnpm --filter flow-agent-bridge build` | bump `version`, merge to `main` | **Yes** — GitHub Actions publishes |
+| Marketing site (`flowlandingpage/`) | `pnpm build` (in `flowlandingpage/`) | merge to `main` | **Yes** — GitHub Actions deploys to Cloudflare Pages |
 
-Two of these release themselves when you merge, and two do not. **Merging to
+Three of these release themselves when you merge, and two do not. **Merging to
 `main` does not ship the macOS or iOS app.** That is the single most common
 thing to get wrong.
 
@@ -189,6 +190,34 @@ First-time account setup (device registration, app record) is in
 
 Simulator, device install, signing, and server selection:
 [docs/design/IOS.md](docs/design/IOS.md).
+
+---
+
+## Marketing site (freeflow.im)
+
+The landing page in `flowlandingpage/` is a standalone Next.js project — **not
+part of the pnpm workspace** — built as a fully static export (`out/`) and
+served by Cloudflare Pages at `freeflow.im` (canonical apex; `www` redirects).
+
+```sh
+cd flowlandingpage
+pnpm install --ignore-workspace   # the flag matters; keeps its lockfile local
+pnpm dev                          # local preview
+pnpm build                        # static export → out/
+```
+
+[`.github/workflows/deploy-landing.yml`](.github/workflows/deploy-landing.yml)
+fires on any push to `main` touching `flowlandingpage/**` and deploys `out/` to
+the Cloudflare Pages project `freeflow-landing`. So releasing is just merging.
+
+One-time Cloudflare setup (already done for prod): Pages project
+`freeflow-landing`; custom domains `freeflow.im` and `www.freeflow.im`; a
+redirect rule sending `www` → apex (301); repo secrets `CLOUDFLARE_API_TOKEN`
+(Cloudflare Pages: Edit) and `CLOUDFLARE_ACCOUNT_ID`.
+
+```sh
+gh run list --workflow deploy-landing.yml   # check a deploy
+```
 
 ---
 
