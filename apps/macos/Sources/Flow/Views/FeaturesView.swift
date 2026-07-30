@@ -17,7 +17,7 @@ struct FeaturesView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("What's new")
-                    .font(.system(size: 15, weight: .bold))
+                    .flowFont(size: 15, weight: .bold)
                     .foregroundStyle(MC.ink)
                 Spacer()
                 Button("Done") { dismiss() }
@@ -53,7 +53,7 @@ struct FeaturesView: View {
         switch block {
         case let .heading(level, text):
             Text(FeatureNotes.inline(text))
-                .font(.system(size: headingSize(level), weight: .bold))
+                .flowFont(size: headingSize(level), weight: .bold)
                 .foregroundStyle(MC.ink)
                 .padding(.top, level <= 2 ? 8 : 3)
         case let .bullet(text):

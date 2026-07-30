@@ -65,28 +65,28 @@ struct UnfurlCardView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
                         Text(siteLabel)
-                            .font(.caption)
+                            .flowFont(.caption)
                             .foregroundStyle(MC.muted)
                     }
                 }
 
                 if let title = unfurl.title, !title.isEmpty {
                     Text(title)
-                        .font(.callout.weight(.semibold))
+                        .flowFont(.callout, weight: .semibold)
                         .foregroundStyle(MC.accentSoft)
                         .lineLimit(2)
                 }
 
                 if let description = unfurl.description, !description.isEmpty {
                     Text(description)
-                        .font(.callout)
+                        .flowFont(.callout)
                         .foregroundStyle(MC.inkSoft)
                         .lineLimit(3)
                 }
 
                 if let meta = metaLine {
                     Text(meta)
-                        .font(.caption)
+                        .flowFont(.caption)
                         .foregroundStyle(MC.faint)
                 }
 
@@ -110,7 +110,7 @@ struct UnfurlCardView: View {
 
             if showPin, let onPin {
                 Button(action: onPin) {
-                    Text("📌").font(.caption)
+                    Text("📌").flowFont(.caption)
                 }
                 .buttonStyle(.plain)
                 .help("Pin as artifact")
@@ -119,7 +119,7 @@ struct UnfurlCardView: View {
 
             if showRemove {
                 Button(action: onRemove) {
-                    Text("✕").font(.caption)
+                    Text("✕").flowFont(.caption)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(MC.faint)

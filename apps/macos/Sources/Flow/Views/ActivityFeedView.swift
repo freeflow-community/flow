@@ -81,10 +81,10 @@ struct ActivityFeedView: View {
                 Text("#").foregroundStyle(MC.muted)
                 Text("Activity")
             }
-            .font(.system(size: 15, weight: .bold))
+            .flowFont(size: 15, weight: .bold)
             .accessibilityIdentifier("activity.header")
             Text("Mentions, direct messages & replies")
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(MC.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -111,14 +111,14 @@ struct ActivityFeedView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(headline(n, sender: sender))
-                            .font(.callout.weight(n.readAt == nil ? .semibold : .regular))
+                            .flowFont(.callout, weight: n.readAt == nil ? .semibold : .regular)
                         Spacer(minLength: 8)
                         Text(ISO8601.displayTime(n.createdAt))
-                            .font(.caption2)
+                            .flowFont(.caption2)
                             .foregroundStyle(MC.faint)
                     }
                     Text(MentionRendering.plainText(n.message.body, names: userNames))
-                        .font(.callout)
+                        .flowFont(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)

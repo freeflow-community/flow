@@ -10,7 +10,7 @@ struct WorkspaceSwitcherView: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("Choose a Workspace")
-                .font(.title.bold())
+                .flowFont(.title, weight: .bold)
                 .padding(.top, 24)
 
             if workspaces.value.isEmpty {
@@ -28,17 +28,17 @@ struct WorkspaceSwitcherView: View {
                                 .frame(width: 32, height: 32)
                                 .overlay(
                                     Text(String(ws.name.prefix(1)).uppercased())
-                                        .font(.headline)
+                                        .flowFont(.headline)
                                         .foregroundStyle(.white)
                                 )
                             VStack(alignment: .leading) {
-                                Text(ws.name).font(.headline)
-                                Text(ws.slug).font(.caption).foregroundStyle(.secondary)
+                                Text(ws.name).flowFont(.headline)
+                                Text(ws.slug).flowFont(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             if let role = ws.role {
                                 Text(role)
-                                    .font(.caption)
+                                    .flowFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Image(systemName: "chevron.right")
@@ -87,7 +87,7 @@ struct CreateWorkspaceSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Create Workspace").font(.headline)
+            Text("Create Workspace").flowFont(.headline)
             TextField("Name (e.g. Acme Inc)", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: name) { _, new in
@@ -96,7 +96,7 @@ struct CreateWorkspaceSheet: View {
             TextField("Slug (url-safe, immutable)", text: $slug)
                 .textFieldStyle(.roundedBorder)
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red)
+                Text(error).flowFont(.callout).foregroundStyle(.red)
             }
             HStack {
                 Spacer()
@@ -139,9 +139,9 @@ struct AcceptInviteSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Accept Invite").font(.headline)
+            Text("Accept Invite").flowFont(.headline)
             Text("Paste an invite token or a full flow://invite/… link.")
-                .font(.callout)
+                .flowFont(.callout)
                 .foregroundStyle(.secondary)
             TextField("flow://invite/… or token", text: $tokenText)
                 .textFieldStyle(.roundedBorder)

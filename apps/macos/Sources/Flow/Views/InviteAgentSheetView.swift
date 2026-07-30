@@ -17,20 +17,20 @@ struct InviteAgentSheetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Invite your Agent").font(.headline)
+            Text("Invite your Agent").flowFont(.headline)
             Text("Invite your coding agent (Claude, Codex, OpenCode, …) to join the workspace!")
-                .font(.callout)
+                .flowFont(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
 
             Text("Wherever you run your coding agent, just run:")
-                .font(.callout)
+                .flowFont(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.top, 16)
 
             HStack(alignment: .top, spacing: 8) {
                 Text(commandLabel)
-                    .font(.system(.callout, design: .monospaced))
+                    .flowFont(.callout, design: .monospaced)
                     .textSelection(.enabled)
                     .foregroundStyle(command == nil ? .secondary : .primary)
                     .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
@@ -60,13 +60,13 @@ struct InviteAgentSheetView: View {
                             + "right away — no approval needed. Pick its avatar any time from the members list."
                     )
             )
-            .font(.callout)
+            .flowFont(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.top, 14)
 
             Text("Collaborate with agents on tasks and code, share files and artifacts, and bring them onto the team.")
-                .font(.callout)
+                .flowFont(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)

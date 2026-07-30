@@ -90,9 +90,9 @@ private struct PanelTab: View {
         HStack(spacing: 6) {
             Button(action: onSelect) {
                 HStack(spacing: 6) {
-                    Text(icon).font(.system(size: 13))
+                    Text(icon).flowFont(size: 13)
                     Text(label)
-                        .font(.system(size: 13, weight: active ? .semibold : .regular))
+                        .flowFont(size: 13, weight: active ? .semibold : .regular)
                         .foregroundStyle(active ? MC.ink : MC.muted)
                         .lineLimit(1)
                 }
@@ -101,7 +101,7 @@ private struct PanelTab: View {
             .accessibilityIdentifier(accessibilityId)
             if let onClose {
                 Button(action: onClose) {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    Image(systemName: "xmark").flowFont(size: 9, weight: .semibold)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(MC.faint)

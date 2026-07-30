@@ -7,12 +7,17 @@ struct FlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppState()
     @StateObject private var updater = AppUpdater()
+    @StateObject private var zoom = TextZoom()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup(Profile.windowTitle) {
             RootView()
                 .environmentObject(app)
+                // One scale for the whole app (#105) — every font is drawn
+                // through `flowFont`, which reads this on the way past.
+                .environment(\.textZoom, zoom.scale)
+                .onAppear { TextZoomShortcuts.install(zoom) }
                 .frame(minWidth: 900, minHeight: 560)
                 // "Is the user actually looking at us?" — the native answer to
                 // the web client's `document.hidden`. A selected channel in a
@@ -35,6 +40,12 @@ struct FlowApp: App {
         .commands {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesCommand(updater: updater)
+            }
+            // `.sidebar` anchors the top of the View menu — where Mac apps
+            // keep zoom.
+            CommandGroup(after: .sidebar) {
+                TextZoomCommands(zoom: zoom)
+                Divider()
             }
         }
     }

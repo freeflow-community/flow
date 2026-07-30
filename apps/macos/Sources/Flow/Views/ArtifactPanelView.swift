@@ -70,7 +70,7 @@ private struct ArtifactToolbarView: View {
             if editing {
                 TextField("Artifact name", text: $draft)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, weight: .semibold))
+                    .flowFont(size: 13, weight: .semibold)
                     .frame(maxWidth: 320)
                     .focused($nameFocused)
                     .onSubmit { saveRename() }
@@ -83,7 +83,7 @@ private struct ArtifactToolbarView: View {
                     nameFocused = true
                 } label: {
                     Text(artifact.name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .flowFont(size: 13, weight: .semibold)
                         .foregroundStyle(MC.muted)
                         .lineLimit(1)
                 }
@@ -94,7 +94,7 @@ private struct ArtifactToolbarView: View {
             if busy { ProgressView().controlSize(.mini) }
             Spacer()
             Text(file.sizeLabel)
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(MC.faint)
             Button(action: download) {
                 Image(systemName: "arrow.down.to.line")
@@ -330,7 +330,7 @@ struct LinkArtifactView: View {
             HStack(spacing: 6) {
                 TextField("Address", text: $draft)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12, design: .monospaced))
+                    .flowFont(size: 12, design: .monospaced)
                     .onSubmit { navigate(to: draft) }
                     .accessibilityIdentifier("artifact.link.urlField")
                 if let u = URL(string: url) {
@@ -461,12 +461,12 @@ private struct ArtifactTextPane: View {
                 ScrollView([.horizontal, .vertical]) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(String(text.prefix(Self.maxChars)))
-                            .font(.system(size: 12, design: .monospaced))
+                            .flowFont(size: 12, design: .monospaced)
                             .foregroundStyle(MC.ink)
                             .textSelection(.enabled)
                         if text.count > Self.maxChars {
                             Text("Showing the first 1 MB — Download for the full file.")
-                                .font(.caption2)
+                                .flowFont(.caption2)
                                 .foregroundStyle(MC.faint)
                         }
                     }
@@ -505,11 +505,11 @@ private struct ArtifactDownloadPane: View {
                 Text("📄")
                 VStack(alignment: .leading, spacing: 1) {
                     Text(file.name)
-                        .font(.callout.weight(.medium))
+                        .flowFont(.callout, weight: .medium)
                         .foregroundStyle(MC.ink)
                         .lineLimit(1)
                     Text("\(file.sizeLabel) — click to download")
-                        .font(.caption2)
+                        .flowFont(.caption2)
                         .foregroundStyle(MC.muted)
                 }
                 if saving {

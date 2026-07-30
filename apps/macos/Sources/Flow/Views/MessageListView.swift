@@ -81,7 +81,7 @@ struct MessageListView: View {
                             Spacer()
                             Button("Load earlier messages", action: onLoadOlder)
                                 .buttonStyle(.link)
-                                .font(.callout)
+                                .flowFont(.callout)
                                 .pointingHandCursor()
                             Spacer()
                         }
@@ -223,7 +223,7 @@ struct MessageListView: View {
                 }
             } label: {
                 Text("Latest msgs ↓")
-                    .font(.system(size: 12, weight: .semibold))
+                    .flowFont(size: 12, weight: .semibold)
                     .foregroundStyle(MC.accentSoft)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -289,7 +289,7 @@ struct DayDividerView: View {
         HStack {
             Spacer()
             Text(label)
-                .font(.system(size: 11))
+                .flowFont(size: 11)
                 .foregroundStyle(MC.faint)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 3)
@@ -316,7 +316,7 @@ struct SystemLineView: View {
         HStack {
             Spacer()
             Text(text)
-                .font(.system(size: 11))
+                .flowFont(size: 11)
                 .foregroundStyle(MC.faint)
             Spacer()
         }
@@ -339,6 +339,7 @@ struct MessageRow: View {
     var onOpenProfile: (String) -> Void = { _ in }
 
     @EnvironmentObject private var app: AppState
+    @Environment(\.textZoom) private var textZoom
     @State private var hovering = false
     @State private var showReactionPicker = false
     @State private var showDeleteConfirm = false
@@ -391,20 +392,20 @@ struct MessageRow: View {
                 if showHeader {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(senderName)
-                            .font(.system(size: 14, weight: .bold))
+                            .flowFont(size: 14, weight: .bold)
                             .foregroundStyle(MC.ink)
                         if let emoji = userStatuses[message.userId], !emoji.isEmpty {
-                            Text(emoji).font(.system(size: 14))
+                            Text(emoji).flowFont(size: 14)
                         }
                         Text(ISO8601.displayTime(message.createdAt))
-                            .font(.system(size: 11))
+                            .flowFont(size: 11)
                             .foregroundStyle(MC.faint)
                     }
                 }
 
                 if message.isDeleted {
                     Text("This message was deleted")
-                        .font(.callout)
+                        .flowFont(.callout)
                         .italic()
                         .foregroundStyle(.tertiary)
                 } else {
@@ -477,7 +478,7 @@ struct MessageRow: View {
                                 "\(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies")",
                                 systemImage: "bubble.left.and.bubble.right"
                             )
-                            .font(.caption)
+                            .flowFont(.caption)
                         }
                     }
                     .buttonStyle(.link)
@@ -615,7 +616,7 @@ struct MessageRow: View {
                     // Web draws this one as an inline SVG (box + leaving arrow);
                     // the matching SF Symbol keeps the same open-external read.
                     Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 15))
+                        .flowFont(size: 15)
                         .foregroundStyle(MC.inkSoft)
                 }
                 .accessibilityIdentifier("msg.saveArtifact")
@@ -673,7 +674,7 @@ struct MessageRow: View {
                 action()
             } label: {
                 label()
-                    .font(.system(size: 15))
+                    .flowFont(size: 15)
                     .frame(width: 26, height: 24)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
@@ -697,7 +698,7 @@ struct MessageRow: View {
 
         private var tooltip: some View {
             Text(help)
-                .font(.system(size: 11))
+                .flowFont(size: 11)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
@@ -801,7 +802,7 @@ struct MessageRow: View {
             .accessibilityIdentifier("msg.quoteBlock")
         case .code(let text):
             Text(text.isEmpty ? " " : text)
-                .font(.system(size: 12, design: .monospaced))
+                .flowFont(size: 12, design: .monospaced)
                 .foregroundStyle(MC.ink)
                 .textSelection(.enabled)
                 .padding(.horizontal, 10)
@@ -819,10 +820,10 @@ struct MessageRow: View {
 
     private func paragraphText(_ text: String) -> some View {
         let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId
+            text, names: userNames, currentUserId: currentUserId, scale: textZoom
         )
         return Text(attributed)
-            .font(.callout)
+            .flowFont(.callout)
             .textSelection(.enabled)
             // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
             // inside a Text, so linkCursor re-lays the string to find them.
@@ -833,7 +834,7 @@ struct MessageRow: View {
     private var trailingMarkers: some View {
         if message.editedAt != nil {
             Text("(edited)")
-                .font(.caption2)
+                .flowFont(.caption2)
                 .foregroundStyle(.tertiary)
         }
         if message.pending {
@@ -847,15 +848,15 @@ struct MessageRow: View {
     private var sendFailedFooter: some View {
         HStack(spacing: 8) {
             Label("Failed to send", systemImage: "exclamationmark.circle.fill")
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(MC.danger)
             Button("Retry") { Task { await app.engine.retrySend(message) } }
                 .buttonStyle(.link)
-                .font(.caption.weight(.semibold))
+                .flowFont(.caption, weight: .semibold)
                 .pointingHandCursor()
             Button("Discard") { Task { await app.engine.discardFailed(message) } }
                 .buttonStyle(.link)
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(MC.muted)
                 .pointingHandCursor()
         }
@@ -884,7 +885,7 @@ struct MessageRow: View {
                 Image(systemName: "stop.circle")
                 Text(stopping ? "Stopping…" : "Interrupt")
             }
-            .font(.caption.weight(.semibold))
+            .flowFont(.caption, weight: .semibold)
             .foregroundStyle(stopping ? MC.faint : MC.inkSoft)
             .padding(.horizontal, 9)
             .padding(.vertical, 2)
@@ -907,9 +908,9 @@ struct MessageRow: View {
                     Task { await app.engine.toggleReaction(messageId: message.id, emoji: agg.emoji) }
                 } label: {
                     HStack(spacing: 3) {
-                        Text(agg.emoji).font(.system(size: 12))
+                        Text(agg.emoji).flowFont(size: 12)
                         Text("\(agg.count)")
-                            .font(.caption2.bold())
+                            .flowFont(.caption2, weight: .bold)
                             .foregroundStyle(mine ? MC.accentSoft : MC.inkSoft)
                     }
                     .padding(.horizontal, 9)
@@ -1000,7 +1001,7 @@ struct AttachmentView: View {
                     CollapsedImages.set(file.id, collapsed: collapsed)
                 } label: {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .flowFont(size: 9, weight: .semibold)
                         .frame(width: 12)
                 }
                 .buttonStyle(.plain)
@@ -1008,7 +1009,7 @@ struct AttachmentView: View {
                 .help(collapsed ? "Show image" : "Hide image")
                 .accessibilityIdentifier("msg.file.collapse.\(file.name)")
                 Text(file.name)
-                    .font(.system(size: 11))
+                    .flowFont(size: 11)
                     .foregroundStyle(MC.faint)
                     .lineLimit(1)
             }
@@ -1066,14 +1067,14 @@ struct AttachmentView: View {
             Button(action: open) {
                 HStack(spacing: 8) {
                     Image(systemName: iconName)
-                        .font(.title2)
+                        .flowFont(.title2)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(file.name)
-                            .font(.callout)
+                            .flowFont(.callout)
                             .lineLimit(1)
                         Text(file.sizeLabel)
-                            .font(.caption2)
+                            .flowFont(.caption2)
                             .foregroundStyle(.tertiary)
                     }
                     if opening {
@@ -1099,7 +1100,7 @@ struct AttachmentView: View {
                     ProgressView().controlSize(.mini)
                 } else {
                     Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 12, weight: .semibold))
+                        .flowFont(size: 12, weight: .semibold)
                 }
             }
             .frame(width: 24, height: 24)
@@ -1164,7 +1165,7 @@ struct ImageLightboxView: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 Text(file.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .flowFont(size: 13, weight: .semibold)
                     .lineLimit(1)
                 if busy { ProgressView().controlSize(.mini) }
                 Spacer()
@@ -1274,7 +1275,7 @@ struct EmojiPickerView: View {
                     ForEach(results, id: \.self) { emoji in
                         Button(emoji) { onPick(emoji) }
                             .buttonStyle(.plain)
-                            .font(.system(size: 20))
+                            .flowFont(size: 20)
                     }
                 }
             }

@@ -15,6 +15,8 @@ struct MarkdownTableView: View {
     let userNames: [String: String]
     let currentUserId: String?
 
+    @Environment(\.textZoom) private var textZoom
+
     /// Columns are sized by the widest cell, so every row must offer the same
     /// number of cells — ragged rows (a common hand-written table) are padded
     /// with empties and over-long ones truncated, mirroring GFM.
@@ -46,8 +48,10 @@ struct MarkdownTableView: View {
     }
 
     private func cell(_ text: String, column: Int, isHeader: Bool) -> some View {
-        Text(MentionRendering.attributed(text, names: userNames, currentUserId: currentUserId))
-            .font(.system(size: 13, weight: isHeader ? .semibold : .regular))
+        Text(MentionRendering.attributed(
+            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+        ))
+            .flowFont(size: 13, weight: isHeader ? .semibold : .regular)
             .foregroundStyle(MC.ink)
             .multilineTextAlignment(textAlignment(column))
             .fixedSize(horizontal: false, vertical: true) // wrap, never truncate
