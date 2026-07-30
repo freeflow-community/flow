@@ -15,6 +15,7 @@ struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable
 /// Design 3a column 2: violet gradient channel/DM list with the profile footer.
 struct SidebarView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.textZoom) private var textZoom
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
@@ -116,7 +117,7 @@ struct SidebarView: View {
                             showCreateChannel = true
                         } label: {
                             Image(systemName: "plus")
-                                .font(.caption)
+                                .flowFont(.caption)
                                 .foregroundStyle(.white.opacity(0.55))
                         }
                         .buttonStyle(.plain)
@@ -133,7 +134,7 @@ struct SidebarView: View {
                             showNewDM = true
                         } label: {
                             Image(systemName: "square.and.pencil")
-                                .font(.caption)
+                                .flowFont(.caption)
                                 .foregroundStyle(.white.opacity(0.55))
                         }
                         .buttonStyle(.plain)
@@ -274,7 +275,7 @@ struct SidebarView: View {
             HStack(spacing: 7) {
                 Text("🤖")
                 Text("Invite your Agent")
-                    .font(.system(size: 13, weight: .semibold))
+                    .flowFont(size: 13, weight: .semibold)
                     .foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity)
@@ -298,7 +299,7 @@ struct SidebarView: View {
     private func sectionHeader(_ label: String, @ViewBuilder action: () -> some View) -> some View {
         HStack {
             Text(label.uppercased())
-                .font(.system(size: 11, weight: .semibold))
+                .flowFont(size: 11, weight: .semibold)
                 .tracking(0.7)
                 .foregroundStyle(.white.opacity(0.55))
             Spacer()
@@ -354,11 +355,11 @@ struct SidebarView: View {
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: unread > 0 ? "bell.badge" : "bell")
-                    .font(.system(size: 13))
+                    .flowFont(size: 13)
                     .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.6))
                     .frame(width: 14)
                 Text("Activity")
-                    .font(.system(size: 14, weight: active || unread > 0 ? .semibold : .regular))
+                    .flowFont(size: 14, weight: active || unread > 0 ? .semibold : .regular)
                     .foregroundStyle(active ? MC.accentDeep : .white.opacity(unread > 0 ? 1 : 0.82))
                 Spacer(minLength: 0)
                 if unread > 0 {
@@ -393,11 +394,11 @@ struct SidebarView: View {
                         Text("#")
                     }
                 }
-                .font(.system(size: 14))
+                .flowFont(size: 14)
                 .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
                 .frame(width: 14)
                 Text(channel.name ?? "")
-                    .font(.system(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular))
+                    .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
                     .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
                 // An agent working here (#137) — DMs included: talking to an
                 // agent one-to-one is the common case.
@@ -406,7 +407,7 @@ struct SidebarView: View {
                 }
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
-                        .font(.caption2)
+                        .flowFont(.caption2)
                         .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
                 }
                 Spacer(minLength: 0)
@@ -453,17 +454,17 @@ struct SidebarView: View {
                         .frame(width: 14)
                 } else {
                     Image(systemName: "person.2")
-                        .font(.caption)
+                        .flowFont(.caption)
                         .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
                         .frame(width: 14)
                 }
                 Text(title)
-                    .font(.system(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular))
+                    .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
                     .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
                     .lineLimit(1)
                 if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
                     Text(emoji)
-                        .font(.system(size: 14))
+                        .flowFont(size: 14)
                         .help(otherStatus?.statusText ?? "")
                 }
                 // An agent working here (#137) — DMs included: talking to an
@@ -473,7 +474,7 @@ struct SidebarView: View {
                 }
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
-                        .font(.caption2)
+                        .flowFont(.caption2)
                         .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
                 }
                 Spacer(minLength: 0)
@@ -523,11 +524,11 @@ struct SidebarView: View {
     private func browseRow(_ channel: Channel) -> some View {
         HStack(spacing: 9) {
             Text("#")
-                .font(.system(size: 14))
+                .flowFont(size: 14)
                 .foregroundStyle(.white.opacity(0.6))
                 .frame(width: 14)
             Text(channel.name ?? "")
-                .font(.system(size: 14))
+                .flowFont(size: 14)
                 .foregroundStyle(.white.opacity(0.7))
             Spacer(minLength: 0)
             Button("Join") {
@@ -541,7 +542,7 @@ struct SidebarView: View {
                 }
             }
             .buttonStyle(.plain)
-            .font(.caption.weight(.semibold))
+            .flowFont(.caption, weight: .semibold)
             .foregroundStyle(.white.opacity(0.8))
         }
         .padding(.horizontal, 8)
@@ -555,26 +556,26 @@ struct SidebarView: View {
             HStack(spacing: 9) {
                 presenceDot(online: app.presence[member.userId] == true)
                 Text(member.displayName)
-                    .font(.system(size: 14))
+                    .flowFont(size: 14)
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
                 if member.isAgent == true {
                     Text("🤖")
-                        .font(.system(size: 14))
+                        .flowFont(size: 14)
                         .help("AI agent")
                 }
                 if let emoji = member.statusEmoji, !emoji.isEmpty {
                     Text(emoji)
-                        .font(.system(size: 14))
+                        .flowFont(size: 14)
                         .help(member.statusText ?? "")
                 }
                 if member.userId == app.currentUser?.id {
-                    Text("(you)").font(.caption2).foregroundStyle(.white.opacity(0.55))
+                    Text("(you)").flowFont(.caption2).foregroundStyle(.white.opacity(0.55))
                 }
                 Spacer(minLength: 0)
                 if member.role != "member" {
                     Text(member.role)
-                        .font(.caption2)
+                        .flowFont(.caption2)
                         .foregroundStyle(.white.opacity(0.55))
                 }
             }
@@ -616,7 +617,7 @@ struct SidebarView: View {
 
     private func unreadBadge(_ n: Int) -> some View {
         Text("\(n)")
-            .font(.system(size: 11, weight: .bold))
+            .flowFont(size: 11, weight: .bold)
             .padding(.horizontal, 7)
             .padding(.vertical, 1)
             .background(Capsule().fill(MC.unread))
@@ -698,12 +699,15 @@ struct SidebarView: View {
             .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
             HStack(spacing: 4) {
+                // Native .font here, not .flowFont: the borderless Menu label is
+                // rendered by AppKit, which only understands built-in modifiers —
+                // a custom ViewModifier makes it drop the white foregroundStyle.
                 Text(currentWorkspace?.name ?? "Workspace")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(ZoomedFont.system(size: 16, weight: .bold, scale: textZoom))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.caption)
+                    .font(ZoomedFont.system(.caption, scale: textZoom))
                     .foregroundStyle(.white.opacity(0.55))
             }
             .contentShape(Rectangle())
@@ -754,7 +758,7 @@ struct StatusFooterView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 5) {
                                 Text(app.currentUser?.displayName ?? "You")
-                                    .font(.system(size: 13.5, weight: .bold))
+                                    .flowFont(size: 13.5, weight: .bold)
                                     .foregroundStyle(.white)
                                     .lineLimit(1)
                                 Circle()
@@ -763,13 +767,13 @@ struct StatusFooterView: View {
                                     .help(app.connection.label)
                             }
                             Text(statusText.isEmpty ? "Set a status" : statusText)
-                                .font(.system(size: 12))
+                                .flowFont(size: 12)
                                 .foregroundStyle(.white.opacity(0.7))
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.down")
-                            .font(.caption)
+                            .flowFont(.caption)
                             .foregroundStyle(.white.opacity(0.55))
                     }
                     .contentShape(Rectangle())
@@ -796,7 +800,7 @@ struct StatusFooterView: View {
                 showMyProfile = true
             } label: {
                 Text("My Profile…")
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .flowFont(size: 13.5, weight: .semibold)
                     .foregroundStyle(MC.ink)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -810,7 +814,7 @@ struct StatusFooterView: View {
                 Task { await app.engine.logout() }
             } label: {
                 Text("Sign Out")
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .flowFont(size: 13.5, weight: .semibold)
                     .foregroundStyle(MC.ink)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -838,7 +842,7 @@ struct StatusFooterView: View {
         .overlay(alignment: .bottomTrailing) {
             if !statusEmoji.isEmpty {
                 Text(statusEmoji)
-                    .font(.system(size: 11))
+                    .flowFont(size: 11)
                     .frame(width: 20, height: 20)
                     .background(Circle().fill(palette.rail))
                     .overlay(Circle().strokeBorder(palette.bottom, lineWidth: 2))
@@ -850,7 +854,7 @@ struct StatusFooterView: View {
     private var statusPicker: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("SET YOUR STATUS")
-                .font(.system(size: 11, weight: .bold))
+                .flowFont(size: 11, weight: .bold)
                 .tracking(0.55)
                 .foregroundStyle(MC.muted)
                 .padding(.horizontal, 8)
@@ -861,15 +865,15 @@ struct StatusFooterView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Text(option.emoji)
-                            .font(.system(size: 17))
+                            .flowFont(size: 17)
                             .frame(width: 22)
                         Text(option.text)
-                            .font(.system(size: 13.5, weight: .semibold))
+                            .flowFont(size: 13.5, weight: .semibold)
                             .foregroundStyle(MC.ink)
                         Spacer(minLength: 0)
                         if option.emoji == statusEmoji, option.text == statusText {
                             Image(systemName: "checkmark")
-                                .font(.caption)
+                                .flowFont(.caption)
                                 .foregroundStyle(MC.accentSoft)
                         }
                     }
@@ -885,7 +889,7 @@ struct StatusFooterView: View {
                 setStatus("", "", false)
             } label: {
                 Text("Clear status")
-                    .font(.system(size: 13, weight: .semibold))
+                    .flowFont(size: 13, weight: .semibold)
                     .foregroundStyle(MC.faint)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -947,9 +951,9 @@ struct WorkspaceColorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Workspace Color").font(.headline)
+            Text("Workspace Color").flowFont(.headline)
             Text("Applies to everyone in \(workspace.name).")
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(SidebarPalette.all) { palette in
@@ -988,12 +992,12 @@ struct WorkspaceColorSheet: View {
                     .overlay {
                         if selected {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 13, weight: .bold))
+                                .flowFont(size: 13, weight: .bold)
                                 .foregroundStyle(.white)
                         }
                     }
                 Text(palette.name)
-                    .font(.caption2)
+                    .flowFont(.caption2)
                     .foregroundStyle(.secondary)
             }
             .contentShape(Rectangle())
@@ -1033,14 +1037,14 @@ struct CreateChannelSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Create Channel").font(.headline)
+            Text("Create Channel").flowFont(.headline)
             TextField("Name (lowercase, a-z 0-9 - _)", text: $name)
                 .textFieldStyle(.roundedBorder)
             TextField("Topic (optional)", text: $topic)
                 .textFieldStyle(.roundedBorder)
             Toggle("Private channel", isOn: $isPrivate)
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red)
+                Text(error).flowFont(.callout).foregroundStyle(.red)
             }
             HStack {
                 Spacer()
@@ -1092,13 +1096,13 @@ private struct ArtifactSidebarRow: View {
             } label: {
                 HStack(spacing: 9) {
                     Text(artifact.glyph)
-                        .font(.system(size: 12))
+                        .flowFont(size: 12)
                         .opacity(active ? 1 : 0.85)
                         .frame(width: 14)
                     // Bold white text marks the selection — no white pill, which
                     // would stack under the active channel's pill.
                     Text(artifact.name)
-                        .font(.system(size: 14, weight: active ? .bold : .regular))
+                        .flowFont(size: 14, weight: active ? .bold : .regular)
                         .foregroundStyle(.white.opacity(active ? 1 : 0.82))
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -1108,7 +1112,7 @@ private struct ArtifactSidebarRow: View {
             .buttonStyle(.plain)
             if hovering {
                 Button(action: remove) {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: "xmark").flowFont(size: 10, weight: .semibold)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.white.opacity(0.6))

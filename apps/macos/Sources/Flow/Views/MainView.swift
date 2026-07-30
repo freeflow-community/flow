@@ -130,7 +130,7 @@ struct MainView: View {
         } else {
             VStack(spacing: 8) {
                 Text("#")
-                    .font(.system(size: 40, weight: .bold))
+                    .flowFont(size: 40, weight: .bold)
                     .foregroundStyle(MC.faint)
                 Text("Select a channel")
                     .foregroundStyle(MC.muted)
@@ -163,7 +163,7 @@ struct WorkspaceRailView: View {
                         .frame(width: 40, height: 40)
                         .overlay(
                             Text(String(ws.name.prefix(1)).uppercased())
-                                .font(.system(size: active ? 17 : 14, weight: active ? .heavy : .bold))
+                                .flowFont(size: active ? 17 : 14, weight: active ? .heavy : .bold)
                                 .foregroundStyle(active ? MC.accent : .white)
                         )
                 }

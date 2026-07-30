@@ -17,16 +17,16 @@ struct AuthView: View {
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 44))
+                .flowFont(size: 44)
                 .foregroundStyle(.tint)
             Text("Flow")
-                .font(.largeTitle.bold())
+                .flowFont(.largeTitle, weight: .bold)
 
             // Set when the server rejected our token mid-session, so being
             // bounced to this screen has a stated reason.
             if let reason = app.signedOutReason {
                 Text(reason)
-                    .font(.callout)
+                    .flowFont(.callout)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("auth.signedOutReason")
@@ -65,7 +65,7 @@ struct AuthView: View {
 
             if let error {
                 Text(error)
-                    .font(.callout)
+                    .flowFont(.callout)
                     .foregroundStyle(.red)
                     .frame(width: 300)
                     .multilineTextAlignment(.center)
@@ -101,7 +101,7 @@ struct AuthView: View {
                 }
                 .accessibilityIdentifier("auth.google")
                 Text("Opens your browser, then returns you here.")
-                    .font(.caption)
+                    .flowFont(.caption)
                     .foregroundStyle(.secondary)
             }
 
@@ -110,12 +110,12 @@ struct AuthView: View {
                     NSWorkspace.shared.open(Server.baseURL)
                 }
                 .buttonStyle(.link)
-                .font(.callout)
+                .flowFont(.callout)
                 .pointingHandCursor()
             }
 
             Text("Server: \(Server.displayName)")
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

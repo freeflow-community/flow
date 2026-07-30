@@ -73,38 +73,51 @@ final class ComposerScrollView: NSScrollView {
 // MARK: - Live styling
 
 /// Attribute-only markdown styling for the composer's NSTextStorage.
+///
+/// Everything here is a function of the text zoom (#105) rather than a
+/// constant: the composer is AppKit, so it never sees `flowFont` and has to be
+/// handed the scale explicitly.
 @MainActor
 enum ComposerMarkdownStyler {
-    static let bodyFont = NSFont.systemFont(ofSize: 13)
-    static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static func bodyFont(_ scale: CGFloat = 1) -> NSFont {
+        NSFont.systemFont(ofSize: 13 * scale)
+    }
+
+    static func codeFont(_ scale: CGFloat = 1) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: 12 * scale, weight: .regular)
+    }
+
     static let ink = NSColor(MC.ink)
     static let inkSoft = NSColor(MC.inkSoft)
     static let fenceMarker = NSColor(MC.muted)
     static let codeBackground = NSColor(MC.codeBg)
     static let quoteBackground = NSColor(MC.accent).withAlphaComponent(0.07)
 
-    static let defaultAttributes: [NSAttributedString.Key: Any] = [
-        .font: bodyFont,
-        .foregroundColor: ink,
-        .paragraphStyle: NSParagraphStyle.default,
-    ]
+    static func defaultAttributes(_ scale: CGFloat = 1) -> [NSAttributedString.Key: Any] {
+        [
+            .font: bodyFont(scale),
+            .foregroundColor: ink,
+            .paragraphStyle: NSParagraphStyle.default,
+        ]
+    }
 
-    static let quoteParagraph: NSParagraphStyle = {
+    static func quoteParagraph(_ scale: CGFloat = 1) -> NSParagraphStyle {
         let p = NSMutableParagraphStyle()
-        p.headIndent = 12
-        p.firstLineHeadIndent = 12
+        p.headIndent = 12 * scale
+        p.firstLineHeadIndent = 12 * scale
         return p
-    }()
+    }
 
     /// Re-derives block styling for the whole buffer. Attribute-only: the
     /// string and the selection are never touched, so the caret position,
     /// undo stack, and IME state survive every pass. Skipped while marked
     /// (IME composition) text is active — restyling composition underlines
     /// would break input methods; the next committed edit restyles.
-    static func restyle(_ textView: NSTextView) {
+    static func restyle(_ textView: NSTextView, scale: CGFloat = 1) {
         guard !textView.hasMarkedText(), let storage = textView.textStorage else { return }
+        let attributes = defaultAttributes(scale)
         storage.beginEditing()
-        storage.setAttributes(defaultAttributes, range: NSRange(location: 0, length: storage.length))
+        storage.setAttributes(attributes, range: NSRange(location: 0, length: storage.length))
         for (range, kind) in MarkdownBlocks.classifiedLineRanges(storage.string) {
             switch kind {
             case .plain:
@@ -113,26 +126,26 @@ enum ComposerMarkdownStyler {
                 storage.addAttributes([
                     .foregroundColor: inkSoft,
                     .backgroundColor: quoteBackground,
-                    .paragraphStyle: quoteParagraph,
+                    .paragraphStyle: quoteParagraph(scale),
                 ], range: range)
             case .fence:
                 // Fence markers are hidden in the composer (operator fix):
                 // the block reads as one code area; the tiny invisible rows
                 // become its top/bottom padding.
                 storage.addAttributes([
-                    .font: NSFont.monospacedSystemFont(ofSize: 5, weight: .regular),
+                    .font: NSFont.monospacedSystemFont(ofSize: 5 * scale, weight: .regular),
                     .foregroundColor: codeBackground,
                     .backgroundColor: codeBackground,
                 ], range: range)
             case .code:
                 storage.addAttributes([
-                    .font: codeFont,
+                    .font: codeFont(scale),
                     .backgroundColor: codeBackground,
                 ], range: range)
             }
         }
         storage.endEditing()
-        textView.typingAttributes = defaultAttributes
+        textView.typingAttributes = attributes
     }
 }
 
@@ -159,6 +172,8 @@ struct MarkdownComposerTextView: NSViewRepresentable {
     /// instead of inserting their paths as text. Return true = consumed.
     var onDropFiles: (([URL]) -> Bool)? = nil
 
+    @Environment(\.textZoom) private var textZoom
+
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, onSend: onSend)
     }
@@ -173,9 +188,9 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: 0, height: 2)
-        textView.font = ComposerMarkdownStyler.bodyFont
+        textView.font = ComposerMarkdownStyler.bodyFont(textZoom)
         textView.textColor = ComposerMarkdownStyler.ink
-        textView.typingAttributes = ComposerMarkdownStyler.defaultAttributes
+        textView.typingAttributes = ComposerMarkdownStyler.defaultAttributes(textZoom)
         textView.setAccessibilityIdentifier(axIdentifier)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -190,9 +205,10 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         )
         context.coordinator.textView = textView
 
+        context.coordinator.scale = textZoom
         if !text.isEmpty {
             textView.string = text
-            ComposerMarkdownStyler.restyle(textView)
+            ComposerMarkdownStyler.restyle(textView, scale: textZoom)
         }
 
         let scroll = ComposerScrollView()
@@ -212,6 +228,13 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         guard let textView = scroll.documentView as? MarkdownNSTextView else { return }
         textView.onPasteImages = onPasteImages
         textView.onDropFiles = onDropFiles
+        // Zoom changed under us: re-run the styling pass so the text in the
+        // buffer (and what you type next) picks up the new size.
+        if coordinator.scale != textZoom {
+            coordinator.scale = textZoom
+            textView.font = ComposerMarkdownStyler.bodyFont(textZoom)
+            ComposerMarkdownStyler.restyle(textView, scale: textZoom)
+        }
         // Heal any stale width left by sizing probes before text is (re)laid
         // out — the wrap width must match the visible width.
         let clipWidth = scroll.contentSize.width
@@ -223,7 +246,7 @@ struct MarkdownComposerTextView: NSViewRepresentable {
             // caret-to-end is the agreed behavior after external writes.
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-            ComposerMarkdownStyler.restyle(textView)
+            ComposerMarkdownStyler.restyle(textView, scale: textZoom)
             textView.scrollRangeToVisible(textView.selectedRange())
         }
         if coordinator.lastFocusRequest != focusRequest {
@@ -244,7 +267,7 @@ struct MarkdownComposerTextView: NSViewRepresentable {
               let layout = textView.layoutManager
         else { return nil }
         let insets = textView.textContainerInset.height * 2
-        let lineHeight = layout.defaultLineHeight(for: ComposerMarkdownStyler.bodyFont)
+        let lineHeight = layout.defaultLineHeight(for: ComposerMarkdownStyler.bodyFont(textZoom))
         let minHeight = ceil(lineHeight + insets)
         let maxHeight = ceil(lineHeight * 8 + insets)
         // Probe handling: never answer from (possibly stale) frame state.
@@ -267,6 +290,9 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         var onSend: () -> Void
         var onCommand: ((Selector) -> Bool)?
         var lastFocusRequest = 0
+        /// Text zoom last applied to the buffer, so `updateNSView` can tell a
+        /// zoom change apart from every other reason it gets called.
+        var scale: CGFloat = 1
         weak var textView: MarkdownNSTextView?
 
         init(text: Binding<String>, onSend: @escaping () -> Void) {
@@ -279,7 +305,7 @@ struct MarkdownComposerTextView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
             if !autoClosing { autoCloseFence(textView) }
-            ComposerMarkdownStyler.restyle(textView)
+            ComposerMarkdownStyler.restyle(textView, scale: scale)
             if text.wrappedValue != textView.string {
                 text.wrappedValue = textView.string
             }

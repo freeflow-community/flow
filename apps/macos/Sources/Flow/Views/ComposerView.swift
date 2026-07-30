@@ -60,7 +60,7 @@ struct ComposerView: View {
                     )
                     if text.isEmpty {
                         Text(placeholder)
-                            .font(.system(size: 13))
+                            .flowFont(size: 13)
                             .foregroundStyle(MC.muted)
                             .padding(.leading, 5) // line-fragment padding
                             .padding(.top, 2) // text-container inset
@@ -85,7 +85,7 @@ struct ComposerView: View {
 
                 Button(action: send) {
                     Image(systemName: "paperplane.fill")
-                        .font(.system(size: 12))
+                        .flowFont(size: 12)
                         .foregroundStyle(.white)
                         .frame(width: 30, height: 30)
                         .background(RoundedRectangle(cornerRadius: 8).fill(MC.send))
@@ -217,7 +217,7 @@ struct ComposerView: View {
                     } label: {
                         HStack {
                             Text(item.label)
-                                .font(.system(size: 13, weight: index == selectedSuggestion(s) ? .semibold : .regular))
+                                .flowFont(size: 13, weight: index == selectedSuggestion(s) ? .semibold : .regular)
                             Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 8)
@@ -323,7 +323,7 @@ struct ComposerView: View {
                                 attachments.removeAll { $0.id == file.id }
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 11))
+                                    .flowFont(size: 11)
                                     .foregroundStyle(.secondary)
                                     .background(Circle().fill(.white))
                             }
@@ -336,16 +336,16 @@ struct ComposerView: View {
                     } else {
                         HStack(spacing: 4) {
                             Image(systemName: "doc")
-                                .font(.caption)
+                                .flowFont(.caption)
                             Text(file.name)
-                                .font(.caption)
+                                .flowFont(.caption)
                                 .lineLimit(1)
                                 .frame(maxWidth: 140)
                             Button {
                                 attachments.removeAll { $0.id == file.id }
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.caption)
+                                    .flowFont(.caption)
                             }
                             .buttonStyle(.plain)
                         }
@@ -358,7 +358,7 @@ struct ComposerView: View {
                 if uploading > 0 {
                     HStack(spacing: 4) {
                         ProgressView().controlSize(.mini)
-                        Text("Uploading…").font(.caption).foregroundStyle(.secondary)
+                        Text("Uploading…").flowFont(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -478,19 +478,19 @@ struct ComposerView: View {
             Image(systemName: "exclamationmark.circle")
                 .foregroundStyle(MC.muted)
             Text("\(names) \(plural ? "aren’t" : "isn’t") in this channel and won’t see your mention.")
-                .font(.system(size: 12))
+                .flowFont(size: 12)
                 .foregroundStyle(MC.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Button("Add to channel") { addMissingToChannel() }
                 .buttonStyle(.borderless)
-                .font(.system(size: 12, weight: .semibold))
+                .flowFont(size: 12, weight: .semibold)
                 .accessibilityIdentifier("composer.mention-invite.add")
             Button {
                 missingMentions = []
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
+                    .flowFont(size: 10, weight: .bold)
                     .foregroundStyle(MC.muted)
             }
             .buttonStyle(.plain)

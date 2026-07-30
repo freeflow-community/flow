@@ -28,7 +28,7 @@ struct ThreadPanelView: View {
         VStack(spacing: 0) {
             if !embedded {
                 HStack {
-                    Text("Thread").font(.headline)
+                    Text("Thread").flowFont(.headline)
                     if let root {
                         Text("#\(root.channelId.suffix(4))").hidden() // keep layout stable
                     }
@@ -70,7 +70,7 @@ struct ThreadPanelView: View {
                                     Text(replies.isEmpty
                                          ? "No replies yet"
                                          : "\(replies.count) \(replies.count == 1 ? "reply" : "replies")")
-                                        .font(.caption)
+                                        .flowFont(.caption)
                                         .foregroundStyle(.secondary)
                                     VStack { Divider() }
                                 }

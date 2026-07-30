@@ -40,7 +40,7 @@ struct DownloadIconButton: View {
                     ProgressView().controlSize(.mini)
                 } else {
                     Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 12, weight: .semibold))
+                        .flowFont(size: 12, weight: .semibold)
                 }
             }
             .frame(width: 24, height: 24)
@@ -80,7 +80,7 @@ struct AttachmentCardHeader: View {
                 CollapsedImages.set(file.id, collapsed: collapsed)
             } label: {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .flowFont(size: 9, weight: .semibold)
                     .frame(width: 12)
             }
             .buttonStyle(.plain)
@@ -88,7 +88,7 @@ struct AttachmentCardHeader: View {
             .help(collapsed ? "Show preview" : "Hide preview")
             .accessibilityIdentifier("msg.file.collapse.\(file.name)")
             Text(file.name)
-                .font(.system(size: 11))
+                .flowFont(size: 11)
                 .foregroundStyle(MC.faint)
                 .lineLimit(1)
         }
@@ -154,7 +154,7 @@ struct TextAttachmentView: View {
             ZStack(alignment: .topTrailing) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     Text(failed ? "Preview unavailable" : previewText)
-                        .font(.system(size: 11, design: .monospaced))
+                        .flowFont(size: 11, design: .monospaced)
                         .foregroundStyle(failed ? MC.faint : MC.ink)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -173,13 +173,13 @@ struct TextAttachmentView: View {
             }
             if expanded, expandTruncated {
                 Text("Showing the first 100 KB — Download for the full file.")
-                    .font(.caption2)
+                    .flowFont(.caption2)
                     .foregroundStyle(MC.faint)
             }
             if canExpand {
                 Button(expanded ? "Collapse" : "Expand") { expanded.toggle() }
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .flowFont(.caption)
                     .pointingHandCursor()
                     .accessibilityIdentifier("msg.file.expand.\(file.name)")
             }
@@ -240,10 +240,10 @@ struct PdfAttachmentView: View {
                 } else if failed {
                     VStack(spacing: 6) {
                         Image(systemName: "doc.richtext")
-                            .font(.title)
+                            .flowFont(.title)
                             .foregroundStyle(.secondary)
                         Text("Preview unavailable")
-                            .font(.caption2)
+                            .flowFont(.caption2)
                             .foregroundStyle(MC.faint)
                     }
                 } else {
@@ -303,7 +303,7 @@ struct PdfReaderView: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 Text(file.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .flowFont(size: 13, weight: .semibold)
                     .lineLimit(1)
                 if busy { ProgressView().controlSize(.mini) }
                 Spacer()
@@ -487,7 +487,7 @@ struct VideoAttachmentView: View {
                         showLightbox = true
                     } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 12, weight: .semibold))
+                            .flowFont(size: 12, weight: .semibold)
                             .frame(width: 24, height: 24)
                             .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.92)))
                             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MC.hairline, lineWidth: 1))
@@ -519,17 +519,17 @@ struct VideoAttachmentView: View {
                         ProgressView().controlSize(.small).tint(.white)
                     } else if failed {
                         Image(systemName: "film")
-                            .font(.title)
+                            .flowFont(.title)
                             .foregroundStyle(.white.opacity(0.7))
                         Text("Couldn't load video — Download to play")
-                            .font(.caption2)
+                            .flowFont(.caption2)
                             .foregroundStyle(.white.opacity(0.7))
                     } else {
                         Image(systemName: "play.circle.fill")
-                            .font(.system(size: 44))
+                            .flowFont(size: 44)
                             .foregroundStyle(.white.opacity(0.9))
                         Text(file.sizeLabel)
-                            .font(.caption2)
+                            .flowFont(.caption2)
                             .foregroundStyle(.white.opacity(0.7))
                     }
                 }
@@ -587,7 +587,7 @@ struct VideoLightboxView: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 Text(file.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .flowFont(size: 13, weight: .semibold)
                     .lineLimit(1)
                 if busy { ProgressView().controlSize(.mini) }
                 Spacer()
