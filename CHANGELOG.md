@@ -13,6 +13,10 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- iOS: no text zoom (#105). macOS scales every font from a `\.textZoom`
+  environment value driven by ⌘+/⌘−/⌘0. iOS wants Dynamic Type instead — a
+  system-wide setting with no keyboard shortcut — so it's a different mechanism,
+  not a port. The shared `Support/` layer already carries the scale.
 - Sign in with Apple is iOS-only (#124): web + macOS still offer only
   Google/password. `/v1/auth/apple` is client-agnostic; macOS can use the same
   native ASAuthorization flow, web needs Apple's JS flow (Services ID +
@@ -172,6 +176,8 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Text zoom (#105) is not built into the web client: the browser's own ⌘+/⌘−
+  already zooms it, and an in-app control would fight it. Not a gap.
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
   SDK: the native button opens the system browser at `/?native=google`, which
   runs Google Identity Services, calls `POST /v1/auth/google`, mints a one-time
@@ -227,6 +233,12 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-07-30 — Text zoom on the Mac app (#105)
+
+- `[macos]` ⌘+ / ⌘− resize every piece of text in the app, ⌘0 returns to 100%,
+  and the three sit in the View menu. Steps 80–200%; the level is app-wide and
+  survives a relaunch. macOS 2.2.13.
 
 ### 2026-07-29 — macOS channel activity spinner (#137)
 
