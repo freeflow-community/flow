@@ -240,6 +240,12 @@ Entries below start after phase 16.
   and the three sit in the View menu. Steps 80–200%; the level is app-wide and
   survives a relaunch. macOS 2.2.13.
 
+### 2026-07-30 — Marketing site deploys to freeflow.im
+
+- The landing page (`flowlandingpage/`) builds as a static Next.js export and
+  auto-deploys to Cloudflare Pages on merge — apex canonical, `www` redirects.
+  New `deploy-landing.yml` workflow; release map updated in BUILD.md.
+
 ### 2026-07-29 — macOS channel activity spinner (#137)
 
 - `[macos]` Sidebar rows (channels and DMs) spin while an agent is working

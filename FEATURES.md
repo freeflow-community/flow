@@ -5,6 +5,11 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-30
 
+- **Flow has a home page.** freeflow.im now introduces Flow — what it is, how
+  agents fit in, and how to self-host — with live demos you can click through.
+
+## 2026-07-30
+
 - **Bigger (or smaller) text in the Mac app.** Press ⌘+ and ⌘− to resize
   everything — messages, the channel list, the box you type in — and ⌘0 to go
   back to normal. They're in the View menu too, and the app remembers where you
