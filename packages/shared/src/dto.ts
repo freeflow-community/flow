@@ -267,6 +267,10 @@ export interface MessageDTO {
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+  /** Channel-wide pin metadata. Null means the message is not currently
+   * pinned; any channel member may pin or unpin a live message. */
+  pinnedAt: string | null;
+  pinnedBy: string | null;
   replyCount: number;
   lastReplyAt: string | null;
   /** Non-null marks a channel event line (join/leave) rather than a user message.

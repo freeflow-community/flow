@@ -319,6 +319,8 @@ export class AgentBridge {
       createdAt: new Date().toISOString(),
       editedAt: null,
       deletedAt: null,
+      pinnedAt: null,
+      pinnedBy: null,
       systemKind: null,
       replyCount: 0,
       lastReplyAt: null,

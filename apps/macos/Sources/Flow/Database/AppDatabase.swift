@@ -203,6 +203,14 @@ struct AppDatabase: Sendable {
                 t.add(column: "parentId", .text)
             }
         }
+        // Channel-wide message pins. These columns are server-authoritative
+        // cache fields; opening a channel backfills every pinned message.
+        migrator.registerMigration("v13") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "pinnedAt", .text)
+                t.add(column: "pinnedBy", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

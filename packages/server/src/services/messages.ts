@@ -22,6 +22,7 @@ interface DtoExtras {
   files?: FileDTO[] | undefined;
   replyParticipants?: string[] | undefined;
   unfurls?: UnfurlDTO[] | undefined;
+  pin?: { pinnedAt: Date; pinnedBy: string | null } | undefined;
 }
 
 export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
@@ -35,6 +36,8 @@ export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
     createdAt: row.createdAt.toISOString(),
     editedAt: row.editedAt?.toISOString() ?? null,
     deletedAt: row.deletedAt?.toISOString() ?? null,
+    pinnedAt: extras?.pin?.pinnedAt.toISOString() ?? null,
+    pinnedBy: extras?.pin?.pinnedBy ?? null,
     systemKind: (row.systemKind as MessageDTO['systemKind']) ?? null,
     replyCount: row.replyCount,
     lastReplyAt: row.lastReplyAt?.toISOString() ?? null,
@@ -82,11 +85,12 @@ async function replyParticipantsForRoots(rows: MessageRow[]): Promise<Map<string
 /** Page hydration (phase2.md §2/§3): one grouped reactions query + one files join per page. */
 async function hydrate(rows: MessageRow[]): Promise<MessageDTO[]> {
   const ids = rows.map((r) => r.id);
-  const [reactions, files, participants, unfurls] = await Promise.all([
+  const [reactions, files, participants, unfurls, pins] = await Promise.all([
     reactionsForMessages(ids),
     filesForMessages(ids),
     replyParticipantsForRoots(rows),
     unfurlsForMessages(ids),
+    pinsForMessages(ids),
   ]);
   return rows.map((r) =>
     toMessageDTO(r, {
@@ -94,8 +98,24 @@ async function hydrate(rows: MessageRow[]): Promise<MessageDTO[]> {
       files: files.get(r.id),
       replyParticipants: participants.get(r.id),
       unfurls: unfurls.get(r.id),
+      pin: pins.get(r.id),
     }),
   );
+}
+
+async function pinsForMessages(
+  messageIds: string[],
+): Promise<Map<string, { pinnedAt: Date; pinnedBy: string | null }>> {
+  const out = new Map<string, { pinnedAt: Date; pinnedBy: string | null }>();
+  if (messageIds.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(schema.messagePins)
+    .where(inArray(schema.messagePins.messageId, messageIds));
+  for (const row of rows) {
+    out.set(row.messageId, { pinnedAt: row.pinnedAt, pinnedBy: row.pinnedBy });
+  }
+  return out;
 }
 
 /**
@@ -309,6 +329,86 @@ export async function listMessages(
   return { messages: await hydrate(rows.slice(0, limit)), hasMore };
 }
 
+/** Every live message pinned in a channel, newest pin first. Reading follows
+ * normal channel visibility; pinning and unpinning require membership. */
+export async function listPinnedMessages(channelId: string, userId: string): Promise<MessageDTO[]> {
+  await requireChannelAccess(channelId, userId);
+  const pins = await db
+    .select()
+    .from(schema.messagePins)
+    .where(eq(schema.messagePins.channelId, channelId))
+    .orderBy(desc(schema.messagePins.pinnedAt));
+  if (pins.length === 0) return [];
+
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(and(
+      inArray(messages.id, pins.map((p) => p.messageId)),
+      eq(messages.channelId, channelId),
+      isNull(messages.deletedAt),
+    ));
+  const hydrated = await hydrate(rows);
+  const byId = new Map(hydrated.map((m) => [m.id, m]));
+  return pins.flatMap((p) => {
+    const message = byId.get(p.messageId);
+    return message ? [message] : [];
+  });
+}
+
+async function requirePinnableMessage(messageId: string, userId: string) {
+  const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+  const row = rows[0];
+  if (!row) throw notFound('message not found');
+  const { chan, isMember } = await requireChannelAccess(row.channelId, userId);
+  if (!isMember) throw forbidden('join the channel to manage pinned messages');
+  if (row.deletedAt) throw badRequest('message_deleted', 'cannot pin a deleted message');
+  if (row.systemKind) throw badRequest('system_message', 'channel event messages cannot be pinned');
+  return { row, chan };
+}
+
+/** Pin a message for everyone in its channel. Idempotent: pinning an already
+ * pinned message keeps the original pinner and timestamp. */
+export async function pinMessage(messageId: string, userId: string): Promise<MessageDTO> {
+  const { row, chan } = await requirePinnableMessage(messageId, userId);
+  const inserted = await db
+    .insert(schema.messagePins)
+    .values({ messageId, channelId: row.channelId, pinnedBy: userId })
+    .onConflictDoNothing()
+    .returning();
+  const dto = (await hydrate([row]))[0]!;
+  if (inserted.length > 0) {
+    publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
+      type: 'message.updated',
+      workspaceId: chan.workspaceId,
+      channelId: row.channelId,
+      ts: new Date().toISOString(),
+      data: dto,
+    });
+  }
+  return dto;
+}
+
+/** Remove a channel-wide pin. Idempotent; the message itself is unchanged. */
+export async function unpinMessage(messageId: string, userId: string): Promise<MessageDTO> {
+  const { row, chan } = await requirePinnableMessage(messageId, userId);
+  const deleted = await db
+    .delete(schema.messagePins)
+    .where(eq(schema.messagePins.messageId, messageId))
+    .returning();
+  const dto = (await hydrate([row]))[0]!;
+  if (deleted.length > 0) {
+    publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
+      type: 'message.updated',
+      workspaceId: chan.workspaceId,
+      channelId: row.channelId,
+      ts: new Date().toISOString(),
+      data: dto,
+    });
+  }
+  return dto;
+}
+
 /** Thread view: root + replies ascending, cursor after=<msgId>. */
 export async function listThread(
   rootId: string,
@@ -424,11 +524,16 @@ export async function deleteMessage(
 
   const enc = encryptBody('');
   const deletedAt = new Date();
-  const updated = await db
-    .update(messages)
-    .set({ body: enc.body, bodyNonce: enc.bodyNonce, encKeyId: enc.encKeyId, encScheme: enc.encScheme, deletedAt })
-    .where(eq(messages.id, messageId))
-    .returning();
+  const updated = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(messages)
+      .set({ body: enc.body, bodyNonce: enc.bodyNonce, encKeyId: enc.encKeyId, encScheme: enc.encScheme, deletedAt })
+      .where(eq(messages.id, messageId))
+      .returning();
+    // A deleted message should not linger in the channel's pinned list.
+    await tx.delete(schema.messagePins).where(eq(schema.messagePins.messageId, messageId));
+    return rows;
+  });
   publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
     type: 'message.deleted',
     workspaceId: chan.workspaceId,

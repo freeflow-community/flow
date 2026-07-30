@@ -7,6 +7,7 @@ struct ChannelView: View {
 
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
+    @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
     /// One roster observer for the whole header + list: names, status and the
     /// agent flag all come off the same User records (#70 needs status *text*,
     /// which the old name/emoji maps dropped).
@@ -18,6 +19,7 @@ struct ChannelView: View {
     /// carries memberIds for DMs.
     @State private var channelMemberIds: [String] = []
     @State private var showMembers = false
+    @State private var showPins = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,10 +82,17 @@ struct ChannelView: View {
                     .order(Column("id"))
                     .fetchAll(db)
             }
+            pinnedMessages.start(db: app.db, reset: []) { db in
+                try Message
+                    .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
+                    .order(Column("pinnedAt").desc)
+                    .fetchAll(db)
+            }
             users.start(db: app.db, reset: [:]) { db in
                 try Dictionary(uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0) })
             }
             await loadChannelMembers()
+            await app.engine.loadPinnedMessages(channelId: channelId)
         }
         // Jump-to-message (phase 12): a target from the Activity feed may sit
         // beyond the loaded page — page older history until it's in the list,
@@ -103,6 +112,22 @@ struct ChannelView: View {
             if let c = channel.value {
                 ChannelEditSheet(channel: c)
             }
+        }
+        .sheet(isPresented: $showPins) {
+            PinnedMessagesSheet(
+                messages: pinnedMessages.value,
+                userNames: userNames,
+                onSelect: { message in
+                    guard let workspaceId = channel.value?.workspaceId else { return }
+                    app.openNotification(
+                        workspaceId: workspaceId,
+                        channelId: message.channelId,
+                        messageId: message.id,
+                        threadRootId: message.threadRootId
+                    )
+                    showPins = false
+                }
+            )
         }
     }
 
@@ -206,6 +231,22 @@ struct ChannelView: View {
                 }
             }
             Spacer()
+            Button {
+                showPins = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: pinnedMessages.value.isEmpty ? "pin" : "pin.fill")
+                    if !pinnedMessages.value.isEmpty {
+                        Text("\(pinnedMessages.value.count)")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(pinnedMessages.value.isEmpty ? MC.muted : MC.accentSoft)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Pinned messages")
+            .accessibilityIdentifier("channel.pins")
             headerAvatars
         }
         .padding(.horizontal, 22)
@@ -376,6 +417,82 @@ struct ChannelView: View {
         if c.kind == "dm" { return "person" }
         if c.kind == "group_dm" { return "person.2" }
         return c.isPrivate ? "lock" : "number"
+    }
+}
+
+struct PinnedMessagesSheet: View {
+    let messages: [Message]
+    let userNames: [String: String]
+    let onSelect: (Message) -> Void
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Pinned Messages").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+
+            if messages.isEmpty {
+                ContentUnavailableView(
+                    "No Pinned Messages",
+                    systemImage: "pin",
+                    description: Text("Pin an important message to keep it easy to find.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(messages) { message in
+                            HStack(alignment: .top, spacing: 8) {
+                                Button {
+                                    onSelect(message)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack {
+                                            Text(userNames[message.userId] ?? "Unknown")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Spacer()
+                                            if let at = message.pinnedAt {
+                                                Text(ISO8601.parse(at)?.formatted(date: .abbreviated, time: .shortened) ?? "")
+                                                    .font(.system(size: 10))
+                                                    .foregroundStyle(MC.faint)
+                                            }
+                                        }
+                                        Text(message.body.isEmpty ? (message.files.first?.name ?? "Message") : message.body)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(MC.inkSoft)
+                                            .lineLimit(3)
+                                        if message.threadRootId != nil {
+                                            Text("Reply in thread")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(MC.accentSoft)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    Task { await app.engine.togglePin(message) }
+                                } label: {
+                                    Image(systemName: "pin.slash")
+                                        .foregroundStyle(MC.accentSoft)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Unpin message")
+                            }
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(MC.daypill.opacity(0.45)))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(MC.hairline, lineWidth: 1))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 480, height: 440)
     }
 }
 

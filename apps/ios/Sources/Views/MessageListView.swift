@@ -289,6 +289,13 @@ struct MessageRow: View {
                     }
                 }
 
+                if message.pinnedAt != nil, !message.isDeleted {
+                    Label("Pinned", systemImage: "pin.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(MC.accentSoft)
+                        .accessibilityIdentifier("msg.pinned.\(message.id)")
+                }
+
                 if message.isDeleted {
                     Text("This message was deleted")
                         .font(.callout)
@@ -372,6 +379,16 @@ struct MessageRow: View {
                         UIPasteboard.general.string = message.body
                     } label: {
                         Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+                if !message.failed {
+                    Button {
+                        Task { await app.engine.togglePin(message) }
+                    } label: {
+                        Label(
+                            message.pinnedAt == nil ? "Pin Message" : "Unpin Message",
+                            systemImage: message.pinnedAt == nil ? "pin" : "pin.slash"
+                        )
                     }
                 }
                 if isMine {

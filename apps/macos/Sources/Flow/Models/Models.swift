@@ -378,6 +378,9 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var createdAt: String
     var editedAt: String?
     var deletedAt: String?
+    /// Channel-wide pin metadata. Nil means the message is not pinned.
+    var pinnedAt: String?
+    var pinnedBy: String?
     var replyCount: Int
     var lastReplyAt: String?
     /// First (up to) 4 distinct reply authors in thread order (reply-avatar stack).
@@ -400,14 +403,15 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
 
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
-        case createdAt, editedAt, deletedAt, replyCount, lastReplyAt
+        case createdAt, editedAt, deletedAt, pinnedAt, pinnedBy, replyCount, lastReplyAt
         case replyParticipantUserIds, reactions, files, unfurls, systemKind, pending, failed
     }
 
     init(
         id: String, channelId: String, userId: String, threadRootId: String?,
         clientMsgId: String, body: String, createdAt: String, editedAt: String?,
-        deletedAt: String?, replyCount: Int, lastReplyAt: String?,
+        deletedAt: String?, pinnedAt: String? = nil, pinnedBy: String? = nil,
+        replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
         unfurls: [Unfurl] = [], systemKind: String? = nil, pending: Bool, failed: Bool = false
@@ -421,6 +425,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.createdAt = createdAt
         self.editedAt = editedAt
         self.deletedAt = deletedAt
+        self.pinnedAt = pinnedAt
+        self.pinnedBy = pinnedBy
         self.replyCount = replyCount
         self.lastReplyAt = lastReplyAt
         self.replyParticipantUserIds = replyParticipantUserIds
@@ -443,6 +449,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         createdAt = try c.decode(String.self, forKey: .createdAt)
         editedAt = try c.decodeIfPresent(String.self, forKey: .editedAt)
         deletedAt = try c.decodeIfPresent(String.self, forKey: .deletedAt)
+        pinnedAt = try c.decodeIfPresent(String.self, forKey: .pinnedAt)
+        pinnedBy = try c.decodeIfPresent(String.self, forKey: .pinnedBy)
         replyCount = try c.decodeIfPresent(Int.self, forKey: .replyCount) ?? 0
         lastReplyAt = try c.decodeIfPresent(String.self, forKey: .lastReplyAt)
         replyParticipantUserIds = try c.decodeIfPresent([String].self, forKey: .replyParticipantUserIds) ?? []
@@ -560,6 +568,9 @@ struct MentionMiss: Identifiable, Hashable, Sendable {
 struct MessagesResponse: Decodable, Sendable {
     let messages: [Message] // newest first
     let hasMore: Bool
+}
+struct PinnedMessagesResponse: Decodable, Sendable {
+    let messages: [Message]
 }
 struct ThreadResponse: Decodable, Sendable {
     let root: Message
