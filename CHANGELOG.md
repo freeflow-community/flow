@@ -13,6 +13,16 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- Scroll-position memory exists on no client: leaving a channel mid-history and
+  coming straight back always re-opens at the newest message. Tried on iOS
+  (#159) and removed — tracking the on-screen row needs per-row geometry, which
+  makes every layout pass touch every row and freezes the app on a channel
+  switch. Needs a `UIViewRepresentable` over `UICollectionView` (or the web
+  equivalent) to do safely.
+- The two native clients decide "follow the newest message?" differently since
+  #159: iOS keys off a deliberate 200pt finger-drag, macOS classifies content
+  growth vs user scroll (`classify` in its `MessageListView`). Same intent,
+  different mechanism — worth converging on one if either misbehaves again.
 - iOS: no text zoom (#105). macOS scales every font from a `\.textZoom`
   environment value driven by ⌘+/⌘−/⌘0. iOS wants Dynamic Type instead — a
   system-wide setting with no keyboard shortcut — so it's a different mechanism,
@@ -246,7 +256,16 @@ work after phase 16.
 
 Entries below start after phase 16.
 
-### 2026-07-30 — iOS artifacts UI (#157)
+### 2026-07-31 — iOS scroll: open at the newest message (#159)
+
+- `[ios]` A channel opens on its newest message, and a message you send always
+  scrolls into view. Both failed because "at the bottom?" was read from
+  geometry, which the keyboard resizing the list answers wrongly mid-pass; now
+  only a 200pt finger-drag stops the list following the end.
+- `[ios]` Build 2.0 (7) for TestFlight.
+- `[qa]` `ScrollBehaviorTests` covers open, back-scroll, own-send and re-open.
+
+
 
 - `[ios]` A Docs button in the channel header, badged with the channel's
   artifact count, opens a dropdown of them; picking one shows it full screen
