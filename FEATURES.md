@@ -10,6 +10,13 @@ For the full technical changelog see `CHANGELOG.md`.
   history, and a message you send always scrolls into view. Scroll back to read
   older messages and Flow stays put, as before.
 
+## 2026-07-31
+
+- **Long messages show all the way to the end again.** On Mac and iPhone, a long
+  message that had a link preview attached could stop partway through, with the
+  preview card sitting where the rest of the text should be. The whole message
+  now renders.
+
 ## 2026-07-30
 
 - **Documents on your iPhone.** Channels with pinned documents now show a Docs
