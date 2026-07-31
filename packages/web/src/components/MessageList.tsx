@@ -6,7 +6,7 @@ import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
-import { useSendMessage, useToggleReaction } from '../hooks';
+import { useSendMessage, useTogglePin, useToggleReaction } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
@@ -286,6 +286,20 @@ function ExternalLinkIcon() {
   );
 }
 
+export function PinIcon({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[17px] w-[17px]">
+      <path
+        d="M8 3h8l-1.2 6.1 3.2 3.2V14h-5v6l-1 1-1-1v-6H6v-1.7l3.2-3.2L8 3Z"
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** "12m ago" style label for thread indicators. */
 function relTime(iso: string | null): string {
   if (!iso) return '';
@@ -315,6 +329,7 @@ function MessageRow({
   const sel = useSelection();
   const qc = useQueryClient();
   const toggle = useToggleReaction();
+  const togglePin = useTogglePin();
   const [showPicker, setShowPicker] = useState(false);
   // Clicking the sender's avatar opens their profile card (ui_nits).
   const [showCard, setShowCard] = useState(false);
@@ -400,6 +415,16 @@ function MessageRow({
           <p className="text-sm text-faint italic">This message was deleted</p>
         ) : (
           <>
+            {message.pinnedAt && (
+              <div
+                data-testid={`pinned-marker-${message.id}`}
+                className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold text-accent-soft"
+                title={`Pinned${message.pinnedBy ? ` by ${names[message.pinnedBy] ?? 'a channel member'}` : ''}`}
+              >
+                <PinIcon filled />
+                <span>Pinned</span>
+              </div>
+            )}
             {message.body.trim() && (
               <div className="text-sm leading-normal break-words whitespace-pre-wrap">
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
@@ -565,6 +590,16 @@ function MessageRow({
               📋
             </button>
           )}
+          <button
+            data-testid={`toggle-pin-${message.id}`}
+            className={`flex items-center rounded-md px-1.5 py-1 leading-none hover:bg-daypill ${
+              message.pinnedAt ? 'text-accent-soft' : 'text-ink'
+            }`}
+            title={message.pinnedAt ? 'Unpin message' : 'Pin message'}
+            onClick={() => togglePin.mutate(message)}
+          >
+            <PinIcon filled={!!message.pinnedAt} />
+          </button>
           {message.files.length > 0 && (
             <button
               data-testid={`pin-artifact-${message.id}`}
