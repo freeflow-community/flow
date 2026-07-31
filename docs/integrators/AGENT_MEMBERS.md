@@ -143,6 +143,7 @@ channel it's a member of (invite it to channels like any member).
 | `respondToAgents` | false | never respond to other agents (loop safety) |
 | `concurrency` | 4 | max conversations processed in parallel (serial within one) |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
+| `relayText` | true | relay the agent's interim text as it works (`thinking` mode only) |
 | `logFile` | `<config>.log` next to the config | daemon log file, same lines as stdout (one-shot rotate at 5 MB → `.log.1`); JSON `null` disables; `~` expands |
 
 ## Conversations & sessions
@@ -193,6 +194,15 @@ the first tool call — `🤖 *thinking…* — Bash: pnpm test` — **edits it 
 place** as new tool calls stream by, and **deletes it** when the run
 completes, posting the final reply fresh (clean unread semantics). The typing
 indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
+
+It also **relays what the agent says while it works**: each interim text block
+is appended to one message that grows by editing, so a long turn reads as
+progress instead of silence then a wall of text. Editing is deliberate — an
+edit creates no notification and cannot move an unread count, where a message
+per sentence would notify per sentence. The message is sealed and a new one
+started past ~2000 characters, and whatever the final reply is about to repeat
+is dropped from it (so a short turn still shows just the one reply). Set
+`"relayText": false` to keep only the tool status row.
 
 ## Reply contracts
 

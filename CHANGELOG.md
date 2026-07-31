@@ -280,6 +280,16 @@ Entries below start after phase 16.
 - `[ios]` Still read-only in one respect: no pin-as-artifact (see Parity).
 - `[qa]` `qa-seed-artifacts.mjs` fixtures + `ArtifactsTests` XCUITest suite.
 
+### 2026-07-31 — Bridge relays the agent's interim text (#162)
+
+- `[bridge]` The agent's running commentary reaches the conversation as it
+  arrives instead of being parsed and thrown away: text blocks grow a single
+  message by editing it, which creates no notification and cannot move an
+  unread count, where a message per block would notify per block.
+- `[bridge]` The message rolls over past ~2000 characters, and whatever the
+  final reply is about to repeat is dropped from it — a short turn looks exactly
+  as it did before. `relayText: false` opts out; bridge 0.19.0.
+
 ### 2026-07-30 — Landing page Sign up buttons go to the app
 
 - The marketing site's Sign up buttons now link to app.freeflow.im (they were
