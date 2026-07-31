@@ -124,20 +124,27 @@ final class ArtifactsTests: XCTestCase {
         attach("05-image-artifact")
     }
 
-    /// Acceptance: link artifacts are reachable but read-only — an "Open in
-    /// Safari" button, and no URL bar that would re-point the artifact under
-    /// everyone else. Deliberate divergence from macOS/web (CHANGELOG Parity).
-    func testLinkArtifactIsReadOnly() {
+    /// Acceptance: a link artifact opens the co-browsing mini-browser — an
+    /// address bar showing the shared url, over a live web view of the page,
+    /// plus a way out to Safari. Full macOS parity, not a "here's a link" card.
+    ///
+    /// Asserts the chrome and that a page committed, not any particular
+    /// content: the fixture url is a real site, so its markup isn't ours to
+    /// pin a test to.
+    func testLinkArtifactOpensCoBrowser() {
         let app = launchInFixtureChannel()
 
         app.buttons["channel.docs"].tap()
         app.buttons["artifact.row.freeflow.im"].tap()
 
         XCTAssertTrue(app.otherElements["artifact.sheet"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["artifact.link.open"].waitForExistence(timeout: 10),
-                      "link artifact has no way out to Safari")
-        XCTAssertFalse(app.textFields["artifact.link.urlField"].exists,
-                       "iOS must not ship the co-browse URL bar — it broadcasts to every viewer")
-        attach("06-link-artifact")
+        let address = app.textFields["artifact.link.urlField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 10), "no address bar — this isn't the mini-browser")
+        XCTAssertEqual(address.value as? String, "https://freeflow.im",
+                       "address bar should show the artifact's shared url")
+        XCTAssertTrue(app.buttons["artifact.link.open"].exists, "no way out to Safari")
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 30),
+                      "the page never loaded — is the simulator online?")
+        attach("06-link-cobrowser")
     }
 }

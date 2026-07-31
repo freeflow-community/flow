@@ -433,41 +433,160 @@ private struct ArtifactFilePane: View {
     }
 }
 
-/// Link artifacts, read-only. The macOS/web co-browsing mini-browser broadcasts
-/// every navigation to all viewers; doing that from a phone means a stray tap
-/// re-points the artifact under everyone else, so iOS opens the page in Safari
-/// instead and leaves the shared url alone. See CHANGELOG Parity.
+/// Whether two urls address the same page. Deliberately not string equality:
+/// WebKit canonicalizes on commit (`https://host` comes back as
+/// `https://host/`), and a literal compare reads that as a user navigation — so
+/// merely *opening* a link artifact PATCHed it and re-pointed the page for
+/// every other viewer. macOS compares literally and has the same quirk.
+private func sameArtifactPage(_ a: String?, _ b: String?) -> Bool {
+    guard let a, let b else { return false }
+    if a == b { return true }
+    guard let ua = URL(string: a), let ub = URL(string: b) else { return false }
+    let pathA = ua.path.isEmpty ? "/" : ua.path
+    let pathB = ub.path.isEmpty ? "/" : ub.path
+    return ua.scheme == ub.scheme && ua.host == ub.host && ua.port == ub.port
+        && pathA == pathB && ua.query == ub.query && ua.fragment == ub.fragment
+}
+
+/// The co-browsing mini-browser, ported from macOS `LinkArtifactView`: an
+/// editable address bar over a live web view of the pinned page. Any navigation
+/// — typing a URL or tapping a link — PATCHes the artifact, so the server
+/// re-points it and every member's viewer follows. Remote changes load here in
+/// turn. Anything less and a link artifact is just a shared link (operator's
+/// call, 2026-07-30 — see decision_log).
 private struct ArtifactLinkPane: View {
     let artifact: Artifact
+    @EnvironmentObject private var app: AppState
     @Environment(\.openURL) private var openURL
+    @State private var draft: String = ""
+    /// Bumped when the address bar is submitted with the url already showing:
+    /// nothing changes server-side, so this is what makes it a reload.
+    @State private var reloadToken: Int = 0
 
-    private var url: URL? { artifact.url.flatMap(URL.init(string:)) }
+    private var url: String { artifact.url ?? "" }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text("🔗").font(.system(size: 40))
-            Text(artifact.url ?? "")
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(MC.inkSoft)
-                .multilineTextAlignment(.center)
-                .lineLimit(4)
-                .textSelection(.enabled)
-            if let url {
-                Button("Open in Safari") { openURL(url) }
-                    .buttonStyle(.borderedProminent)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                TextField("Address", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .submitLabel(.go)
+                    .onSubmit { navigate(to: draft) }
+                    .accessibilityIdentifier("artifact.link.urlField")
+                if let u = URL(string: url) {
+                    Button {
+                        openURL(u)
+                    } label: {
+                        Image(systemName: "safari")
+                    }
                     .accessibilityIdentifier("artifact.link.open")
+                    .accessibilityLabel("Open in Safari")
+                }
             }
-            Text("Co-browsing is Mac and web only — opening it here won't move anyone else's view.")
-                .font(.caption2)
-                .foregroundStyle(MC.faint)
-                .multilineTextAlignment(.center)
+            .padding(.horizontal, 12)
+            .frame(height: 44)
+            Rectangle().fill(MC.hairline).frame(height: 1)
+            CoBrowserWebView(url: url, reloadToken: reloadToken, onNavigate: broadcast)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // `.contain` or the container's identifier overwrites every child's —
-        // including the Safari button's, which is the one worth asserting.
+        .onAppear { draft = url }
+        // Follow the shared url when it changes remotely (or via our own echo).
+        .onChange(of: url) { _, now in draft = now }
+        // Without `.contain`, the container's identifier overwrites every
+        // child's — including the address field's and the Safari button's.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("artifact.link.\(artifact.name)")
+    }
+
+    /// Normalize an address-bar entry (add a scheme to a bare host) and broadcast.
+    private func navigate(to raw: String) {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return }
+        let withScheme = s.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) != nil
+            ? s : "https://\(s)"
+        guard URL(string: withScheme) != nil else { draft = url; return }
+        // Submitting the url already showing means "reload", not "no-op" — and
+        // it also pulls the view back to the shared url after in-page browsing.
+        if sameArtifactPage(withScheme, url) { reloadToken += 1; draft = url; return }
+        broadcast(withScheme)
+    }
+
+    private func broadcast(_ next: String) {
+        guard !sameArtifactPage(next, url) else { return }
+        Task {
+            do {
+                try await app.engine.setArtifactURL(id: artifact.id, url: next)
+            } catch {
+                draft = url
+                app.showError("Couldn't change the page: \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+/// Renders the shared url and reports navigations back — the UIKit half of the
+/// macOS `CoBrowserWebView`, same coordinator logic. It loads a new url only
+/// when it differs from what's already showing, so our own committed
+/// navigations (which echo back through `url`) never reload.
+private struct CoBrowserWebView: UIViewRepresentable {
+    let url: String
+    /// Any change forces a fresh load of `url`, even when it's already showing.
+    let reloadToken: Int
+    let onNavigate: (String) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onNavigate: onNavigate) }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let view = WKWebView(frame: .zero)
+        view.navigationDelegate = context.coordinator
+        view.allowsBackForwardNavigationGestures = true
+        context.coordinator.lastReloadToken = reloadToken
+        if let u = URL(string: url) {
+            context.coordinator.lastLoaded = url
+            view.load(URLRequest(url: u))
+        }
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {
+        context.coordinator.onNavigate = onNavigate
+        guard let u = URL(string: url) else { return }
+        if context.coordinator.lastReloadToken != reloadToken {
+            context.coordinator.lastReloadToken = reloadToken
+            context.coordinator.lastLoaded = url
+            view.load(URLRequest(url: u))
+            return
+        }
+        // Load only genuine remote changes: skip when the view already shows
+        // this url or we just loaded/committed it (prevents feedback loops).
+        let current = view.url?.absoluteString
+        if !Coordinator.samePage(current, url), !Coordinator.samePage(context.coordinator.lastLoaded, url) {
+            context.coordinator.lastLoaded = url
+            view.load(URLRequest(url: u))
+        }
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var onNavigate: (String) -> Void
+        var lastLoaded: String?
+        var lastReloadToken = 0
+
+        init(onNavigate: @escaping (String) -> Void) { self.onNavigate = onNavigate }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard let s = webView.url?.absoluteString else { return }
+            // Ignore the programmatic load we issued for the current shared url;
+            // report only user-driven navigations (link taps, form submits).
+            if Self.samePage(s, lastLoaded) { return }
+            lastLoaded = s
+            onNavigate(s)
+        }
+
+        static func samePage(_ a: String?, _ b: String?) -> Bool { sameArtifactPage(a, b) }
     }
 }
 

@@ -9,6 +9,9 @@ For the full technical changelog see `CHANGELOG.md`.
   button at the top right, with a count. Tap it for the list, tap one to read it
   full screen — and when an agent makes something for you, it opens by itself.
   Before this, anything an agent created was only reachable on a computer.
+- **Browse a pinned link together, from your phone.** Pinned links open in
+  Flow's shared mini-browser on iPhone now, the same one the Mac app has —
+  whoever moves to a new page moves it for everyone looking.
 
 ## 2026-07-30
 

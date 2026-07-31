@@ -12,16 +12,28 @@ report if the reasoning isn't written down.
   Mac disagree about the same channel, and "what clears it" is then a second
   design problem. If we want it, it's a server-side read model shared by all
   three clients.
-- **Link artifacts are listed, counted, and open in Safari — iOS does not
-  co-browse.** Excluding them was not an option: the badge would disagree with
-  the list. But the mini-browser's navigation is a *write* — it PATCHes the
-  artifact and every viewer follows — and on a phone a stray tap during a
-  scroll would re-point the page under everyone on desktop. Revisit with a
-  read-only follow mode or an explicit "take control" gesture.
-- **iOS ships read-only: no pin-as-artifact.** Pinning is a separate affordance
-  (message long-press plus a naming flow), and the case that made the ticket
-  urgent is *reading* agent-created artifacts, which have no chat message
-  behind them and so had no route on iPhone at all.
+- **Link artifacts get the full co-browsing mini-browser on iOS (operator).**
+  Proposed shipping them read-only — open in Safari, don't broadcast — on the
+  grounds that a stray tap during a scroll would re-point the page under
+  everyone on desktop. Scott overruled: *"I think link artifacts should use the
+  in-app browser, like macOS does. Otherwise you may as well just share the
+  link."* Which is the stronger argument — a link artifact whose whole point is
+  that everyone is looking at the same page isn't one if the phone quietly opts
+  out. Shipped at macOS parity: address bar, live web view, navigation
+  broadcasts. If phone-side accidental navigation does turn out to be a
+  problem, the fix is a *shared* one (a follow mode or a take-control gesture),
+  not iOS silently diverging.
+- **No pin-as-artifact on iOS yet.** Pinning is a separate affordance (message
+  long-press plus a naming flow), and the case that made the ticket urgent is
+  *reading* agent-created artifacts, which have no chat message behind them and
+  so had no route on iPhone at all.
+
+Building the mini-browser then surfaced a bug in the shared design: WebKit
+canonicalizes `https://host` to `https://host/` when it commits, so comparing
+the committed url to the requested one as strings reads the app's own load as a
+user navigation — merely *opening* a link artifact PATCHed it and re-pointed
+the page for everyone else. iOS now compares the parsed components. macOS has
+the same quirk and the same one-function fix.
 
 ## 2026-07-29 — Replica scaling is scheduled work; presence gossips over NATS, not Redis (operator)
 
