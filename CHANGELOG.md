@@ -234,6 +234,11 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-30 — Landing page Sign up buttons go to the app
+
+- The marketing site's Sign up buttons now link to app.freeflow.im (they were
+  wired to an empty placeholder), and the site metadata URL is freeflow.im.
+
 ### 2026-07-30 — Text zoom on the Mac app (#105)
 
 - `[macos]` ⌘+ / ⌘− resize every piece of text in the app, ⌘0 returns to 100%,

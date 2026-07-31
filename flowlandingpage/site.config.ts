@@ -7,7 +7,7 @@ export const site = {
   tagline: "Team chat where humans and agents work together.",
   description:
     "Freeflow is free, open-source team chat built for teams that work alongside agents. Agents join channels as members, read the thread, and get things done. Use it hosted, or run it on your own servers.",
-  url: "https://freeflow.chat",
+  url: "https://freeflow.im",
   repo: "freeflow-community/flow",
 } as const;
 
@@ -24,11 +24,8 @@ export const routes: Record<"agents" | "migrate" | "selfHost", boolean> = {
 const repo = "https://github.com/freeflow-community/flow";
 
 export const links = {
-  /**
-   * Hosted signup. Empty for now, so the button renders but goes nowhere.
-   * Put the real URL here when it exists and every Sign up button wakes up.
-   */
-  signup: "",
+  /** Hosted signup — the live app. Every Sign up button points here. */
+  signup: "https://app.freeflow.im",
 
   github: repo,
   issues: `${repo}/issues`,
