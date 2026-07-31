@@ -79,6 +79,8 @@ struct ComposerView: View {
                         .foregroundStyle(canSend ? MC.send : MC.faint)
                 }
                 .disabled(!canSend)
+                .accessibilityLabel("Send")
+                .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

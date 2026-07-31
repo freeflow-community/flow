@@ -3,6 +3,13 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-07-31
+
+- **Channels open where the conversation is, on iPhone.** Opening a channel
+  takes you to the newest message instead of leaving you part-way up its
+  history, and a message you send always scrolls into view. Scroll back to read
+  older messages and Flow stays put, as before.
+
 ## 2026-07-30
 
 - **Documents on your iPhone.** Channels with pinned documents now show a Docs

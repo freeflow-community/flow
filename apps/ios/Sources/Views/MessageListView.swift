@@ -29,15 +29,27 @@ struct MessageListView: View {
     /// newest message (#111).
     @State private var contentBottom: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    /// The list follows new messages down while this is true. Only a
+    /// deliberate back-scroll clears it (see `reactToScroll`) — geometry
+    /// churn from the keyboard or late-loading content must not, which is the
+    /// bug that used to strand the list mid-history behind a jump button.
+    @State private var pinToBottom = true
+    /// True once the reader has actually dragged this list. Before that the
+    /// list owns its own position and stays at the bottom no matter what the
+    /// measurements say.
+    @State private var hasDragged = false
+    @State private var isDragging = false
 
     private static let scrollSpace = "messageScroll"
     /// Within this much of the end still counts as "at the bottom", so a
     /// part-scrolled last message doesn't raise the button.
     private static let bottomSlack: CGFloat = 120
+    /// Back-scroll shorter than this is a nudge, not a decision to stop
+    /// following the conversation.
+    private static let minBackScroll: CGFloat = 200
 
-    /// False once the reader has scrolled up far enough that following new
-    /// messages down would yank them away from what they're reading.
-    private var atBottom: Bool { contentBottom - viewportHeight <= Self.bottomSlack }
+    /// How far the newest message sits below the viewport.
+    private var distanceFromBottom: CGFloat { max(0, contentBottom - viewportHeight) }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -97,28 +109,42 @@ struct MessageListView: View {
                 }
             )
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
-            .animation(.easeOut(duration: 0.15), value: atBottom)
+            .animation(.easeOut(duration: 0.15), value: pinToBottom)
+            // Only a finger on the glass may stop the list following the end.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { _ in
+                        isDragging = true
+                        hasDragged = true
+                    }
+                    .onEnded { _ in isDragging = false }
+            )
+            .onChange(of: distanceFromBottom) { _, _ in reactToScroll() }
             .onChange(of: messages.last?.id) { _, newId in
-                // A pending jump owns the scroll position — don't yank to bottom.
                 guard focusMessageId == nil, newId != nil else { return }
-                // Follow new messages down only from the bottom: someone reading
-                // back-scroll keeps their place and gets the jump button (#111).
-                guard atBottom else { return }
+                // My own message always wins. I just pressed send, so I mean to
+                // see it land — being back-scrolled, or having the keyboard
+                // resize the list out from under the measurements, doesn't
+                // change that.
+                if let me = currentUserId, messages.last?.userId == me {
+                    pinToBottom = true
+                }
+                // Otherwise follow the end only when we were already there:
+                // someone reading back-scroll keeps their place (#111).
+                guard pinToBottom else { return }
                 withAnimation(.easeOut(duration: 0.15)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
             // First open must land on the newest message (same rationale as
             // macOS: scrollTo from onAppear runs before lazy rows lay out).
-            // Async avatar/attachment loads grow row heights after the
-            // initial layout, so settle-scroll once shortly after the list
-            // populates or changes — unless a jump owns the scroll position.
             .task(id: messages.count) {
-                // Decided *before* the wait: the settle-scroll exists to catch up
-                // with content that grows underneath us, and that growth is what
-                // would otherwise make this look like back-scroll (#111).
-                guard focusMessageId == nil, atBottom else { return }
+                guard focusMessageId == nil, pinToBottom else { return }
+                proxy.scrollTo("bottom", anchor: .bottom)
+                // Rows keep growing after that first layout as avatars and
+                // attachments arrive, so come back once things have settled.
                 try? await Task.sleep(for: .milliseconds(350))
+                guard pinToBottom else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
             .defaultScrollAnchor(.bottom)
@@ -133,12 +159,25 @@ struct MessageListView: View {
         }
     }
 
+    /// Turns measured scroll position into the follow/don't-follow decision.
+    /// Gated on an actual drag: before the reader touches the list, the
+    /// measurements are just layout settling and mean nothing.
+    private func reactToScroll() {
+        guard hasDragged else { return }
+        if distanceFromBottom > Self.minBackScroll {
+            pinToBottom = false
+        } else if distanceFromBottom <= Self.bottomSlack {
+            pinToBottom = true
+        }
+    }
+
     /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
     /// of the transcript (#111). Tapping it returns to the newest message.
     @ViewBuilder
     private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
-        if !atBottom, !messages.isEmpty {
+        if !pinToBottom, !messages.isEmpty {
             Button {
+                pinToBottom = true
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
