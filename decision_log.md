@@ -1,5 +1,28 @@
 # Decision log
 
+## 2026-07-30 — iOS artifacts: count everything, read-only, no co-browse (#157)
+
+Three product questions the ticket left open, answered while porting artifacts
+to iOS. Recorded because each is the kind of thing that comes back as a bug
+report if the reasoning isn't written down.
+
+- **The header badge counts every artifact in the channel, not unseen ones.**
+  An unseen count needs per-user last-seen state that no client keeps and the
+  server doesn't model. Building it on iOS alone would make the phone and the
+  Mac disagree about the same channel, and "what clears it" is then a second
+  design problem. If we want it, it's a server-side read model shared by all
+  three clients.
+- **Link artifacts are listed, counted, and open in Safari — iOS does not
+  co-browse.** Excluding them was not an option: the badge would disagree with
+  the list. But the mini-browser's navigation is a *write* — it PATCHes the
+  artifact and every viewer follows — and on a phone a stray tap during a
+  scroll would re-point the page under everyone on desktop. Revisit with a
+  read-only follow mode or an explicit "take control" gesture.
+- **iOS ships read-only: no pin-as-artifact.** Pinning is a separate affordance
+  (message long-press plus a naming flow), and the case that made the ticket
+  urgent is *reading* agent-created artifacts, which have no chat message
+  behind them and so had no route on iPhone at all.
+
 ## 2026-07-29 — Replica scaling is scheduled work; presence gossips over NATS, not Redis (operator)
 
 - The operator wants the `app` service able to run `replicas > 1` on Railway

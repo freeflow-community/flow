@@ -56,11 +56,22 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   per-user pref toggles in phase 10, plus the Reactions toggle 2026-07-25).
   Nothing on-device consumes them yet — iOS has no push notifications — so this
   closes with the APNs work.
-- iOS: no Artifacts UI — no nested sidebar rows, artifact side panel, or
-  pin-as-artifact action; the `artifact.*` WS events are safely ignored. Now
-  the per-channel model (phase 13); server + web + macOS shipped together
-  2026-07-23. Link artifacts (co-browsing mini-browser) likewise skip
-  iOS — closes with the iOS artifacts port.
+- iOS artifacts, what's still missing after #157 (2026-07-30). Reading them is
+  done — header Docs button, count badge, dropdown, full-screen viewer, and
+  auto-open of agent-created ones. Two gaps remain:
+  - **No pin-as-artifact.** Web + macOS can pin a message's file; iOS is
+    read-only. Needs a message long-press action and a naming flow. Pure client
+    port — `createArtifact` is already in the shared `SyncEngine`.
+  - **No co-browsing mini-browser.** iOS lists and counts link artifacts and
+    opens them in Safari, but doesn't render or broadcast them. Deliberate, not
+    just unbuilt: every navigation in the mini-browser PATCHes the artifact for
+    all viewers, and a stray tap on a phone would re-point the page under
+    everyone on desktop. Revisit only with a read-only/follow mode, or an
+    explicit "take control" gesture.
+  - Also deliberate: the badge counts **all** artifacts in the channel, not
+    unseen ones — no client tracks per-user last-seen for artifacts and the
+    server doesn't model it, so an unseen count on iOS alone would disagree
+    with macOS about the same channel.
 - Link-artifact mini-browser: the web client renders link artifacts in a sandboxed
   `<iframe>`, which has two browser limits the native macOS `WKWebView` doesn't:
   (1) sites sending `X-Frame-Options`/CSP `frame-ancestors` can't be embedded
@@ -233,6 +244,17 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-07-30 — iOS artifacts UI (#157)
+
+- `[ios]` A Docs button in the channel header, badged with the channel's
+  artifact count, opens a dropdown of them; picking one shows it full screen
+  (image/video/pdf/html/text, HTML sandboxed in an ephemeral `WKWebView`).
+  Agent-created artifacts auto-open, as on macOS — until now the only route to
+  one on iPhone was none at all.
+- `[ios]` Read-only to start: no pin-as-artifact, and link artifacts open in
+  Safari rather than the co-browsing mini-browser (see Parity).
+- `[qa]` `qa-seed-artifacts.mjs` fixtures + `ArtifactsTests` XCUITest suite.
 
 ### 2026-07-30 — Landing page Sign up buttons go to the app
 
