@@ -741,6 +741,43 @@ actor SyncEngine {
         }
     }
 
+    // MARK: - Pinned messages
+
+    /// Fetch every pin in the channel so older pinned messages become part of
+    /// the local cache even when normal history pagination has not reached them.
+    func loadPinnedMessages(channelId: String) async {
+        do {
+            let response: PinnedMessagesResponse = try await api.get("/v1/channels/\(channelId)/pins")
+            // The list is authoritative: clear stale offline-era pins before
+            // saving the current rows returned by the server.
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE message SET pinnedAt = NULL, pinnedBy = NULL WHERE channelId = ?",
+                    arguments: [channelId]
+                )
+            }
+            await storeMessages(response.messages)
+        } catch {
+            await appState?.showError("Couldn't load pinned messages: \(error.localizedDescription)")
+        }
+    }
+
+    /// Pin or unpin for the whole channel; the returned full message is the
+    /// immediate local update and the websocket echo converges other clients.
+    func togglePin(_ message: Message) async {
+        do {
+            let updated: Message
+            if message.pinnedAt == nil {
+                updated = try await api.put("/v1/messages/\(message.id)/pin")
+            } else {
+                updated = try await api.delete("/v1/messages/\(message.id)/pin")
+            }
+            _ = await applyServerMessage(updated)
+        } catch {
+            await appState?.showError("Couldn't update pin: \(error.localizedDescription)")
+        }
+    }
+
     private func setReactions(messageId: String, _ reactions: [ReactionAgg]) async {
         try? await db.writer.write { db in
             guard var m = try Message.fetchOne(db, key: messageId) else { return }

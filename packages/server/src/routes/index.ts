@@ -593,6 +593,11 @@ export function registerRoutes(app: FastifyInstance): void {
     return msg.listMessages(id, req.user.id, q.before, q.limit);
   });
 
+  app.get('/v1/channels/:id/pins', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { messages: await msg.listPinnedMessages(id, req.user.id) };
+  });
+
   app.post('/v1/channels/:id/messages', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(SendMessageBody, req.body);
@@ -620,6 +625,16 @@ export function registerRoutes(app: FastifyInstance): void {
     const { purge } = req.query as { purge?: string };
     await msg.deleteMessage(id, req.user.id, { hard: purge === 'true' || purge === '1' });
     return { ok: true };
+  });
+
+  app.put('/v1/messages/:id/pin', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return msg.pinMessage(id, req.user.id);
+  });
+
+  app.delete('/v1/messages/:id/pin', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return msg.unpinMessage(id, req.user.id);
   });
 
   app.get('/v1/messages/:id/thread', { preHandler: requireAuth }, async (req) => {

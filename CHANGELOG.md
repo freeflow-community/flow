@@ -250,6 +250,10 @@ Entries below start after phase 16.
 - The landing page (`flowlandingpage/`) builds as a static Next.js export and
   auto-deploys to Cloudflare Pages on merge — apex canonical, `www` redirects.
   New `deploy-landing.yml` workflow; release map updated in BUILD.md.
+### 2026-07-30 — Pinned messages
+
+- [server] Channel members can pin/unpin messages; pin metadata and channel pin lists are persistent, authorized, idempotent, and live-updated.
+- [web] [macos] [ios] Message actions now include pinning, pinned rows are marked, and each channel header opens a jump-to-message pin list.
 
 ### 2026-07-29 — macOS channel activity spinner (#137)
 

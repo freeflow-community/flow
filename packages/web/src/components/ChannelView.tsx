@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
-import { useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, flattenMessages } from '../hooks';
+import { useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import ChannelMembersPopover, { type MemberRow } from './ChannelMembersPopover';
-import MessageList from './MessageList';
+import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
-import { EditChannelModal, UserCard } from './modals';
+import { EditChannelModal, Modal, UserCard } from './modals';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -18,11 +19,13 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const names = useNameMap(sel.workspaceId);
   const displayNames = useDisplayNameMap(sel.workspaceId); // agent names carry the 🤖 badge
   const messagesQ = useMessages(channelId);
+  const pins = usePinnedMessages(channelId);
   const markRead = useMarkRead();
   const lastReadRef = useRef<string | null>(null);
   const [cardUserId, setCardUserId] = useState<string | null>(null);
   const [editChannel, setEditChannel] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [pinsOpen, setPinsOpen] = useState(false);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
@@ -131,6 +134,18 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">
+          <button
+            type="button"
+            data-testid="channel-pins-trigger"
+            title="Pinned messages"
+            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold hover:bg-daypill/60 ${
+              (pins.data?.length ?? 0) > 0 ? 'text-accent-soft' : 'text-muted'
+            }`}
+            onClick={() => setPinsOpen(true)}
+          >
+            <PinIcon filled={(pins.data?.length ?? 0) > 0} />
+            {(pins.data?.length ?? 0) > 0 && <span>{pins.data!.length}</span>}
+          </button>
           {/* member stack — opens the roster; dropped on mobile so the title gets the room */}
           <button
             data-testid="channel-members-trigger"
@@ -209,6 +224,78 @@ export default function ChannelView({ channelId }: { channelId: string }) {
 
       {cardUserId && <UserCard userId={cardUserId} onClose={() => setCardUserId(null)} />}
       {editChannel && channel && <EditChannelModal channel={channel} onClose={() => setEditChannel(false)} />}
+      {pinsOpen && (
+        <PinnedMessagesModal
+          messages={pins.data ?? []}
+          names={names}
+          loading={pins.isLoading}
+          onClose={() => setPinsOpen(false)}
+        />
+      )}
     </section>
+  );
+}
+
+export function PinnedMessagesModal({
+  messages,
+  names,
+  loading,
+  onClose,
+}: {
+  messages: MessageDTO[];
+  names: Record<string, string>;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  const sel = useSelection();
+  const togglePin = useTogglePin();
+
+  return (
+    <Modal onClose={onClose} testid="pinned-messages-modal">
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <h3 className="font-bold">Pinned messages</h3>
+        <button className="rounded px-2 text-faint hover:bg-daypill hover:text-ink" onClick={onClose}>×</button>
+      </div>
+      {loading ? (
+        <p className="py-6 text-center text-sm text-muted">Loading…</p>
+      ) : messages.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted">No pinned messages in this channel.</p>
+      ) : (
+        <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+          {messages.map((message) => (
+            <div key={message.id} className="flex items-start gap-2 rounded-xl border border-hairline p-2 hover:border-hairline2">
+              <button
+                type="button"
+                className="min-w-0 flex-1 cursor-pointer text-left"
+                onClick={() => {
+                  sel.jumpToMessage(message.channelId, message.id, message.threadRootId);
+                  onClose();
+                }}
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="truncate text-xs font-bold">{names[message.userId] ?? 'Unknown'}</span>
+                  <span className="shrink-0 text-[11px] text-faint">
+                    {message.pinnedAt ? new Date(message.pinnedAt).toLocaleString() : ''}
+                  </span>
+                </div>
+                <p className="mt-0.5 line-clamp-3 text-sm text-ink-soft">
+                  {message.body.trim() || message.files[0]?.name || 'Message'}
+                </p>
+                {message.threadRootId && <span className="text-[11px] text-accent-soft">Reply in thread</span>}
+              </button>
+              <button
+                type="button"
+                data-testid={`unpin-from-list-${message.id}`}
+                title="Unpin message"
+                className="shrink-0 rounded-md p-1 text-accent-soft hover:bg-daypill"
+                onClick={() => togglePin.mutate(message)}
+              >
+                <PinIcon filled />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }

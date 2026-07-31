@@ -135,6 +135,7 @@ export default function Main() {
         // Hard delete: remove the message entirely (no tombstone). Used for
         // the agent's ephemeral "thinking…" status.
         removeMessageFromCache(qc, event.data as MessageDTO);
+        void qc.invalidateQueries({ queryKey: ['pins', (event.data as MessageDTO).channelId] });
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         break;
       }
@@ -152,6 +153,9 @@ export default function Main() {
         }
         const insert = event.type === 'message.created' || event.type === 'thread.reply';
         applyMessageEvent(qc, msg, insert);
+        // Pin/unpin and delete events are full message updates; keep the
+        // channel's independently fetched pinned-message list in sync too.
+        void qc.invalidateQueries({ queryKey: ['pins', msg.channelId] });
         // Sidebar unread counts/ordering still come from the channels query.
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         break;

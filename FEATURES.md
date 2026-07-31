@@ -14,6 +14,7 @@ For the full technical changelog see `CHANGELOG.md`.
   everything — messages, the channel list, the box you type in — and ⌘0 to go
   back to normal. They're in the View menu too, and the app remembers where you
   left it.
+- **Keep important messages within reach.** Anyone in a channel can pin a message, see every pin from the channel header, and jump straight back to its place in the conversation or thread.
 
 ## 2026-07-29
 

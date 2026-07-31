@@ -403,6 +403,14 @@ struct MessageRow: View {
                     }
                 }
 
+                if message.pinnedAt != nil, !message.isDeleted {
+                    Label("Pinned", systemImage: "pin.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MC.accentSoft)
+                        .help(pinnedHelp)
+                        .accessibilityIdentifier("msg.pinned.\(message.id)")
+                }
+
                 if message.isDeleted {
                     Text("This message was deleted")
                         .flowFont(.callout)
@@ -544,6 +552,11 @@ struct MessageRow: View {
                     NSPasteboard.general.setString(message.body, forType: .string)
                 }
             }
+            if !message.isDeleted, !message.pending, !message.failed {
+                Button(message.pinnedAt == nil ? "Pin Message" : "Unpin Message") {
+                    Task { await app.engine.togglePin(message) }
+                }
+            }
             if !message.files.isEmpty, !message.isDeleted, !message.pending {
                 Button("Pin as Artifact") { pinAsArtifact() }
             }
@@ -611,6 +624,15 @@ struct MessageRow: View {
                 .accessibilityIdentifier("msg.copy")
             }
 
+            MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
+                Task { await app.engine.togglePin(message) }
+            } label: {
+                Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
+            }
+            .accessibilityIdentifier("msg.togglePin")
+
             if !message.files.isEmpty {
                 MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
                     // Web draws this one as an inline SVG (box + leaving arrow);
@@ -649,6 +671,11 @@ struct MessageRow: View {
         // hover: landing on it cancels the pending hide and keeps the menu up.
         .contentShape(Rectangle())
         .onHover { setHovering($0) }
+    }
+
+    private var pinnedHelp: String {
+        guard let pinner = message.pinnedBy else { return "Pinned to this channel" }
+        return "Pinned by \(userNames[pinner] ?? "a channel member")"
     }
 
     /// One borderless glyph button in the hover pill. Mirrors the web buttons'

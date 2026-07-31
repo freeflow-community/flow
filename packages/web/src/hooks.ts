@@ -160,6 +160,15 @@ export function useMessages(channelId: string | null) {
   });
 }
 
+export function usePinnedMessages(channelId: string | null) {
+  return useQuery({
+    queryKey: ['pins', channelId],
+    queryFn: () => api<{ messages: MessageDTO[] }>('GET', `/v1/channels/${channelId}/pins`),
+    select: (d) => d.messages,
+    enabled: channelId !== null,
+  });
+}
+
 /** Flattened ascending message list from the infinite query pages. */
 export function flattenMessages(pages: MessagePage[] | undefined): MessageDTO[] {
   if (!pages) return [];
@@ -233,6 +242,8 @@ export function useSendMessage(channelId: string) {
     createdAt: new Date().toISOString(),
     editedAt: null,
     deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
     systemKind: null,
     replyCount: 0,
     lastReplyAt: null,
@@ -295,6 +306,21 @@ export function useToggleReaction() {
       } else {
         void qc.invalidateQueries({ queryKey: ['thread', input.message.id] });
       }
+    },
+  });
+}
+
+export function useTogglePin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (message: MessageDTO) =>
+      api<MessageDTO>(
+        message.pinnedAt ? 'DELETE' : 'PUT',
+        `/v1/messages/${message.id}/pin`,
+      ),
+    onSuccess: (updated) => {
+      applyMessageEvent(qc, updated, false);
+      void qc.invalidateQueries({ queryKey: ['pins', updated.channelId] });
     },
   });
 }
