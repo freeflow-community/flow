@@ -61,6 +61,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var pendingTap: NotificationTap?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Flow's palette (`MC`) is a single fixed *light* theme — the same
+        // tokens the web client hard-codes in index.css, which has no dark
+        // theme either. Nothing in the UI repaints for a dark appearance, but
+        // anything drawn in a system colour does: on a Mac set to Dark, every
+        // view that doesn't name its own colour resolves `.primary`/`.label`
+        // to white and lands on MC.base, which is near-white. Message bodies
+        // and the avatar menu became unreadable that way.
+        //
+        // Pinning the process to Aqua fixes all of them at once, and covers
+        // the AppKit surfaces SwiftUI's `preferredColorScheme` doesn't reach
+        // (menus, alerts, the composer's NSTextView). This is the app opting
+        // out of dark mode, not a workaround — supporting it properly means a
+        // second palette on all three clients.
+        NSApp.appearance = NSAppearance(named: .aqua)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         // Same bundle guard every other UserNotifications call site uses (see

@@ -256,6 +256,14 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-08-01 — Native clients opt out of Dark Mode (#169)
+
+- `[macos]` `[ios]` `MC` is a fixed light palette, so on a Mac set to Dark
+  every uncoloured view resolved to white and message bodies went invisible.
+  Both clients now pin their appearance to light. Real dark-mode support means
+  a second palette on all three clients — not attempted.
+- `[macos]` VERSION 2.2.16. `[ios]` build 2.0 (8).
+
 ### 2026-07-31 — iOS scroll: open at the newest message (#159)
 
 - `[ios]` A channel opens on its newest message, and a message you send always
