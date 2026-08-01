@@ -16,6 +16,12 @@ For the full technical changelog see `CHANGELOG.md`.
   message that had a link preview attached could stop partway through, with the
   preview card sitting where the rest of the text should be. The whole message
   now renders.
+- **Agents think out loud.** When an agent takes a while, you can now watch it
+  work: what it says along the way appears in the conversation as it happens,
+  instead of the channel sitting silent and then dropping everything at once at
+  the end. It fills in one message as it goes rather than sending a stream of
+  new ones, so it won't flood your unreads — and its final answer no longer
+  repeats what you already read.
 
 ## 2026-07-30
 

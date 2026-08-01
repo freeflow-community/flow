@@ -668,6 +668,7 @@ export class AgentBridge {
       this.api,
       this.socket,
       this.cfg.progress,
+      this.cfg.relayText,
       msg.channelId,
       replyRoot,
       (m) => this.log(m),
@@ -689,6 +690,7 @@ export class AgentBridge {
           mcpConfigPath,
           signal: live.controller.signal,
           onToolStep: (step) => progress.onStep(step),
+          onText: (text) => progress.onText(text),
           log: (m) => this.log(m),
         });
       let result = await run(conv.started);
@@ -700,7 +702,9 @@ export class AgentBridge {
         conv.started = true;
         result = await run(true);
       }
-      await progress.finish();
+      // The reply we're about to post is (for claude) the last text block we
+      // already relayed — hand it over so the narration doesn't end on it.
+      await progress.finish(result.text);
       if (result.interrupted) {
         // Asked for, not broken: say who stopped it and hand back the partial
         // work. The session survives (SIGTERM let the CLI flush its
