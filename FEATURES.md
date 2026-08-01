@@ -3,6 +3,13 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-08-01
+
+- **Messages are readable again if your Mac or iPhone is set to Dark Mode.**
+  Flow's look is light, but it wasn't telling your device that — so on a dark
+  system the text of a message could come out white on white and vanish. Flow
+  now always shows its own light theme, whichever mode you're in.
+
 ## 2026-07-31
 
 - **Headings look like headings on Mac and iPhone.** A message written with
