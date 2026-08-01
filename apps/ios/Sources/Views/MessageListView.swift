@@ -574,22 +574,29 @@ struct MessageRow: View {
     /// fenced code renders monospaced in a warm block, fence markers hidden.
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        if segments.count == 1, case .paragraph(let text) = segments[0] {
-            // Fast path: single plain paragraph keeps baseline-aligned markers.
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                paragraphText(text)
-                trailingMarkers
-            }
-        } else {
-            HStack(alignment: .bottom, spacing: 4) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(segment)
-                    }
+        Group {
+            if segments.count == 1, case .paragraph(let text) = segments[0] {
+                // Fast path: single plain paragraph keeps baseline-aligned markers.
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    paragraphText(text)
+                    trailingMarkers
                 }
-                trailingMarkers
+            } else {
+                HStack(alignment: .bottom, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                            segmentView(segment)
+                        }
+                    }
+                    trailingMarkers
+                }
             }
         }
+        // Same row layout as macOS, so the same #161 hazard: the body shares a
+        // VStack with unfurl cards and attachments, and is the only vertically
+        // flexible child. Without this it is the one that gives way when the
+        // row's ideal height exceeds what the list proposes.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder

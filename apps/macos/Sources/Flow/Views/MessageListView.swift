@@ -794,23 +794,35 @@ struct MessageRow: View {
     /// pills or markdown inside code).
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        if segments.count == 1, case .paragraph(let text) = segments[0] {
-            // Fast path: single plain paragraph keeps the original inline
-            // layout (baseline-aligned edited/pending markers).
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                paragraphText(text)
-                trailingMarkers
-            }
-        } else {
-            HStack(alignment: .bottom, spacing: 4) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(segment)
-                    }
+        Group {
+            if segments.count == 1, case .paragraph(let text) = segments[0] {
+                // Fast path: single plain paragraph keeps the original inline
+                // layout (baseline-aligned edited/pending markers).
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    paragraphText(text)
+                    trailingMarkers
                 }
-                trailingMarkers
+            } else {
+                HStack(alignment: .bottom, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                            segmentView(segment)
+                        }
+                    }
+                    trailingMarkers
+                }
             }
         }
+        // The body must never be the view that gives way (#161). It shares the
+        // row's VStack with attachments, unfurl cards and reactions, and a
+        // multiline `Text` is the only flexible one of them: when the row's
+        // ideal height exceeds the height the message list proposes, SwiftUI
+        // compresses the text and the body renders cut off partway through,
+        // with the card below it sitting where the rest of the prose should
+        // be. `fixedSize` vertically makes the body report its wrapped height
+        // as its ideal *and* its minimum, so the row grows instead. Width
+        // stays flexible, so wrapping is unchanged.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder

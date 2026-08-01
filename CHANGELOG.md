@@ -280,6 +280,13 @@ Entries below start after phase 16.
 - `[ios]` Still read-only in one respect: no pin-as-artifact (see Parity).
 - `[qa]` `qa-seed-artifacts.mjs` fixtures + `ArtifactsTests` XCUITest suite.
 
+### 2026-07-31 — Long message bodies no longer render cut off (#161)
+
+- `[macos]` `[ios]` A message with a link preview under it rendered its body cut
+  off partway through. The body shares a `VStack` with the preview cards and was
+  the only vertically flexible child, so it absorbed the shortfall whenever the
+  row's ideal height exceeded what the list proposed; `fixedSize` vertically
+  takes it out of that negotiation. Web was never affected.
 ### 2026-07-31 — Bridge relays the agent's interim text (#162)
 
 - `[bridge]` The agent's running commentary reaches the conversation as it

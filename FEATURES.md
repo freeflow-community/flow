@@ -12,6 +12,10 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-31
 
+- **Long messages show all the way to the end again.** On Mac and iPhone, a long
+  message that had a link preview attached could stop partway through, with the
+  preview card sitting where the rest of the text should be. The whole message
+  now renders.
 - **Agents think out loud.** When an agent takes a while, you can now watch it
   work: what it says along the way appears in the conversation as it happens,
   instead of the channel sitting silent and then dropping everything at once at
