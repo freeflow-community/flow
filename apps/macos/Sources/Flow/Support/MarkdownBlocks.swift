@@ -24,6 +24,9 @@ enum MarkdownBlocks {
         case paragraph(String)
         case quote(String) // ">"/"> " markers stripped, lines joined with \n
         case code(String)  // fence marker lines dropped
+        /// An ATX heading. `level` is 1...6; the hashes and the whitespace
+        /// after them are stripped, so `text` is the inline content.
+        case heading(level: Int, text: String)
         /// A GFM pipe table. `align` is per column and may be shorter than
         /// `header` when the separator row has fewer cells; nil = unset.
         case table(header: [String], align: [CellAlign?], rows: [[String]])
@@ -106,8 +109,9 @@ enum MarkdownBlocks {
     }
 
     /// Block segments for message rendering: fenced code blocks (markers
-    /// hidden), runs of consecutive quote lines (markers stripped), and plain
-    /// paragraph runs. Whitespace-only paragraph runs are dropped.
+    /// hidden), runs of consecutive quote lines (markers stripped), ATX
+    /// headings (hashes stripped), GFM tables, and plain paragraph runs.
+    /// Whitespace-only paragraph runs are dropped.
     static func segments(_ body: String) -> [Segment] {
         let raw = lines(body)
         let ks = kinds(of: raw)
@@ -139,8 +143,8 @@ enum MarkdownBlocks {
                 segs.append(.quote(content.joined(separator: "\n")))
                 i = j
             case .plain:
-                // A plain run can contain tables; flush the prose accumulated
-                // so far whenever one starts, then resume after it.
+                // A plain run can contain headings and tables; flush the prose
+                // accumulated so far whenever one starts, then resume after it.
                 var content: [String] = []
                 var j = i
                 func flushParagraph() {
@@ -150,6 +154,14 @@ enum MarkdownBlocks {
                     content.removeAll()
                 }
                 while j < raw.count, ks[j] == .plain {
+                    // Headings are checked before tables, as on web: a heading
+                    // line that happens to contain a pipe is still a heading.
+                    if let heading = parseHeading(text[j]) {
+                        flushParagraph()
+                        segs.append(.heading(level: heading.level, text: heading.text))
+                        j += 1
+                        continue
+                    }
                     guard isTableStart(text, ks, j) else {
                         content.append(text[j])
                         j += 1
@@ -176,6 +188,27 @@ enum MarkdownBlocks {
             }
         }
         return segs
+    }
+
+    // MARK: - ATX headings
+
+    /// An ATX heading line, or nil. Mirrors the web client's
+    /// `HEADING_RE = /^(#{1,6})\s+(.*)$/` (packages/web/src/lib/format.tsx):
+    /// 1–6 hashes at the very start of the line, at least one whitespace
+    /// character after them, and the rest of the line as inline content. So
+    /// seven hashes is prose, and so is `#hashtag` with no space. Callers
+    /// pass only `.plain` lines, which is what keeps `#` inside a fence code.
+    static func parseHeading(_ line: String) -> (level: Int, text: String)? {
+        var level = 0
+        var i = line.startIndex
+        while i < line.endIndex, line[i] == "#" {
+            level += 1
+            if level > 6 { return nil }
+            i = line.index(after: i)
+        }
+        guard level > 0, i < line.endIndex, line[i].isWhitespace else { return nil }
+        // `\s+` is greedy on web, so the content never keeps leading spaces.
+        return (level, String(line[i...].drop(while: \.isWhitespace)))
     }
 
     // MARK: - GFM pipe tables

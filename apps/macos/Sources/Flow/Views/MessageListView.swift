@@ -839,6 +839,8 @@ struct MessageRow: View {
                     .foregroundStyle(MC.inkSoft)
             }
             .accessibilityIdentifier("msg.quoteBlock")
+        case .heading(let level, let text):
+            headingText(level: level, text: text)
         case .code(let text):
             Text(text.isEmpty ? " " : text)
                 .flowFont(size: 12, design: .monospaced)
@@ -855,6 +857,27 @@ struct MessageRow: View {
                 userNames: userNames, currentUserId: currentUserId
             )
         }
+    }
+
+    /// ATX headings, sized as the macOS analogue of web's scale rather than a
+    /// copy of its Tailwind classes: body text is `.callout` (13pt), so h1/h2
+    /// step up by web's own ratios (1.29×, 1.2×) and h3–h6 stay body-size,
+    /// distinguished by weight — which is what `HEADING_CLASS` does. Sizes go
+    /// through `flowFont(size:)` so text zoom (#105) still applies, and the
+    /// inline pass runs inside the heading so mentions and `**bold**` work.
+    private func headingText(level: Int, text: String) -> some View {
+        let size: CGFloat = level == 1 ? 17 : (level == 2 ? 15.5 : 13)
+        let attributed = MentionRendering.attributed(
+            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+        )
+        return Text(attributed)
+            .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
+            .foregroundStyle(MC.ink)
+            .textSelection(.enabled)
+            .linkCursor(attributed)
+            .padding(.top, level <= 2 ? 2 : 0) // web's mt-2 on h1/h2
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("msg.heading")
     }
 
     private func paragraphText(_ text: String) -> some View {
