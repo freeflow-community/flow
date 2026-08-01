@@ -256,6 +256,13 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-31 — Headings render on the native clients (#166)
+
+- `[macos]` `[ios]` `MarkdownBlocks` gains a `heading` segment, ported from
+  web's `HEADING_RE`, so `#`…`######` render as headings instead of literal
+  hashes. Both `segmentView`s render it — iOS compiles the same file.
+- `[macos]` VERSION 2.2.15.
+
 ### 2026-07-31 — iOS scroll: open at the newest message (#159)
 
 - `[ios]` A channel opens on its newest message, and a message you send always

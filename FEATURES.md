@@ -5,6 +5,12 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-07-31
 
+- **Headings look like headings on Mac and iPhone.** A message written with
+  `#` headings — most agent replies, for instance — used to show the raw `##`
+  marks. Now it renders as a proper heading, the way it always has on the web.
+
+## 2026-07-31
+
 - **Channels open where the conversation is, on iPhone.** Opening a channel
   takes you to the newest message instead of leaving you part-way up its
   history, and a message you send always scrolls into view. Scroll back to read
