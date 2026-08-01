@@ -613,6 +613,8 @@ struct MessageRow: View {
                     .foregroundStyle(MC.inkSoft)
             }
             .accessibilityIdentifier("msg.quoteBlock")
+        case .heading(let level, let text):
+            headingText(level: level, text: text)
         case .code(let text):
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(text.isEmpty ? " " : text)
@@ -630,6 +632,20 @@ struct MessageRow: View {
                 userNames: userNames, currentUserId: currentUserId
             )
         }
+    }
+
+    /// ATX headings at macOS parity, rebased on iOS's larger body text:
+    /// `.callout` is 16pt here, so web's ratios put h1 at 21 and h2 at 19,
+    /// with h3–h6 body-size and separated by weight (as `HEADING_CLASS` does).
+    private func headingText(level: Int, text: String) -> some View {
+        let size: CGFloat = level == 1 ? 21 : (level == 2 ? 19 : 16)
+        return Text(MentionRendering.attributed(text, names: userNames, currentUserId: currentUserId))
+            .font(.system(size: size, weight: level <= 3 ? .bold : .semibold))
+            .foregroundStyle(MC.ink)
+            .textSelection(.enabled)
+            .padding(.top, level <= 2 ? 2 : 0) // web's mt-2 on h1/h2
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("msg.heading")
     }
 
     private func paragraphText(_ text: String) -> some View {

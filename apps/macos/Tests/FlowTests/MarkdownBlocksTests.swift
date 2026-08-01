@@ -104,6 +104,107 @@ final class MarkdownBlocksTests: XCTestCase {
         )
     }
 
+    // MARK: - ATX headings
+    //
+    // The web client is the specification here (packages/web/src/lib/format.tsx
+    // `HEADING_RE`, pinned by format.test.tsx:67-71 and 114-119). These mirror
+    // those cases so the two grammars can't drift apart silently.
+
+    func testHeadingLevelsOneThroughSix() {
+        for level in 1...6 {
+            let hashes = String(repeating: "#", count: level)
+            XCTAssertEqual(
+                MarkdownBlocks.segments("\(hashes) Title"),
+                [.heading(level: level, text: "Title")],
+                "\(level) hashes should be an h\(level)"
+            )
+        }
+    }
+
+    func testSevenHashesIsNotAHeading() {
+        // Web: html('####### too many') === '####### too many'.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("####### too many"),
+            [.paragraph("####### too many")]
+        )
+    }
+
+    func testHashesWithoutFollowingSpaceAreNotAHeading() {
+        XCTAssertEqual(MarkdownBlocks.segments("#hashtag"), [.paragraph("#hashtag")])
+        XCTAssertEqual(MarkdownBlocks.segments("###C++"), [.paragraph("###C++")])
+        XCTAssertEqual(MarkdownBlocks.segments("#"), [.paragraph("#")])
+    }
+
+    func testHeadingKeepsInlineMarkupForTheInlinePass() {
+        // Web renders heading content through renderBody, so the markers must
+        // survive the block parse — `MentionRendering.attributed` handles them.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("# Big **title** <@01234567-89ab-cdef-0123-456789abcdef>"),
+            [.heading(level: 1, text: "Big **title** <@01234567-89ab-cdef-0123-456789abcdef>")]
+        )
+    }
+
+    func testHeadingDropsAllWhitespaceAfterTheHashes() {
+        // `\s+` is greedy on web, so content never keeps leading spaces.
+        XCTAssertEqual(MarkdownBlocks.segments("##   spaced"), [.heading(level: 2, text: "spaced")])
+        XCTAssertEqual(MarkdownBlocks.segments("##\tTabbed"), [.heading(level: 2, text: "Tabbed")])
+        XCTAssertEqual(MarkdownBlocks.segments("# "), [.heading(level: 1, text: "")])
+    }
+
+    func testHeadingSplitsSurroundingProseIntoSeparateParagraphs() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("intro line\n## Section\nbody line\nmore body"),
+            [
+                .paragraph("intro line"),
+                .heading(level: 2, text: "Section"),
+                .paragraph("body line\nmore body"),
+            ]
+        )
+    }
+
+    func testConsecutiveHeadingsAreSeparateSegments() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("# One\n## Two"),
+            [.heading(level: 1, text: "One"), .heading(level: 2, text: "Two")]
+        )
+    }
+
+    func testHeadingInsideFencedCodeIsNotParsed() {
+        // Web: format.test.tsx:114-119 — '# not a heading' stays literal.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("```\n# not a heading\n```"),
+            [.code("# not a heading")]
+        )
+    }
+
+    func testHeadingInsideQuoteStaysQuoteContent() {
+        // Web checks the quote branch before the heading branch, so a "> #"
+        // line is a quote whose text happens to start with a hash.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("> # quoted"),
+            [.quote("# quoted")]
+        )
+    }
+
+    func testHeadingBeatsTableStartOnTheSameLine() {
+        // Web tests HEADING_RE before isTableStart; a heading line carrying a
+        // pipe is still a heading, and the separator below it is then prose.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("# a | b\n| - | - |"),
+            [.heading(level: 1, text: "a | b"), .paragraph("| - | - |")]
+        )
+    }
+
+    func testHeadingRecognisedAfterATable() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("| a |\n| - |\n| 1 |\n## After"),
+            [
+                .table(header: ["a"], align: [nil], rows: [["1"]]),
+                .heading(level: 2, text: "After"),
+            ]
+        )
+    }
+
     // MARK: - GFM pipe tables
 
     func testTableParsesHeaderAlignAndRows() {

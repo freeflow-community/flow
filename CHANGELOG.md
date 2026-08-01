@@ -256,6 +256,12 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-07-31 — Headings render on the native clients (#166)
+
+- `[macos]` `[ios]` `MarkdownBlocks` gains a `heading` segment, ported from
+  web's `HEADING_RE`, so `#`…`######` render as headings instead of literal
+  hashes. Both `segmentView`s render it — iOS compiles the same file.
+- `[macos]` VERSION 2.2.15.
 ### 2026-08-01 — Native clients opt out of Dark Mode (#169)
 
 - `[macos]` `[ios]` `MC` is a fixed light palette, so on a Mac set to Dark
