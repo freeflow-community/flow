@@ -24,6 +24,8 @@ export interface RunOpts {
    */
   signal?: AbortSignal | undefined;
   onToolStep(step: string): void;
+  /** Each assistant text block as it is produced — the agent's narration (#162). */
+  onText?(text: string): void;
   log(msg: string): void;
 }
 
@@ -115,7 +117,16 @@ export class StreamJsonParser {
    */
   lastText = '';
 
-  constructor(private readonly onToolStep: (step: string) => void) {}
+  /**
+   * `onText` receives every assistant text block as it arrives — the agent's
+   * running commentary, which used to be parsed and dropped on the floor
+   * (#162). A block identical to the one before it is swallowed: relaying the
+   * same sentence twice reads as a glitch, never as progress.
+   */
+  constructor(
+    private readonly onToolStep: (step: string) => void,
+    private readonly onText: (text: string) => void = () => {},
+  ) {}
 
   feed(chunk: string): void {
     this.buf += chunk;
@@ -139,8 +150,12 @@ export class StreamJsonParser {
     if (ev.type === 'assistant') {
       for (const block of ev.message?.content ?? []) {
         if (block.type === 'tool_use' && block.name) this.onToolStep(formatToolStep(block.name, block.input));
-        // Latest wins: on a dead run the newest one is "where it got to".
-        else if (block.type === 'text' && block.text?.trim()) this.lastText = block.text.trim();
+        else if (block.type === 'text' && block.text?.trim()) {
+          const text = block.text.trim();
+          if (text !== this.lastText) this.onText(text);
+          // Latest wins: on a dead run the newest one is "where it got to".
+          this.lastText = text;
+        }
       }
     } else if (ev.type === 'result') {
       this.sawResult = true;
@@ -260,7 +275,7 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       detached: true,
     });
     if (child.pid) liveGroups.add(child.pid);
-    const parser = new StreamJsonParser(opts.onToolStep);
+    const parser = new StreamJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
     let stdout = '';
     let stderr = '';
     let settled = false;

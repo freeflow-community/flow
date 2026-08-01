@@ -10,6 +10,15 @@ For the full technical changelog see `CHANGELOG.md`.
   history, and a message you send always scrolls into view. Scroll back to read
   older messages and Flow stays put, as before.
 
+## 2026-07-31
+
+- **Agents think out loud.** When an agent takes a while, you can now watch it
+  work: what it says along the way appears in the conversation as it happens,
+  instead of the channel sitting silent and then dropping everything at once at
+  the end. It fills in one message as it goes rather than sending a stream of
+  new ones, so it won't flood your unreads — and its final answer no longer
+  repeats what you already read.
+
 ## 2026-07-30
 
 - **Documents on your iPhone.** Channels with pinned documents now show a Docs
