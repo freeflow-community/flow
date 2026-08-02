@@ -240,6 +240,13 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
   support, so macOS shows the file chip (Download / open externally) for
   webm attachments (ruled — see decision_log 2026-07-20).
+- macOS + web upload images at full size and full bytes — #84 fixed iOS only.
+  The Mac composer also accepts `.heic` and sends it raw, so it lands with no
+  thumbnail (the same bug #84 fixed on iOS). `Support/ImagePrep.swift` is
+  ImageIO-based and already compiles for macOS, so the Mac side is a call-site
+  change; web needs a `canvas`/`createImageBitmap` equivalent in
+  `packages/web/src/lib/api.ts`. Board: "macOS + web: compress and convert
+  images on upload".
 - Responsive/mobile layout (drawer nav, viewport-capped media and modals):
   web only, and inherently so — the native clients lay themselves out per
   platform, and the iOS app is the native phone experience. Not a gap.
@@ -255,6 +262,20 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-08-02 — iOS shares images compressed and converted (#84)
+
+- `[ios]` Photos downscale to 1024px on the longest edge and re-encode to JPEG
+  before upload — a 12MP HEIC goes up 5× smaller. Images already smaller than
+  the cap in a web-friendly format pass through untouched, not recompressed.
+- `[ios]` HEIC picked through the Files app used to upload raw, so it arrived
+  with no thumbnail and rendered as a generic file; it now converts like a
+  photo-library pick.
+- `[ios]` Transparent images convert to PNG rather than JPEG, which can't carry
+  an alpha channel.
+- `[macos]` New shared `Support/ImagePrep.swift` (ImageIO, cross-platform);
+  `.heic`/`.heif` now map to `image/heic` instead of `application/octet-stream`.
+  VERSION 2.2.17.
 
 ### 2026-07-31 — Headings render on the native clients (#166)
 
