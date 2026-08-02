@@ -3,6 +3,14 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-08-02
+
+- **Sharing a photo from your iPhone is much faster.** Photos are now scaled
+  down and compressed before they're sent, so a shot straight off the camera
+  uploads around five times smaller — and iPhone photos in Apple's HEIC format
+  now show up as pictures in the conversation instead of as a file you have to
+  download to look at.
+
 ## 2026-08-01
 
 - **Messages are readable again if your Mac or iPhone is set to Dark Mode.**

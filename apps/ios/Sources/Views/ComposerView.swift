@@ -159,9 +159,9 @@ struct ComposerView: View {
     // MARK: - Uploads (shared pipeline: engine.uploadFile → attachment bar)
 
     /// Photo library picks. Videos pass through untouched (loaded as a file URL
-    /// so a large movie never lands in memory); still images use original bytes
-    /// when the format is web-friendly, HEIC/others re-encoded to JPEG so server
-    /// thumbnailing works.
+    /// so a large movie never lands in memory); still images go through
+    /// `ImagePrep` — HEIC re-encoded so server thumbnailing works, anything
+    /// over 1024px on its longest edge downscaled.
     private func uploadPhotos(_ items: [PhotosPickerItem]) {
         for item in items {
             let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
@@ -180,21 +180,15 @@ struct ComposerView: View {
                     app.showError("Couldn't load the selected photo")
                     return
                 }
-                let type = item.supportedContentTypes.first
+                // Write the picked bytes out first and let ImagePrep decide
+                // from the file itself — the picker's declared type isn't
+                // always the container the bytes are actually in.
+                let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "img"
                 let epochMs = Int(Date().timeIntervalSince1970 * 1000)
-                let url: URL
-                if let type, [UTType.png, .jpeg, .gif, .webP].contains(type) {
-                    let ext = type.preferredFilenameExtension ?? "png"
-                    url = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("photo-\(epochMs).\(ext)")
-                    try? data.write(to: url)
-                } else if let image = UIImage(data: data),
-                          let jpeg = image.jpegData(compressionQuality: 0.9) {
-                    url = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("photo-\(epochMs).jpg")
-                    try? jpeg.write(to: url)
-                } else {
-                    app.showError("Unsupported photo format")
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("photo-\(epochMs).\(ext)")
+                guard (try? data.write(to: url)) != nil else {
+                    app.showError("Couldn't read the selected photo")
                     return
                 }
                 await upload(url)
@@ -214,12 +208,17 @@ struct ComposerView: View {
             let epochMs = Int(Date().timeIntervalSince1970 * 1000)
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("camera-\(epochMs).jpg")
-            try? jpeg.write(to: url)
+            guard (try? jpeg.write(to: url)) != nil else {
+                app.showError("Couldn't save the captured photo")
+                return
+            }
             await upload(url)
         }
     }
 
     /// Files app picks: security-scoped URLs copied to temp before reading.
+    /// Images get the same ImagePrep treatment as a photo-library pick —
+    /// a .heic picked here used to upload raw, so it arrived thumbnail-less.
     private func uploadPickedFiles(_ urls: [URL]) {
         for url in urls {
             uploading += 1
@@ -243,11 +242,17 @@ struct ComposerView: View {
         }
     }
 
+    /// The one funnel every upload path goes through — photo library, camera,
+    /// Files picker and the debug QA harness. `ImagePrep` belongs here rather
+    /// than at each call site: it can't be forgotten by a new caller, and the
+    /// QA harness exercises the same code a real pick does. Non-images and
+    /// already-small images come back `nil` and upload untouched.
     private func upload(_ fileURL: URL) async {
         guard let wsId = workspaceId else {
             app.showError("Couldn't upload: workspace unknown")
             return
         }
+        let fileURL = ImagePrep.prepareForUpload(fileURL) ?? fileURL
         do {
             let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: fileURL)
             if attachments.count < 10 { attachments.append(file) }
