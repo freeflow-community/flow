@@ -19,6 +19,7 @@ struct ThreadScreen: View {
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channelId = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
+    @State private var flashId: String?
 
     private var userNames: [String: String] {
         Dictionary(users.value.map { ($0.id, $0.displayNameWithBadge) }, uniquingKeysWith: { a, _ in a })
@@ -47,6 +48,7 @@ struct ThreadScreen: View {
                                 currentUserId: app.currentUser?.id,
                                 showHeader: true,
                                 showThreadAffordances: false,
+                                highlighted: message.id == flashId,
                                 onOpenThread: { _ in },
                                 onEdit: { editingMessage = $0 },
                                 onDelete: { msg in
@@ -83,9 +85,11 @@ struct ThreadScreen: View {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
                 .defaultScrollAnchor(.bottom)
-                .scrollDismissesKeyboard(.interactively)
-                .dismissesKeyboardOnTap()
+                .onChange(of: app.focusMessageId) { _, _ in focusPinnedMessage(proxy) }
+                .onChange(of: thread.value.count) { _, _ in focusPinnedMessage(proxy) }
+                .onAppear { focusPinnedMessage(proxy) }
             }
+            .dismissesKeyboardOnChatInteraction()
             if let chId = channelId.value {
                 TypingIndicatorView(channelId: chId, threadRootId: rootId, userNames: userNames)
                 Divider()
@@ -118,6 +122,21 @@ struct ThreadScreen: View {
         // can tell a Back tap from a channel switch.
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
+        }
+    }
+
+    private func focusPinnedMessage(_ proxy: ScrollViewProxy) {
+        guard let messageId = app.focusMessageId,
+              thread.value.contains(where: { $0.id == messageId }) else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(messageId, anchor: .center)
+        }
+        flashId = messageId
+        app.focusMessageId = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            withAnimation(.easeOut(duration: 0.6)) {
+                if flashId == messageId { flashId = nil }
+            }
         }
     }
 }

@@ -81,7 +81,7 @@ struct MessageListView: View {
                             Spacer()
                             Button("Load earlier messages", action: onLoadOlder)
                                 .buttonStyle(.link)
-                                .font(.callout)
+                                .flowFont(.callout)
                                 .pointingHandCursor()
                             Spacer()
                         }
@@ -223,7 +223,7 @@ struct MessageListView: View {
                 }
             } label: {
                 Text("Latest msgs ↓")
-                    .font(.system(size: 12, weight: .semibold))
+                    .flowFont(size: 12, weight: .semibold)
                     .foregroundStyle(MC.accentSoft)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -289,7 +289,7 @@ struct DayDividerView: View {
         HStack {
             Spacer()
             Text(label)
-                .font(.system(size: 11))
+                .flowFont(size: 11)
                 .foregroundStyle(MC.faint)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 3)
@@ -316,7 +316,7 @@ struct SystemLineView: View {
         HStack {
             Spacer()
             Text(text)
-                .font(.system(size: 11))
+                .flowFont(size: 11)
                 .foregroundStyle(MC.faint)
             Spacer()
         }
@@ -339,6 +339,7 @@ struct MessageRow: View {
     var onOpenProfile: (String) -> Void = { _ in }
 
     @EnvironmentObject private var app: AppState
+    @Environment(\.textZoom) private var textZoom
     @State private var hovering = false
     @State private var showReactionPicker = false
     @State private var showDeleteConfirm = false
@@ -391,20 +392,28 @@ struct MessageRow: View {
                 if showHeader {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(senderName)
-                            .font(.system(size: 14, weight: .bold))
+                            .flowFont(size: 14, weight: .bold)
                             .foregroundStyle(MC.ink)
                         if let emoji = userStatuses[message.userId], !emoji.isEmpty {
-                            Text(emoji).font(.system(size: 14))
+                            Text(emoji).flowFont(size: 14)
                         }
                         Text(ISO8601.displayTime(message.createdAt))
-                            .font(.system(size: 11))
+                            .flowFont(size: 11)
                             .foregroundStyle(MC.faint)
                     }
                 }
 
+                if message.pinnedAt != nil, !message.isDeleted {
+                    Label("Pinned", systemImage: "pin.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MC.accentSoft)
+                        .help(pinnedHelp)
+                        .accessibilityIdentifier("msg.pinned.\(message.id)")
+                }
+
                 if message.isDeleted {
                     Text("This message was deleted")
-                        .font(.callout)
+                        .flowFont(.callout)
                         .italic()
                         .foregroundStyle(.tertiary)
                 } else {
@@ -437,6 +446,10 @@ struct MessageRow: View {
 
                     if message.failed {
                         sendFailedFooter
+                    }
+
+                    if isThinkingRow {
+                        interruptButton
                     }
 
                     if !message.reactions.isEmpty {
@@ -473,7 +486,7 @@ struct MessageRow: View {
                                 "\(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies")",
                                 systemImage: "bubble.left.and.bubble.right"
                             )
-                            .font(.caption)
+                            .flowFont(.caption)
                         }
                     }
                     .buttonStyle(.link)
@@ -537,6 +550,11 @@ struct MessageRow: View {
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(message.body, forType: .string)
+                }
+            }
+            if !message.isDeleted, !message.pending, !message.failed {
+                Button(message.pinnedAt == nil ? "Pin Message" : "Unpin Message") {
+                    Task { await app.engine.togglePin(message) }
                 }
             }
             if !message.files.isEmpty, !message.isDeleted, !message.pending {
@@ -606,12 +624,21 @@ struct MessageRow: View {
                 .accessibilityIdentifier("msg.copy")
             }
 
+            MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
+                Task { await app.engine.togglePin(message) }
+            } label: {
+                Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
+            }
+            .accessibilityIdentifier("msg.togglePin")
+
             if !message.files.isEmpty {
                 MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
                     // Web draws this one as an inline SVG (box + leaving arrow);
                     // the matching SF Symbol keeps the same open-external read.
                     Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 15))
+                        .flowFont(size: 15)
                         .foregroundStyle(MC.inkSoft)
                 }
                 .accessibilityIdentifier("msg.saveArtifact")
@@ -646,6 +673,11 @@ struct MessageRow: View {
         .onHover { setHovering($0) }
     }
 
+    private var pinnedHelp: String {
+        guard let pinner = message.pinnedBy else { return "Pinned to this channel" }
+        return "Pinned by \(userNames[pinner] ?? "a channel member")"
+    }
+
     /// One borderless glyph button in the hover pill. Mirrors the web buttons'
     /// `rounded-md px-1.5 py-1 … hover:bg-daypill`: a rounded daypill highlight
     /// appears under the glyph on hover.
@@ -669,7 +701,7 @@ struct MessageRow: View {
                 action()
             } label: {
                 label()
-                    .font(.system(size: 15))
+                    .flowFont(size: 15)
                     .frame(width: 26, height: 24)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
@@ -693,7 +725,7 @@ struct MessageRow: View {
 
         private var tooltip: some View {
             Text(help)
-                .font(.system(size: 11))
+                .flowFont(size: 11)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
@@ -762,23 +794,35 @@ struct MessageRow: View {
     /// pills or markdown inside code).
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        if segments.count == 1, case .paragraph(let text) = segments[0] {
-            // Fast path: single plain paragraph keeps the original inline
-            // layout (baseline-aligned edited/pending markers).
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                paragraphText(text)
-                trailingMarkers
-            }
-        } else {
-            HStack(alignment: .bottom, spacing: 4) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(segment)
-                    }
+        Group {
+            if segments.count == 1, case .paragraph(let text) = segments[0] {
+                // Fast path: single plain paragraph keeps the original inline
+                // layout (baseline-aligned edited/pending markers).
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    paragraphText(text)
+                    trailingMarkers
                 }
-                trailingMarkers
+            } else {
+                HStack(alignment: .bottom, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                            segmentView(segment)
+                        }
+                    }
+                    trailingMarkers
+                }
             }
         }
+        // The body must never be the view that gives way (#161). It shares the
+        // row's VStack with attachments, unfurl cards and reactions, and a
+        // multiline `Text` is the only flexible one of them: when the row's
+        // ideal height exceeds the height the message list proposes, SwiftUI
+        // compresses the text and the body renders cut off partway through,
+        // with the card below it sitting where the rest of the prose should
+        // be. `fixedSize` vertically makes the body report its wrapped height
+        // as its ideal *and* its minimum, so the row grows instead. Width
+        // stays flexible, so wrapping is unchanged.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -795,9 +839,11 @@ struct MessageRow: View {
                     .foregroundStyle(MC.inkSoft)
             }
             .accessibilityIdentifier("msg.quoteBlock")
+        case .heading(let level, let text):
+            headingText(level: level, text: text)
         case .code(let text):
             Text(text.isEmpty ? " " : text)
-                .font(.system(size: 12, design: .monospaced))
+                .flowFont(size: 12, design: .monospaced)
                 .foregroundStyle(MC.ink)
                 .textSelection(.enabled)
                 .padding(.horizontal, 10)
@@ -813,12 +859,33 @@ struct MessageRow: View {
         }
     }
 
-    private func paragraphText(_ text: String) -> some View {
+    /// ATX headings, sized as the macOS analogue of web's scale rather than a
+    /// copy of its Tailwind classes: body text is `.callout` (13pt), so h1/h2
+    /// step up by web's own ratios (1.29×, 1.2×) and h3–h6 stay body-size,
+    /// distinguished by weight — which is what `HEADING_CLASS` does. Sizes go
+    /// through `flowFont(size:)` so text zoom (#105) still applies, and the
+    /// inline pass runs inside the heading so mentions and `**bold**` work.
+    private func headingText(level: Int, text: String) -> some View {
+        let size: CGFloat = level == 1 ? 17 : (level == 2 ? 15.5 : 13)
         let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId
+            text, names: userNames, currentUserId: currentUserId, scale: textZoom
         )
         return Text(attributed)
-            .font(.callout)
+            .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
+            .foregroundStyle(MC.ink)
+            .textSelection(.enabled)
+            .linkCursor(attributed)
+            .padding(.top, level <= 2 ? 2 : 0) // web's mt-2 on h1/h2
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("msg.heading")
+    }
+
+    private func paragraphText(_ text: String) -> some View {
+        let attributed = MentionRendering.attributed(
+            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+        )
+        return Text(attributed)
+            .flowFont(.callout)
             .textSelection(.enabled)
             // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
             // inside a Text, so linkCursor re-lays the string to find them.
@@ -829,7 +896,7 @@ struct MessageRow: View {
     private var trailingMarkers: some View {
         if message.editedAt != nil {
             Text("(edited)")
-                .font(.caption2)
+                .flowFont(.caption2)
                 .foregroundStyle(.tertiary)
         }
         if message.pending {
@@ -843,19 +910,56 @@ struct MessageRow: View {
     private var sendFailedFooter: some View {
         HStack(spacing: 8) {
             Label("Failed to send", systemImage: "exclamationmark.circle.fill")
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(MC.danger)
             Button("Retry") { Task { await app.engine.retrySend(message) } }
                 .buttonStyle(.link)
-                .font(.caption.weight(.semibold))
+                .flowFont(.caption, weight: .semibold)
                 .pointingHandCursor()
             Button("Discard") { Task { await app.engine.discardFailed(message) } }
                 .buttonStyle(.link)
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(MC.muted)
                 .pointingHandCursor()
         }
         .padding(.top, 1)
+    }
+
+    /// An agent's live "thinking…" row carries its own stop control (#67).
+    private var isThinkingRow: Bool {
+        app.agentIds.contains(message.userId) && AgentStatus.isThinkingRow(message.body)
+    }
+
+    /// True once we've asked: the reaction is already ours, so the bridge has
+    /// the signal and the turn is on its way down.
+    private var stopping: Bool {
+        guard let me = currentUserId else { return false }
+        return message.reactions.contains { $0.emoji == AgentStatus.interruptEmoji && $0.userIds.contains(me) }
+    }
+
+    /// Interrupt: adds the 🛑 reaction the bridge maps back to the running turn.
+    private var interruptButton: some View {
+        Button {
+            guard !stopping else { return }
+            Task { await app.engine.toggleReaction(messageId: message.id, emoji: AgentStatus.interruptEmoji) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "stop.circle")
+                Text(stopping ? "Stopping…" : "Interrupt")
+            }
+            .flowFont(.caption, weight: .semibold)
+            .foregroundStyle(stopping ? MC.faint : MC.inkSoft)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(.white))
+            .overlay(Capsule().strokeBorder(MC.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(stopping)
+        .pointingHandCursor()
+        .help(stopping ? "Stopping…" : "Stop this agent turn")
+        .accessibilityIdentifier("msg.interrupt.\(message.id)")
+        .padding(.top, 2)
     }
 
     private var reactionChips: some View {
@@ -866,9 +970,9 @@ struct MessageRow: View {
                     Task { await app.engine.toggleReaction(messageId: message.id, emoji: agg.emoji) }
                 } label: {
                     HStack(spacing: 3) {
-                        Text(agg.emoji).font(.system(size: 12))
+                        Text(agg.emoji).flowFont(size: 12)
                         Text("\(agg.count)")
-                            .font(.caption2.bold())
+                            .flowFont(.caption2, weight: .bold)
                             .foregroundStyle(mine ? MC.accentSoft : MC.inkSoft)
                     }
                     .padding(.horizontal, 9)
@@ -959,7 +1063,7 @@ struct AttachmentView: View {
                     CollapsedImages.set(file.id, collapsed: collapsed)
                 } label: {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .flowFont(size: 9, weight: .semibold)
                         .frame(width: 12)
                 }
                 .buttonStyle(.plain)
@@ -967,7 +1071,7 @@ struct AttachmentView: View {
                 .help(collapsed ? "Show image" : "Hide image")
                 .accessibilityIdentifier("msg.file.collapse.\(file.name)")
                 Text(file.name)
-                    .font(.system(size: 11))
+                    .flowFont(size: 11)
                     .foregroundStyle(MC.faint)
                     .lineLimit(1)
             }
@@ -1025,14 +1129,14 @@ struct AttachmentView: View {
             Button(action: open) {
                 HStack(spacing: 8) {
                     Image(systemName: iconName)
-                        .font(.title2)
+                        .flowFont(.title2)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(file.name)
-                            .font(.callout)
+                            .flowFont(.callout)
                             .lineLimit(1)
                         Text(file.sizeLabel)
-                            .font(.caption2)
+                            .flowFont(.caption2)
                             .foregroundStyle(.tertiary)
                     }
                     if opening {
@@ -1058,7 +1162,7 @@ struct AttachmentView: View {
                     ProgressView().controlSize(.mini)
                 } else {
                     Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 12, weight: .semibold))
+                        .flowFont(size: 12, weight: .semibold)
                 }
             }
             .frame(width: 24, height: 24)
@@ -1123,7 +1227,7 @@ struct ImageLightboxView: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 Text(file.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .flowFont(size: 13, weight: .semibold)
                     .lineLimit(1)
                 if busy { ProgressView().controlSize(.mini) }
                 Spacer()
@@ -1233,7 +1337,7 @@ struct EmojiPickerView: View {
                     ForEach(results, id: \.self) { emoji in
                         Button(emoji) { onPick(emoji) }
                             .buttonStyle(.plain)
-                            .font(.system(size: 20))
+                            .flowFont(size: 20)
                     }
                 }
             }

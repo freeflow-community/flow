@@ -70,6 +70,60 @@ describe('StreamJsonParser', () => {
     p.feed(`${JSON.stringify({ type: 'result', subtype: 'success', result: 'fine', is_error: false })}\n`);
     expect(p.errorSubtype).toBe('');
   });
+
+  // #162: the text blocks used to be parsed and dropped, so every normal turn
+  // discarded the agent's running commentary.
+  it('emits every assistant text block as it arrives', () => {
+    const said: string[] = [];
+    const p = new StreamJsonParser(
+      () => {},
+      (t) => said.push(t),
+    );
+    const say = (text: string): string =>
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+    p.feed(`${say('  reading the parser  ')}\n${say('')}\n${say('now writing the test')}\n`);
+    expect(said).toEqual(['reading the parser', 'now writing the test']);
+  });
+
+  it('emits text in the order it appears alongside tool calls', () => {
+    const events: string[] = [];
+    const p = new StreamJsonParser(
+      (s) => events.push(`step:${s}`),
+      (t) => events.push(`text:${t}`),
+    );
+    p.feed(
+      `${JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'let me check the tests' },
+            { type: 'tool_use', name: 'Bash', input: { command: 'pnpm test' } },
+          ],
+        },
+      })}\n`,
+    );
+    expect(events).toEqual(['text:let me check the tests', 'step:Bash: pnpm test']);
+  });
+
+  it('swallows a block identical to the one before it', () => {
+    // Relaying the same sentence twice reads as a glitch, not as progress.
+    const said: string[] = [];
+    const p = new StreamJsonParser(
+      () => {},
+      (t) => said.push(t),
+    );
+    const say = (text: string): string =>
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+    p.feed(`${say('on it')}\n${say('on it')}\n${say('still on it')}\n`);
+    expect(said).toEqual(['on it', 'still on it']);
+    expect(p.lastText).toBe('still on it');
+  });
+
+  it('needs no text callback — the salvage path still works', () => {
+    const p = new StreamJsonParser(() => {});
+    p.feed(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'got here' }] } })}\n`);
+    expect(p.lastText).toBe('got here');
+  });
 });
 
 describe('describeResultError', () => {

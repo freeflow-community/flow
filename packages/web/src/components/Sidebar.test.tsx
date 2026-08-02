@@ -1,6 +1,7 @@
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ChannelDTO } from '@flow/shared';
-import { nestChannels } from './Sidebar';
+import { ActivitySpinner, nestChannels } from './Sidebar';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
 // child whose parent isn't in the list must still be rendered, or you lose a
@@ -67,5 +68,24 @@ describe('nestChannels', () => {
   it('returns every channel it was given', () => {
     const list = [chan('a'), chan('b', 'a'), chan('c', 'gone'), chan('d')];
     expect(nestChannels(list)).toHaveLength(list.length);
+  });
+});
+
+// The "an agent is working here" spinner (#137).
+describe('ActivitySpinner', () => {
+  it('spins, and holds still for anyone who asked for less motion', () => {
+    const html = renderToStaticMarkup(<ActivitySpinner active={false} />);
+    expect(html).toContain('animate-spin');
+    expect(html).toContain('motion-reduce:animate-none');
+  });
+
+  it('is labelled, so it is not a mystery dot', () => {
+    expect(renderToStaticMarkup(<ActivitySpinner active={false} />)).toContain('title="an agent is working');
+  });
+
+  it('does not shrink the channel name away', () => {
+    // It sits after a truncating label — without shrink-0 the ring is what
+    // collapses when a long channel name fills the row.
+    expect(renderToStaticMarkup(<ActivitySpinner active />)).toContain('shrink-0');
   });
 });

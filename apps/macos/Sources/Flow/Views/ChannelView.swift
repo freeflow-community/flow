@@ -7,6 +7,7 @@ struct ChannelView: View {
 
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
+    @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
     /// One roster observer for the whole header + list: names, status and the
     /// agent flag all come off the same User records (#70 needs status *text*,
     /// which the old name/emoji maps dropped).
@@ -18,6 +19,7 @@ struct ChannelView: View {
     /// carries memberIds for DMs.
     @State private var channelMemberIds: [String] = []
     @State private var showMembers = false
+    @State private var showPins = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,7 +59,7 @@ struct ChannelView: View {
 
             if channel.value?.archivedAt != nil {
                 Text("This channel is archived and read-only.")
-                    .font(.callout)
+                    .flowFont(.callout)
                     .foregroundStyle(.secondary)
                     .padding(12)
             } else {
@@ -80,10 +82,17 @@ struct ChannelView: View {
                     .order(Column("id"))
                     .fetchAll(db)
             }
+            pinnedMessages.start(db: app.db, reset: []) { db in
+                try Message
+                    .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
+                    .order(Column("pinnedAt").desc)
+                    .fetchAll(db)
+            }
             users.start(db: app.db, reset: [:]) { db in
                 try Dictionary(uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0) })
             }
             await loadChannelMembers()
+            await app.engine.loadPinnedMessages(channelId: channelId)
         }
         // Jump-to-message (phase 12): a target from the Activity feed may sit
         // beyond the loaded page — page older history until it's in the list,
@@ -103,6 +112,22 @@ struct ChannelView: View {
             if let c = channel.value {
                 ChannelEditSheet(channel: c)
             }
+        }
+        .sheet(isPresented: $showPins) {
+            PinnedMessagesSheet(
+                messages: pinnedMessages.value,
+                userNames: userNames,
+                onSelect: { message in
+                    guard let workspaceId = channel.value?.workspaceId else { return }
+                    app.openNotification(
+                        workspaceId: workspaceId,
+                        channelId: message.channelId,
+                        messageId: message.id,
+                        threadRootId: message.threadRootId
+                    )
+                    showPins = false
+                }
+            )
         }
     }
 
@@ -163,7 +188,7 @@ struct ChannelView: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Image(systemName: headerIcon)
-                        .font(.system(size: 13))
+                        .flowFont(size: 13)
                         .foregroundStyle(MC.muted)
                     // Ruling 4: a 1:1 DM's header title opens the other
                     // member's profile card.
@@ -172,7 +197,7 @@ struct ChannelView: View {
                             profileUserId = otherId
                         } label: {
                             Text(headerTitle)
-                                .font(.system(size: 15, weight: .bold))
+                                .flowFont(size: 15, weight: .bold)
                                 .foregroundStyle(MC.ink)
                                 .contentShape(Rectangle())
                         }
@@ -185,7 +210,7 @@ struct ChannelView: View {
                             showChannelEdit = true
                         } label: {
                             Text(channel.value?.name ?? "")
-                                .font(.system(size: 15, weight: .bold))
+                                .flowFont(size: 15, weight: .bold)
                                 .foregroundStyle(MC.ink)
                                 .contentShape(Rectangle())
                         }
@@ -194,18 +219,34 @@ struct ChannelView: View {
                         .accessibilityIdentifier("channel.editHeader")
                     } else {
                         Text(headerTitle)
-                            .font(.system(size: 15, weight: .bold))
+                            .flowFont(size: 15, weight: .bold)
                             .foregroundStyle(MC.ink)
                     }
                 }
                 if let topic = channel.value?.topic, !topic.isEmpty {
                     Text(topic)
-                        .font(.system(size: 12))
+                        .flowFont(size: 12)
                         .foregroundStyle(MC.muted)
                         .lineLimit(1)
                 }
             }
             Spacer()
+            Button {
+                showPins = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: pinnedMessages.value.isEmpty ? "pin" : "pin.fill")
+                    if !pinnedMessages.value.isEmpty {
+                        Text("\(pinnedMessages.value.count)")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(pinnedMessages.value.isEmpty ? MC.muted : MC.accentSoft)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Pinned messages")
+            .accessibilityIdentifier("channel.pins")
             headerAvatars
         }
         .padding(.horizontal, 22)
@@ -238,13 +279,13 @@ struct ChannelView: View {
                 }
                 if extra > 0 {
                     Text("+\(extra)")
-                        .font(.system(size: 12))
+                        .flowFont(size: 12)
                         .foregroundStyle(MC.muted)
                 }
                 // Nothing to stack yet (fetch in flight) — keep a click target.
                 if shown.isEmpty {
                     Image(systemName: "person.2")
-                        .font(.system(size: 13))
+                        .flowFont(size: 13)
                         .foregroundStyle(MC.muted)
                 }
             }
@@ -287,14 +328,14 @@ struct ChannelView: View {
         let rows = orderedMembers
         return VStack(alignment: .leading, spacing: 0) {
             Text(rows.count == 1 ? "1 MEMBER" : "\(rows.count) MEMBERS")
-                .font(.system(size: 11, weight: .bold))
+                .flowFont(size: 11, weight: .bold)
                 .kerning(0.5)
                 .foregroundStyle(MC.muted)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 6)
             if rows.isEmpty {
                 Text("No members.")
-                    .font(.system(size: 13))
+                    .flowFont(size: 13)
                     .foregroundStyle(MC.faint)
                     .padding(.horizontal, 10)
             }
@@ -332,22 +373,22 @@ struct ChannelView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
                         Text(user.displayName)
-                            .font(.system(size: 13.5, weight: .semibold))
+                            .flowFont(size: 13.5, weight: .semibold)
                             .foregroundStyle(MC.ink)
                             .lineLimit(1)
                         if user.id == app.currentUser?.id {
                             Text("(you)")
-                                .font(.system(size: 13.5))
+                                .flowFont(size: 13.5)
                                 .foregroundStyle(MC.faint)
                         }
-                        if user.isAgent == true { Text("🤖").font(.system(size: 12)) }
+                        if user.isAgent == true { Text("🤖").flowFont(size: 12) }
                         if let emoji = user.statusEmoji, !emoji.isEmpty {
-                            Text(emoji).font(.system(size: 12))
+                            Text(emoji).flowFont(size: 12)
                         }
                     }
                     if let status = user.statusText, !status.isEmpty {
                         Text(status)
-                            .font(.system(size: 11))
+                            .flowFont(size: 11)
                             .foregroundStyle(MC.faint)
                             .lineLimit(1)
                     }
@@ -379,6 +420,82 @@ struct ChannelView: View {
     }
 }
 
+struct PinnedMessagesSheet: View {
+    let messages: [Message]
+    let userNames: [String: String]
+    let onSelect: (Message) -> Void
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Pinned Messages").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+
+            if messages.isEmpty {
+                ContentUnavailableView(
+                    "No Pinned Messages",
+                    systemImage: "pin",
+                    description: Text("Pin an important message to keep it easy to find.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(messages) { message in
+                            HStack(alignment: .top, spacing: 8) {
+                                Button {
+                                    onSelect(message)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack {
+                                            Text(userNames[message.userId] ?? "Unknown")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Spacer()
+                                            if let at = message.pinnedAt {
+                                                Text(ISO8601.parse(at)?.formatted(date: .abbreviated, time: .shortened) ?? "")
+                                                    .font(.system(size: 10))
+                                                    .foregroundStyle(MC.faint)
+                                            }
+                                        }
+                                        Text(message.body.isEmpty ? (message.files.first?.name ?? "Message") : message.body)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(MC.inkSoft)
+                                            .lineLimit(3)
+                                        if message.threadRootId != nil {
+                                            Text("Reply in thread")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(MC.accentSoft)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    Task { await app.engine.togglePin(message) }
+                                } label: {
+                                    Image(systemName: "pin.slash")
+                                        .foregroundStyle(MC.accentSoft)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Unpin message")
+                            }
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(MC.daypill.opacity(0.45)))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(MC.hairline, lineWidth: 1))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 480, height: 440)
+    }
+}
+
 struct TypingIndicatorView: View {
     let channelId: String
     /// nil = the channel's main composer; set = that thread's composer, so the
@@ -392,7 +509,7 @@ struct TypingIndicatorView: View {
         HStack {
             if !ids.isEmpty {
                 Text(typingText(ids))
-                    .font(.caption)
+                    .flowFont(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("typing.indicator")
             }
@@ -428,7 +545,7 @@ struct EditMessageSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Edit Message").font(.headline)
+            Text("Edit Message").flowFont(.headline)
             TextField("Message", text: $text, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3...10)
@@ -470,9 +587,9 @@ struct ChannelEditSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Channel settings").font(.headline)
+            Text("Channel settings").flowFont(.headline)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Name").font(.caption).foregroundStyle(.secondary)
+                Text("Name").flowFont(.caption).foregroundStyle(.secondary)
                 TextField("name (lowercase, a-z 0-9 - _)", text: $name)
                     .textFieldStyle(.roundedBorder)
                     .disabled(isGeneral)
@@ -480,13 +597,13 @@ struct ChannelEditSheet: View {
                     .accessibilityIdentifier("channel.edit.name")
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Topic").font(.caption).foregroundStyle(.secondary)
+                Text("Topic").flowFont(.caption).foregroundStyle(.secondary)
                 TextField("What's this channel about?", text: $topic)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("channel.edit.topic")
             }
             if let error {
-                Text(error).font(.caption).foregroundStyle(.red)
+                Text(error).flowFont(.caption).foregroundStyle(.red)
             }
             HStack {
                 Spacer()

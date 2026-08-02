@@ -20,6 +20,20 @@ operator's screen, so they're safe to run any time.
    via `FLOW_DEBUG_OPEN_CHANNEL` (all DEBUG-only, compiled out of release).
    `FLOW_SERVER_URL` points the app at the local server.
 
+   Both defaults are overridable, because neither holds on every machine — port
+   8787 is often taken, and old QA-Lab `#general` rows are encrypted with a dev
+   key a fresh server doesn't hold (message fetch 500s). Pass them through to
+   the test runner with Xcode's `TEST_RUNNER_` prefix:
+
+   ```sh
+   TEST_RUNNER_FLOW_TEST_SERVER_URL=http://127.0.0.1:8788 \
+   TEST_RUNNER_FLOW_TEST_CHANNEL=kbd139 \
+   xcodebuild test …
+   ```
+
+   The scroll test wants a transcript long enough to actually scroll — seed a
+   fresh channel with a few dozen messages rather than reusing `#general`.
+
 2. **Software keyboard on.** Keyboard tests need the on-screen keyboard, which
    the simulator hides while a hardware keyboard is connected:
 
@@ -45,5 +59,28 @@ checks")`, the simulator is wedged from a previous run:
 
 ## Tests
 
-- `KeyboardDismissTests` — #69: the keyboard goes down when the drawer opens
-  and when you tap the message list. Verified red before the fix, green after.
+- `KeyboardDismissTests` — #69/#139: the keyboard goes down when the drawer
+  opens, and on any tap or scroll of the chat area. Verified red before each
+  fix, green after.
+- `ArtifactsTests` — #157: the header Docs button, its count badge, the
+  dropdown, and the viewer for each artifact kind. Needs the extra fixtures:
+
+  ```sh
+  node packages/server/scripts/qa-seed-artifacts.mjs   # after qa-seed.mjs
+  ```
+
+  That creates `#docs157` with exactly four artifacts (HTML, text, image,
+  link) — the badge assertion is that number, so pin nothing else in there.
+  Override the channel with `FLOW_TEST_ARTIFACT_CHANNEL`. These tests also
+  attach the screenshots the PR uses; pull them out of the result bundle with
+  `xcrun xcresulttool export attachments --path <run>.xcresult --output-path <dir>`.
+
+Both suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
+they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —
+passing them as trailing `xcodebuild` arguments looks right and silently does
+nothing (the app just talks to the default server):
+
+```sh
+export TEST_RUNNER_FLOW_TEST_SERVER_URL=http://127.0.0.1:8789
+xcodebuild test …
+```

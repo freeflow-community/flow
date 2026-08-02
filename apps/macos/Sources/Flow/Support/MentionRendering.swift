@@ -29,16 +29,21 @@ enum MentionRendering {
     /// body into plain segments (markdown-rendered) and token segments
     /// (styled pills) — index-safe by construction. Markdown spans crossing a
     /// mention boundary are intentionally not supported.
+    /// `scale` is the caller's text zoom (#105): pills carry their own font, so
+    /// they have to be told, or they stay put while the prose around them grows.
     static func attributed(
         _ body: String,
         names: [String: String],
-        currentUserId: String?
+        currentUserId: String?,
+        scale: CGFloat = 1
     ) -> AttributedString {
         var result = AttributedString()
         var rest = Substring(body)
         while let match = rest.firstMatch(of: anyToken) {
             let token = String(rest[match.range])
-            if let pillFor = pill(token: token, names: names, currentUserId: currentUserId) {
+            if let pillFor = pill(
+                token: token, names: names, currentUserId: currentUserId, scale: scale
+            ) {
                 if match.range.lowerBound > rest.startIndex {
                     result += markdown(String(rest[rest.startIndex..<match.range.lowerBound]))
                 }
@@ -54,7 +59,7 @@ enum MentionRendering {
     }
 
     private static func pill(
-        token: String, names: [String: String], currentUserId: String?
+        token: String, names: [String: String], currentUserId: String?, scale: CGFloat
     ) -> AttributedString? {
         var text: String
         var strong: Bool
@@ -71,7 +76,7 @@ enum MentionRendering {
         var pill = AttributedString(text)
         pill.foregroundColor = strong ? .white : .accentColor
         pill.backgroundColor = strong ? Color.accentColor : Color.accentColor.opacity(0.18)
-        pill.font = .callout.bold()
+        pill.font = ZoomedFont.system(.callout, weight: .bold, scale: scale)
         return pill
     }
 

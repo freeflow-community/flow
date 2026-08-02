@@ -18,9 +18,9 @@ struct NewDMSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New Direct Message").font(.headline)
+            Text("New Direct Message").flowFont(.headline)
             Text("Pick one person for a DM, several for a group DM (max 8).")
-                .font(.caption)
+                .flowFont(.caption)
                 .foregroundStyle(.secondary)
             List(others) { member in
                 Toggle(isOn: Binding(
@@ -40,7 +40,7 @@ struct NewDMSheet: View {
             }
             .frame(minHeight: 180, maxHeight: 260)
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red)
+                Text(error).flowFont(.callout).foregroundStyle(.red)
             }
             HStack {
                 Spacer()
@@ -88,7 +88,7 @@ struct AddMemberSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Invite to #\(channel.name ?? "")").font(.headline)
+            Text("Invite to #\(channel.name ?? "")").flowFont(.headline)
             List(candidates) { member in
                 HStack(spacing: 6) {
                     Text(member.displayName + (member.isAgent == true ? " 🤖" : ""))
@@ -118,7 +118,7 @@ struct AddMemberSheet: View {
             }
             .frame(minHeight: 160, maxHeight: 240)
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red)
+                Text(error).flowFont(.callout).foregroundStyle(.red)
             }
             HStack {
                 Spacer()
@@ -145,28 +145,28 @@ struct MemberProfileSheet: View {
         VStack(spacing: 12) {
             avatar
             Text(user.map(\.displayNameWithBadge) ?? "…")
-                .font(.title3.bold())
+                .flowFont(.title3, weight: .bold)
                 .accessibilityIdentifier("profile.name")
             if user?.isAgent == true {
-                Text("AI agent").font(.caption).foregroundStyle(.secondary)
+                Text("AI agent").flowFont(.caption).foregroundStyle(.secondary)
             }
             if let sponsor {
                 sponsorRow(sponsor)
             }
             if let email = user?.email {
                 Text(email)
-                    .font(.callout)
+                    .flowFont(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
             if let tz = user?.timezone {
                 Text(localTimeLine(tz))
-                    .font(.callout)
+                    .flowFont(.callout)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("profile.localTime")
             }
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red)
+                Text(error).flowFont(.callout).foregroundStyle(.red)
             }
             HStack {
                 if userId != app.currentUser?.id, let wsId = app.selectedWorkspaceId {
@@ -206,7 +206,7 @@ struct MemberProfileSheet: View {
     /// "Sponsored by <name>" chip for an agent's card.
     private func sponsorRow(_ s: User) -> some View {
         HStack(spacing: 6) {
-            Text("Sponsored by").font(.caption).foregroundStyle(.secondary)
+            Text("Sponsored by").flowFont(.caption).foregroundStyle(.secondary)
             Group {
                 if let path = s.avatarUrl, path.hasPrefix("/v1/avatars/") {
                     AuthImage(path: path) { Circle().fill(.secondary.opacity(0.2)) }
@@ -217,7 +217,7 @@ struct MemberProfileSheet: View {
                     Circle().fill(.secondary.opacity(0.2)).frame(width: 18, height: 18)
                 }
             }
-            Text(s.displayName).font(.callout.weight(.semibold))
+            Text(s.displayName).flowFont(.callout, weight: .semibold)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -240,7 +240,7 @@ struct MemberProfileSheet: View {
                     .frame(width: 72, height: 72)
                     .overlay(
                         Text(initials)
-                            .font(.title2.bold())
+                            .flowFont(.title2, weight: .bold)
                             .foregroundStyle(.secondary)
                     )
             }
@@ -278,7 +278,7 @@ struct MyProfileSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("My Profile").font(.headline)
+            Text("My Profile").flowFont(.headline)
 
             HStack(spacing: 12) {
                 avatar
@@ -288,14 +288,14 @@ struct MyProfileSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Display name").font(.caption).foregroundStyle(.secondary)
+                Text("Display name").flowFont(.caption).foregroundStyle(.secondary)
                 TextField("Display name", text: $displayName)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("profile.displayName")
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Timezone").font(.caption).foregroundStyle(.secondary)
+                Text("Timezone").flowFont(.caption).foregroundStyle(.secondary)
                 Picker("Timezone", selection: $timezone) {
                     ForEach(Self.timezones, id: \.self) { tz in
                         Text(tz).tag(tz)
@@ -306,7 +306,7 @@ struct MyProfileSheet: View {
             }
 
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red)
+                Text(error).flowFont(.callout).foregroundStyle(.red)
             }
 
             HStack {

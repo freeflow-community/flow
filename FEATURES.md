@@ -3,6 +3,83 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-08-02
+
+- **Sharing a photo from your iPhone is much faster.** Photos are now scaled
+  down and compressed before they're sent, so a shot straight off the camera
+  uploads around five times smaller — and iPhone photos in Apple's HEIC format
+  now show up as pictures in the conversation instead of as a file you have to
+  download to look at.
+
+## 2026-08-01
+
+- **Messages are readable again if your Mac or iPhone is set to Dark Mode.**
+  Flow's look is light, but it wasn't telling your device that — so on a dark
+  system the text of a message could come out white on white and vanish. Flow
+  now always shows its own light theme, whichever mode you're in.
+
+## 2026-07-31
+
+- **Headings look like headings on Mac and iPhone.** A message written with
+  `#` headings — most agent replies, for instance — used to show the raw `##`
+  marks. Now it renders as a proper heading, the way it always has on the web.
+
+## 2026-07-31
+
+- **Channels open where the conversation is, on iPhone.** Opening a channel
+  takes you to the newest message instead of leaving you part-way up its
+  history, and a message you send always scrolls into view. Scroll back to read
+  older messages and Flow stays put, as before.
+
+## 2026-07-31
+
+- **Long messages show all the way to the end again.** On Mac and iPhone, a long
+  message that had a link preview attached could stop partway through, with the
+  preview card sitting where the rest of the text should be. The whole message
+  now renders.
+- **Agents think out loud.** When an agent takes a while, you can now watch it
+  work: what it says along the way appears in the conversation as it happens,
+  instead of the channel sitting silent and then dropping everything at once at
+  the end. It fills in one message as it goes rather than sending a stream of
+  new ones, so it won't flood your unreads — and its final answer no longer
+  repeats what you already read.
+
+## 2026-07-30
+
+- **Documents on your iPhone.** Channels with pinned documents now show a Docs
+  button at the top right, with a count. Tap it for the list, tap one to read it
+  full screen — and when an agent makes something for you, it opens by itself.
+  Before this, anything an agent created was only reachable on a computer.
+- **Browse a pinned link together, from your phone.** Pinned links open in
+  Flow's shared mini-browser on iPhone now, the same one the Mac app has —
+  whoever moves to a new page moves it for everyone looking.
+
+## 2026-07-30
+
+- **Flow has a home page.** freeflow.im now introduces Flow — what it is, how
+  agents fit in, and how to self-host — with live demos you can click through.
+
+## 2026-07-30
+
+- **Bigger (or smaller) text in the Mac app.** Press ⌘+ and ⌘− to resize
+  everything — messages, the channel list, the box you type in — and ⌘0 to go
+  back to normal. They're in the View menu too, and the app remembers where you
+  left it.
+- **Keep important messages within reach.** Anyone in a channel can pin a message, see every pin from the channel header, and jump straight back to its place in the conversation or thread.
+
+## 2026-07-29
+
+- **The Mac app shows which channels an agent is working in too.** The same
+  small spinner as in the browser, on channels and direct messages alike.
+
+## 2026-07-29
+
+- **You can stop an agent mid-thought.** While an agent is working, its
+  "thinking…" line now carries an **Interrupt** button — press it and the agent
+  stops there and then, tells you what it got done, and stays ready to carry on
+  when you send the next message. On every client, and `/stop` does the same by
+  typing.
+
 
 - **Sign in with Apple on iPhone.** The iOS app now offers the native Apple
   sign-in sheet next to Google — one tap with Face ID, and hiding your email
@@ -12,6 +89,16 @@ For the full technical changelog see `CHANGELOG.md`.
   run of itself that lives there, and gives you your conversation back in
   seconds. Watch the run in the task channel — and just talk in that channel to
   steer or stop it; the working agent sees your message with full context.
+
+## 2026-07-29
+
+- **See at a glance which channels an agent is working in.** A small spinner
+  appears at the end of a channel's name in the sidebar while an agent is busy
+  in there, and stops when it's done — so you can tell a run is still going
+  without opening the channel.
+- **The keyboard gets out of the way on iPhone.** Scroll back through a
+  conversation and the keyboard drops away the moment you start — as it already
+  did when you tap the messages or open the channel menu.
 
 ## 2026-07-28
 

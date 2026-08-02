@@ -7,6 +7,7 @@ import { inArray, eq } from 'drizzle-orm';
 import type { ClientFrame, Event, ServerFrame } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import * as auth from '../services/auth.js';
+import { clearIndicatorsOnDisconnect } from '../services/channelIndicators.js';
 import {
   publishEvent,
   subjectPresence,
@@ -300,6 +301,10 @@ export function attachGateway(server: HttpServer): { close(): void } {
         for (const wsId of state.workspaces) {
           publishEvent(subjectPresence(wsId), presenceEvent(wsId, state.userId, 'offline'));
         }
+        // Going offline retracts any activity spinners this user left running
+        // (#137) — an agent whose process died shouldn't spin a channel until
+        // its TTL lapses.
+        clearIndicatorsOnDisconnect(state.userId);
       } else {
         online.set(state.userId, count);
       }

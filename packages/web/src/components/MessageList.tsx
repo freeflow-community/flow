@@ -4,8 +4,9 @@ import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
+import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
-import { useSendMessage, useToggleReaction } from '../hooks';
+import { useSendMessage, useTogglePin, useToggleReaction } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
@@ -285,6 +286,20 @@ function ExternalLinkIcon() {
   );
 }
 
+export function PinIcon({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[17px] w-[17px]">
+      <path
+        d="M8 3h8l-1.2 6.1 3.2 3.2V14h-5v6l-1 1-1-1v-6H6v-1.7l3.2-3.2L8 3Z"
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** "12m ago" style label for thread indicators. */
 function relTime(iso: string | null): string {
   if (!iso) return '';
@@ -314,6 +329,7 @@ function MessageRow({
   const sel = useSelection();
   const qc = useQueryClient();
   const toggle = useToggleReaction();
+  const togglePin = useTogglePin();
   const [showPicker, setShowPicker] = useState(false);
   // Clicking the sender's avatar opens their profile card (ui_nits).
   const [showCard, setShowCard] = useState(false);
@@ -330,6 +346,12 @@ function MessageRow({
   // Optimistic row whose POST errored out: kept in place with Retry/discard.
   const failed = (message as LocalMessage).failed === true;
   const send = useSendMessage(message.channelId);
+  // The agent's live "thinking…" row carries its own stop control (issue #67):
+  // reacting 🛑 is what tells the bridge to end that turn.
+  const thinking = !message.deletedAt && member?.isAgent === true && isThinkingStatus(message.body);
+  const stopping = message.reactions.some(
+    (r) => r.emoji === INTERRUPT_EMOJI && r.userIds.includes(auth.user.id),
+  );
 
   // Pin the message's file(s) as shared artifacts in this channel (phase 13);
   // the new artifact opens in the side panel automatically.
@@ -393,12 +415,40 @@ function MessageRow({
           <p className="text-sm text-faint italic">This message was deleted</p>
         ) : (
           <>
+            {message.pinnedAt && (
+              <div
+                data-testid={`pinned-marker-${message.id}`}
+                className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold text-accent-soft"
+                title={`Pinned${message.pinnedBy ? ` by ${names[message.pinnedBy] ?? 'a channel member'}` : ''}`}
+              >
+                <PinIcon filled />
+                <span>Pinned</span>
+              </div>
+            )}
             {message.body.trim() && (
               <div className="text-sm leading-normal break-words whitespace-pre-wrap">
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
                   {renderBlocks(message.body, names, auth.user.id)}
                 </InlineLinkContext.Provider>
                 {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
+              </div>
+            )}
+            {thinking && (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  data-testid={`interrupt-${message.id}`}
+                  disabled={stopping || pending}
+                  title={stopping ? 'Stopping…' : 'Stop this agent turn'}
+                  className={`rounded-[20px] border px-[9px] py-[2px] text-xs font-[650] ${
+                    stopping
+                      ? 'border-hairline text-faint'
+                      : 'border-hairline bg-white text-ink-soft hover:border-hairline2 hover:text-ink'
+                  }`}
+                  onClick={() => toggle.mutate({ message, emoji: INTERRUPT_EMOJI, mine: false })}
+                >
+                  {stopping ? '⏹ Stopping…' : '⏹ Interrupt'}
+                </button>
               </div>
             )}
             {message.files.map((f) => (
@@ -540,6 +590,16 @@ function MessageRow({
               📋
             </button>
           )}
+          <button
+            data-testid={`toggle-pin-${message.id}`}
+            className={`flex items-center rounded-md px-1.5 py-1 leading-none hover:bg-daypill ${
+              message.pinnedAt ? 'text-accent-soft' : 'text-ink'
+            }`}
+            title={message.pinnedAt ? 'Unpin message' : 'Pin message'}
+            onClick={() => togglePin.mutate(message)}
+          >
+            <PinIcon filled={!!message.pinnedAt} />
+          </button>
           {message.files.length > 0 && (
             <button
               data-testid={`pin-artifact-${message.id}`}

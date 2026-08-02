@@ -378,6 +378,9 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var createdAt: String
     var editedAt: String?
     var deletedAt: String?
+    /// Channel-wide pin metadata. Nil means the message is not pinned.
+    var pinnedAt: String?
+    var pinnedBy: String?
     var replyCount: Int
     var lastReplyAt: String?
     /// First (up to) 4 distinct reply authors in thread order (reply-avatar stack).
@@ -400,14 +403,15 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
 
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
-        case createdAt, editedAt, deletedAt, replyCount, lastReplyAt
+        case createdAt, editedAt, deletedAt, pinnedAt, pinnedBy, replyCount, lastReplyAt
         case replyParticipantUserIds, reactions, files, unfurls, systemKind, pending, failed
     }
 
     init(
         id: String, channelId: String, userId: String, threadRootId: String?,
         clientMsgId: String, body: String, createdAt: String, editedAt: String?,
-        deletedAt: String?, replyCount: Int, lastReplyAt: String?,
+        deletedAt: String?, pinnedAt: String? = nil, pinnedBy: String? = nil,
+        replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
         unfurls: [Unfurl] = [], systemKind: String? = nil, pending: Bool, failed: Bool = false
@@ -421,6 +425,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.createdAt = createdAt
         self.editedAt = editedAt
         self.deletedAt = deletedAt
+        self.pinnedAt = pinnedAt
+        self.pinnedBy = pinnedBy
         self.replyCount = replyCount
         self.lastReplyAt = lastReplyAt
         self.replyParticipantUserIds = replyParticipantUserIds
@@ -443,6 +449,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         createdAt = try c.decode(String.self, forKey: .createdAt)
         editedAt = try c.decodeIfPresent(String.self, forKey: .editedAt)
         deletedAt = try c.decodeIfPresent(String.self, forKey: .deletedAt)
+        pinnedAt = try c.decodeIfPresent(String.self, forKey: .pinnedAt)
+        pinnedBy = try c.decodeIfPresent(String.self, forKey: .pinnedBy)
         replyCount = try c.decodeIfPresent(Int.self, forKey: .replyCount) ?? 0
         lastReplyAt = try c.decodeIfPresent(String.self, forKey: .lastReplyAt)
         replyParticipantUserIds = try c.decodeIfPresent([String].self, forKey: .replyParticipantUserIds) ?? []
@@ -523,7 +531,31 @@ struct MemberDTO: Decodable, Sendable {
 }
 
 struct WorkspacesResponse: Decodable, Sendable { let workspaces: [Workspace] }
-struct ChannelsResponse: Decodable, Sendable { let channels: [Channel] }
+struct ChannelsResponse: Decodable, Sendable {
+    let channels: [Channel]
+    /// Channels with an activity spinner showing right now (#137). Read off the
+    /// same rows but kept out of `Channel` on purpose: channel rows are cached
+    /// on disk, and a spinner must never survive a relaunch — it's a claim
+    /// about what an agent is doing this second.
+    let busyChannelIds: Set<String>
+
+    private struct IndicatorRow: Decodable { let id: String; let indicator: String? }
+    private enum CodingKeys: String, CodingKey { case channels }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        channels = try c.decode([Channel].self, forKey: .channels)
+        let rows = try c.decode([IndicatorRow].self, forKey: .channels)
+        busyChannelIds = Set(rows.filter { $0.indicator != nil }.map(\.id))
+    }
+}
+
+/// `channel.indicator` payload (#137): the channel's aggregate state after a
+/// change, so a client only ever sets or clears — `state` nil means quiet.
+struct ChannelIndicatorData: Decodable, Sendable {
+    let channelId: String
+    let state: String?
+}
 struct MembersResponse: Decodable, Sendable { let members: [MemberDTO] }
 struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
 
@@ -536,6 +568,9 @@ struct MentionMiss: Identifiable, Hashable, Sendable {
 struct MessagesResponse: Decodable, Sendable {
     let messages: [Message] // newest first
     let hasMore: Bool
+}
+struct PinnedMessagesResponse: Decodable, Sendable {
+    let messages: [Message]
 }
 struct ThreadResponse: Decodable, Sendable {
     let root: Message
@@ -766,6 +801,7 @@ enum EventPayload: Sendable {
     case message(Message)
     case typing(TypingData)
     case presence(PresenceData)
+    case channelIndicator(ChannelIndicatorData)
     case channel(Channel)
     case channelUpdated(Channel)
     case channelArchived(Channel)
@@ -807,6 +843,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .typing(try c.decode(TypingData.self, forKey: .data))
         case "presence":
             payload = .presence(try c.decode(PresenceData.self, forKey: .data))
+        case "channel.indicator":
+            payload = .channelIndicator(try c.decode(ChannelIndicatorData.self, forKey: .data))
         case "channel.created":
             payload = .channel(try c.decode(Channel.self, forKey: .data))
         case "channel.updated":

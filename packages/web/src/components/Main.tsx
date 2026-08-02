@@ -3,6 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type {
   ArtifactDTO,
+  ChannelDTO,
+  ChannelIndicatorData,
   Event,
   MessageDTO,
   NotificationDTO,
@@ -10,6 +12,7 @@ import type {
   PresenceData,
 } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
+import { applyIndicator } from '../lib/channelCache';
 import { api, getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
@@ -132,6 +135,7 @@ export default function Main() {
         // Hard delete: remove the message entirely (no tombstone). Used for
         // the agent's ephemeral "thinking…" status.
         removeMessageFromCache(qc, event.data as MessageDTO);
+        void qc.invalidateQueries({ queryKey: ['pins', (event.data as MessageDTO).channelId] });
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         break;
       }
@@ -149,6 +153,9 @@ export default function Main() {
         }
         const insert = event.type === 'message.created' || event.type === 'thread.reply';
         applyMessageEvent(qc, msg, insert);
+        // Pin/unpin and delete events are full message updates; keep the
+        // channel's independently fetched pinned-message list in sync too.
+        void qc.invalidateQueries({ queryKey: ['pins', msg.channelId] });
         // Sidebar unread counts/ordering still come from the channels query.
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         break;
@@ -180,6 +187,16 @@ export default function Main() {
             return { ...prev, [key]: rest };
           });
         }, 5200);
+        break;
+      }
+      case 'channel.indicator': {
+        // Patch the cached channel rather than invalidating (#137): the spinner
+        // is high-frequency and purely cosmetic — it must never cost the
+        // sidebar a refetch, and it should appear the instant the event lands.
+        const d = event.data as ChannelIndicatorData;
+        qc.setQueryData<{ channels: ChannelDTO[] }>(['channels', event.workspaceId], (old) =>
+          old ? { channels: applyIndicator(old.channels, d) } : old,
+        );
         break;
       }
       case 'presence': {

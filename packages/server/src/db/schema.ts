@@ -236,6 +236,17 @@ export const messages = pgTable(
   ],
 );
 
+export const messagePins = pgTable(
+  'message_pins',
+  {
+    messageId: uuid('message_id').primaryKey().references(() => messages.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    pinnedBy: uuid('pinned_by').references(() => users.id, { onDelete: 'set null' }),
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('message_pins_channel_idx').on(t.channelId, t.pinnedAt.desc())],
+);
+
 export const reactions = pgTable(
   'reactions',
   {

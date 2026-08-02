@@ -13,6 +13,20 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- Scroll-position memory exists on no client: leaving a channel mid-history and
+  coming straight back always re-opens at the newest message. Tried on iOS
+  (#159) and removed — tracking the on-screen row needs per-row geometry, which
+  makes every layout pass touch every row and freezes the app on a channel
+  switch. Needs a `UIViewRepresentable` over `UICollectionView` (or the web
+  equivalent) to do safely.
+- The two native clients decide "follow the newest message?" differently since
+  #159: iOS keys off a deliberate 200pt finger-drag, macOS classifies content
+  growth vs user scroll (`classify` in its `MessageListView`). Same intent,
+  different mechanism — worth converging on one if either misbehaves again.
+- iOS: no text zoom (#105). macOS scales every font from a `\.textZoom`
+  environment value driven by ⌘+/⌘−/⌘0. iOS wants Dynamic Type instead — a
+  system-wide setting with no keyboard shortcut — so it's a different mechanism,
+  not a port. The shared `Support/` layer already carries the scale.
 - Sign in with Apple is iOS-only (#124): web + macOS still offer only
   Google/password. `/v1/auth/apple` is client-agnostic; macOS can use the same
   native ASAuthorization flow, web needs Apple's JS flow (Services ID +
@@ -52,11 +66,23 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   per-user pref toggles in phase 10, plus the Reactions toggle 2026-07-25).
   Nothing on-device consumes them yet — iOS has no push notifications — so this
   closes with the APNs work.
-- iOS: no Artifacts UI — no nested sidebar rows, artifact side panel, or
-  pin-as-artifact action; the `artifact.*` WS events are safely ignored. Now
-  the per-channel model (phase 13); server + web + macOS shipped together
-  2026-07-23. Link artifacts (co-browsing mini-browser) likewise skip
-  iOS — closes with the iOS artifacts port.
+- iOS artifacts, what's still missing after #157 (2026-07-30). Viewing is done —
+  header Docs button, count badge, dropdown, full-screen viewer, co-browsing
+  mini-browser, and auto-open of agent-created ones. What's left:
+  - **No pin-as-artifact.** Web + macOS can pin a message's file; iOS can't.
+    Needs a message long-press action and a naming flow. Pure client port —
+    `createArtifact` is already in the shared `SyncEngine`.
+  - Deliberate: the badge counts **all** artifacts in the channel, not unseen
+    ones — no client tracks per-user last-seen for artifacts and the server
+    doesn't model it, so an unseen count on iOS alone would disagree with macOS
+    about the same channel.
+- macOS co-browse re-points a link artifact just by opening it: `WKWebView`
+  canonicalizes `https://host` to `https://host/` on commit, and
+  `CoBrowserWebView` compares literally, so the didCommit handler reads its own
+  programmatic load as a user navigation and PATCHes. Every viewer's page
+  changes (cosmetically) because someone looked. iOS compares scheme/host/port/
+  path/query/fragment instead (#157); macOS wants the same fix — web is
+  unaffected (the iframe can't see cross-origin navigation at all).
 - Link-artifact mini-browser: the web client renders link artifacts in a sandboxed
   `<iframe>`, which has two browser limits the native macOS `WKWebView` doesn't:
   (1) sites sending `X-Frame-Options`/CSP `frame-ancestors` can't be embedded
@@ -166,8 +192,14 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   Web was already correct: its `<video>` carries only max-width/max-height and
   CSS replaced-element sizing keeps the intrinsic ratio. Closes when iOS gets an
   inline player (AVKit, same sizing rule as macOS).
+- iOS: no channel activity spinner (#137) — web and macOS spin a channel's
+  sidebar row while an agent works there. Server API and the `channel.indicator`
+  event are client-agnostic and `ChannelDTO.indicator` carries the initial
+  state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Text zoom (#105) is not built into the web client: the browser's own ⌘+/⌘−
+  already zooms it, and an in-app control would fight it. Not a gap.
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native
   SDK: the native button opens the system browser at `/?native=google`, which
   runs Google Identity Services, calls `POST /v1/auth/google`, mints a one-time
@@ -208,6 +240,13 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
   support, so macOS shows the file chip (Download / open externally) for
   webm attachments (ruled — see decision_log 2026-07-20).
+- macOS + web upload images at full size and full bytes — #84 fixed iOS only.
+  The Mac composer also accepts `.heic` and sends it raw, so it lands with no
+  thumbnail (the same bug #84 fixed on iOS). `Support/ImagePrep.swift` is
+  ImageIO-based and already compiles for macOS, so the Mac side is a call-site
+  change; web needs a `canvas`/`createImageBitmap` equivalent in
+  `packages/web/src/lib/api.ts`. Board: "macOS + web: compress and convert
+  images on upload".
 - Responsive/mobile layout (drawer nav, viewport-capped media and modals):
   web only, and inherently so — the native clients lay themselves out per
   platform, and the iOS app is the native phone experience. Not a gap.
@@ -224,6 +263,117 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-08-02 — iOS shares images compressed and converted (#84)
+
+- `[ios]` Photos downscale to 1024px on the longest edge and re-encode to JPEG
+  before upload — a 12MP HEIC goes up 5× smaller. Images already smaller than
+  the cap in a web-friendly format pass through untouched, not recompressed.
+- `[ios]` HEIC picked through the Files app used to upload raw, so it arrived
+  with no thumbnail and rendered as a generic file; it now converts like a
+  photo-library pick.
+- `[ios]` Transparent images convert to PNG rather than JPEG, which can't carry
+  an alpha channel.
+- `[macos]` New shared `Support/ImagePrep.swift` (ImageIO, cross-platform);
+  `.heic`/`.heif` now map to `image/heic` instead of `application/octet-stream`.
+  VERSION 2.2.17.
+
+### 2026-07-31 — Headings render on the native clients (#166)
+
+- `[macos]` `[ios]` `MarkdownBlocks` gains a `heading` segment, ported from
+  web's `HEADING_RE`, so `#`…`######` render as headings instead of literal
+  hashes. Both `segmentView`s render it — iOS compiles the same file.
+- `[macos]` VERSION 2.2.15.
+### 2026-08-01 — Native clients opt out of Dark Mode (#169)
+
+- `[macos]` `[ios]` `MC` is a fixed light palette, so on a Mac set to Dark
+  every uncoloured view resolved to white and message bodies went invisible.
+  Both clients now pin their appearance to light. Real dark-mode support means
+  a second palette on all three clients — not attempted.
+- `[macos]` VERSION 2.2.16. `[ios]` build 2.0 (8).
+
+### 2026-07-31 — iOS scroll: open at the newest message (#159)
+
+- `[ios]` A channel opens on its newest message, and a message you send always
+  scrolls into view. Both failed because "at the bottom?" was read from
+  geometry, which the keyboard resizing the list answers wrongly mid-pass; now
+  only a 200pt finger-drag stops the list following the end.
+- `[ios]` Build 2.0 (7) for TestFlight.
+- `[qa]` `ScrollBehaviorTests` covers open, back-scroll, own-send and re-open.
+
+
+
+- `[ios]` A Docs button in the channel header, badged with the channel's
+  artifact count, opens a dropdown of them; picking one shows it full screen
+  (image/video/pdf/html/text, HTML sandboxed in an ephemeral `WKWebView`).
+  Agent-created artifacts auto-open, as on macOS — until now the only route to
+  one on iPhone was none at all.
+- `[ios]` Link artifacts open the co-browsing mini-browser, same as macOS —
+  address bar over a live web view, and navigating re-points it for everyone.
+- `[ios]` Opening a link artifact no longer re-points it: WebKit canonicalizes
+  `https://host` to `https://host/` on commit, which the literal compare read as
+  a navigation and broadcast. macOS still has this (see Parity).
+- `[ios]` Still read-only in one respect: no pin-as-artifact (see Parity).
+- `[qa]` `qa-seed-artifacts.mjs` fixtures + `ArtifactsTests` XCUITest suite.
+
+### 2026-07-31 — Long message bodies no longer render cut off (#161)
+
+- `[macos]` `[ios]` A message with a link preview under it rendered its body cut
+  off partway through. The body shares a `VStack` with the preview cards and was
+  the only vertically flexible child, so it absorbed the shortfall whenever the
+  row's ideal height exceeded what the list proposed; `fixedSize` vertically
+  takes it out of that negotiation. Web was never affected.
+### 2026-07-31 — Bridge relays the agent's interim text (#162)
+
+- `[bridge]` The agent's running commentary reaches the conversation as it
+  arrives instead of being parsed and thrown away: text blocks grow a single
+  message by editing it, which creates no notification and cannot move an
+  unread count, where a message per block would notify per block.
+- `[bridge]` The message rolls over past ~2000 characters, and whatever the
+  final reply is about to repeat is dropped from it — a short turn looks exactly
+  as it did before. `relayText: false` opts out; bridge 0.19.0.
+
+### 2026-07-30 — Landing page Sign up buttons go to the app
+
+- The marketing site's Sign up buttons now link to app.freeflow.im (they were
+  wired to an empty placeholder), and the site metadata URL is freeflow.im.
+
+### 2026-07-30 — Text zoom on the Mac app (#105)
+
+- `[macos]` ⌘+ / ⌘− resize every piece of text in the app, ⌘0 returns to 100%,
+  and the three sit in the View menu. Steps 80–200%; the level is app-wide and
+  survives a relaunch. macOS 2.2.13.
+
+### 2026-07-30 — Marketing site deploys to freeflow.im
+
+- The landing page (`flowlandingpage/`) builds as a static Next.js export and
+  auto-deploys to Cloudflare Pages on merge — apex canonical, `www` redirects.
+  New `deploy-landing.yml` workflow; release map updated in BUILD.md.
+### 2026-07-30 — Pinned messages
+
+- [server] Channel members can pin/unpin messages; pin metadata and channel pin lists are persistent, authorized, idempotent, and live-updated.
+- [web] [macos] [ios] Message actions now include pinning, pinned rows are marked, and each channel header opens a jump-to-message pin list.
+
+### 2026-07-29 — macOS channel activity spinner (#137)
+
+- `[macos]` Sidebar rows (channels and DMs) spin while an agent is working
+  there. Transient state alongside presence, never written to the local DB — a
+  spinner must not survive a relaunch. macOS 2.2.12.
+
+### 2026-07-29 — Channel activity indicator (#137)
+
+- `[server]` `PUT /v1/channels/:id/indicator` sets a channel's "an agent is
+  working here" spinner, fanned out as `channel.indicator`. State is in-memory
+  like presence — it expires, clears on the setter's disconnect, and dies with a
+  restart, so a crashed run can't leave a channel spinning forever.
+- `[web]` Sidebar rows spin while the indicator is set; `ChannelDTO.indicator`
+  carries it on load so a fresh client doesn't start blank.
+### 2026-07-29 — zero-downtime Railway deploys
+
+- `[server]` `railway.json`: add `overlapSeconds: 60` / `drainingSeconds: 30`
+  so the old deploy keeps serving through the traffic switch and drains
+  sockets cleanly. Pairs with detaching the rollback-only `/data` volume
+  (operator step), which is what forced stop-then-start deploys.
+
 ### 2026-07-29 — Turn-cap failures say so, and the cap is 200
 
 - `[bridge]` A failed run reported "runtime reported an error" for every cause;
@@ -231,6 +381,35 @@ Entries below start after phase 16.
   "agent exceeded max turns (200)". Other subtypes pass through by name.
 - `[bridge]` Default `maxTurns` 100 → 200 — 100 cut a build off mid-tool-loop
   after 19 productive minutes. Bridge 0.17.0.
+
+### 2026-07-29 — iOS keyboard closes on any chat tap or scroll (#139)
+
+- `[ios]` The transcript now dismisses the keyboard `.immediately` on scroll,
+  not `.interactively` — the old mode only fired when the drag crossed the
+  keyboard, so scrolling back through history left it covering half the screen.
+  Tap dismissal and the drawer-open resign (#69) are unchanged. Touch-only by
+  nature; no macOS/web counterpart exists.
+- `[qa]` `KeyboardDismissTests` gains a scroll case; server URL and channel are
+  now overridable (`FLOW_TEST_SERVER_URL` / `FLOW_TEST_CHANNEL`).
+### 2026-07-29 — Interrupt an agent turn (#67)
+
+- `[web]` `[macos]` `[ios]` `[bridge]` An **Interrupt** button on the agent's
+  live "thinking…" row stops the turn: 🛑 on that row (or `/stop`) kills the
+  runtime's process group and posts "⏹ Stopped by @you" with any partial work.
+  SIGTERM first, so the session stays resumable. Bridge 0.18.0, macOS 2.2.11.
+- `[bridge]` 🛑 on a status row no run owns reaps it — the orphan a bridge that
+  died mid-turn leaves behind.
+- `[qa]` `[ios]` `FLOW_DEBUG_OPEN_CHANNEL` accepts a channel id as well as a
+  name, so a DM (which has no name) can be opened for a test — agent
+  conversations are DMs.
+
+### 2026-07-29 — Bridge drives the channel indicator (#137)
+
+- `[bridge]` A turn now spins its channel's sidebar row alongside the typing
+  frames and the "thinking…" message, refreshing against the server's TTL and
+  clearing in `finish()` — so the error paths clear it too. Bridge 0.18.1.
+- `[bridge]` New MCP tool `set_channel_indicator`, for marking a channel the
+  agent handed work off to. Bounded 5-minute lease: nothing refreshes it.
 
 ### 2026-07-28 — Join notices no longer wake agents (#120)
 

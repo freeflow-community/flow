@@ -143,6 +143,7 @@ channel it's a member of (invite it to channels like any member).
 | `respondToAgents` | false | never respond to other agents (loop safety) |
 | `concurrency` | 4 | max conversations processed in parallel (serial within one) |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
+| `relayText` | true | relay the agent's interim text as it works (`thinking` mode only) |
 | `logFile` | `<config>.log` next to the config | daemon log file, same lines as stdout (one-shot rotate at 5 MB → `.log.1`); JSON `null` disables; `~` expands |
 
 ## Conversations & sessions
@@ -159,6 +160,20 @@ supervisor process): **`/update`** makes the bridge npm-install the latest
 `flow-agent-bridge` and restart, then post "back online — vX" where it was
 asked (a source-checkout install restarts without updating); **`/restart`**
 relaunches as-is. Like `/reset`, they take a leading @-mention in a channel.
+
+## Stopping a turn
+
+A turn in flight can be ended: press **Interrupt** on the agent's live
+`🤖 *thinking…*` row (every client draws it; it adds a **🛑** reaction, which
+is the signal), or send **`/stop`**. The bridge kills that run's whole process group — SIGTERM
+first, so the CLI flushes its session transcript — deletes the status row and
+posts `⏹ Stopped by @you` with any partial work. The conversation's session is
+untouched, so the next message resumes with full context.
+
+Interrupts are handled on the event, not queued behind the running turn, and
+aren't subject to the usual scope rules: stopping an agent isn't talking to it,
+so 🛑 works in any channel the agent is in. A 🛑 on a status row no run owns —
+the bridge died mid-turn and left it stranded — reaps the row instead.
 
 ## Attachments (images, documents)
 
@@ -179,6 +194,15 @@ the first tool call — `🤖 *thinking…* — Bash: pnpm test` — **edits it 
 place** as new tool calls stream by, and **deletes it** when the run
 completes, posting the final reply fresh (clean unread semantics). The typing
 indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
+
+It also **relays what the agent says while it works**: each interim text block
+is appended to one message that grows by editing, so a long turn reads as
+progress instead of silence then a wall of text. Editing is deliberate — an
+edit creates no notification and cannot move an unread count, where a message
+per sentence would notify per sentence. The message is sealed and a new one
+started past ~2000 characters, and whatever the final reply is about to repeat
+is dropped from it (so a short turn still shows just the one reply). Set
+`"relayText": false` to keep only the tool status row.
 
 ## Reply contracts
 
@@ -204,6 +228,7 @@ indicator runs alongside. `typing` keeps only the indicator; `silent` neither.
   | `list_users` | List workspace members — id, display name, role, 🤖 for agents (ids feed `<@userId>` mentions). |
   | `join_channel` | Join a public channel by id (needed before reading/posting where the agent isn't a member). |
   | `leave_channel` | Leave a channel by id. |
+  | `set_channel_indicator` | Show (`busy`) or hide (`none`) the small spinner on a channel's sidebar row, marking it as one the agent is actively working in. The bridge already does this for the channel it was asked in, for the length of the turn — this is for marking a *different* channel (e.g. one work was handed off to). Server-side state expires, so a set lapses after five minutes unless repeated. |
   | `create_channel` | Create a channel in the workspace (`name`, optional `topic` and `isPrivate`) — the agent is auto-added as a member. Returns the new channel id; a duplicate name reports the existing channel's id instead. |
   | `invite_to_channel` | Add one or more workspace members to a channel (`userIds`). Each is added independently; the result lists who was added and why any failed. |
   | `start_task` | Hand long-running work off to a **separate run of the agent homed in another channel**, returning immediately. The prompt is the run's entire context (must be self-contained); the target channel becomes the run's conversation — progress, replies and human steering all live there, top-level. Daemon-only: it reaches the bridge over a local socket, so it's absent in pull mode. |

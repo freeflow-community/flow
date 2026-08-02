@@ -396,6 +396,10 @@ actor SyncEngine {
         guard let resp: ChannelsResponse = try? await api.get("/v1/workspaces/\(workspaceId)/channels")
         else { return }
         let channels = resp.channels
+        // Activity spinners (#137) are transient and never hit the local DB —
+        // this snapshot is also how a client that missed events while asleep
+        // gets back in step.
+        await appState?.setBusyChannelIds(resp.busyChannelIds)
         try? await db.writer.write { db in
             let ids = channels.map(\.id)
             try Channel
@@ -737,6 +741,43 @@ actor SyncEngine {
         }
     }
 
+    // MARK: - Pinned messages
+
+    /// Fetch every pin in the channel so older pinned messages become part of
+    /// the local cache even when normal history pagination has not reached them.
+    func loadPinnedMessages(channelId: String) async {
+        do {
+            let response: PinnedMessagesResponse = try await api.get("/v1/channels/\(channelId)/pins")
+            // The list is authoritative: clear stale offline-era pins before
+            // saving the current rows returned by the server.
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE message SET pinnedAt = NULL, pinnedBy = NULL WHERE channelId = ?",
+                    arguments: [channelId]
+                )
+            }
+            await storeMessages(response.messages)
+        } catch {
+            await appState?.showError("Couldn't load pinned messages: \(error.localizedDescription)")
+        }
+    }
+
+    /// Pin or unpin for the whole channel; the returned full message is the
+    /// immediate local update and the websocket echo converges other clients.
+    func togglePin(_ message: Message) async {
+        do {
+            let updated: Message
+            if message.pinnedAt == nil {
+                updated = try await api.put("/v1/messages/\(message.id)/pin")
+            } else {
+                updated = try await api.delete("/v1/messages/\(message.id)/pin")
+            }
+            _ = await applyServerMessage(updated)
+        } catch {
+            await appState?.showError("Couldn't update pin: \(error.localizedDescription)")
+        }
+    }
+
     private func setReactions(messageId: String, _ reactions: [ReactionAgg]) async {
         try? await db.writer.write { db in
             guard var m = try Message.fetchOne(db, key: messageId) else { return }
@@ -838,6 +879,7 @@ actor SyncEngine {
         case "jpg", "jpeg": "image/jpeg"
         case "gif": "image/gif"
         case "webp": "image/webp"
+        case "heic", "heif": "image/heic"
         case "pdf": "application/pdf"
         case "txt", "md", "log": "text/plain"
         case "json": "application/json"
@@ -1195,6 +1237,12 @@ actor SyncEngine {
 
         case .presence(let p):
             await appState?.presenceReceived(userId: p.userId, online: p.status == "online")
+
+        case .channelIndicator(let ind):
+            // Any non-nil state spins the row — an added state later shouldn't
+            // leave this client rendering nothing.
+            await appState?.channelIndicatorReceived(
+                channelId: ind.channelId, busy: ind.state != nil)
 
         case .channel(let dto):
             // The broadcast DTO claims isMember from the creator's perspective;

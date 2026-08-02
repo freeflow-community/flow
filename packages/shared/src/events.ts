@@ -1,4 +1,12 @@
-import type { ArtifactDTO, ChannelDTO, MessageDTO, NotificationDTO, UserDTO, WorkspaceMemberDTO } from './dto.js';
+import type {
+  ArtifactDTO,
+  ChannelDTO,
+  ChannelIndicatorState,
+  MessageDTO,
+  NotificationDTO,
+  UserDTO,
+  WorkspaceMemberDTO,
+} from './dto.js';
 
 // WS event envelope, per phase1.md §3
 export type EventType =
@@ -12,6 +20,7 @@ export type EventType =
   | 'channel.created'
   | 'channel.updated' // rename / topic change (ui_nits item 5)
   | 'channel.archived'
+  | 'channel.indicator' // per-channel subject: the activity spinner turned on/off (#137)
   | 'member.joined'
   | 'member.left'
   | 'member.updated' // workspace role change (admin panel)
@@ -43,6 +52,17 @@ export interface TypingData {
   /** Set when typing in a thread's composer — the indicator belongs to that
    * thread, not the channel's main view. Absent = the main composer. */
   threadRootId?: string;
+}
+
+/**
+ * The channel's *aggregate* indicator after a change (#137) — not one setter's.
+ * Several agents can be working in one channel; clients only ever show one
+ * spinner, so the server collapses them and sends the result. `state: null`
+ * means the row goes quiet.
+ */
+export interface ChannelIndicatorData {
+  channelId: string;
+  state: ChannelIndicatorState | null;
 }
 
 export interface PresenceData {

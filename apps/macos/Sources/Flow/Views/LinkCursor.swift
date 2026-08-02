@@ -37,6 +37,9 @@ private struct LinkCursorModifier: ViewModifier {
     /// Empty — and free — for the overwhelming majority of messages, which
     /// carry no links at all.
     @State private var rects: [CGRect] = []
+    /// The re-layout has to use the size the text is actually drawn at, or the
+    /// cursor rects drift away from the links as soon as you zoom (#105).
+    @Environment(\.textZoom) private var textZoom
 
     func body(content: Content) -> some View {
         content
@@ -46,13 +49,14 @@ private struct LinkCursorModifier: ViewModifier {
                         .onAppear { measure(geo.size.width) }
                         .onChange(of: geo.size.width) { _, new in measure(new) }
                         .onChange(of: attributed) { _, _ in measure(geo.size.width) }
+                        .onChange(of: textZoom) { _, _ in measure(geo.size.width) }
                 }
             )
             .overlay(LinkCursorOverlay(rects: rects).allowsHitTesting(false))
     }
 
     private func measure(_ width: CGFloat) {
-        let next = LinkHitTest.linkRects(in: attributed, width: width)
+        let next = LinkHitTest.linkRects(in: attributed, width: width, scale: textZoom)
         if next != rects { rects = next }
     }
 }
@@ -94,10 +98,12 @@ private final class LinkCursorNSView: NSView {
 enum LinkHitTest {
     /// The on-screen rectangles covered by link runs, one per wrapped line,
     /// in the text view's own (top-left origin) coordinates.
-    static func linkRects(in attributed: AttributedString, width: CGFloat) -> [CGRect] {
+    static func linkRects(
+        in attributed: AttributedString, width: CGFloat, scale: CGFloat = 1
+    ) -> [CGRect] {
         guard width > 0, attributed.runs.contains(where: { $0.link != nil }) else { return [] }
 
-        let storage = NSTextStorage(attributedString: measurable(attributed))
+        let storage = NSTextStorage(attributedString: measurable(attributed, scale: scale))
         let manager = NSLayoutManager()
         let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
@@ -121,8 +127,9 @@ enum LinkHitTest {
     /// SwiftUI-scope attributes (the mention-pill font, the view-level
     /// `.callout`) don't survive the bridge to `NSAttributedString`, so rebuild
     /// the string run by run with the AppKit fonts SwiftUI is drawing.
-    private static func measurable(_ attributed: AttributedString) -> NSAttributedString {
-        let base = NSFont.preferredFont(forTextStyle: .callout)
+    private static func measurable(_ attributed: AttributedString, scale: CGFloat) -> NSAttributedString {
+        let callout = NSFont.preferredFont(forTextStyle: .callout)
+        let base = scale == 1 ? callout : NSFont.systemFont(ofSize: callout.pointSize * scale)
         let manager = NSFontManager.shared
         let bold = manager.convert(base, toHaveTrait: .boldFontMask)
         let italic = manager.convert(base, toHaveTrait: .italicFontMask)

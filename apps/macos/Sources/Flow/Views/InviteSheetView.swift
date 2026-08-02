@@ -23,9 +23,9 @@ struct InviteSheetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Invite to Workspace").font(.headline)
+            Text("Invite to Workspace").flowFont(.headline)
             Text("Enter an email address to create an invite link. No email is sent — copy the link and share it yourself.")
-                .font(.callout)
+                .flowFont(.callout)
                 .foregroundStyle(.secondary)
 
             HStack {
@@ -37,13 +37,13 @@ struct InviteSheetView: View {
             }
 
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red)
+                Text(error).flowFont(.callout).foregroundStyle(.red)
             }
 
             if let inviteUrl {
                 HStack {
                     Text(inviteUrl)
-                        .font(.system(.callout, design: .monospaced))
+                        .flowFont(.callout, design: .monospaced)
                         .textSelection(.enabled)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -80,15 +80,15 @@ struct InviteSheetView: View {
     /// closing the door.
     private var joinLinkSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Share a join link").font(.headline)
+            Text("Share a join link").flowFont(.headline)
             Text("Anyone with this link can join the workspace. It stays valid until you regenerate or revoke it.")
-                .font(.callout)
+                .flowFont(.callout)
                 .foregroundStyle(.secondary)
 
             if let joinUrl {
                 HStack {
                     Text(joinUrl)
-                        .font(.system(.callout, design: .monospaced))
+                        .flowFont(.callout, design: .monospaced)
                         .textSelection(.enabled)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -114,7 +114,7 @@ struct InviteSheetView: View {
             }
 
             if let joinError {
-                Text(joinError).font(.callout).foregroundStyle(.red)
+                Text(joinError).flowFont(.callout).foregroundStyle(.red)
             }
         }
     }

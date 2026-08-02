@@ -1,5 +1,57 @@
 # Decision log
 
+## 2026-07-30 — iOS artifacts: count everything, read-only, no co-browse (#157)
+
+Three product questions the ticket left open, answered while porting artifacts
+to iOS. Recorded because each is the kind of thing that comes back as a bug
+report if the reasoning isn't written down.
+
+- **The header badge counts every artifact in the channel, not unseen ones.**
+  An unseen count needs per-user last-seen state that no client keeps and the
+  server doesn't model. Building it on iOS alone would make the phone and the
+  Mac disagree about the same channel, and "what clears it" is then a second
+  design problem. If we want it, it's a server-side read model shared by all
+  three clients.
+- **Link artifacts get the full co-browsing mini-browser on iOS (operator).**
+  Proposed shipping them read-only — open in Safari, don't broadcast — on the
+  grounds that a stray tap during a scroll would re-point the page under
+  everyone on desktop. Scott overruled: *"I think link artifacts should use the
+  in-app browser, like macOS does. Otherwise you may as well just share the
+  link."* Which is the stronger argument — a link artifact whose whole point is
+  that everyone is looking at the same page isn't one if the phone quietly opts
+  out. Shipped at macOS parity: address bar, live web view, navigation
+  broadcasts. If phone-side accidental navigation does turn out to be a
+  problem, the fix is a *shared* one (a follow mode or a take-control gesture),
+  not iOS silently diverging.
+- **No pin-as-artifact on iOS yet.** Pinning is a separate affordance (message
+  long-press plus a naming flow), and the case that made the ticket urgent is
+  *reading* agent-created artifacts, which have no chat message behind them and
+  so had no route on iPhone at all.
+
+Building the mini-browser then surfaced a bug in the shared design: WebKit
+canonicalizes `https://host` to `https://host/` when it commits, so comparing
+the committed url to the requested one as strings reads the app's own load as a
+user navigation — merely *opening* a link artifact PATCHed it and re-pointed
+the page for everyone else. iOS now compares the parsed components. macOS has
+the same quirk and the same one-function fix.
+
+## 2026-07-29 — Replica scaling is scheduled work; presence gossips over NATS, not Redis (operator)
+
+- The operator wants the `app` service able to run `replicas > 1` on Railway
+  for availability. This **overrides the 2026-07-18 scale-trigger ruling for
+  replica scaling of the existing monolith only** — the full phase-4
+  Appendix A split (API/gateway pools, JetStream, pgbouncer) remains
+  scale-triggered, not scheduled.
+- **Redis considered and rejected for presence**: a new service, client, and
+  failure mode to buy an authoritative view we don't need — presence is soft
+  state, and the local-fallback you'd build for a Redis outage *is* the
+  NATS-gossip design. Nothing else in the replica-readiness set needs Redis
+  either (Postgres advisory locks + `SKIP LOCKED` cover the hard-state
+  cases). Revisit only if a future feature independently justifies Redis.
+- Design: `docs/design/DISTRIBUTED_PRESENCE.md` — heartbeat/merge presence,
+  Postgres locking for migrations/outbox/sweeps, Socket Mode routing over
+  NATS, then flip to 2 replicas.
+
 ## 2026-07-28 — Task channels are top-level; sub-channels are for logs (operator)
 
 - A `start_task` work channel (`#task-N`) represents the **task**, not the

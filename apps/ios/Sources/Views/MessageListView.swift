@@ -29,15 +29,27 @@ struct MessageListView: View {
     /// newest message (#111).
     @State private var contentBottom: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    /// The list follows new messages down while this is true. Only a
+    /// deliberate back-scroll clears it (see `reactToScroll`) — geometry
+    /// churn from the keyboard or late-loading content must not, which is the
+    /// bug that used to strand the list mid-history behind a jump button.
+    @State private var pinToBottom = true
+    /// True once the reader has actually dragged this list. Before that the
+    /// list owns its own position and stays at the bottom no matter what the
+    /// measurements say.
+    @State private var hasDragged = false
+    @State private var isDragging = false
 
     private static let scrollSpace = "messageScroll"
     /// Within this much of the end still counts as "at the bottom", so a
     /// part-scrolled last message doesn't raise the button.
     private static let bottomSlack: CGFloat = 120
+    /// Back-scroll shorter than this is a nudge, not a decision to stop
+    /// following the conversation.
+    private static let minBackScroll: CGFloat = 200
 
-    /// False once the reader has scrolled up far enough that following new
-    /// messages down would yank them away from what they're reading.
-    private var atBottom: Bool { contentBottom - viewportHeight <= Self.bottomSlack }
+    /// How far the newest message sits below the viewport.
+    private var distanceFromBottom: CGFloat { max(0, contentBottom - viewportHeight) }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -97,34 +109,48 @@ struct MessageListView: View {
                 }
             )
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
-            .animation(.easeOut(duration: 0.15), value: atBottom)
+            .animation(.easeOut(duration: 0.15), value: pinToBottom)
+            // Only a finger on the glass may stop the list following the end.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { _ in
+                        isDragging = true
+                        hasDragged = true
+                    }
+                    .onEnded { _ in isDragging = false }
+            )
+            .onChange(of: distanceFromBottom) { _, _ in reactToScroll() }
             .onChange(of: messages.last?.id) { _, newId in
-                // A pending jump owns the scroll position — don't yank to bottom.
                 guard focusMessageId == nil, newId != nil else { return }
-                // Follow new messages down only from the bottom: someone reading
-                // back-scroll keeps their place and gets the jump button (#111).
-                guard atBottom else { return }
+                // My own message always wins. I just pressed send, so I mean to
+                // see it land — being back-scrolled, or having the keyboard
+                // resize the list out from under the measurements, doesn't
+                // change that.
+                if let me = currentUserId, messages.last?.userId == me {
+                    pinToBottom = true
+                }
+                // Otherwise follow the end only when we were already there:
+                // someone reading back-scroll keeps their place (#111).
+                guard pinToBottom else { return }
                 withAnimation(.easeOut(duration: 0.15)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
             // First open must land on the newest message (same rationale as
             // macOS: scrollTo from onAppear runs before lazy rows lay out).
-            // Async avatar/attachment loads grow row heights after the
-            // initial layout, so settle-scroll once shortly after the list
-            // populates or changes — unless a jump owns the scroll position.
             .task(id: messages.count) {
-                // Decided *before* the wait: the settle-scroll exists to catch up
-                // with content that grows underneath us, and that growth is what
-                // would otherwise make this look like back-scroll (#111).
-                guard focusMessageId == nil, atBottom else { return }
+                guard focusMessageId == nil, pinToBottom else { return }
+                proxy.scrollTo("bottom", anchor: .bottom)
+                // Rows keep growing after that first layout as avatars and
+                // attachments arrive, so come back once things have settled.
                 try? await Task.sleep(for: .milliseconds(350))
+                guard pinToBottom else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
             .defaultScrollAnchor(.bottom)
-            // Drag the list down and the keyboard follows your finger (#69) —
-            // the tap-to-dismiss handler on the list covers the discrete case.
-            .scrollDismissesKeyboard(.interactively)
+            // Keyboard dismissal (tap + scroll) is applied by the screen that
+            // owns the composer, so it can cover the whole chat area rather
+            // than just this list — see ChannelScreen (#139).
             // Jump-to-message (phase 12): center + flash the target once it's in
             // the list (older history pages in via ChannelScreen), then release.
             .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
@@ -133,12 +159,25 @@ struct MessageListView: View {
         }
     }
 
+    /// Turns measured scroll position into the follow/don't-follow decision.
+    /// Gated on an actual drag: before the reader touches the list, the
+    /// measurements are just layout settling and mean nothing.
+    private func reactToScroll() {
+        guard hasDragged else { return }
+        if distanceFromBottom > Self.minBackScroll {
+            pinToBottom = false
+        } else if distanceFromBottom <= Self.bottomSlack {
+            pinToBottom = true
+        }
+    }
+
     /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
     /// of the transcript (#111). Tapping it returns to the newest message.
     @ViewBuilder
     private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
-        if !atBottom, !messages.isEmpty {
+        if !pinToBottom, !messages.isEmpty {
             Button {
+                pinToBottom = true
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
@@ -289,6 +328,13 @@ struct MessageRow: View {
                     }
                 }
 
+                if message.pinnedAt != nil, !message.isDeleted {
+                    Label("Pinned", systemImage: "pin.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(MC.accentSoft)
+                        .accessibilityIdentifier("msg.pinned.\(message.id)")
+                }
+
                 if message.isDeleted {
                     Text("This message was deleted")
                         .font(.callout)
@@ -319,6 +365,10 @@ struct MessageRow: View {
                                 }
                             }
                         )
+                    }
+
+                    if isThinkingRow {
+                        interruptButton
                     }
 
                     if !message.reactions.isEmpty {
@@ -368,6 +418,16 @@ struct MessageRow: View {
                         UIPasteboard.general.string = message.body
                     } label: {
                         Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+                if !message.failed {
+                    Button {
+                        Task { await app.engine.togglePin(message) }
+                    } label: {
+                        Label(
+                            message.pinnedAt == nil ? "Pin Message" : "Unpin Message",
+                            systemImage: message.pinnedAt == nil ? "pin" : "pin.slash"
+                        )
                     }
                 }
                 if isMine {
@@ -441,6 +501,41 @@ struct MessageRow: View {
         .accessibilityIdentifier("msg.openThread")
     }
 
+    /// An agent's live "thinking…" row carries its own stop control (#67).
+    private var isThinkingRow: Bool {
+        app.agentIds.contains(message.userId) && AgentStatus.isThinkingRow(message.body)
+    }
+
+    /// True once we've asked: the reaction is already ours, so the bridge has
+    /// the signal and the turn is on its way down.
+    private var stopping: Bool {
+        guard let me = currentUserId else { return false }
+        return message.reactions.contains { $0.emoji == AgentStatus.interruptEmoji && $0.userIds.contains(me) }
+    }
+
+    /// Interrupt: adds the 🛑 reaction the bridge maps back to the running turn.
+    private var interruptButton: some View {
+        Button {
+            guard !stopping else { return }
+            Task { await app.engine.toggleReaction(messageId: message.id, emoji: AgentStatus.interruptEmoji) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "stop.circle")
+                Text(stopping ? "Stopping…" : "Interrupt")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(stopping ? MC.faint : MC.inkSoft)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(.white))
+            .overlay(Capsule().strokeBorder(MC.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(stopping)
+        .accessibilityIdentifier("msg.interrupt.\(message.id)")
+        .padding(.top, 3)
+    }
+
     /// Reaction chips with counts; tap toggles the caller's reaction.
     private var reactionChips: some View {
         HStack(spacing: 4) {
@@ -479,22 +574,29 @@ struct MessageRow: View {
     /// fenced code renders monospaced in a warm block, fence markers hidden.
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        if segments.count == 1, case .paragraph(let text) = segments[0] {
-            // Fast path: single plain paragraph keeps baseline-aligned markers.
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                paragraphText(text)
-                trailingMarkers
-            }
-        } else {
-            HStack(alignment: .bottom, spacing: 4) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(segment)
-                    }
+        Group {
+            if segments.count == 1, case .paragraph(let text) = segments[0] {
+                // Fast path: single plain paragraph keeps baseline-aligned markers.
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    paragraphText(text)
+                    trailingMarkers
                 }
-                trailingMarkers
+            } else {
+                HStack(alignment: .bottom, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                            segmentView(segment)
+                        }
+                    }
+                    trailingMarkers
+                }
             }
         }
+        // Same row layout as macOS, so the same #161 hazard: the body shares a
+        // VStack with unfurl cards and attachments, and is the only vertically
+        // flexible child. Without this it is the one that gives way when the
+        // row's ideal height exceeds what the list proposes.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -511,6 +613,8 @@ struct MessageRow: View {
                     .foregroundStyle(MC.inkSoft)
             }
             .accessibilityIdentifier("msg.quoteBlock")
+        case .heading(let level, let text):
+            headingText(level: level, text: text)
         case .code(let text):
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(text.isEmpty ? " " : text)
@@ -528,6 +632,20 @@ struct MessageRow: View {
                 userNames: userNames, currentUserId: currentUserId
             )
         }
+    }
+
+    /// ATX headings at macOS parity, rebased on iOS's larger body text:
+    /// `.callout` is 16pt here, so web's ratios put h1 at 21 and h2 at 19,
+    /// with h3–h6 body-size and separated by weight (as `HEADING_CLASS` does).
+    private func headingText(level: Int, text: String) -> some View {
+        let size: CGFloat = level == 1 ? 21 : (level == 2 ? 19 : 16)
+        return Text(MentionRendering.attributed(text, names: userNames, currentUserId: currentUserId))
+            .font(.system(size: size, weight: level <= 3 ? .bold : .semibold))
+            .foregroundStyle(MC.ink)
+            .textSelection(.enabled)
+            .padding(.top, level <= 2 ? 2 : 0) // web's mt-2 on h1/h2
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("msg.heading")
     }
 
     private func paragraphText(_ text: String) -> some View {

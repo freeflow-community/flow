@@ -7,10 +7,23 @@ struct ChannelScreen: View {
     let channelId: String
     @EnvironmentObject var app: AppState
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
+    @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var threadRoute: ThreadRoute?
+    @State private var showPins = false
+
+    /// The open artifact (#157), presented as a sheet over the conversation.
+    /// Driven by `AppState.selectedArtifactId` — the same selection macOS uses
+    /// for its side panel — so an agent-created artifact auto-opens here too
+    /// (`maybeAutoOpenArtifact`), and switching channel closes it for free.
+    private var artifactRoute: Binding<ArtifactRoute?> {
+        Binding(
+            get: { app.selectedArtifactId.map(ArtifactRoute.init) },
+            set: { if $0 == nil { app.selectArtifact(nil) } }
+        )
+    }
 
     private var usersById: [String: User] {
         Dictionary(users.value.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -33,36 +46,61 @@ struct ChannelScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MessageListView(
-                messages: messages.value,
-                userNames: usersById.mapValues { $0.displayNameWithBadge },
-                userStatuses: statusesById,
-                currentUserId: app.currentUser?.id,
-                hasMore: app.hasMore[channelId] ?? false,
-                showThreadAffordances: true,
-                onLoadOlder: {
-                    Task { await app.engine.loadOlder(channelId: channelId) }
-                },
-                onOpenThread: { rootId in
-                    threadRoute = ThreadRoute(rootId: rootId)
-                },
-                onEdit: { editingMessage = $0 },
-                onDelete: { msg in
-                    Task { await app.engine.deleteMessage(id: msg.id) }
-                },
-                // Jump-to-message (phase 12): the Activity feed only sets a
-                // target for top-level messages on iOS (thread replies live in
-                // a separate pushed screen — see CHANGELOG Parity).
-                focusMessageId: app.focusMessageId,
-                onFocused: { app.focusMessageId = nil }
-            )
-            .dismissesKeyboardOnTap()
-            TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
+            // The chat area — everything above the composer. Tapping or
+            // scrolling any of it puts the keyboard away (#139); the composer
+            // is deliberately outside, since tapping it means "type".
+            VStack(spacing: 0) {
+                MessageListView(
+                    messages: messages.value,
+                    userNames: usersById.mapValues { $0.displayNameWithBadge },
+                    userStatuses: statusesById,
+                    currentUserId: app.currentUser?.id,
+                    hasMore: app.hasMore[channelId] ?? false,
+                    showThreadAffordances: true,
+                    onLoadOlder: {
+                        Task { await app.engine.loadOlder(channelId: channelId) }
+                    },
+                    onOpenThread: { rootId in
+                        threadRoute = ThreadRoute(rootId: rootId)
+                    },
+                    onEdit: { editingMessage = $0 },
+                    onDelete: { msg in
+                        Task { await app.engine.deleteMessage(id: msg.id) }
+                    },
+                    // Jump-to-message (phase 12): the Activity feed only sets a
+                    // target for top-level messages on iOS (thread replies live
+                    // in a separate pushed screen — see CHANGELOG Parity).
+                    focusMessageId: app.focusMessageId,
+                    onFocused: { app.focusMessageId = nil }
+                )
+                TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
+            }
+            .dismissesKeyboardOnChatInteraction()
             Divider()
             ComposerView(channelId: channelId)
         }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
+        }
+        .sheet(item: artifactRoute) { route in
+            ArtifactSheet(artifactId: route.id)
+        }
+        .sheet(isPresented: $showPins) {
+            PinnedMessagesSheet(
+                messages: pinnedMessages.value,
+                userNames: usersById.mapValues { $0.displayNameWithBadge },
+                onSelect: { message in
+                    showPins = false
+                    if let rootId = message.threadRootId {
+                        app.openThread(rootId)
+                        threadRoute = ThreadRoute(rootId: rootId)
+                    } else {
+                        app.openThread(nil)
+                        threadRoute = nil
+                    }
+                    app.focusMessageId = message.id
+                }
+            )
         }
         .navigationDestination(item: $threadRoute) { route in
             ThreadScreen(rootId: route.rootId)
@@ -83,10 +121,33 @@ struct ChannelScreen: View {
         .background(MC.base)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showPins = true
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: pinnedMessages.value.isEmpty ? "pin" : "pin.fill")
+                        if !pinnedMessages.value.isEmpty {
+                            Text("\(pinnedMessages.value.count)")
+                                .font(.caption2.weight(.semibold))
+                        }
+                    }
+                }
+                .accessibilityLabel("Pinned messages")
+                .accessibilityIdentifier("channel.pins")
+            }
+        }
         // Account/status live in the drawer's profile footer now (web/macOS
         // parity — the sidebar owns that affordance), reached from the header
-        // hamburger. The channel bar keeps just the title + that hamburger,
-        // which MainView supplies as the content pane's leading toolbar item.
+        // hamburger. The channel bar keeps the title + that hamburger, which
+        // MainView supplies as the content pane's leading toolbar item, plus
+        // the trailing Docs button below (#157).
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                ArtifactsMenuButton(channelId: channelId)
+            }
+        }
         .task {
             app.selectChannel(channelId)
             // Re-push the thread this channel had open before we left it (#89).
@@ -101,6 +162,13 @@ struct ChannelScreen: View {
                     .order(Column("id"))
                     .fetchAll(db)
             }
+            pinnedMessages.start(db: app.db, reset: []) { db in
+                try Message
+                    .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
+                    .order(Column("pinnedAt").desc)
+                    .fetchAll(db)
+            }
+            await app.engine.loadPinnedMessages(channelId: channelId)
         }
     }
 
@@ -112,6 +180,76 @@ struct ChannelScreen: View {
             Task { await app.engine.loadOlder(channelId: channelId) }
         } else {
             app.focusMessageId = nil // not in this channel's loaded history
+        }
+    }
+}
+
+private struct PinnedMessagesSheet: View {
+    let messages: [Message]
+    let userNames: [String: String]
+    let onSelect: (Message) -> Void
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if messages.isEmpty {
+                    ContentUnavailableView(
+                        "No Pinned Messages",
+                        systemImage: "pin",
+                        description: Text("Pin an important message to keep it easy to find.")
+                    )
+                } else {
+                    List(messages) { message in
+                        HStack(alignment: .top, spacing: 10) {
+                            Button {
+                                onSelect(message)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(userNames[message.userId] ?? "Unknown")
+                                            .font(.caption.weight(.bold))
+                                        Spacer()
+                                        if let at = message.pinnedAt {
+                                            Text(ISO8601.parse(at)?.formatted(date: .abbreviated, time: .shortened) ?? "")
+                                                .font(.caption2)
+                                                .foregroundStyle(MC.faint)
+                                        }
+                                    }
+                                    Text(message.body.isEmpty ? (message.files.first?.name ?? "Message") : message.body)
+                                        .font(.callout)
+                                        .foregroundStyle(MC.inkSoft)
+                                        .lineLimit(3)
+                                    if message.threadRootId != nil {
+                                        Text("Reply in thread")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(MC.accentSoft)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                Task { await app.engine.togglePin(message) }
+                            } label: {
+                                Image(systemName: "pin.slash")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Unpin message")
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("Pinned Messages")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }

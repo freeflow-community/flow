@@ -10,7 +10,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import type { ChannelDTO, Event, MessageDTO, UserDTO, WorkspaceDTO, WorkspaceMemberDTO } from '@flow/shared';
+import type {
+  ChannelDTO,
+  Event,
+  MessageDTO,
+  ReactionEventData,
+  UserDTO,
+  WorkspaceDTO,
+  WorkspaceMemberDTO,
+} from '@flow/shared';
 import type { BridgeConfig } from './config.js';
 import { FlowApi } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
@@ -23,6 +31,23 @@ import { currentVersion, isOutdated, latestPublishedVersion } from './version.js
 const THINKING_PREFIX = '🤖 *thinking…*';
 /** Cap on salvaged text in a failure reply (the API caps a body at 12000). */
 const SALVAGE_LIMIT = 4000;
+/**
+ * React with this on a thinking row to stop the turn (issue #67). A reaction
+ * is the signal because every client can already send one — no new endpoint,
+ * no new event type — and it names the exact run: the row is the turn.
+ */
+export const INTERRUPT_EMOJI = '🛑';
+/** Typed equivalent of the button, for clients that don't draw one yet. */
+const INTERRUPT_COMMANDS = new Set(['/stop', '/interrupt']);
+
+/** A note plus whatever the agent managed to say before the turn ended. */
+function withSalvage(note: string, text: string): string {
+  const salvaged = text.trim();
+  if (!salvaged) return note;
+  const capped =
+    salvaged.length > SALVAGE_LIMIT ? `${salvaged.slice(0, SALVAGE_LIMIT - 1).trimEnd()}…` : salvaged;
+  return `${note}\n\nWhere I got to:\n\n${capped}`;
+}
 
 /**
  * What a failed turn posts. An expired run has no final result event, and the
@@ -30,12 +55,16 @@ const SALVAGE_LIMIT = 4000;
  * worked for hours leaves nothing behind but an error string.
  */
 export function failureReply(result: RunResult): string {
-  const note = `🤖 sorry — I hit an error (${result.error ?? 'unknown'}).`;
-  const salvaged = result.text.trim();
-  if (!salvaged) return note;
-  const capped =
-    salvaged.length > SALVAGE_LIMIT ? `${salvaged.slice(0, SALVAGE_LIMIT - 1).trimEnd()}…` : salvaged;
-  return `${note}\n\nWhere I got to:\n\n${capped}`;
+  return withSalvage(`🤖 sorry — I hit an error (${result.error ?? 'unknown'}).`, result.text);
+}
+
+/**
+ * What a stopped turn posts in place of its status row. Not an apology — the
+ * stop was asked for — but it still carries the partial work, which is the
+ * whole point of stopping a long run rather than letting it time out.
+ */
+export function interruptReply(result: RunResult, byUserId: string | null): string {
+  return withSalvage(`⏹ Stopped${byUserId ? ` by <@${byUserId}>` : ''}.`, result.text);
 }
 
 /** Per-agent scratch dir (0700) for the bridge's own runtime state: the task
@@ -63,6 +92,14 @@ interface RelaunchNote {
   fromVersion: string | null;
   update: boolean;
   at: string;
+}
+
+/** A runtime turn in flight, so an interrupt can find and end it. */
+interface LiveRun {
+  controller: AbortController;
+  progress: ProgressReporter;
+  /** Who pressed stop — named in the reply. Null until someone does. */
+  stoppedBy: string | null;
 }
 
 interface Conversation {
@@ -105,6 +142,8 @@ export class AgentBridge {
   private taskChannels = new Set<string>();
   /** threadRootId → "we've spoken in this thread" (see inThread). */
   private threadParticipation = new Map<string, boolean>();
+  /** convKey → the turn currently running there, for `/stop` and 🛑. */
+  private liveRuns = new Map<string, LiveRun>();
   private readonly sem: Semaphore;
   private refreshTimer: NodeJS.Timeout | null = null;
   private ipcServer: http.Server | null = null;
@@ -280,6 +319,8 @@ export class AgentBridge {
       createdAt: new Date().toISOString(),
       editedAt: null,
       deletedAt: null,
+      pinnedAt: null,
+      pinnedBy: null,
       systemKind: null,
       replyCount: 0,
       lastReplyAt: null,
@@ -358,8 +399,55 @@ export class AgentBridge {
       this.scheduleRefresh();
       return;
     }
+    if (ev.type === 'reaction.added') {
+      void this.handleReaction(ev.data as ReactionEventData);
+      return;
+    }
     if (ev.type !== 'message.created' && ev.type !== 'thread.reply') return;
     void this.handleMessage(ev.data as MessageDTO);
+  }
+
+  /**
+   * The Interrupt button: 🛑 on a thinking row stops the turn that row belongs
+   * to. Deliberately not routed through `inScope` — stopping an agent is not
+   * talking to it, so it works from any channel we're in, mention or not.
+   */
+  private async handleReaction(data: ReactionEventData): Promise<void> {
+    if (data.emoji !== INTERRUPT_EMOJI || data.userId === this.me.id) return;
+    for (const [key, run] of this.liveRuns) {
+      if (run.progress.statusId !== data.messageId) continue;
+      this.stopRun(key, run, data.userId);
+      return;
+    }
+    // No live run owns that row. Either the turn just finished (harmless), or
+    // the row was orphaned by a bridge that died mid-turn and nothing ever
+    // reaped it — in which case pressing Interrupt should still clear it.
+    await this.reapOrphanStatus(data.messageId, data.channelId);
+  }
+
+  /** Abort the runtime; `processMessage` posts the reply when it unwinds. */
+  private stopRun(key: string, run: LiveRun, byUserId: string | null): void {
+    if (run.controller.signal.aborted) return;
+    run.stoppedBy = byUserId;
+    this.log(`interrupting the run in ${key}${byUserId ? ` (asked by ${this.senderLabel(byUserId)})` : ''}`);
+    run.controller.abort();
+  }
+
+  /**
+   * Clear a `🤖 *thinking…*` row of ours that no run owns any more. Verified
+   * against the channel's recent messages first: we only ever hard-delete our
+   * own status rows, never a real message someone reacted 🛑 to.
+   */
+  private async reapOrphanStatus(messageId: string, channelId: string): Promise<void> {
+    try {
+      const page = await this.api.listMessages(channelId, 30);
+      const row = page.messages.find((m) => m.id === messageId);
+      if (!row || row.deletedAt || row.userId !== this.me.id || !row.body.startsWith(THINKING_PREFIX)) return;
+      await this.api.deleteMessage(messageId, { hard: true });
+      this.log(`reaped an orphaned status row in ${this.channelLabel(channelId)}`);
+    } catch (err) {
+      this.log(`orphan status reap failed: ${(err as Error).message}`);
+    }
   }
 
   private async handleMessage(msg: MessageDTO): Promise<void> {
@@ -373,6 +461,7 @@ export class AgentBridge {
     // put the message in scope at all).
     const command = msg.body.replace(new RegExp(`^\\s*<@${this.me.id}>\\s*`), '').trim();
     if (command === '/reset') return this.handleReset(msg);
+    if (INTERRUPT_COMMANDS.has(command)) return this.handleStop(msg);
     if (command === '/update' || command === '/restart') {
       return this.handleRelaunch(msg, command === '/update');
     }
@@ -515,6 +604,20 @@ export class AgentBridge {
     return joined;
   }
 
+  /**
+   * `/stop` — the Interrupt button for anyone whose client doesn't draw one.
+   * Handled here, on the event, rather than queued: a turn is running, and a
+   * queued stop would only be read once that turn was over.
+   */
+  private async handleStop(msg: MessageDTO): Promise<void> {
+    const key = this.convKey(msg);
+    const run = this.liveRuns.get(key);
+    if (run) return this.stopRun(key, run, msg.userId);
+    await this.api
+      .sendMessage(msg.channelId, '🤖 nothing running here to stop.', this.replyRoot(msg))
+      .catch((err: Error) => this.log(`stop reply failed: ${err.message}`));
+  }
+
   private async handleReset(msg: MessageDTO): Promise<void> {
     this.conversations.delete(this.convKey(msg));
     await this.api
@@ -541,7 +644,7 @@ export class AgentBridge {
         const msg = conv.queue.shift()!;
         await this.sem.acquire();
         try {
-          await this.processMessage(conv, msg);
+          await this.processMessage(conv, msg, key);
         } catch (err) {
           this.log(`processing failed: ${(err as Error).message}`);
         } finally {
@@ -556,7 +659,7 @@ export class AgentBridge {
     }
   }
 
-  private async processMessage(conv: Conversation, msg: MessageDTO): Promise<void> {
+  private async processMessage(conv: Conversation, msg: MessageDTO, key: string): Promise<void> {
     // Everything about this turn — status line, MCP context, the reply itself
     // — targets the same thread (a new one when we're answering a top-level
     // channel message).
@@ -565,12 +668,17 @@ export class AgentBridge {
       this.api,
       this.socket,
       this.cfg.progress,
+      this.cfg.relayText,
       msg.channelId,
       replyRoot,
       (m) => this.log(m),
     );
     progress.start();
     const mcpConfigPath = this.cfg.runtime.mcp ? this.writeMcpConfig(msg, replyRoot) : undefined;
+    // Registered before the runtime starts, so a stop that arrives in the gap
+    // still lands: runRuntime checks the signal before it spawns anything.
+    const live: LiveRun = { controller: new AbortController(), progress, stoppedBy: null };
+    this.liveRuns.set(key, live);
     try {
       const prompt = await this.buildPrompt(conv, msg);
       const run = (resume: boolean) =>
@@ -580,7 +688,9 @@ export class AgentBridge {
           prompt,
           systemPrompt: this.buildSystemPrompt(msg, mcpConfigPath !== undefined),
           mcpConfigPath,
+          signal: live.controller.signal,
           onToolStep: (step) => progress.onStep(step),
+          onText: (text) => progress.onText(text),
           log: (m) => this.log(m),
         });
       let result = await run(conv.started);
@@ -592,7 +702,19 @@ export class AgentBridge {
         conv.started = true;
         result = await run(true);
       }
-      await progress.finish();
+      // The reply we're about to post is (for claude) the last text block we
+      // already relayed — hand it over so the narration doesn't end on it.
+      await progress.finish(result.text);
+      if (result.interrupted) {
+        // Asked for, not broken: say who stopped it and hand back the partial
+        // work. The session survives (SIGTERM let the CLI flush its
+        // transcript), so the next message continues where this left off.
+        this.log('run stopped by request');
+        if (result.sawSession) conv.started = true;
+        await this.api.sendMessage(msg.channelId, interruptReply(result, live.stoppedBy), replyRoot).catch(() => {});
+        if (replyRoot) this.threadParticipation.set(replyRoot, true);
+        return;
+      }
       if (result.ok) {
         conv.started = true;
         const text = result.text.trim();
@@ -613,6 +735,7 @@ export class AgentBridge {
         await this.api.sendMessage(msg.channelId, failureReply(result), replyRoot).catch(() => {});
       }
     } finally {
+      if (this.liveRuns.get(key) === live) this.liveRuns.delete(key);
       await progress.finish().catch(() => {});
       if (mcpConfigPath) fs.rmSync(mcpConfigPath, { force: true });
     }

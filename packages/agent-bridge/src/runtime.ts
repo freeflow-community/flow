@@ -17,7 +17,15 @@ export interface RunOpts {
   systemPrompt: string;
   /** Path to an MCP config JSON to pass via --mcp-config (claude only). */
   mcpConfigPath?: string | undefined;
+  /**
+   * Abort → end this turn now: the process group dies (SIGTERM first, so the
+   * CLI still flushes its session transcript and the next turn can --resume)
+   * and the run settles as `interrupted`. This is the Interrupt button.
+   */
+  signal?: AbortSignal | undefined;
   onToolStep(step: string): void;
+  /** Each assistant text block as it is produced — the agent's narration (#162). */
+  onText?(text: string): void;
   log(msg: string): void;
 }
 
@@ -36,6 +44,11 @@ export interface RunResult {
    * proves it: the CLI only starts emitting them once the session exists.
    */
   sawSession?: boolean;
+  /**
+   * The turn was stopped on purpose (Interrupt button / `/stop`), not by an
+   * error or a timeout. The caller says so instead of apologising.
+   */
+  interrupted?: boolean;
 }
 
 /** One line per tool call, latest step shown: "Bash: pnpm test". */
@@ -104,7 +117,16 @@ export class StreamJsonParser {
    */
   lastText = '';
 
-  constructor(private readonly onToolStep: (step: string) => void) {}
+  /**
+   * `onText` receives every assistant text block as it arrives — the agent's
+   * running commentary, which used to be parsed and dropped on the floor
+   * (#162). A block identical to the one before it is swallowed: relaying the
+   * same sentence twice reads as a glitch, never as progress.
+   */
+  constructor(
+    private readonly onToolStep: (step: string) => void,
+    private readonly onText: (text: string) => void = () => {},
+  ) {}
 
   feed(chunk: string): void {
     this.buf += chunk;
@@ -128,8 +150,12 @@ export class StreamJsonParser {
     if (ev.type === 'assistant') {
       for (const block of ev.message?.content ?? []) {
         if (block.type === 'tool_use' && block.name) this.onToolStep(formatToolStep(block.name, block.input));
-        // Latest wins: on a dead run the newest one is "where it got to".
-        else if (block.type === 'text' && block.text?.trim()) this.lastText = block.text.trim();
+        else if (block.type === 'text' && block.text?.trim()) {
+          const text = block.text.trim();
+          if (text !== this.lastText) this.onText(text);
+          // Latest wins: on a dead run the newest one is "where it got to".
+          this.lastText = text;
+        }
       }
     } else if (ev.type === 'result') {
       this.sawResult = true;
@@ -219,10 +245,22 @@ export function describeResultError(subtype: string, maxTurns: number): string {
   return 'runtime reported an error';
 }
 
+/** What an interrupted turn resolves to — no CLI error, just a stopped run. */
+const INTERRUPTED = 'interrupted';
+
 export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<RunResult> {
+  if (opts.signal?.aborted) return { ok: false, text: '', error: INTERRUPTED, interrupted: true };
   if (cfg.kind === 'demo') {
-    // Brief pause so the typing indicator is visible in clients.
-    await new Promise((r) => setTimeout(r, 500));
+    // Brief pause so the typing indicator is visible in clients — and long
+    // enough to be interruptible, which is what makes demo mode testable.
+    const stopped = await new Promise<boolean>((resolve) => {
+      const t = setTimeout(() => resolve(false), 500);
+      opts.signal?.addEventListener('abort', () => {
+        clearTimeout(t);
+        resolve(true);
+      });
+    });
+    if (stopped) return { ok: false, text: '', error: INTERRUPTED, interrupted: true };
     return { ok: true, text: DEMO_REPLY };
   }
   const args = cfg.kind === 'claude' ? buildClaudeArgs(cfg, opts) : buildCodexArgs(cfg, opts);
@@ -237,7 +275,7 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       detached: true,
     });
     if (child.pid) liveGroups.add(child.pid);
-    const parser = new StreamJsonParser(opts.onToolStep);
+    const parser = new StreamJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -248,12 +286,18 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       if (idleTimer) clearTimeout(idleTimer);
       if (capTimer) clearTimeout(capTimer);
       if (child.pid) liveGroups.delete(child.pid);
+      opts.signal?.removeEventListener('abort', onAbort);
     };
-    const expire = (error: string): void => {
+    /**
+     * End the run early. An expiry and an interrupt take the same path — kill
+     * the process group, salvage whatever the agent said — and differ only in
+     * how the caller reports it.
+     */
+    const expire = (error: string, interrupted = false): void => {
       if (settled) return;
       settled = true;
       cleanup();
-      opts.log(`runtime expired: ${error} — killing the process group`);
+      opts.log(interrupted ? 'run interrupted — killing the process group' : `runtime expired: ${error} — killing the process group`);
       if (child.pid) killGroup(child.pid, 5000);
       // The terminal result event will never arrive, so salvage the last thing
       // the agent said (codex has no events — its raw stdout is the contract).
@@ -262,8 +306,13 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
         text: cfg.kind === 'claude' ? parser.lastText : stdout.trim(),
         error,
         sawSession: parser.sawEvent,
+        interrupted,
       });
     };
+    function onAbort(): void {
+      expire(INTERRUPTED, true);
+    }
+    opts.signal?.addEventListener('abort', onAbort);
     /**
      * Rearmed by every byte the runtime emits. A turn that is still working
      * narrates itself (stream-json emits an event per tool call), so it never

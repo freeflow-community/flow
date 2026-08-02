@@ -33,6 +33,7 @@ import {
   RedeemAgentInviteBody,
   RedeemJoinLinkBody,
   SendMessageBody,
+  SetChannelIndicatorBody,
   SetMemberRoleBody,
   SetNotifyLevelBody,
   UpdateAppBody,
@@ -61,6 +62,7 @@ import * as apple from '../services/oauthApple.js';
 import { listIdentities } from '../services/oauthAccounts.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
+import * as ci from '../services/channelIndicators.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
 import * as fl from '../services/files.js';
@@ -562,6 +564,14 @@ export function registerRoutes(app: FastifyInstance): void {
     return ch.archiveChannel(id, req.user.id);
   });
 
+  // Activity indicator (#137): agents spin the sidebar row while they work.
+  // Transient — see services/channelIndicators.ts for how it can't get stuck on.
+  app.put('/v1/channels/:id/indicator', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SetChannelIndicatorBody, req.body);
+    return ci.setChannelIndicator(id, req.user.id, body.state, body.ttlSeconds);
+  });
+
   app.put('/v1/channels/:id/notify', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(SetNotifyLevelBody, req.body);
@@ -581,6 +591,11 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const q = parse(ListMessagesQuery, req.query);
     return msg.listMessages(id, req.user.id, q.before, q.limit);
+  });
+
+  app.get('/v1/channels/:id/pins', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { messages: await msg.listPinnedMessages(id, req.user.id) };
   });
 
   app.post('/v1/channels/:id/messages', { preHandler: requireAuth }, async (req, reply) => {
@@ -610,6 +625,16 @@ export function registerRoutes(app: FastifyInstance): void {
     const { purge } = req.query as { purge?: string };
     await msg.deleteMessage(id, req.user.id, { hard: purge === 'true' || purge === '1' });
     return { ok: true };
+  });
+
+  app.put('/v1/messages/:id/pin', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return msg.pinMessage(id, req.user.id);
+  });
+
+  app.delete('/v1/messages/:id/pin', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return msg.unpinMessage(id, req.user.id);
   });
 
   app.get('/v1/messages/:id/thread', { preHandler: requireAuth }, async (req) => {
