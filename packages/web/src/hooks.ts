@@ -29,6 +29,7 @@ import {
   removePendingMessage,
   type LocalMessage,
 } from './lib/messageCache';
+import { randomUuid } from './lib/uuid';
 import { useAuth } from './state';
 
 export function useWorkspaces() {
@@ -276,7 +277,7 @@ export function useSendMessage(channelId: string) {
   return {
     ...mutation,
     mutate: (input: SendInput, opts?: Parameters<typeof mutation.mutate>[1]) =>
-      mutation.mutate({ ...input, clientMsgId: crypto.randomUUID() }, opts),
+      mutation.mutate({ ...input, clientMsgId: randomUuid() }, opts),
     /** Re-POST a failed message with its original clientMsgId (idempotent
      * server-side). Flips the row back to pending and re-bumps the rollup. */
     retry: (clientMsgId: string, opts?: Parameters<typeof mutation.mutate>[1]) => {
