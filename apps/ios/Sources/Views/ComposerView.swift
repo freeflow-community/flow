@@ -191,7 +191,7 @@ struct ComposerView: View {
                     app.showError("Couldn't read the selected photo")
                     return
                 }
-                await upload(ImagePrep.prepareForUpload(url) ?? url)
+                await upload(url)
             }
         }
     }
@@ -212,8 +212,7 @@ struct ComposerView: View {
                 app.showError("Couldn't save the captured photo")
                 return
             }
-            // Capture is full sensor resolution, so this is the resize path.
-            await upload(ImagePrep.prepareForUpload(url) ?? url)
+            await upload(url)
         }
     }
 
@@ -238,16 +237,22 @@ struct ComposerView: View {
                     return
                 }
                 if scoped { url.stopAccessingSecurityScopedResource() }
-                await upload(ImagePrep.prepareForUpload(copy) ?? copy)
+                await upload(copy)
             }
         }
     }
 
+    /// The one funnel every upload path goes through — photo library, camera,
+    /// Files picker and the debug QA harness. `ImagePrep` belongs here rather
+    /// than at each call site: it can't be forgotten by a new caller, and the
+    /// QA harness exercises the same code a real pick does. Non-images and
+    /// already-small images come back `nil` and upload untouched.
     private func upload(_ fileURL: URL) async {
         guard let wsId = workspaceId else {
             app.showError("Couldn't upload: workspace unknown")
             return
         }
+        let fileURL = ImagePrep.prepareForUpload(fileURL) ?? fileURL
         do {
             let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: fileURL)
             if attachments.count < 10 { attachments.append(file) }

@@ -37,7 +37,11 @@ enum ImagePrep {
     static func prepareForUpload(_ url: URL) -> URL? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let typeId = CGImageSourceGetType(source) as String?,
-              let type = UTType(typeId)
+              let type = UTType(typeId),
+              // ImageIO will happily open a video container and hand back its
+              // first frame; without this a shared movie would upload as a
+              // still. Only actual images are ours to touch.
+              type.conforms(to: .image)
         else { return nil }  // not a decodable image — upload untouched
 
         // Animations lose every frame but the first through a thumbnail pass.
