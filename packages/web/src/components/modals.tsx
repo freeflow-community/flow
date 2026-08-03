@@ -188,6 +188,8 @@ function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Two-step arm for Regenerate — it kills the live link (error-prevention pass).
+  const [confirmRegen, setConfirmRegen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -241,8 +243,18 @@ function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
               className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
               disabled={busy} onClick={() => void copy()}>{copied ? 'Copied' : 'Copy link'}</button>
             <button data-testid="join-link-regenerate"
-              className="px-3 py-1.5 text-sm text-ink-soft disabled:opacity-50"
-              disabled={busy} onClick={() => void run('POST')}>Regenerate</button>
+              className={`px-3 py-1.5 text-sm disabled:opacity-50 ${
+                confirmRegen ? 'font-semibold text-red-600' : 'text-ink-soft'
+              }`}
+              disabled={busy}
+              onClick={() => {
+                if (!confirmRegen) { setConfirmRegen(true); return; }
+                setConfirmRegen(false);
+                void run('POST');
+              }}
+            >
+              {confirmRegen ? 'Old link stops working — sure?' : 'Regenerate'}
+            </button>
             <button data-testid="join-link-revoke"
               className="px-3 py-1.5 text-sm text-red-600 disabled:opacity-50"
               disabled={busy} onClick={() => void run('DELETE')}>Revoke</button>
@@ -377,6 +389,9 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
   const chanMembers = useChannelMembers(channel.id);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState<Set<string>>(new Set());
+  // Two-step arm for Archive — it's workspace-visible and un-confirmed was a
+  // one-click surprise (error-prevention pass).
+  const [confirmArchive, setConfirmArchive] = useState(false);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] });
 
@@ -477,15 +492,23 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
           {!isDm && channel.name !== 'general' && (
             <button
               data-testid="channel-archive"
-              className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
-              onClick={() =>
-                act(async () => {
+              className={`rounded border px-3 py-1.5 text-sm ${
+                confirmArchive
+                  ? 'border-red-600 bg-red-600 font-semibold text-white'
+                  : 'border-red-200 text-red-600 hover:bg-red-50'
+              }`}
+              onClick={() => {
+                if (!confirmArchive) {
+                  setConfirmArchive(true);
+                  return;
+                }
+                void act(async () => {
                   await api('POST', `/v1/channels/${channel.id}/archive`);
                   if (sel.channelId === channel.id) sel.selectChannel(null);
-                })
-              }
+                });
+              }}
             >
-              Archive
+              {confirmArchive ? 'Archive for everyone?' : 'Archive'}
             </button>
           )}
         </div>

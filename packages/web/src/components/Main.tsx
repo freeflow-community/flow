@@ -24,6 +24,7 @@ import AdminView from './AdminView';
 import ActivityView from './ActivityView';
 import SidePanel from './SidePanel';
 import { MobileMenuButton } from './MobileMenuButton';
+import CommandPalette from './CommandPalette';
 import { PlusIcon } from './icons';
 
 export default function Main() {
@@ -40,6 +41,8 @@ export default function Main() {
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // ⌘K / Ctrl+K switcher — the keyboard-first way around the workspace.
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const socketRef = useRef<SocketClient | null>(null);
   // refs so the socket handler always sees current selection
   const selRef = useRef(sel);
@@ -54,6 +57,17 @@ export default function Main() {
     if ('Notification' in window && Notification.permission === 'default') {
       void Notification.requestPermission();
     }
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, []);
 
   // The Activity badge counts this workspace only — the feed behind it is
@@ -370,6 +384,7 @@ export default function Main() {
         {/* The "works best in the desktop app" banner is gone (design ruling,
             .impeccable.md): the web client stands on its own. Mac download
             links live on the auth screen and workspace chooser. */}
+        {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
         <div className="relative flex min-h-0 flex-1">
           {/* Rail + sidebar. Desktop: inline flex columns. Mobile (<md): a
               fixed slide-in drawer over the content, toggled by the header

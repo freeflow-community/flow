@@ -552,12 +552,19 @@ function AdminRow({
 }
 
 /** An artifact row (phase 13): nested under its channel; selectable opens the
- * side panel; hover ✕ DELETES the shared artifact (and its own file, if the
- * artifact owns it — server-side). */
+ * side panel. The hover remove DELETES the shared artifact (and its own file,
+ * if the artifact owns it — server-side), so it's a two-step confirm: first
+ * click arms ("Delete?"), second click within 3s commits. */
 function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
   const sel = useSelection();
   const qc = useQueryClient();
   const active = sel.artifactId === artifact.id;
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const t = setTimeout(() => setConfirming(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirming]);
   return (
     // No white pill for the active artifact — it would stack under the active
     // channel's pill (double-highlight). Selection reads as bold white text.
@@ -574,17 +581,26 @@ function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
       </button>
       <button
         data-testid={`sidebar-artifact-remove-${artifact.name}`}
-        title="Remove artifact"
-        className="hidden rounded px-1 text-xs text-white/55 hover:text-white group-hover:block"
+        title={confirming ? 'Click again to delete for everyone' : 'Remove artifact'}
+        className={`rounded px-1 text-xs group-hover:flex group-hover:items-center ${
+          confirming
+            ? 'flex items-center bg-white/15 font-semibold text-white'
+            : 'hidden text-white/55 hover:text-white'
+        }`}
         onClick={(e) => {
           e.stopPropagation();
+          if (!confirming) {
+            setConfirming(true);
+            return;
+          }
+          setConfirming(false);
           void api('DELETE', `/v1/artifacts/${artifact.id}`).then(() => {
             if (active) sel.selectArtifact(null);
             return qc.invalidateQueries({ queryKey: ['artifacts', artifact.workspaceId] });
           });
         }}
       >
-        <CloseIcon size={11} />
+        {confirming ? 'Delete?' : <CloseIcon size={11} />}
       </button>
     </div>
   );
