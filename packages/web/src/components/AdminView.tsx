@@ -114,7 +114,7 @@ function MemberRow({
       await api('PATCH', `/v1/workspaces/${workspaceId}/members/${member.userId}/role`, { role });
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     } finally {
       setBusy(false);
     }
@@ -127,7 +127,7 @@ function MemberRow({
       await api('DELETE', `/v1/workspaces/${workspaceId}/members/${member.userId}`);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
       setBusy(false);
       setConfirmRemove(false);
     }

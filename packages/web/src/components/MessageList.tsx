@@ -47,6 +47,7 @@ export default function MessageList({
   hasMore,
   onLoadOlder,
   showThreadAffordances,
+  emptyState,
   scrollKey,
   focusMessageId = null,
   onFocused,
@@ -57,6 +58,9 @@ export default function MessageList({
   hasMore: boolean;
   onLoadOlder: () => void;
   showThreadAffordances: boolean;
+  /** Rendered when the list is empty with no older pages — channels pass a
+   * designed welcome; threads omit it (the root message is context enough). */
+  emptyState?: React.ReactNode;
   /** Enables per-view scroll-position memory (channels pass their id; threads omit it). */
   scrollKey?: string;
   /** Jump-to-message target (phase 12): scroll it into view + flash it once
@@ -199,6 +203,7 @@ export default function MessageList({
               </button>
             </div>
           )}
+          {messages.length === 0 && !hasMore && emptyState}
           {messages.map((m, i) => (
             <div key={m.id}>
               {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}

@@ -15,6 +15,7 @@ import { useLive, useSelection } from '../state';
 import { useMemberMap, useNameMap, useNotifications } from '../hooks';
 import { Avatar } from './Avatar';
 import { MobileMenuButton } from './MobileMenuButton';
+import { BellIcon } from './icons';
 
 const kindLabel = (kind: number, sender: string, emoji: string | null) =>
   kind === 1 ? `${sender} sent you a direct message`
@@ -66,7 +67,11 @@ export default function ActivityView() {
 
       <div className="mc-scroll min-h-0 flex-1 overflow-y-auto" data-testid="activity-list">
         {rows.length === 0 && (
-          <p className="py-16 text-center text-sm text-faint">No activity yet</p>
+          <div className="flex flex-col items-center gap-2 py-16 text-center">
+            <span className="flex text-faint" aria-hidden><BellIcon size={20} /></span>
+            <p className="text-sm font-medium text-ink-soft">You&rsquo;re all caught up</p>
+            <p className="text-xs text-faint">Mentions, thread replies, and reactions land here.</p>
+          </div>
         )}
         {rows.map((n) => {
           // Who to show: the reactor on a reaction row, the author otherwise.

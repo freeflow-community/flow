@@ -6,6 +6,7 @@ import { clearJoinToken, parseJoinPath, readJoinToken, stashJoinToken } from './
 import { createThreadMemory } from './lib/threadMemory';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
+import { AgentMarkIcon } from './components/icons';
 import JoinScreen from './components/JoinScreen';
 import NativeSignIn from './components/NativeSignIn';
 import WorkspaceChooser from './components/WorkspaceChooser';
@@ -167,7 +168,14 @@ export default function App() {
   }, [qc, threadMemory]);
 
   if (booting) {
-    return <div className="flex h-full items-center justify-center text-faint">Loading…</div>;
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-base">
+        <span className="mc-think flex text-accent" aria-hidden>
+          <AgentMarkIcon size={22} />
+        </span>
+        <span className="text-sm text-faint">Warming up…</span>
+      </div>
+    );
   }
 
   // The native apps' Google button lands here (phase16 §9): sign in, mint a

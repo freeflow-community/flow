@@ -9,7 +9,7 @@ import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
 import { EditChannelModal, Modal, UserCard } from './modals';
-import { AgentMarkIcon, UsersIcon } from './icons';
+import { AgentMarkIcon, LockIcon, UsersIcon } from './icons';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -201,6 +201,25 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         showThreadAffordances
         focusMessageId={focusId}
         onFocused={() => sel.clearFocusMessage()}
+        emptyState={
+          !messagesQ.isLoading && (
+            <div className="mc-rise-in flex flex-col items-start gap-2 px-[22px] pt-10 pb-6" data-testid="channel-empty-state">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-wash text-accent">
+                {channel?.isPrivate ? <LockIcon size={18} /> : <span className="font-display text-xl font-bold">#</span>}
+              </span>
+              <h3 className="font-display text-lg font-semibold text-ink">
+                {channel?.kind === 'standard' ? <>Welcome to #{title}</> : <>This is the start of your conversation</>}
+              </h3>
+              <p className="max-w-[46ch] text-sm text-muted">
+                {channel?.topic
+                  ? channel.topic
+                  : channel?.kind === 'standard'
+                    ? 'Nothing here yet — say hello, drop a file, or @mention an agent to put it to work.'
+                    : 'Messages here stay between you. Files, threads, and agents all work in DMs too.'}
+              </p>
+            </div>
+          )
+        }
       />
 
       <div className="h-5 px-[22px] text-xs text-muted" data-testid="typing-indicator-slot">
@@ -265,7 +284,7 @@ export function PinnedMessagesModal({
       {loading ? (
         <p className="py-6 text-center text-sm text-muted">Loading…</p>
       ) : messages.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted">No pinned messages in this channel.</p>
+        <p className="py-6 text-center text-sm text-muted">Nothing pinned yet — hover a message and hit the pin.</p>
       ) : (
         <div className="max-h-[60vh] space-y-2 overflow-y-auto">
           {messages.map((message) => (

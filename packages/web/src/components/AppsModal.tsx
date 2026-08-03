@@ -35,7 +35,7 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
       setName('');
       await qc.invalidateQueries({ queryKey: ['apps', workspaceId] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     } finally {
       setBusy(false);
     }
@@ -230,7 +230,7 @@ function AppRow({
     let alive = true;
     api<AppCredentials>('GET', `/v1/apps/${app.id}/credentials`)
       .then((c) => { if (alive) setCreds(c); })
-      .catch((err) => { if (alive) setCredsError(err instanceof Error ? err.message : 'failed'); });
+      .catch((err) => { if (alive) setCredsError(err instanceof Error ? err.message : 'Something went wrong — please try again.'); });
     return () => { alive = false; };
   }, [expanded, creds, app.id]);
 
@@ -243,7 +243,7 @@ function AppRow({
         await fn();
         await qc.invalidateQueries({ queryKey: ['apps', workspaceId] });
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'failed');
+        setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
       } finally {
         setBusy(false);
       }

@@ -34,7 +34,7 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
       await qc.invalidateQueries({ queryKey: ['members', workspaceId] });
       await qc.invalidateQueries({ queryKey: ['channels', workspaceId] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     } finally {
       setBusy(false);
     }
@@ -47,7 +47,7 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
         Agents are real members with an agent mark, each sponsored by the person who invited them. To add
         one: click <span className="font-semibold">Invite your Agent</span> in the sidebar to get a
         one-time <code className="rounded bg-daypill px-1">npx flow-agent-bridge &lt;code&gt;</code> command,
-        then run it on the agent&rsquo;s machine — it joins right away, no admin needed. See AGENT_MEMBERS.md.
+        then run it on the agent&rsquo;s machine — it joins right away, no admin needed.
       </p>
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
 

@@ -59,15 +59,16 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
       onClose();
       sel.selectChannel(ch.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     }
   };
 
   return (
     <Modal onClose={onClose} testid="create-channel-modal">
       <h3 className="mb-3 font-bold">Create Channel</h3>
-      <input data-testid="create-channel-name" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
-        placeholder="name (lowercase, a-z 0-9 - _)" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+      <input data-testid="create-channel-name" className="mb-1 w-full rounded border border-hairline2 px-3 py-2 text-sm"
+        placeholder="channel-name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+      <p className="mb-2 px-1 text-xs text-faint">Lowercase letters, numbers, and dashes.</p>
       <input className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         placeholder="Topic (optional)" value={topic} onChange={(e) => setTopic(e.target.value)} />
       <label className="mb-3 flex items-center gap-2 text-sm">
@@ -102,7 +103,7 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
       await qc.invalidateQueries({ queryKey: ['channels', channel.workspaceId] });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     }
   };
 
@@ -111,7 +112,7 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
       <h3 className="mb-3 font-bold">Channel settings</h3>
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Name</label>
       <input data-testid="edit-channel-name" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm disabled:opacity-60"
-        placeholder="name (lowercase, a-z 0-9 - _)" value={name} disabled={isGeneral}
+        placeholder="channel-name" value={name} disabled={isGeneral}
         title={isGeneral ? '#general cannot be renamed' : undefined}
         onChange={(e) => setName(e.target.value)} autoFocus={!isGeneral} />
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Topic</label>
@@ -154,7 +155,7 @@ function SelfRegisterToggle({ workspaceId }: { workspaceId: string }) {
       await api('PATCH', `/v1/workspaces/${workspaceId}`, { googleSelfRegisterDomain: next ? domain : null });
       await qc.invalidateQueries({ queryKey: ['workspaces'] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     } finally {
       setBusy(false);
     }
@@ -212,7 +213,7 @@ function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
       const link = await api<JoinLinkDTO>(method, `/v1/workspaces/${workspaceId}/join-link`);
       setUrl(link.joinUrl);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     } finally {
       setBusy(false);
     }
@@ -268,7 +269,7 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
     try {
       setInvite(await api<InviteDTO>('POST', `/v1/workspaces/${workspaceId}/invites`, { email }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     }
   };
 
@@ -325,7 +326,7 @@ export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onCl
       onClose();
       sel.selectChannel(ch.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     }
   };
 
@@ -387,7 +388,7 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
         await refresh();
         if (close) onClose();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'failed');
+        setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
       }
     })();
   };
@@ -509,7 +510,7 @@ export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: str
       await api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id });
       await qc.invalidateQueries({ queryKey: ['workspaces'] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     } finally {
       setBusy(false);
     }
@@ -591,7 +592,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
       await qc.invalidateQueries({ queryKey: ['members'] });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     }
   };
 
@@ -601,7 +602,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
       const me = await api<UserDTO>('PATCH', '/v1/me', { notificationPrefs: { [key]: value } });
       auth.setUser(me);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     }
   };
 
@@ -692,7 +693,7 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
   useEffect(() => {
     void api<UserDTO>('GET', `/v1/users/${userId}`)
       .then(setUser)
-      .catch((err) => setError(err instanceof Error ? err.message : 'failed'));
+      .catch((err) => setError(err instanceof Error ? err.message : 'Something went wrong — please try again.'));
   }, [userId]);
 
   const localTime = (tz: string) => {
@@ -711,7 +712,7 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
       onClose();
       sel.selectChannel(ch.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed');
+      setError(err instanceof Error ? err.message : 'Something went wrong — please try again.');
     }
   };
 

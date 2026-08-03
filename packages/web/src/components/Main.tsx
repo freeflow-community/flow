@@ -407,8 +407,11 @@ export default function Main() {
                 <div className="flex h-[60px] items-center justify-between border-b border-hairline px-[22px]">
                   <MobileMenuButton />
                 </div>
-                <div className="flex flex-1 items-center justify-center text-faint">
-                  Select a channel
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                  <p className="font-display text-lg font-semibold text-ink-soft">Pick a channel to dive in</p>
+                  <p className="max-w-[40ch] text-sm text-faint">
+                    Everything on the left is live — channels, DMs, and your agents.
+                  </p>
                 </div>
               </div>
             )}
