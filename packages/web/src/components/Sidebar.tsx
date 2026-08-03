@@ -591,9 +591,24 @@ function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
 }
 
 function PresenceDot({ online }: { online: boolean }) {
+  // Wake-up moment (.impeccable.md signature): a one-shot ripple when this
+  // member's dot flips offline → online while you're watching.
+  const prev = useRef(online);
+  const [woke, setWoke] = useState(false);
+  useEffect(() => {
+    if (online && !prev.current) {
+      setWoke(true);
+      const t = setTimeout(() => setWoke(false), 750);
+      prev.current = online;
+      return () => clearTimeout(t);
+    }
+    prev.current = online;
+  }, [online]);
   return (
     <span
-      className={`inline-block h-2 w-2 shrink-0 rounded-full ${online ? 'bg-online' : 'border-[1.5px] border-white/40'}`}
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${online ? 'bg-online' : 'border-[1.5px] border-white/40'} ${
+        woke ? 'mc-wake' : ''
+      }`}
     />
   );
 }

@@ -4,7 +4,7 @@ import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
-import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
+import { INTERRUPT_EMOJI, isThinkingStatus, THINKING_PREFIX } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
 import { useSendMessage, useTogglePin, useToggleReaction } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
@@ -321,6 +321,14 @@ function ReactionChip({
   );
 }
 
+/** Human-readable text for an agent's status row: the bridge writes
+ * `🤖 *thinking…*` plus an optional per-tool suffix; strip the protocol
+ * prefix and markdown emphasis so the designed row reads cleanly. */
+function thinkingLabel(body: string): string {
+  const rest = body.slice(THINKING_PREFIX.length).replace(/^\s*[—–-]\s*/, '').replaceAll('*', '').trim();
+  return rest || 'Thinking…';
+}
+
 /** "12m ago" style label for thread indicators. */
 function relTime(iso: string | null): string {
   if (!iso) return '';
@@ -416,7 +424,7 @@ function MessageRow({
             className="block cursor-pointer leading-none"
             onClick={() => setShowCard(true)}
           >
-            <Avatar userId={message.userId} name={sender} avatarUrl={member?.avatarUrl} size={38} radius={11} />
+            <Avatar userId={message.userId} name={sender} avatarUrl={member?.avatarUrl} size={38} radius={11} agent={member?.isAgent} />
           </button>
         )}
       </div>
@@ -459,22 +467,21 @@ function MessageRow({
                 <span>Pinned</span>
               </div>
             )}
-            {message.body.trim() && (
-              <div className="text-sm leading-[1.45] break-words whitespace-pre-wrap text-ink">
-                <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
-                  {renderBlocks(message.body, names, auth.user.id)}
-                </InlineLinkContext.Provider>
-                {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
-              </div>
-            )}
-            {thinking && (
-              <div className="mt-1">
+            {thinking ? (
+              /* The agent's live status row — the signature surface. A breathing
+                 spark, the current status, and the stop control, in place of the
+                 raw `🤖 *thinking…*` protocol text the bridge writes. */
+              <div className="flex flex-wrap items-center gap-2.5 py-0.5">
+                <span className="mc-think flex text-accent" aria-hidden>
+                  <AgentMarkIcon size={13} />
+                </span>
+                <span className="text-sm text-ink-soft italic">{thinkingLabel(message.body)}</span>
                 <button
                   type="button"
                   data-testid={`interrupt-${message.id}`}
                   disabled={stopping || pending}
                   title={stopping ? 'Stopping…' : 'Stop this agent turn'}
-                  className={`rounded-[20px] border px-[9px] py-[2px] text-xs font-[650] ${
+                  className={`rounded-[20px] border px-[9px] py-[2px] text-xs font-semibold transition-colors duration-100 ${
                     stopping
                       ? 'border-hairline text-faint'
                       : 'border-hairline bg-white text-ink-soft hover:border-hairline2 hover:text-ink'
@@ -487,6 +494,15 @@ function MessageRow({
                   </span>
                 </button>
               </div>
+            ) : (
+              message.body.trim() && (
+                <div className="text-sm leading-[1.45] break-words whitespace-pre-wrap text-ink">
+                  <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
+                    {renderBlocks(message.body, names, auth.user.id)}
+                  </InlineLinkContext.Provider>
+                  {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
+                </div>
+              )
             )}
             {message.files.map((f) => (
               <Attachment key={f.id} file={f} />

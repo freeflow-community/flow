@@ -2,6 +2,7 @@
 // bearer-auth <img> helper shared by attachments and profile views.
 import { useEffect, useState } from 'react';
 import { blobUrl } from '../lib/api';
+import { AgentMarkIcon } from './icons';
 
 /* Design 3a avatar palette (bg / text), extended with two matching pairs. */
 const PALETTE: [string, string][] = [
@@ -37,6 +38,7 @@ export function Avatar({
   size = 38,
   radius = 11,
   className = '',
+  agent = false,
 }: {
   userId: string;
   name: string;
@@ -44,20 +46,46 @@ export function Avatar({
   size?: number;
   radius?: number;
   className?: string;
+  /** AI teammate: teal identity chip + spark badge (signature, .impeccable.md). */
+  agent?: boolean;
 }) {
   const style = { width: size, height: size, borderRadius: radius };
+  let core: React.ReactNode;
   if (avatarUrl) {
-    return (
-      <AuthImg path={avatarUrl} alt={name} className={`shrink-0 object-cover ${className}`} style={style} />
+    core = <AuthImg path={avatarUrl} alt={name} className={`shrink-0 object-cover ${agent ? '' : className}`} style={style} />;
+  } else if (agent) {
+    // Agents don't get the human pastel palette — they wear the brand.
+    core = (
+      <span
+        className={`flex shrink-0 items-center justify-center bg-accent font-extrabold text-white select-none ${agent ? '' : className}`}
+        style={{ ...style, fontSize: Math.round(size * 0.37) }}
+      >
+        {initials(name)}
+      </span>
+    );
+  } else {
+    const [bg, fg] = chipColors(userId);
+    core = (
+      <span
+        className={`flex shrink-0 items-center justify-center font-extrabold select-none ${className}`}
+        style={{ ...style, background: bg, color: fg, fontSize: Math.round(size * 0.37) }}
+      >
+        {initials(name)}
+      </span>
     );
   }
-  const [bg, fg] = chipColors(userId);
+  if (!agent) return core;
+  const badge = Math.max(12, Math.round(size * 0.42));
   return (
-    <span
-      className={`flex shrink-0 items-center justify-center font-extrabold select-none ${className}`}
-      style={{ ...style, background: bg, color: fg, fontSize: Math.round(size * 0.37) }}
-    >
-      {initials(name)}
+    <span className={`relative inline-flex shrink-0 ${className}`} style={{ width: size, height: size }}>
+      {core}
+      <span
+        className="absolute flex items-center justify-center rounded-full bg-white text-accent shadow-card"
+        style={{ width: badge, height: badge, right: -badge * 0.22, bottom: -badge * 0.18 }}
+        title="AI agent"
+      >
+        <AgentMarkIcon size={Math.round(badge * 0.62)} />
+      </span>
     </span>
   );
 }

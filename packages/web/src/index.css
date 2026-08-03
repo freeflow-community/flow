@@ -124,6 +124,22 @@ body {
 }
 .mc-view-in { animation: mc-view-in 120ms var(--ease-out-quart); }
 
+/* --- Agent presence (the signature moments, .impeccable.md) ---------------- */
+
+/* The thinking spark: a slow breath, alive but unhurried. */
+@keyframes mc-think {
+  0%, 100% { opacity: 0.4; transform: scale(0.9); }
+  50%      { opacity: 1;   transform: scale(1.1); }
+}
+.mc-think { animation: mc-think 1.5s ease-in-out infinite; }
+
+/* Wake-up ripple: fires once when an agent's presence dot flips online. */
+@keyframes mc-wake {
+  from { box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-online) 70%, transparent); }
+  to   { box-shadow: 0 0 0 8px transparent; }
+}
+.mc-wake { animation: mc-wake 700ms var(--ease-out-quart); }
+
 /* Jump-to-message highlight: wayfinding, not alarm — accent-tinted (was pink). */
 @keyframes mc-flash {
   0%, 25% { background-color: color-mix(in oklch, var(--color-accent) 14%, transparent); }

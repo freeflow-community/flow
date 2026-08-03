@@ -9,7 +9,7 @@ import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
 import { EditChannelModal, Modal, UserCard } from './modals';
-import { UsersIcon } from './icons';
+import { AgentMarkIcon, UsersIcon } from './icons';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -205,7 +205,12 @@ export default function ChannelView({ channelId }: { channelId: string }) {
 
       <div className="h-5 px-[22px] text-xs text-muted" data-testid="typing-indicator-slot">
         {typers.length === 1 && (
-          <span data-testid="typing-indicator">
+          <span data-testid="typing-indicator" className="inline-flex items-center gap-1.5">
+            {typers[0]!.isAgent && (
+              <span className="mc-think flex text-accent" aria-hidden>
+                <AgentMarkIcon size={10} />
+              </span>
+            )}
             {typers[0]!.name} is {typers[0]!.isAgent ? 'thinking' : 'typing'}…
           </span>
         )}
