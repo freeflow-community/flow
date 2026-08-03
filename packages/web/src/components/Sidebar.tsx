@@ -237,7 +237,7 @@ export default function Sidebar() {
           <span className="flex text-white/55"><ChevronDownIcon size={12} /></span>
         </button>
         {wsMenuOpen && (
-          <div className="absolute top-12 left-3 right-3 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
+          <div className="mc-pop-in absolute top-12 left-3 right-3 z-20 rounded-lg bg-white py-1 text-ink shadow-float">
             {(workspaces.data ?? []).map((w) => (
               <MenuItem key={w.id} onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(w.id); }}>
                 <span className="flex items-center gap-1.5">

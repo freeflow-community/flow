@@ -112,7 +112,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     .map(([uid]) => ({ name: names[uid] ?? 'Someone', isAgent: memberMap[uid]?.isAgent ?? false }));
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col bg-base">
+    <section className="mc-view-in flex min-w-0 flex-1 flex-col bg-base">
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
         <MobileMenuButton />
         <div className="min-w-0 flex-1">

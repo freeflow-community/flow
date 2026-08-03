@@ -53,7 +53,7 @@ export default function StatusFooter() {
       {open && (
         <div
           data-testid="status-picker"
-          className="absolute bottom-[74px] left-3 right-3 z-30 rounded-[14px] bg-white p-3 shadow-[0_12px_40px_rgba(20,8,40,.4)]"
+          className="mc-pop-in absolute bottom-[74px] left-3 right-3 z-30 rounded-[14px] bg-white p-3 shadow-float"
         >
           <p className="px-1 pb-1 text-[11px] font-bold tracking-[.05em] text-muted uppercase">Set your status</p>
           {STATUS_OPTIONS.map((o, i) => (
@@ -83,7 +83,7 @@ export default function StatusFooter() {
       {menuOpen && (
         <div
           data-testid="avatar-menu"
-          className="absolute bottom-[74px] left-3 z-30 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]"
+          className="mc-pop-in absolute bottom-[74px] left-3 z-30 rounded-lg bg-white py-1 text-ink shadow-float"
         >
           <button
             data-testid="avatar-menu-profile"

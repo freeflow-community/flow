@@ -65,7 +65,7 @@ export default function ChannelMembersPopover({
       data-testid="channel-members-popover"
       role="dialog"
       aria-label="Channel members"
-      className="absolute top-[46px] right-0 z-30 max-h-[60vh] w-64 overflow-y-auto rounded-[14px] bg-white p-2 shadow-[0_12px_40px_rgba(20,8,40,.25)]"
+      className="mc-pop-in absolute top-[46px] right-0 z-30 max-h-[60vh] w-64 overflow-y-auto rounded-[14px] bg-white p-2 shadow-float"
     >
       <p className="px-2 pt-1 pb-1.5 text-[11px] font-bold tracking-[.05em] text-muted uppercase">
         {loading && rows.length === 0 ? 'Members' : `${rows.length} member${rows.length === 1 ? '' : 's'}`}

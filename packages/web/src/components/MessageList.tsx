@@ -287,6 +287,40 @@ function SystemLine({ message }: { message: MessageDTO }) {
  * pick). The add-reaction button beside them still opens the full picker. */
 const QUICK_REACTIONS = ['👍', '👀', '🙌'];
 
+/** A reaction pill. Pops (mc-reaction-pop) only when it arrives on an
+ * already-visible row — history renders still, live reactions feel alive. */
+function ReactionChip({
+  emoji,
+  count,
+  mine,
+  title,
+  rowMountedAt,
+  onClick,
+}: {
+  emoji: string;
+  count: number;
+  mine: boolean;
+  title: string;
+  rowMountedAt: number;
+  onClick: () => void;
+}) {
+  const [pop] = useState(() => Date.now() - rowMountedAt > 400);
+  return (
+    <button
+      data-testid={`reaction-${emoji}`}
+      data-count={count}
+      data-mine={mine}
+      title={title}
+      className={`rounded-[20px] border bg-white px-[9px] py-[2px] text-xs transition-[border-color,transform] duration-100 ease-out-quart active:scale-90 ${
+        mine ? 'border-accent-soft/40' : 'border-hairline hover:border-hairline2'
+      } ${pop ? 'mc-reaction-pop' : ''}`}
+      onClick={onClick}
+    >
+      {emoji} <span className={`font-bold ${mine ? 'text-accent-soft' : 'text-ink-soft'}`}>{count}</span>
+    </button>
+  );
+}
+
 /** "12m ago" style label for thread indicators. */
 function relTime(iso: string | null): string {
   if (!iso) return '';
@@ -339,6 +373,15 @@ function MessageRow({
   const stopping = message.reactions.some(
     (r) => r.emoji === INTERRUPT_EMOJI && r.userIds.includes(auth.user.id),
   );
+  // Send-settle / arrival: rows born in the last moments rise into place —
+  // your optimistic send and live incoming messages, never scrollback. Own
+  // confirmed rows skip it (the ack remount would double-animate the settle).
+  const [riseIn] = useState(
+    () => (pending || !mine) && Date.now() - new Date(message.createdAt).getTime() < 3000,
+  );
+  // Reaction chips added while the row is on screen pop; chips that arrive
+  // with the row (initial channel render) don't.
+  const rowMountedAt = useRef(Date.now());
 
   // Pin the message's file(s) as shared artifacts in this channel (phase 13);
   // the new artifact opens in the side panel automatically.
@@ -362,7 +405,7 @@ function MessageRow({
     <div
       data-testid={`message-${message.id}`}
       data-pending={pending || undefined}
-      className={`group relative flex gap-2.5 px-[22px] ${editing ? 'bg-accent/5' : 'hover:bg-daypill/40'} ${showHeader ? 'mt-3' : 'py-px'} ${pending ? 'opacity-55' : ''}`}
+      className={`group relative flex gap-2.5 px-[22px] ${editing ? 'bg-accent/5' : 'hover:bg-daypill/40'} ${showHeader ? 'mt-3' : 'py-px'} ${pending ? 'opacity-55' : ''} ${riseIn ? 'mc-rise-in' : ''} transition-opacity duration-300`}
     >
       <div className="w-[38px] shrink-0">
         {showHeader && (
@@ -490,20 +533,15 @@ function MessageRow({
                 {message.reactions.map((r) => {
                   const mineR = r.userIds.includes(auth.user.id);
                   return (
-                    <button
+                    <ReactionChip
                       key={r.emoji}
-                      data-testid={`reaction-${r.emoji}`}
-                      data-count={r.count}
-                      data-mine={mineR}
+                      emoji={r.emoji}
+                      count={r.count}
+                      mine={mineR}
                       title={r.userIds.map((id) => names[id] ?? '?').join(', ')}
-                      className={`rounded-[20px] border bg-white px-[9px] py-[2px] text-xs ${
-                        mineR ? 'border-accent-soft/40' : 'border-hairline hover:border-hairline2'
-                      }`}
+                      rowMountedAt={rowMountedAt.current}
                       onClick={() => toggle.mutate({ message, emoji: r.emoji, mine: mineR })}
-                    >
-                      {r.emoji}{' '}
-                      <span className={`font-bold ${mineR ? 'text-accent-soft' : 'text-ink-soft'}`}>{r.count}</span>
-                    </button>
+                    />
                   );
                 })}
               </div>
@@ -541,7 +579,7 @@ function MessageRow({
       </div>
 
       {!message.deletedAt && !editing && !pending && !failed && (
-        <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
+        <div className="pointer-events-none absolute top-0 right-[22px] flex translate-y-0.5 items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 opacity-0 shadow-pop transition-[opacity,transform] duration-100 ease-out-quart group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
           {QUICK_REACTIONS.map((emoji) => {
             const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
             return (

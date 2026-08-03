@@ -25,13 +25,13 @@ export function Modal({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onMouseDown={onClose}>
+    <div className="mc-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/30" onMouseDown={onClose}>
       <div
         data-testid={testid}
         className={`${
           // cap to the viewport on phones so the dialog never overflows
           wide ? 'w-[min(560px,calc(100vw-2rem))]' : 'w-[min(24rem,calc(100vw-2rem))]'
-        } max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl bg-white p-5 text-ink shadow-2xl`}
+        } mc-pop-in max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl bg-white p-5 text-ink shadow-float`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {children}

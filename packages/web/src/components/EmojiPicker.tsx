@@ -42,7 +42,7 @@ export default function EmojiPicker({
       );
 
   return (
-    <div ref={ref} data-testid="emoji-picker" className="w-72 rounded-lg border border-hairline bg-white p-2 shadow-xl">
+    <div ref={ref} data-testid="emoji-picker" className="mc-pop-in w-72 rounded-lg border border-hairline bg-white p-2 shadow-pop">
       <input
         data-testid="emoji-search"
         className="mb-2 w-full rounded border border-hairline2 px-2 py-1 text-sm"

@@ -35,7 +35,7 @@ export default function SidePanel() {
   return (
     <aside
       data-testid="side-panel"
-      className="relative flex shrink-0 flex-col border-l border-hairline bg-base shadow-[-6px_0_16px_rgba(57,52,47,0.10)] max-md:fixed max-md:inset-0 max-md:z-30 max-md:border-l-0"
+      className="mc-slide-in-right relative flex shrink-0 flex-col border-l border-hairline bg-base shadow-[-6px_0_16px_rgba(57,52,47,0.10)] max-md:fixed max-md:inset-0 max-md:z-30 max-md:border-l-0"
       style={isMobile ? undefined : { width }}
     >
       {/* Left-edge drag handle: dragging left widens the panel. */}

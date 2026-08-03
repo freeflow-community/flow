@@ -74,6 +74,56 @@ body {
   border-radius: 6px;
 }
 
+/* ---------------------------------------------------------------------------
+   Motion vocabulary. Transform/opacity only; entrances decelerate, exits are
+   cuts (dismissal should feel instant). Reduced-motion collapses everything
+   via the media query at the bottom of this file.
+--------------------------------------------------------------------------- */
+
+/* Overlays and popovers arriving: a small lift + fade, no drama. */
+@keyframes mc-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+.mc-pop-in { animation: mc-pop-in 180ms var(--ease-out-quint); }
+
+/* Backdrop fade behind modals/lightboxes. */
+@keyframes mc-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.mc-fade-in { animation: mc-fade-in 150ms var(--ease-out-quart); }
+
+/* A message landing in the stream — the send-settle. Slight rise, then rest. */
+@keyframes mc-rise-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: none; }
+}
+.mc-rise-in { animation: mc-rise-in 220ms var(--ease-out-quart); }
+
+/* Reaction chip arriving: overshoot a hair, settle. (Keyframed — no elastic easing.) */
+@keyframes mc-reaction-pop {
+  0%   { opacity: 0; transform: scale(0.55); }
+  70%  { opacity: 1; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.mc-reaction-pop { animation: mc-reaction-pop 220ms var(--ease-out-quart); }
+
+/* Side panel sliding in from the right edge. */
+@keyframes mc-slide-in-right {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: none; }
+}
+.mc-slide-in-right { animation: mc-slide-in-right 200ms var(--ease-out-quint); }
+
+/* Channel switch: the incoming view fades up briefly so the cut reads as a
+   scene change, not a glitch. Fast enough to never feel like loading. */
+@keyframes mc-view-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.mc-view-in { animation: mc-view-in 120ms var(--ease-out-quart); }
+
 /* Jump-to-message highlight: wayfinding, not alarm — accent-tinted (was pink). */
 @keyframes mc-flash {
   0%, 25% { background-color: color-mix(in oklch, var(--color-accent) 14%, transparent); }
