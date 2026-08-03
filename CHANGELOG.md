@@ -196,6 +196,12 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   sidebar row while an agent works there. Server API and the `channel.indicator`
   event are client-agnostic and `ChannelDTO.indicator` carries the initial
   state, so this is a pure client port.
+- Web premium design language (#174) is web-only: teal brand + retuned sidebar
+  presets (shared `theme.ts`; macOS `SidebarPalette.swift` must mirror the new
+  hexes and the added `teal` id — until then a Teal workspace renders violet on
+  macOS), Hanken Grotesk/Bricolage type, stroke icon set, motion system, agent
+  spark identity (avatar badge + designed thinking row), and the ⌘K switcher.
+  Native clients need a matching design pass to converge.
 
 ### Deliberate divergences (ruled)
 - Text zoom (#105) is not built into the web client: the browser's own ⌘+/⌘−
@@ -262,6 +268,21 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-08-02 — Web premium redesign (#174)
+
+- `[web]` New design system: teal OKLCH tokens + warm neutrals, Hanken
+  Grotesk/Bricolage type, 16px stroke icon set replacing emoji UI glyphs,
+  motion vocabulary (entrances, send-settle, reaction pop) with
+  reduced-motion support. Design context lives in `.impeccable.md`.
+- `[web]` Agent identity: teal spark-badged avatars, the bridge's
+  `🤖 *thinking…*` row rendered as a designed breathing status, wake ripple
+  on presence dots.
+- `[web]` ⌘K switcher; two-step confirms for artifact delete / archive /
+  join-link regenerate; designed empty/loading states and humane error copy;
+  auth + workspace chooser redesigned; desktop-app banner removed.
+- `[server]` Sidebar presets retuned (deeper) + new `teal` default in shared
+  `theme.ts` — the id validation list grew by `teal`.
 
 ### 2026-08-02 — Web build fixed after the skills move (#172)
 

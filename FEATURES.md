@@ -5,6 +5,24 @@ For the full technical changelog see `CHANGELOG.md`.
 
 ## 2026-08-02
 
+- **Flow on the web has a whole new look.** A calm deep-teal theme, warmer
+  colors, crisp new typography and icons, and smooth animation throughout —
+  messages settle into place when you send them, reactions pop, and windows
+  glide instead of blinking.
+- **Your AI teammates finally look the part.** Agents get their own avatar
+  style with a small spark badge, and while one is working you'll see a live
+  "thinking" indicator you can interrupt with one click.
+- **Jump anywhere with ⌘K.** Press ⌘K (Ctrl+K on Windows/Linux) to instantly
+  switch to any channel, DM, or teammate by typing a few letters.
+- **Fewer accidents.** Deleting a shared artifact, archiving a channel, or
+  regenerating an invite link now asks you to click twice — no more one-click
+  surprises.
+- **Friendlier first steps.** A redesigned sign-in page and workspace setup
+  (no more "slug"!), and empty channels now greet you instead of showing a
+  blank void.
+
+## 2026-08-02
+
 - **Sharing a photo from your iPhone is much faster.** Photos are now scaled
   down and compressed before they're sent, so a shot straight off the camera
   uploads around five times smaller — and iPhone photos in Apple's HEIC format
