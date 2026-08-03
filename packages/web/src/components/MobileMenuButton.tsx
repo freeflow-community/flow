@@ -1,4 +1,5 @@
 import { useMobileNav } from '../state';
+import { MenuIcon } from './icons';
 
 /**
  * Hamburger that opens the nav drawer — mobile only (the rail + sidebar are
@@ -14,7 +15,7 @@ export function MobileMenuButton() {
       className="-ml-1.5 mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-lg text-ink-soft hover:bg-daypill hover:text-ink md:hidden"
       onClick={nav.openDrawer}
     >
-      ☰
+      <MenuIcon size={18} />
     </button>
   );
 }

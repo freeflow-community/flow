@@ -9,6 +9,7 @@ import type { AppDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useApps } from '../hooks';
 import { Modal } from './modals';
+import { CheckIcon } from './icons';
 
 export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -90,10 +91,10 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
             </code>
             <button
               data-testid="app-token-copy"
-              className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+              className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
               onClick={() => void copy('token')}
             >
-              {copied === 'token' ? 'Copied ✓' : 'Copy'}
+              {copied === 'token' ? <>Copied <CheckIcon size={12} /></> : 'Copy'}
             </button>
           </div>
           <p className="mb-1 text-sm font-semibold">App-level token</p>
@@ -104,10 +105,10 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
             </code>
             <button
               data-testid="app-app-token-copy"
-              className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+              className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
               onClick={() => void copy('appToken')}
             >
-              {copied === 'appToken' ? 'Copied ✓' : 'Copy'}
+              {copied === 'appToken' ? <>Copied <CheckIcon size={12} /></> : 'Copy'}
             </button>
           </div>
           <p className="mb-1 text-sm font-semibold">Signing secret</p>
@@ -118,10 +119,10 @@ export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClo
             </code>
             <button
               data-testid="app-secret-copy"
-              className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+              className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
               onClick={() => void copy('secret')}
             >
-              {copied === 'secret' ? 'Copied ✓' : 'Copy'}
+              {copied === 'secret' ? <>Copied <CheckIcon size={12} /></> : 'Copy'}
             </button>
           </div>
           <div className="flex justify-end">
@@ -186,7 +187,7 @@ function CredentialRow({
         </code>
         <button
           data-testid={`app-cred-${testid}-copy-${app.name}`}
-          className="shrink-0 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
+          className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-3 py-1 text-xs font-semibold text-white"
           onClick={() => {
             void navigator.clipboard.writeText(value).then(
               () => setCopied(true),
@@ -194,7 +195,7 @@ function CredentialRow({
             );
           }}
         >
-          {copied ? 'Copied ✓' : 'Copy'}
+          {copied ? <>Copied <CheckIcon size={12} /></> : 'Copy'}
         </button>
       </div>
     </div>

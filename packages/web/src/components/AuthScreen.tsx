@@ -9,6 +9,7 @@ import type {
 import { api } from '../lib/api';
 import { loadGoogleIdentity, publicConfig } from '../lib/google';
 import { MAC_DOWNLOAD_URL } from './OpenInApp';
+import { AgentMarkIcon, DownloadIcon } from './icons';
 
 type Mode =
   | 'signin'
@@ -21,9 +22,10 @@ type Mode =
   | 'link-sent'
   | 'signin-link';
 
-const inputCls = 'mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm';
+const inputCls =
+  'mb-2 w-full rounded-lg border border-hairline2 bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-faint transition-colors duration-150 focus:border-accent/60 focus:outline-none';
 const submitCls =
-  'w-full rounded bg-accent py-2 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-50';
+  'w-full rounded-lg bg-accent py-2.5 text-sm font-semibold text-white transition-[background-color,transform,opacity] duration-150 ease-out-quart enabled:hover:bg-accent-deep enabled:active:scale-[0.985] disabled:opacity-40';
 
 /**
  * "Continue with Google" (phase16 §5). Sign-in and register are the same act
@@ -363,18 +365,24 @@ export default function AuthScreen({
     const isRegister = mode === 'register';
     body = (
       <form onSubmit={submitAuth}>
-        <div className="mb-4 flex justify-center gap-2 text-sm" data-testid="auth-mode">
+        <div
+          className="mx-auto mb-5 flex w-fit rounded-full border border-hairline bg-base p-0.5 text-sm"
+          data-testid="auth-mode"
+        >
           <button
             type="button"
-            className={!isRegister ? 'font-semibold text-accent-soft' : 'text-muted'}
+            className={`rounded-full px-4 py-1 transition-colors duration-150 ${
+              !isRegister ? 'bg-white font-semibold text-ink shadow-card' : 'text-muted hover:text-ink'
+            }`}
             onClick={() => nav('signin')}
           >
             Sign In
           </button>
-          <span className="text-faint">·</span>
           <button
             type="button"
-            className={isRegister ? 'font-semibold text-accent-soft' : 'text-muted'}
+            className={`rounded-full px-4 py-1 transition-colors duration-150 ${
+              isRegister ? 'bg-white font-semibold text-ink shadow-card' : 'text-muted hover:text-ink'
+            }`}
             onClick={() => nav('register')}
           >
             Register
@@ -397,7 +405,7 @@ export default function AuthScreen({
           <>
             <input
               data-testid="auth-password"
-              className="mb-1 w-full rounded border border-hairline2 px-3 py-2 text-sm"
+              className={`${inputCls} mb-1`}
               placeholder="Password"
               type="password"
               value={password}
@@ -447,9 +455,17 @@ export default function AuthScreen({
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 bg-base">
-      <div className="w-80 rounded-xl border border-hairline bg-white p-6 shadow-sm">
-        <h1 className="mb-1 text-center text-2xl font-bold text-ink">Flow</h1>
+    <div className="flex h-full flex-col items-center justify-center gap-5 bg-base bg-[radial-gradient(90%_65%_at_50%_-5%,oklch(0.95_0.022_183)_0%,transparent_72%)] px-4">
+      <div className="flex flex-col items-center gap-1.5">
+        <div className="flex items-center gap-2 text-ink">
+          <span className="flex text-accent" aria-hidden>
+            <AgentMarkIcon size={22} />
+          </span>
+          <h1 className="font-display text-[32px] leading-none font-bold tracking-tight">Flow</h1>
+        </div>
+        <p className="text-sm text-muted">Team chat for humans — and their agents.</p>
+      </div>
+      <div className="w-80 rounded-2xl border border-hairline bg-white p-6 shadow-pop">
         {invited && (
           <p data-testid="invite-banner" className="mb-3 rounded-lg bg-accent/10 px-3 py-2 text-center text-sm text-accent-deep">
             {joinWorkspace ? (
@@ -468,9 +484,10 @@ export default function AuthScreen({
       <a
         data-testid="download-mac-app"
         href={MAC_DOWNLOAD_URL}
-        className="text-sm font-semibold text-accent-soft hover:underline"
+        className="flex items-center gap-1.5 text-sm font-semibold text-accent-soft hover:underline"
       >
-        Download the Mac app ↓
+        Download the Mac app
+        <DownloadIcon size={13} />
       </a>
     </div>
   );

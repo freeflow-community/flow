@@ -12,6 +12,26 @@ import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
 import { UnfurlCard } from './UnfurlCard';
+import {
+  AddReactionIcon,
+  AgentMarkIcon,
+  ArrowDownIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  CloseIcon,
+  CopyIcon,
+  DocIcon,
+  DownloadIcon,
+  EditIcon,
+  ExternalIcon,
+  PinIcon,
+  StopIcon,
+  ThreadIcon,
+  TrashIcon,
+} from './icons';
+
+export { PinIcon } from './icons';
 
 /** Remembered scroll position per channel, so switching away and back lands
  * where you left off (ui_nits). Kept module-level (survives the per-channel
@@ -206,7 +226,10 @@ export default function MessageList({
           className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-full border border-hairline bg-white px-3 py-1.5 text-xs font-semibold text-accent-soft shadow-md hover:border-hairline2"
           onClick={jumpToLatest}
         >
-          Latest msgs ↓
+          <span className="flex items-center gap-1.5">
+            Jump to latest
+            <ArrowDownIcon size={12} />
+          </span>
         </button>
       )}
     </div>
@@ -261,44 +284,8 @@ function SystemLine({ message }: { message: MessageDTO }) {
 }
 
 /** Quick one-tap reactions shown first in the message hover menu (operator
- * pick). The 🙂 button beside them still opens the full picker. */
+ * pick). The add-reaction button beside them still opens the full picker. */
 const QUICK_REACTIONS = ['👍', '👀', '🙌'];
-
-/** Open-external glyph (box with an arrow leaving it) for the pin-as-artifact
- * action. The rest of the UI uses unicode/emoji glyphs, but no codepoint draws
- * this mark — hence the one inline SVG. Strokes follow the button's text color. */
-function ExternalLinkIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-[15px] w-[15px]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M15 3h6v6" />
-      <path d="M10 14 21 3" />
-      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-    </svg>
-  );
-}
-
-export function PinIcon({ filled = false }: { filled?: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[17px] w-[17px]">
-      <path
-        d="M8 3h8l-1.2 6.1 3.2 3.2V14h-5v6l-1 1-1-1v-6H6v-1.7l3.2-3.2L8 3Z"
-        fill={filled ? 'currentColor' : 'none'}
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 /** "12m ago" style label for thread indicators. */
 function relTime(iso: string | null): string {
@@ -397,8 +384,12 @@ function MessageRow({
             <span className="text-sm font-bold">
               {sender}
               {member?.isAgent && (
-                <span className="ml-1 text-sm font-normal" title="AI agent" data-testid={`agent-badge-${sender}`}>
-                  🤖
+                <span
+                  className="ml-1 inline-flex align-baseline text-accent-soft"
+                  title="AI agent"
+                  data-testid={`agent-badge-${sender}`}
+                >
+                  <AgentMarkIcon size={11} />
                 </span>
               )}
               {member?.statusEmoji && (
@@ -447,7 +438,10 @@ function MessageRow({
                   }`}
                   onClick={() => toggle.mutate({ message, emoji: INTERRUPT_EMOJI, mine: false })}
                 >
-                  {stopping ? '⏹ Stopping…' : '⏹ Interrupt'}
+                  <span className="flex items-center gap-1">
+                    <StopIcon size={11} />
+                    {stopping ? 'Stopping…' : 'Interrupt'}
+                  </span>
                 </button>
               </div>
             )}
@@ -469,13 +463,13 @@ function MessageRow({
                 </button>
                 <button
                   type="button"
-                  className="text-muted hover:text-ink"
+                  className="flex items-center text-muted hover:text-ink"
                   title="Discard"
                   onClick={() =>
                     send.discard((message as LocalMessage).clientMsgId, message.threadRootId ?? undefined)
                   }
                 >
-                  ✕
+                  <CloseIcon size={12} />
                 </button>
               </div>
             )}
@@ -565,35 +559,35 @@ function MessageRow({
           <div className="mx-0.5 h-6 w-px self-center bg-hairline" />
           <button
             data-testid={`add-reaction-${message.id}`}
-            className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+            className="flex items-center rounded-md px-1.5 py-1.5 text-ink-soft hover:bg-daypill hover:text-ink"
             title="Add reaction"
             onClick={() => setShowPicker(true)}
           >
-            🙂
+            <AddReactionIcon />
           </button>
           {showThreadAffordances && (
             <button
-              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+              className="flex items-center rounded-md px-1.5 py-1.5 text-ink-soft hover:bg-daypill hover:text-ink"
               title="Reply in thread"
               onClick={() => sel.openThread(message.threadRootId ?? message.id)}
             >
-              💬
+              <ThreadIcon />
             </button>
           )}
           {message.body && (
             <button
               data-testid={`copy-message-${message.id}`}
-              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+              className="flex items-center rounded-md px-1.5 py-1.5 text-ink-soft hover:bg-daypill hover:text-ink"
               title="Copy text"
               onClick={() => void navigator.clipboard?.writeText(message.body)}
             >
-              📋
+              <CopyIcon />
             </button>
           )}
           <button
             data-testid={`toggle-pin-${message.id}`}
-            className={`flex items-center rounded-md px-1.5 py-1 leading-none hover:bg-daypill ${
-              message.pinnedAt ? 'text-accent-soft' : 'text-ink'
+            className={`flex items-center rounded-md px-1.5 py-1.5 hover:bg-daypill ${
+              message.pinnedAt ? 'text-accent-soft' : 'text-ink-soft hover:text-ink'
             }`}
             title={message.pinnedAt ? 'Unpin message' : 'Pin message'}
             onClick={() => togglePin.mutate(message)}
@@ -603,30 +597,30 @@ function MessageRow({
           {message.files.length > 0 && (
             <button
               data-testid={`pin-artifact-${message.id}`}
-              className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+              className="flex items-center rounded-md px-1.5 py-1.5 text-ink-soft hover:bg-daypill hover:text-ink"
               title="Pin as artifact"
               onClick={() => void pinFiles()}
             >
-              <ExternalLinkIcon />
+              <ExternalIcon />
             </button>
           )}
           {mine && (
             <>
               <button
                 data-testid={`edit-message-${message.id}`}
-                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                className="flex items-center rounded-md px-1.5 py-1.5 text-ink-soft hover:bg-daypill hover:text-ink"
                 title="Edit"
                 onClick={() => sel.setEditingMessage(message.id)}
               >
-                ✏️
+                <EditIcon />
               </button>
               <button
                 data-testid={`delete-message-${message.id}`}
-                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                className="flex items-center rounded-md px-1.5 py-1.5 text-ink-soft hover:bg-daypill hover:text-red-600"
                 title="Delete"
                 onClick={() => setConfirmDelete(true)}
               >
-                🗑
+                <TrashIcon />
               </button>
             </>
           )}
@@ -724,11 +718,11 @@ function CardHeader({
     <div className="flex items-center gap-1 text-[11px] text-faint">
       <button
         data-testid={`file-collapse-${file.name}`}
-        className="w-4 hover:text-ink"
+        className="flex w-4 items-center hover:text-ink"
         title={collapsed ? 'Show preview' : 'Hide preview'}
         onClick={onToggle}
       >
-        {collapsed ? '▸' : '▾'}
+        {collapsed ? <ChevronRightIcon size={11} /> : <ChevronDownIcon size={11} />}
       </button>
       <span className="truncate">{file.name}</span>
     </div>
@@ -739,11 +733,11 @@ function DownloadHoverButton({ file, onDownload }: { file: FileDTO; onDownload: 
   return (
     <button
       data-testid={`file-download-${file.name}`}
-      className="absolute top-1.5 right-1.5 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white/90 text-sm shadow-sm hover:bg-white group-hover/att:flex"
+      className="absolute top-1.5 right-1.5 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white/90 text-ink-soft shadow-sm hover:bg-white hover:text-ink group-hover/att:flex"
       title="Download"
       onClick={() => void onDownload()}
     >
-      ⤓
+      <DownloadIcon size={14} />
     </button>
   );
 }
@@ -896,7 +890,7 @@ function VideoLightbox({
           title="Download"
           onClick={() => void onDownload()}
         >
-          ⤓
+          <DownloadIcon size={14} />
         </button>
         <button
           data-testid="video-lightbox-close"
@@ -904,7 +898,7 @@ function VideoLightbox({
           title="Close"
           onClick={onClose}
         >
-          ✕
+          <CloseIcon size={14} />
         </button>
       </div>
       <video
@@ -969,7 +963,10 @@ function TextAttachment({ file }: { file: FileDTO }) {
               className="mt-0.5 text-xs font-semibold text-accent-soft hover:underline"
               onClick={() => setExpanded((v) => !v)}
             >
-              {expanded ? 'Collapse ▴' : 'Expand ▾'}
+              <span className="flex items-center gap-1">
+                {expanded ? 'Collapse' : 'Expand'}
+                {expanded ? <ChevronUpIcon size={11} /> : <ChevronDownIcon size={11} />}
+              </span>
             </button>
           )}
         </div>
@@ -1055,7 +1052,7 @@ function PdfReader({
           title="Open external"
           onClick={() => window.open(url, '_blank')}
         >
-          ↗
+          <ExternalIcon size={14} />
         </button>
         <button
           data-testid="pdf-reader-download"
@@ -1063,7 +1060,7 @@ function PdfReader({
           title="Download"
           onClick={() => void onDownload()}
         >
-          ⤓
+          <DownloadIcon size={14} />
         </button>
         <button
           data-testid="pdf-reader-close"
@@ -1071,7 +1068,7 @@ function PdfReader({
           title="Close"
           onClick={onClose}
         >
-          ✕
+          <CloseIcon size={14} />
         </button>
       </div>
       <div className="h-[90vh] w-[80vw]" onMouseDown={(e) => e.stopPropagation()}>
@@ -1093,7 +1090,7 @@ function FileChip({ file }: { file: FileDTO }) {
         className="flex items-center gap-2 rounded-[10px] border border-hairline bg-white py-2 pr-10 pl-3 text-left text-sm hover:border-hairline2"
         onClick={() => void download()}
       >
-        <span>📄</span>
+        <span className="text-ink-soft"><DocIcon size={18} /></span>
         <span>
           <span className="block font-medium">{file.name}</span>
           <span className="block text-xs text-muted">{bytesLabel(file.sizeBytes)}</span>
@@ -1105,7 +1102,7 @@ function FileChip({ file }: { file: FileDTO }) {
         title="Download"
         onClick={() => void download()}
       >
-        ⤓
+        <DownloadIcon size={14} />
       </button>
     </div>
   );
@@ -1145,7 +1142,7 @@ function ImageLightbox({
           title="Open external"
           onClick={() => { if (url) window.open(url, '_blank'); }}
         >
-          ↗
+          <ExternalIcon size={14} />
         </button>
         <button
           data-testid="lightbox-download"
@@ -1153,7 +1150,7 @@ function ImageLightbox({
           title="Download"
           onClick={() => void onDownload()}
         >
-          ⤓
+          <DownloadIcon size={14} />
         </button>
         <button
           data-testid="lightbox-close"
@@ -1161,7 +1158,7 @@ function ImageLightbox({
           title="Close"
           onClick={onClose}
         >
-          ✕
+          <CloseIcon size={14} />
         </button>
       </div>
       {url ? (

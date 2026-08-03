@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GoogleAuthResponse } from '@flow/shared';
 import { setToken } from '../lib/api';
 import { GoogleButton } from './AuthScreen';
+import { DownloadIcon, ExternalIcon } from './icons';
 import { MAC_DOWNLOAD_URL, openInApp } from './OpenInApp';
 
 type Phase = 'choose' | 'handing-off' | 'sent' | 'no-app' | 'error';
@@ -81,10 +82,10 @@ export default function NativeSignIn({ signedIn }: { signedIn: boolean }) {
             </p>
             <button
               data-testid="native-retry"
-              className="w-full rounded bg-accent py-2 text-sm font-semibold text-white hover:bg-accent-deep"
+              className="flex w-full items-center justify-center gap-1.5 rounded bg-accent py-2 text-sm font-semibold text-white hover:bg-accent-deep"
               onClick={handOff}
             >
-              Open the Flow app ↗
+              Open the Flow app <ExternalIcon size={12} />
             </button>
             <p className="mt-2 text-xs text-faint">You can close this tab once Flow opens.</p>
           </>
@@ -97,9 +98,9 @@ export default function NativeSignIn({ signedIn }: { signedIn: boolean }) {
             <a
               data-testid="native-download"
               href={MAC_DOWNLOAD_URL}
-              className="text-sm font-semibold text-accent-soft hover:underline"
+              className="inline-flex items-center gap-1 text-sm font-semibold text-accent-soft hover:underline"
             >
-              Download for Mac ↓
+              Download for Mac <DownloadIcon size={12} />
             </a>
             <button
               className="mt-3 block w-full rounded border border-hairline2 py-2 text-sm font-semibold text-ink hover:bg-base"

@@ -6,6 +6,7 @@ import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { AuthImg, Avatar } from './Avatar';
+import { AgentMarkIcon, CheckIcon } from './icons';
 
 export function Modal({
   children,
@@ -349,7 +350,7 @@ export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onCl
                 }}
               />
               {m.displayName}
-              {m.isAgent && <span title="AI agent"> 🤖</span>}
+              {m.isAgent && <span className="ml-1 inline-flex align-baseline text-accent-soft" title="AI agent"><AgentMarkIcon size={11} /></span>}
             </label>
           ))}
       </div>
@@ -430,10 +431,10 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
               <div key={m.userId} className="flex items-center justify-between px-1 py-1 text-sm">
                 <span>
                   {m.displayName}
-                  {m.isAgent && <span title="AI agent"> 🤖</span>}
+                  {m.isAgent && <span className="ml-1 inline-flex align-baseline text-accent-soft" title="AI agent"><AgentMarkIcon size={11} /></span>}
                 </span>
                 {added.has(m.userId) ? (
-                  <span className="text-xs text-green-600">added ✓</span>
+                  <span className="inline-flex items-center gap-1 text-xs text-green-600">Added <CheckIcon size={12} /></span>
                 ) : (
                   <button
                     data-testid={`channel-add-${m.displayName}`}
@@ -530,7 +531,7 @@ export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: str
             style={{ background: `linear-gradient(to bottom, ${c.top}, ${c.bottom})` }}
             onClick={() => void pick(c.id)}
           >
-            {current === c.id ? '✓' : ''}
+            {current === c.id && <CheckIcon size={12} />}
           </button>
         ))}
       </div>
@@ -649,7 +650,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
       <div className="mt-2 mb-1 border-t border-hairline pt-3 text-xs font-semibold text-faint uppercase">
         Notifications
       </div>
-      <p className="mb-1 text-xs text-faint">Off means no banner — everything still lands in the 🔔 list.</p>
+      <p className="mb-1 text-xs text-faint">Off means no banner — everything still lands in the Activity list.</p>
       <PrefToggle testid="pref-dm" label="Direct messages" hint="any message in a DM"
         checked={prefs.dm !== false} onChange={(v) => void setPref('dm', v)} />
       <PrefToggle testid="pref-mention" label="Mentions of me" hint="@you"
@@ -727,7 +728,7 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
           )}
           <p data-testid="user-card-name" className="text-lg font-bold">
             {user.displayName}
-            {user.isAgent && <span title="AI agent"> 🤖</span>}
+            {user.isAgent && <span className="ml-1 inline-flex align-baseline text-accent-soft" title="AI agent"><AgentMarkIcon size={11} /></span>}
           </p>
           {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
           <p className="text-sm text-muted select-all">{user.email}</p>

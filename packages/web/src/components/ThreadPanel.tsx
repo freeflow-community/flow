@@ -3,6 +3,7 @@ import { typingKey, useAuth, useLive, useMobileNav, useSelection } from '../stat
 import { useMarkRead, useMemberMap, useNameMap, useThread } from '../hooks';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
+import { CloseIcon } from './icons';
 
 // Thread panel width (phase 5 item 6): local per-device preference, like the sidebar.
 const WIDTH_KEY = 'flow.threadWidth';
@@ -139,10 +140,10 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
         <h3 className="font-bold">Thread</h3>
         <button
           data-testid="thread-close"
-          className="rounded px-2 text-faint hover:bg-daypill hover:text-ink"
+          className="flex items-center rounded px-2 text-faint hover:bg-daypill hover:text-ink"
           onClick={() => sel.openThread(null)}
         >
-          ✕
+          <CloseIcon size={14} />
         </button>
       </header>
       {body}

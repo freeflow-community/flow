@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import { useAuth, useLive } from '../state';
 import { Avatar } from './Avatar';
 import { ProfileModal } from './modals';
+import { ChevronDownIcon } from './icons';
 
 /** suppresses: phase 10 DND-family statuses — sets statusSuppressAlerts server-side. */
 export const STATUS_OPTIONS: { emoji: string; text: string; suppresses?: boolean }[] = [
@@ -135,7 +136,7 @@ export default function StatusFooter() {
               {me.statusText || 'Set a status'}
             </span>
           </span>
-          <span className="text-white/55">▾</span>
+          <span className="flex items-center text-white/55"><ChevronDownIcon size={12} /></span>
         </button>
       </div>
 

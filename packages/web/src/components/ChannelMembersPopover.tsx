@@ -3,6 +3,7 @@
 // and the user-card handoff, so the ordering rule stays unit-testable.
 import { useEffect, useRef } from 'react';
 import { Avatar } from './Avatar';
+import { AgentMarkIcon } from './icons';
 
 export interface MemberRow {
   userId: string;
@@ -86,7 +87,7 @@ export default function ChannelMembersPopover({
                 {m.displayName}
                 {m.isSelf && <span className="font-normal text-faint"> (you)</span>}
               </span>
-              {m.isAgent && <span title="AI agent">🤖</span>}
+              {m.isAgent && <span className="inline-flex align-baseline text-accent-soft" title="AI agent"><AgentMarkIcon size={11} /></span>}
               {m.statusEmoji && <span title={m.statusText || undefined}>{m.statusEmoji}</span>}
             </span>
             {m.statusText && <span className="block truncate text-[11px] text-faint">{m.statusText}</span>}

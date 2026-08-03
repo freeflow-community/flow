@@ -12,6 +12,7 @@ import { bytesLabel } from '../lib/format';
 import { isHtmlFile, isImageFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { useSelection } from '../state';
 import { useArtifacts } from '../hooks';
+import { DocIcon, DownloadIcon, ExternalIcon } from './icons';
 
 export default function ArtifactBody({ artifactId }: { artifactId: string }) {
   const sel = useSelection();
@@ -132,7 +133,7 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-faint hover:bg-daypill hover:text-ink"
             title="Open in new tab"
           >
-            ↗
+            <ExternalIcon size={12} />
           </a>
         )}
       </div>
@@ -165,9 +166,9 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-[10px] border border-hairline bg-white px-4 py-2 text-sm font-medium hover:border-hairline2"
+                className="flex items-center gap-1.5 rounded-[10px] border border-hairline bg-white px-4 py-2 text-sm font-medium hover:border-hairline2"
               >
-                Open in new tab ↗
+                Open in new tab <ExternalIcon size={12} />
               </a>
               <button
                 className="rounded-[10px] px-3 py-2 text-sm text-muted hover:text-ink"
@@ -251,7 +252,7 @@ function ArtifactToolbar({ artifact, onRenamed }: { artifact: ArtifactDTO; onRen
         title="Download"
         onClick={() => void download()}
       >
-        ⤓
+        <DownloadIcon size={14} />
       </button>
     </div>
   );
@@ -403,7 +404,7 @@ function DownloadPane({ file }: { file: FileDTO }) {
         className="flex items-center gap-2 rounded-[10px] border border-hairline bg-white px-4 py-3 text-left text-sm hover:border-hairline2"
         onClick={() => void download()}
       >
-        <span>📄</span>
+        <span className="text-ink-soft"><DocIcon size={16} /></span>
         <span>
           <span className="block font-medium">{file.name}</span>
           <span className="block text-xs text-muted">{bytesLabel(file.sizeBytes)} — click to download</span>

@@ -12,6 +12,7 @@ import { createContext, Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { WorkspaceMemberDTO } from '@flow/shared';
 import { expandShortcodes } from '@flow/shared';
+import { PinIcon } from '../components/icons';
 
 /** Lets a message row offer "Pin as artifact" on every inline link it renders,
  * without threading a callback through the recursive renderer. Rendering sites
@@ -36,13 +37,13 @@ function InlineLink({ href, children }: { href: string; children: ReactNode }) {
         data-testid="inline-link-pin"
         title="Pin as artifact"
         aria-label="Pin as artifact"
-        className="ml-0.5 rounded px-0.5 align-baseline text-[0.85em] leading-none opacity-0 group-hover/lnk:opacity-100 hover:bg-daypill"
+        className="ml-0.5 inline-flex items-center self-center rounded px-0.5 leading-none opacity-0 group-hover/lnk:opacity-100 hover:bg-daypill"
         onClick={(e) => {
           e.preventDefault();
           onPinLink(href);
         }}
       >
-        📌
+        <PinIcon size={12} />
       </button>
     </span>
   );

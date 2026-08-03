@@ -3,7 +3,19 @@ import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
-import { fileGlyph } from '../lib/fileKind';
+import {
+  AgentMarkIcon,
+  BellIcon,
+  BellOffIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  FileKindIcon,
+  HashIcon,
+  LockIcon,
+  ShieldIcon,
+  UsersIcon,
+} from './icons';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
@@ -222,13 +234,16 @@ export default function Sidebar() {
           onClick={() => setWsMenuOpen((v) => !v)}
         >
           <span className="truncate">{ws?.name ?? 'Workspace'}</span>
-          <span className="text-xs text-white/55">▾</span>
+          <span className="flex text-white/55"><ChevronDownIcon size={12} /></span>
         </button>
         {wsMenuOpen && (
           <div className="absolute top-12 left-3 right-3 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
             {(workspaces.data ?? []).map((w) => (
               <MenuItem key={w.id} onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(w.id); }}>
-                {w.id === sel.workspaceId ? '✓ ' : ''}{w.name}
+                <span className="flex items-center gap-1.5">
+                  {w.name}
+                  {w.id === sel.workspaceId && <CheckIcon size={12} className="text-accent-soft" />}
+                </span>
               </MenuItem>
             ))}
             <hr className="my-1 border-hairline3" />
@@ -323,8 +338,11 @@ export default function Sidebar() {
                 onClick={() => void openDm(a.userId)}
               >
                 <PresenceDot online={!!live.presence[a.userId]} />
-                <span className="truncate">
-                  {a.displayName} <span title="AI agent">🤖</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{a.displayName}</span>
+                  <span className="shrink-0 text-white/70" title="AI agent">
+                    <AgentMarkIcon size={10} />
+                  </span>
                 </span>
               </button>
             );
@@ -347,7 +365,7 @@ export default function Sidebar() {
                     // self-DM: you're online by definition (this client is connected)
                     <PresenceDot online={otherId ? !!live.presence[otherId] : true} />
                   ) : (
-                    <span className="text-xs text-white/60">👥</span>
+                    <span className="flex text-white/60"><UsersIcon size={13} /></span>
                   )
                 }
                 onMenu={() => setMenuChannel(c)}
@@ -398,7 +416,7 @@ export default function Sidebar() {
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/35 bg-white/[0.18] px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-white/25"
           onClick={() => setShowInviteAgent(true)}
         >
-          <span aria-hidden>🤖</span>
+          <AgentMarkIcon size={13} aria-hidden />
           Invite your Agent
         </button>
       </div>
@@ -474,7 +492,7 @@ function ActivityRow({
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={onOpen}
       >
-        <span className={active ? 'opacity-70' : 'text-white/60'}>🔔</span>
+        <span className={`flex ${active ? 'opacity-70' : 'text-white/60'}`}><BellIcon size={14} /></span>
         <span className={`truncate ${active ? 'font-[650]' : unread > 0 ? 'font-[650] text-white' : 'text-white/82'}`}>
           Activity
         </span>
@@ -513,7 +531,7 @@ function AdminRow({
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={onOpen}
       >
-        <span className={active ? 'opacity-70' : 'text-white/60'}>🛡️</span>
+        <span className={`flex ${active ? 'opacity-70' : 'text-white/60'}`}><ShieldIcon size={14} /></span>
         <span className={`truncate ${active ? 'font-[650]' : 'text-white/82'}`}>Manage users</span>
       </button>
       <button
@@ -527,7 +545,7 @@ function AdminRow({
           onClose();
         }}
       >
-        ✕
+        <CloseIcon size={11} />
       </button>
     </div>
   );
@@ -549,7 +567,9 @@ function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={() => sel.selectArtifact(artifact.id)}
       >
-        <span className={active ? 'text-white' : 'text-white/60'}>{fileGlyph(artifact.file)}</span>
+        <span className={`flex ${active ? 'text-white' : 'text-white/60'}`}>
+          <FileKindIcon file={artifact.file} size={13} />
+        </span>
         <span className={`truncate ${active ? 'font-bold text-white' : 'text-white/82'}`}>{artifact.name}</span>
       </button>
       <button
@@ -564,7 +584,7 @@ function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
           });
         }}
       >
-        ✕
+        <CloseIcon size={11} />
       </button>
     </div>
   );
@@ -667,7 +687,9 @@ function ChannelRow({
         onClick={() => sel.selectChannel(channel.id)}
       >
         {leading ?? (
-          <span className={active ? 'opacity-60' : 'text-white/60'}>{channel.isPrivate ? '🔒' : '#'}</span>
+          <span className={`flex ${active ? 'opacity-60' : 'text-white/60'}`}>
+            {channel.isPrivate ? <LockIcon size={13} /> : <HashIcon size={13} />}
+          </span>
         )}
         <span
           className={`truncate ${
@@ -680,7 +702,9 @@ function ChannelRow({
         {statusEmoji && (
           <span className="ml-0.5 shrink-0 text-sm" title={statusTitle}>{statusEmoji}</span>
         )}
-        {channel.notifyLevel === 0 && <span className="text-xs opacity-60">🔕</span>}
+        {channel.notifyLevel === 0 && (
+          <span className="flex shrink-0 opacity-60"><BellOffIcon size={12} /></span>
+        )}
         {notifications > 0 && (
           <span className="ml-auto rounded-[9px] bg-unread px-[7px] py-px text-[11px] font-bold text-white">
             {Math.min(notifications, 99)}

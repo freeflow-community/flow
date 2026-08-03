@@ -9,6 +9,7 @@ import { useChannelMembers, useChannels, useMembers, useSendMessage } from '../h
 import { useQueryClient } from '@tanstack/react-query';
 import { AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
+import { AgentMarkIcon, CheckIcon, CloseIcon, DocIcon, PlusIcon, SendIcon, SmileIcon } from './icons';
 
 export default function Composer({
   channelId,
@@ -361,7 +362,14 @@ export default function Composer({
               onMouseEnter={() => setSelIndex(i)}
               onClick={() => applySuggestion(s.insert)}
             >
-              {s.label}
+              <span className="flex items-center gap-1.5">
+                {s.label}
+                {s.isAgent && (
+                  <span className="inline-flex text-accent-soft" title="AI agent">
+                    <AgentMarkIcon size={10} />
+                  </span>
+                )}
+              </span>
             </button>
           ))}
         </div>
@@ -376,7 +384,7 @@ export default function Composer({
             {missingMentions
               .map((id) => {
                 const m = (members.data ?? []).find((x) => x.userId === id);
-                return `${m?.displayName ?? 'They'}${m?.isAgent ? ' 🤖' : ''}`;
+                return m?.displayName ?? 'They';
               })
               .join(', ')}{' '}
             {missingMentions.length === 1 ? 'is' : 'are'} not in this channel and won&rsquo;t see your mention.
@@ -433,7 +441,7 @@ export default function Composer({
                   title="Remove"
                   onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}
                 >
-                  ✕
+                  <CloseIcon size={9} />
                 </button>
               </span>
             ) : (
@@ -442,9 +450,10 @@ export default function Composer({
                 data-testid={`pending-file-${f.name}`}
                 className="flex items-center gap-1 rounded-full bg-daypill px-2 py-0.5 text-xs"
               >
-                📄 {f.name}
-                <button className="text-faint hover:text-ink" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
-                  ✕
+                <span className="text-ink-soft"><DocIcon size={13} /></span>
+                {f.name}
+                <button className="flex items-center text-faint hover:text-ink" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
+                  <CloseIcon size={11} />
                 </button>
               </span>
             ),
@@ -503,26 +512,26 @@ export default function Composer({
           onKeyDown={onKeyDown}
           onPaste={onPaste}
         />
-        <div className="mt-1.5 flex items-center gap-3 text-[15px] text-faint">
+        <div className="mt-1.5 flex items-center gap-1.5 text-ink-soft">
           <button
             data-testid={`${testPrefix}-attach`}
-            className="hover:text-ink"
+            className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-daypill hover:text-ink"
             title="Attach files"
             onClick={() => fileRef.current?.click()}
           >
-            ＋
+            <PlusIcon size={15} />
           </button>
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => void pickFiles(e.target.files)} />
           <button
             data-testid={`${testPrefix}-emoji`}
-            className="hover:text-ink"
+            className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-daypill hover:text-ink"
             title="Emoji"
             onClick={() => setShowEmoji((v) => !v)}
           >
-            😊
+            <SmileIcon size={15} />
           </button>
           <button
-            className="hover:text-ink"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[15px] font-medium hover:bg-daypill hover:text-ink"
             title="Mention someone"
             onClick={() => setDraft(text + '@')}
           >
@@ -530,12 +539,12 @@ export default function Composer({
           </button>
           <button
             data-testid={`${testPrefix}-send`}
-            className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
+            className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-full bg-send text-white transition-[transform,opacity] duration-150 ease-out-quart enabled:hover:bg-accent-deep enabled:active:scale-90 disabled:opacity-35"
             title={editingId ? 'Save edit' : 'Send'}
             disabled={editingId ? !text.trim() : (!text.trim() && attachments.length === 0) || uploading > 0}
             onClick={() => doSend()}
           >
-            {editingId ? '✓' : '➤'}
+            {editingId ? <CheckIcon size={14} /> : <SendIcon size={14} />}
           </button>
         </div>
       </div>
@@ -577,7 +586,7 @@ function trailingToken(text: string): string | null {
 function buildSuggestions(
   token: string,
   members: { userId: string; displayName: string; isAgent?: boolean }[],
-): { label: string; insert: string }[] {
+): { label: string; insert: string; isAgent?: boolean }[] {
   const query = token.slice(1).toLowerCase();
   if (token.startsWith('@')) {
     const groups = ['channel', 'here', 'everyone']
@@ -586,8 +595,8 @@ function buildSuggestions(
     const users = members
       .filter((m) => m.displayName.toLowerCase().startsWith(query))
       .slice(0, 6)
-      // agents get the 🤖 badge in the popup label; the insert stays the plain name
-      .map((m) => ({ label: `@${m.displayName}${m.isAgent ? ' 🤖' : ''}`, insert: `@${m.displayName} ` }));
+      // agents get the agent mark in the popup label; the insert stays the plain name
+      .map((m) => ({ label: `@${m.displayName}`, insert: `@${m.displayName} `, isAgent: m.isAgent }));
     return [...groups, ...users].slice(0, 8);
   }
   return emojiMatches(query).map((e) => ({ label: `${e.emoji} :${e.code}:`, insert: `${e.emoji} ` }));

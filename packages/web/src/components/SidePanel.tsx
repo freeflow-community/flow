@@ -4,11 +4,13 @@
 // the active tab's body (ThreadPanel embedded, or an ArtifactBody). Threads and
 // artifacts coexist; the tab strip picks which one shows.
 import { useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { fileGlyph } from '../lib/fileKind';
 import { useMobileNav, useSelection } from '../state';
 import { useArtifacts } from '../hooks';
 import ThreadPanel from './ThreadPanel';
 import ArtifactBody from './ArtifactView';
+import { CloseIcon, ThreadIcon } from './icons';
 
 const WIDTH_KEY = 'flow.sidePanelWidth';
 const DEFAULT_WIDTH = 480;
@@ -68,7 +70,7 @@ export default function SidePanel() {
           {sel.threadRootId && (
             <PanelTab
               testid="side-tab-thread"
-              icon="💬"
+              icon={<ThreadIcon size={14} />}
               label="Thread"
               active={threadActive}
               onClick={() => sel.showThread()}
@@ -92,7 +94,7 @@ export default function SidePanel() {
           title="Close panel"
           onClick={() => sel.closeSidePanel()}
         >
-          ✕
+          <CloseIcon size={14} />
         </button>
       </div>
 
@@ -113,7 +115,7 @@ function PanelTab({
   onClose,
   testid,
 }: {
-  icon: string;
+  icon: ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
@@ -134,20 +136,20 @@ function PanelTab({
         onClick={onClick}
         title={label}
       >
-        <span className="shrink-0 text-sm">{icon}</span>
+        <span className="flex shrink-0 items-center text-sm">{icon}</span>
         <span className="truncate text-[13px]">{label}</span>
       </button>
       {onClose && (
         <button
           data-testid={`${testid}-close`}
-          className="hidden shrink-0 rounded px-0.5 text-xs text-faint outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 group-hover:block"
+          className="hidden shrink-0 items-center rounded px-0.5 text-xs text-faint outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 group-hover:flex"
           title="Close thread"
           onClick={(e) => {
             e.stopPropagation();
             onClose();
           }}
         >
-          ✕
+          <CloseIcon size={14} />
         </button>
       )}
     </div>

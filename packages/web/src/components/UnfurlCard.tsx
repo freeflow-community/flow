@@ -3,6 +3,7 @@ import type { ArtifactDTO, UnfurlDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useSelection } from '../state';
 import { AuthImg } from './Avatar';
+import { CloseIcon, PinIcon } from './icons';
 
 /**
  * Phase 11 link preview card. Renders whatever fields the server sent — every
@@ -120,20 +121,20 @@ export function UnfurlCard({
           data-testid="unfurl-pin"
           title="Pin as artifact"
           aria-label="Pin as artifact"
-          className="h-5 shrink-0 rounded px-1 text-xs text-faint hover:bg-daypill hover:text-ink"
+          className="flex h-5 shrink-0 items-center rounded px-1 text-faint hover:bg-daypill hover:text-ink"
           onClick={() => void pin()}
         >
-          📌
+          <PinIcon size={13} />
         </button>
         {canRemove && (
           <button
             data-testid="unfurl-remove"
             title="Remove this preview"
             aria-label="Remove this preview"
-            className="h-5 shrink-0 rounded px-1 text-xs text-faint hover:bg-daypill hover:text-ink"
+            className="flex h-5 shrink-0 items-center rounded px-1 text-faint hover:bg-daypill hover:text-ink"
             onClick={() => void remove()}
           >
-            ✕
+            <CloseIcon size={12} />
           </button>
         )}
       </div>

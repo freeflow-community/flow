@@ -9,6 +9,7 @@ import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
 import { EditChannelModal, Modal, UserCard } from './modals';
+import { UsersIcon } from './icons';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -173,7 +174,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             })}
             {extra > 0 && <span className="ml-1.5 text-xs text-muted">+{extra}</span>}
             {/* nothing to stack yet (fetch in flight) — keep a clickable target */}
-            {shown.length === 0 && <span className="text-sm text-muted">👥</span>}
+            {shown.length === 0 && <span className="flex items-center text-muted"><UsersIcon size={14} /></span>}
           </button>
           {membersOpen && (
             <ChannelMembersPopover

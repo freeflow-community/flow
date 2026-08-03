@@ -3,6 +3,7 @@
 // exchanges it for its own session (raw tokens never ride in the URL).
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { CloseIcon, DownloadIcon, ExternalIcon } from './icons';
 
 const DISMISS_KEY = 'flow.appCtaDismissed';
 
@@ -54,9 +55,9 @@ function DownloadLink({ className = '' }: { className?: string }) {
     <a
       data-testid="download-mac"
       href={MAC_DOWNLOAD_URL}
-      className={`font-semibold text-accent-soft hover:underline ${className}`}
+      className={`inline-flex items-center gap-1 font-semibold text-accent-soft hover:underline ${className}`}
     >
-      Download for Mac ↓
+      Download for Mac <DownloadIcon size={12} />
     </a>
   );
 }
@@ -68,10 +69,10 @@ export function OpenInAppButton() {
     <div className="flex flex-col items-center gap-1">
       <button
         data-testid="open-in-app"
-        className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+        className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
         onClick={() => { setNoApp(false); void openInApp(() => setNoApp(true)).catch(() => setNoApp(true)); }}
       >
-        Open the desktop app ↗
+        Open the desktop app <ExternalIcon size={12} />
       </button>
       {noApp && (
         <p className="text-xs text-muted">
@@ -98,22 +99,22 @@ export function OpenInAppBanner() {
       ) : (
         <button
           data-testid="open-in-app-banner-open"
-          className="font-semibold text-accent-soft hover:underline"
+          className="inline-flex items-center gap-1 font-semibold text-accent-soft hover:underline"
           onClick={() => void openInApp(() => setNoApp(true)).catch(() => setNoApp(true))}
         >
-          Open the app ↗
+          Open the app <ExternalIcon size={12} />
         </button>
       )}
       <button
         data-testid="open-in-app-banner-dismiss"
-        className="ml-2 text-faint hover:text-ink"
+        className="ml-2 flex items-center text-faint hover:text-ink"
         title="Dismiss"
         onClick={() => {
           localStorage.setItem(DISMISS_KEY, '1');
           setDismissed(true);
         }}
       >
-        ✕
+        <CloseIcon size={12} />
       </button>
     </div>
   );

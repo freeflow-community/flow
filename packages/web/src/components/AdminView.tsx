@@ -10,6 +10,7 @@ import { useAuth, useSelection } from '../state';
 import { useMembers, useWorkspaces } from '../hooks';
 import { Avatar } from './Avatar';
 import { MobileMenuButton } from './MobileMenuButton';
+import { AgentMarkIcon, ShieldIcon } from './icons';
 
 export default function AdminView() {
   const auth = useAuth();
@@ -30,8 +31,8 @@ export default function AdminView() {
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
         <MobileMenuButton />
         <div className="min-w-0 flex-1">
-          <h2 data-testid="admin-header" className="truncate text-[15px] font-bold">
-            🛡️ Manage users
+          <h2 data-testid="admin-header" className="flex items-center gap-1.5 truncate text-[15px] font-bold">
+            <ShieldIcon size={14} /> Manage users
           </h2>
           <p className="truncate text-xs text-muted">{ws?.name ?? 'Workspace'} members &amp; roles</p>
         </div>
@@ -141,7 +142,7 @@ function MemberRow({
           <div className="min-w-0">
             <div className="truncate font-semibold">
               {member.displayName}
-              {member.isAgent && <span title="AI agent"> 🤖</span>}
+              {member.isAgent && <span className="ml-1 inline-flex align-baseline text-accent-soft" title="AI agent"><AgentMarkIcon size={11} /></span>}
               {isSelf && <span className="text-faint"> (you)</span>}
             </div>
             <div className="truncate text-xs text-muted">{member.email}</div>

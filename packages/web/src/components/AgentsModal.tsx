@@ -8,6 +8,7 @@ import { api } from '../lib/api';
 import { useMembers } from '../hooks';
 import { useAuth } from '../state';
 import { Modal } from './modals';
+import { AgentMarkIcon } from './icons';
 
 export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -43,7 +44,7 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
     <Modal onClose={onClose} testid="agents-modal" wide>
       <h3 className="mb-1 font-bold">AI Agents</h3>
       <p className="mb-3 text-sm text-muted">
-        Agents are real members with an 🤖 badge, each sponsored by the person who invited them. To add
+        Agents are real members with an agent mark, each sponsored by the person who invited them. To add
         one: click <span className="font-semibold">Invite your Agent</span> in the sidebar to get a
         one-time <code className="rounded bg-daypill px-1">npx flow-agent-bridge &lt;code&gt;</code> command,
         then run it on the agent&rsquo;s machine — it joins right away, no admin needed. See AGENT_MEMBERS.md.
@@ -55,7 +56,7 @@ export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onC
       {agents.map((a) => (
         <div key={a.userId} className="flex items-center justify-between border-t border-hairline3 px-1 py-2 text-sm">
           <div className="min-w-0">
-            <span className="font-semibold">{a.displayName} 🤖</span>
+            <span className="font-semibold">{a.displayName}<span className="ml-1 inline-flex align-baseline text-accent-soft" title="AI agent"><AgentMarkIcon size={11} /></span></span>
             <span className="ml-2 text-xs text-muted">sponsored by {nameOf(a.sponsorId)}</span>
             {a.statusText && <span className="ml-2 truncate text-xs text-muted">{a.statusText}</span>}
           </div>

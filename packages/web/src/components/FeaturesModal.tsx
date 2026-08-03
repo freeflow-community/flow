@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { renderBlocks } from '../lib/format';
+import { CloseIcon } from './icons';
 
 /** Fold soft-wrapped source lines back together: an indented continuation line
  * (FEATURES.md wraps long bullets at ~80 cols) joins the previous line, so the
@@ -55,11 +56,11 @@ export function FeaturesModal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-hairline px-5 py-3">
           <h2 className="text-base font-bold">What&apos;s new</h2>
           <button
-            className="rounded-md px-2 py-1 text-lg leading-none text-ink/50 hover:bg-daypill"
+            className="flex items-center rounded-md px-2 py-1 text-ink/50 hover:bg-daypill"
             onClick={onClose}
             aria-label="Close"
           >
-            ✕
+            <CloseIcon size={14} />
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm leading-relaxed whitespace-pre-wrap">

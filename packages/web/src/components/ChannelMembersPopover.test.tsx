@@ -36,7 +36,7 @@ describe('ChannelMembersPopover render', () => {
     expect(html).toContain('channel-member-Alice');
     expect(html).toContain('channel-member-CypressBot');
     expect(html).toContain('Focusing');
-    expect(html).toContain('🤖');
+    expect(html).toContain('title="AI agent"');
     expect(html).toContain('2 members');
   });
 
