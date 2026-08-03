@@ -164,6 +164,19 @@ export interface ReactionAggDTO {
   userIds: string[];
 }
 
+/** A workspace custom emoji (#175). `emoji` is the `:shortcode:` form — exactly
+ * the string a reaction row stores — so clients can key their lookup map on it
+ * directly. The image is fetched from `/v1/files/{fileId}` like any other. */
+export interface WorkspaceEmojiDTO {
+  id: string;
+  workspaceId: string;
+  shortcode: string; // bare, no colons
+  emoji: string; // `:shortcode:`
+  fileId: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface FileDTO {
   id: string;
   workspaceId: string;

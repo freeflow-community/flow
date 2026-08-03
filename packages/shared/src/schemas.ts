@@ -276,12 +276,48 @@ export const ListThreadQuery = z.object({
 export type ListThreadQuery = z.infer<typeof ListThreadQuery>;
 
 // ---- reactions -------------------------------------------------
-/** A single RGI emoji (incl. ZWJ sequences, skin tones, keycaps). Unicode only — no shortcodes. */
+/** Bare custom-emoji shortcode, no colons (#175). Lowercase so `:Tada:` and
+ * `:tada:` can't be two different reactions on the same message. */
+export const CUSTOM_EMOJI_CODE_RE = /^[a-z0-9][a-z0-9_-]{0,30}[a-z0-9]$/;
+
+/** `:shortcode:` as it appears in a reaction row and on the wire. */
+export const CUSTOM_EMOJI_RE = /^:[a-z0-9][a-z0-9_-]{0,30}[a-z0-9]:$/;
+
+export function isCustomEmoji(s: string): boolean {
+  return CUSTOM_EMOJI_RE.test(s);
+}
+
+/** Strips the colons from a `:shortcode:`; returns null for anything else. */
+export function customEmojiCode(s: string): string | null {
+  return isCustomEmoji(s) ? s.slice(1, -1) : null;
+}
+
+/**
+ * A reaction identifier: either a single RGI emoji (incl. ZWJ sequences, skin
+ * tones, keycaps) or a workspace custom emoji as `:shortcode:` (#175).
+ *
+ * This is a URL path segment on the reaction routes, which is why the shortcode
+ * charset is deliberately narrow — `[a-z0-9_-]` needs no escaping, so it
+ * survives the round-trip through the path with or without percent-encoding.
+ * Shape only: that a custom shortcode actually *exists* in the workspace is
+ * checked when the reaction is added (see services/reactions.ts).
+ */
 export const EmojiParam = z
   .string()
   .min(1)
-  .max(32)
-  .refine((s) => /^\p{RGI_Emoji}$/v.test(s), 'must be a single unicode emoji');
+  .max(34) // ':' + 32 + ':'
+  .refine((s) => /^\p{RGI_Emoji}$/v.test(s) || CUSTOM_EMOJI_RE.test(s), 'must be a single unicode emoji or a :shortcode:');
+
+/** POST /v1/workspaces/:id/emoji — register an already-uploaded image. */
+export const CreateWorkspaceEmojiBody = z.object({
+  shortcode: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .refine((s) => CUSTOM_EMOJI_CODE_RE.test(s), 'letters, digits, - and _ only; 2–32 characters'),
+  fileId: z.string().uuid(),
+});
+export type CreateWorkspaceEmojiBody = z.infer<typeof CreateWorkspaceEmojiBody>;
 
 // ---- notifications ---------------------------------------------
 /**
