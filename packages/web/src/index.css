@@ -1,39 +1,86 @@
 @import "tailwindcss";
 
-/* Design 3a "Quiet, in violet" tokens (design_handoff_chat_workspace/README.md) */
+/* ---------------------------------------------------------------------------
+   Flow design tokens — "Deep water" system (.impeccable.md).
+   Teal-green brand on warm sage-ivory neutrals, all OKLCH. Light theme only;
+   dark arrives later as a token swap, so EVERY color must route through here.
+   Token names kept from design 3a so existing utility classes keep working.
+--------------------------------------------------------------------------- */
 @theme {
-  --color-rail: oklch(0.42 0.19 292);
-  --color-side-top: oklch(0.5 0.19 305);
-  --color-side-bot: oklch(0.44 0.19 292);
-  --color-base: #fbfaf8;
-  --color-ink: #39342f;
-  --color-ink-soft: #635d56;
-  --color-muted: #a49d94;
-  --color-faint: #b7b0a6;
-  --color-hairline: #e7e3db;
-  --color-hairline2: #ddd8cf;
-  --color-hairline3: #eee7dc;
-  --color-daypill: #f0ede7;
-  --color-accent: oklch(0.46 0.19 300);
-  --color-accent-deep: oklch(0.44 0.19 300);
-  --color-accent-soft: oklch(0.42 0.16 292);
-  --color-send: oklch(0.5 0.19 305);
-  --color-online: #5ef0a8;
-  --color-unread: #ff5c8a;
+  /* type */
+  --font-sans: "Hanken Grotesk Variable", "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque", var(--font-sans);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* brand */
+  --color-accent: oklch(0.50 0.09 183);        /* deep teal-green — primary actions */
+  --color-accent-deep: oklch(0.44 0.09 184);   /* pressed / emphasis */
+  --color-accent-soft: oklch(0.45 0.08 183);   /* links, tinted text on light */
+  --color-accent-wash: oklch(0.96 0.015 178);  /* hover / selected washes */
+  --color-send: oklch(0.50 0.09 183);
+
+  /* sidebar (fallbacks — workspaces override via sidebarColor() presets) */
+  --color-rail: oklch(0.29 0.045 200);
+  --color-side-top: oklch(0.33 0.05 192);
+  --color-side-bot: oklch(0.28 0.045 200);
+
+  /* neutrals — warm ivory pulled gently toward the brand hue */
+  --color-base: oklch(0.982 0.005 130);
+  --color-ink: oklch(0.32 0.014 175);
+  --color-ink-soft: oklch(0.47 0.014 170);
+  --color-muted: oklch(0.60 0.014 165);
+  --color-faint: oklch(0.72 0.012 160);
+  --color-hairline: oklch(0.915 0.008 150);
+  --color-hairline2: oklch(0.885 0.009 150);
+  --color-hairline3: oklch(0.93 0.008 145);
+  --color-daypill: oklch(0.945 0.007 150);
+
+  /* signals */
+  --color-online: oklch(0.82 0.15 162);
+  --color-unread: oklch(0.64 0.17 25);
+
+  /* elevation — shadows carry a whisper of the brand hue, never neutral gray */
+  --shadow-card: 0 1px 2px oklch(0.25 0.03 200 / 0.06);
+  --shadow-pop: 0 4px 16px oklch(0.25 0.03 200 / 0.10), 0 1px 3px oklch(0.25 0.03 200 / 0.08);
+  --shadow-float: 0 16px 48px oklch(0.22 0.04 200 / 0.16), 0 2px 8px oklch(0.22 0.04 200 / 0.07);
+
+  /* motion — transform/opacity only, always decelerating */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 html, body, #root {
   height: 100%;
 }
 
-/* Jump-to-message highlight (phase 12): a message reached from the Activity
-   feed flashes briefly so the eye can find it after the scroll. */
+body {
+  color: var(--color-ink);
+  background: var(--color-base);
+  font-feature-settings: "ss01" off;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in oklch, var(--color-accent) 22%, transparent);
+}
+
+/* One focus treatment for the whole app (keyboard-first audience). Buttons and
+   inputs opt out only by carrying their own focus-visible utility classes. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Jump-to-message highlight: wayfinding, not alarm — accent-tinted (was pink). */
 @keyframes mc-flash {
-  0%, 25% { background-color: color-mix(in oklch, var(--color-unread) 22%, transparent); }
+  0%, 25% { background-color: color-mix(in oklch, var(--color-accent) 14%, transparent); }
   100%    { background-color: transparent; }
 }
 .mc-flash {
-  animation: mc-flash 2s ease-out;
+  animation: mc-flash 2s var(--ease-out-quart);
   border-radius: 8px;
 }
 
@@ -51,14 +98,14 @@ html, body, #root {
   pointer-events: none;
 }
 .mc-composer > .cmp-quote {
-  border-left: 3px solid var(--color-accent);
-  background: color-mix(in oklab, var(--color-accent) 6%, transparent);
+  border-left: 2px solid color-mix(in oklch, var(--color-accent) 55%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 5%, transparent);
   color: var(--color-ink-soft);
-  padding-left: 9px;
+  padding-left: 10px;
 }
 .mc-composer > .cmp-code {
-  background: #f4f2ee;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: oklch(0.955 0.006 140);
+  font-family: var(--font-mono);
   font-size: 13px;
   padding-left: 9px;
   padding-right: 9px;
@@ -83,10 +130,19 @@ html, body, #root {
 
 /* thin scrollbars for panels */
 .mc-scroll::-webkit-scrollbar { width: 8px; }
-.mc-scroll::-webkit-scrollbar-thumb { background: rgb(0 0 0 / 0.15); border-radius: 4px; }
-/* on-violet variant */
+.mc-scroll::-webkit-scrollbar-thumb { background: oklch(0.32 0.02 190 / 0.15); border-radius: 4px; }
+/* on-dark variant */
 .mc-scroll-dark::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.2); }
 
 /* scrollable but no visible bar (e.g. the side-panel tab strip) */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Motion respects the OS setting: state changes stay, choreography goes. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

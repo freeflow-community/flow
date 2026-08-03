@@ -14,19 +14,26 @@ export interface SidebarColor {
   rail: string;
 }
 
+// "Deep water" retune (premium pass, .impeccable.md): every preset pulled
+// deeper and less saturated so white sidebar text sits on ink, not candy.
+// Ids are stable — existing workspaces keep their stored choice — with one
+// addition ('teal', the new Flow default). macOS keeps its own Swift copy in
+// SidebarPalette.swift; retunes ride the CHANGELOG Parity section until
+// mirrored there.
 export const SIDEBAR_COLORS: SidebarColor[] = [
-  { id: 'violet', name: 'Violet', top: '#7D3AB7', bottom: '#5A2FB0', rail: '#5528A9' }, // design 3a default
-  { id: 'indigo', name: 'Indigo', top: '#4A50C0', bottom: '#343BA8', rail: '#2E339B' },
-  { id: 'ocean', name: 'Ocean', top: '#1E6FA8', bottom: '#155A8C', rail: '#124E7B' },
-  { id: 'forest', name: 'Forest', top: '#2F7D5A', bottom: '#20634A', rail: '#1B5740' },
-  { id: 'ember', name: 'Ember', top: '#B0532B', bottom: '#93401F', rail: '#83381A' },
-  { id: 'plum', name: 'Plum', top: '#8C2F66', bottom: '#6F2350', rail: '#612046' },
-  { id: 'slate', name: 'Slate', top: '#4A5568', bottom: '#374151', rail: '#303845' },
-  { id: 'midnight', name: 'Midnight', top: '#23305E', bottom: '#1A2547', rail: '#16203E' },
+  { id: 'teal', name: 'Teal', top: '#1F5A56', bottom: '#16443F', rail: '#123A38' }, // Flow default
+  { id: 'violet', name: 'Violet', top: '#5D4A8A', bottom: '#473973', rail: '#3D3164' },
+  { id: 'indigo', name: 'Indigo', top: '#3D4B96', bottom: '#2E3A7D', rail: '#27326C' },
+  { id: 'ocean', name: 'Ocean', top: '#1D5F8C', bottom: '#154B72', rail: '#124163' },
+  { id: 'forest', name: 'Forest', top: '#2E6B4F', bottom: '#22523D', rail: '#1C4634' },
+  { id: 'ember', name: 'Ember', top: '#96512F', bottom: '#7C3F22', rail: '#6E381E' },
+  { id: 'plum', name: 'Plum', top: '#7C3760', bottom: '#61294B', rail: '#552441' },
+  { id: 'slate', name: 'Slate', top: '#46505F', bottom: '#353D4A', rail: '#2E3540' },
+  { id: 'midnight', name: 'Midnight', top: '#232E52', bottom: '#1A2440', rail: '#161E37' },
 ];
 
 export const SIDEBAR_COLOR_IDS = SIDEBAR_COLORS.map((c) => c.id);
-export const DEFAULT_SIDEBAR_COLOR = 'violet';
+export const DEFAULT_SIDEBAR_COLOR = 'teal';
 
 export function sidebarColor(id: string | undefined | null): SidebarColor {
   return SIDEBAR_COLORS.find((c) => c.id === id) ?? SIDEBAR_COLORS[0]!;
