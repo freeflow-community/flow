@@ -13,11 +13,11 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* brand */
-  --color-accent: oklch(0.50 0.09 183);        /* deep teal-green — primary actions */
-  --color-accent-deep: oklch(0.44 0.09 184);   /* pressed / emphasis */
-  --color-accent-soft: oklch(0.45 0.08 183);   /* links, tinted text on light */
+  --color-accent: oklch(0.44 0.10 183);        /* deep teal-green — primary actions */
+  --color-accent-deep: oklch(0.38 0.095 185);  /* pressed / emphasis */
+  --color-accent-soft: oklch(0.42 0.09 183);   /* links, tinted text on light */
   --color-accent-wash: oklch(0.96 0.015 178);  /* hover / selected washes */
-  --color-send: oklch(0.50 0.09 183);
+  --color-send: oklch(0.44 0.10 183);
 
   /* sidebar (fallbacks — workspaces override via sidebarColor() presets) */
   --color-rail: oklch(0.29 0.045 200);

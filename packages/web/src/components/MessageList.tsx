@@ -381,7 +381,7 @@ function MessageRow({
       <div className="min-w-0 flex-1">
         {showHeader && (
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-bold">
+            <span className="text-sm font-semibold tracking-[-0.006em] text-ink">
               {sender}
               {member?.isAgent && (
                 <span
@@ -398,7 +398,7 @@ function MessageRow({
                 </span>
               )}
             </span>
-            <span className="text-[11px] text-faint">{displayTime(message.createdAt)}</span>
+            <span className="text-[11px] text-faint tabular-nums">{displayTime(message.createdAt)}</span>
           </div>
         )}
 
@@ -417,7 +417,7 @@ function MessageRow({
               </div>
             )}
             {message.body.trim() && (
-              <div className="text-sm leading-normal break-words whitespace-pre-wrap">
+              <div className="text-sm leading-[1.45] break-words whitespace-pre-wrap text-ink">
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
                   {renderBlocks(message.body, names, auth.user.id)}
                 </InlineLinkContext.Provider>

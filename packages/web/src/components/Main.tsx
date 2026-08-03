@@ -23,8 +23,8 @@ import ChannelView from './ChannelView';
 import AdminView from './AdminView';
 import ActivityView from './ActivityView';
 import SidePanel from './SidePanel';
-import { OpenInAppBanner } from './OpenInApp';
 import { MobileMenuButton } from './MobileMenuButton';
+import { PlusIcon } from './icons';
 
 export default function Main() {
   const auth = useAuth();
@@ -367,7 +367,9 @@ export default function Main() {
     <LiveContext.Provider value={live}>
      <MobileNavContext.Provider value={mobileNav}>
       <div className="flex h-full flex-col bg-base text-ink">
-        <OpenInAppBanner />
+        {/* The "works best in the desktop app" banner is gone (design ruling,
+            .impeccable.md): the web client stands on its own. Mac download
+            links live on the auth screen and workspace chooser. */}
         <div className="relative flex min-h-0 flex-1">
           {/* Rail + sidebar. Desktop: inline flex columns. Mobile (<md): a
               fixed slide-in drawer over the content, toggled by the header
@@ -452,7 +454,7 @@ function WorkspaceRail() {
         className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-white/40 text-white/70 hover:border-white/70 hover:text-white"
         onClick={() => sel.selectWorkspace(null)}
       >
-        +
+        <PlusIcon size={15} />
       </button>
     </nav>
   );
