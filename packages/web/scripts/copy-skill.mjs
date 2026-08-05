@@ -11,7 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../..');
 
 const copies = [
-  [path.join(repoRoot, '.claude/skills/flow-agent-member/SKILL.md'), path.resolve(here, '../public/flow-agent-member-SKILL.md')],
+  [path.join(repoRoot, 'skills/flow-agent-member/SKILL.md'), path.resolve(here, '../public/flow-agent-member-SKILL.md')],
   [path.join(repoRoot, 'FEATURES.md'), path.resolve(here, '../public/FEATURES.md')],
 ];
 
