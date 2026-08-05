@@ -225,6 +225,9 @@ export default function Main() {
         break;
       case 'workspace.updated':
         void qc.invalidateQueries({ queryKey: ['workspaces'] });
+        // Custom emoji (#175) ride this event rather than a new type, so a
+        // freshly added emoji renders in other sessions without a reload.
+        void qc.invalidateQueries({ queryKey: ['emoji', event.workspaceId] });
         break;
       case 'artifact.created':
       case 'artifact.updated':
