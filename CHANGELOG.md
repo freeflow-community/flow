@@ -268,6 +268,14 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-08-05 — CI builds and tests every PR (#177)
+
+- `[qa]` New `ci` workflow builds every package and runs the whole test suite on
+  each PR to `main` (and on `main` itself), with postgres as a service so the
+  DB-backed server tests run unnarrowed. Catches build-only breakage like the
+  `copy-skill.mjs` path that reached `main` in #172 with all tests green.
+- `[qa]` Reports only — making it a required check is a branch-protection
+  setting, so it stays the operator's call.
 ### 2026-08-03 — Custom emoji reactions (#175)
 
 - `[server]` `[web]` Workspace custom emoji: owners/admins upload an image under
