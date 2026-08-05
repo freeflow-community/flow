@@ -263,6 +263,14 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-08-02 — Web build fixed after the skills move (#172)
+
+- `[web]` `copy-skill.mjs` follows `skills/` → `.claude/skills/`. It runs on
+  `predev` and `prebuild`, so the stale path broke `pnpm dev` and `pnpm build`
+  for web — and with them the Railway deploy — on any checkout of `main`.
+- `[web]` A missing copy source now names the file and points at the list to
+  update, instead of a bare `ENOENT` from `copyFileSync`.
+
 ### 2026-08-02 — iOS shares images compressed and converted (#84)
 
 - `[ios]` Photos downscale to 1024px on the longest edge and re-encode to JPEG
