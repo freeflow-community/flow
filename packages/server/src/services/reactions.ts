@@ -1,7 +1,9 @@
-// Emoji reactions (phase2.md §2). Unicode emoji only; idempotent add/remove;
-// events on the channel's msg subject; aggregates computed per message page.
+// Emoji reactions (phase2.md §2). Unicode emoji, plus workspace custom emoji as
+// `:shortcode:` (#175); idempotent add/remove; events on the channel's msg
+// subject; aggregates computed per message page.
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import type { ReactionAggDTO } from '@flow/shared';
+import { customEmojiCode, type ReactionAggDTO } from '@flow/shared';
+import { resolveShortcodes } from './workspaceEmoji.js';
 import { db, schema } from '../db/index.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { requireChannelAccess } from './channels.js';
@@ -23,6 +25,13 @@ async function loadMessage(messageId: string, userId: string) {
 
 export async function addReaction(messageId: string, userId: string, emoji: string): Promise<ReactionAggDTO[]> {
   const { row, chan } = await loadMessage(messageId, userId);
+  // EmojiParam only checks the *shape* of a `:shortcode:` (#175). Resolving it
+  // here keeps unknown codes out of the table — otherwise anyone could react
+  // with arbitrary text that every client renders as literal `:whatever:`.
+  const code = customEmojiCode(emoji);
+  if (code !== null && !(await resolveShortcodes(chan.workspaceId, [code])).has(code)) {
+    throw badRequest('unknown_emoji', `:${code}: is not a custom emoji in this workspace`);
+  }
   const inserted = await db.transaction(async (tx) => {
     const ins = await tx
       .insert(reactions)

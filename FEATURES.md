@@ -3,6 +3,13 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-08-03
+
+- **Your team's own emoji.** Workspace admins can upload images as custom emoji
+  under a name like `:party-parrot:` (workspace menu → Custom Emoji), and anyone
+  can then react to a message with them. On the web for now — the Mac and iPhone
+  apps show the name rather than the picture until they catch up.
+
 ## 2026-08-02
 
 - **Sharing a photo from your iPhone is much faster.** Photos are now scaled

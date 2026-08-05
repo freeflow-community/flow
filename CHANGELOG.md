@@ -13,6 +13,11 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- Custom emoji (#175) are web-only: macOS and iOS render a custom reaction as
+  the literal text `:shortcode:` rather than the image. The reaction itself is
+  correct everywhere (count, who reacted, notifications) — only the glyph is
+  missing. Each client needs to fetch `GET /v1/workspaces/:id/emoji` and swap in
+  the image. Custom emoji inline in *message text* is unbuilt on every client.
 - Scroll-position memory exists on no client: leaving a channel mid-history and
   coming straight back always re-opens at the newest message. Tried on iOS
   (#159) and removed — tracking the on-screen row needs per-row geometry, which
@@ -263,6 +268,14 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-08-03 — Custom emoji reactions (#175)
+
+- `[server]` `[web]` Workspace custom emoji: owners/admins upload an image under
+  a `:shortcode:`, anyone can react with it. `EmojiParam` now accepts a
+  shortcode as well as unicode; existence is checked when the reaction is added,
+  not by the shape validator.
+- `[server]` Images are ordinary `files` rows registered by id, so the existing
+  presign upload and blob storage are reused rather than duplicated.
 ### 2026-08-02 — Web build fixed after the skills move (#172)
 
 - `[web]` `copy-skill.mjs` follows `skills/` → `.claude/skills/`. It runs on
