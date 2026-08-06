@@ -344,6 +344,10 @@ struct MessageRow: View {
     @State private var showReactionPicker = false
     @State private var showDeleteConfirm = false
     @State private var hoverHideWork: DispatchWorkItem?
+    /// A pending row renders at full strength; it only dims (and shows the
+    /// mini spinner) once the send has gone unconfirmed past this window.
+    private static let pendingDimDelay: TimeInterval = 3
+    @State private var pendingSlow = false
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
@@ -420,7 +424,7 @@ struct MessageRow: View {
                     let segments = MarkdownBlocks.segments(message.body)
                     if !segments.isEmpty {
                         bodyContent(segments)
-                    } else if message.pending {
+                    } else if pendingSlow {
                         ProgressView().controlSize(.mini)
                     }
 
@@ -501,7 +505,22 @@ struct MessageRow: View {
         .padding(.bottom, 1)
         .background(highlighted ? MC.unread.opacity(0.16) : Color.clear)
         .animation(.easeOut(duration: 0.6), value: highlighted)
-        .opacity(message.pending ? 0.55 : 1)
+        .opacity(pendingSlow ? 0.55 : 1)
+        // Keyed off createdAt so a row remount mid-wait doesn't restart the
+        // clock; the id change on pending -> confirmed resets the state.
+        .task(id: message.pending) {
+            guard message.pending else {
+                pendingSlow = false
+                return
+            }
+            let elapsed = ISO8601.parse(message.createdAt)
+                .map { Date().timeIntervalSince($0) } ?? 0
+            let remaining = Self.pendingDimDelay - elapsed
+            if remaining > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            }
+            if !Task.isCancelled { pendingSlow = true }
+        }
         .contentShape(Rectangle())
         .onHover { setHovering($0) }
         // Hover menu (web parity, ui_nits items 2+3): react / reply-in-thread,
@@ -899,7 +918,7 @@ struct MessageRow: View {
                 .flowFont(.caption2)
                 .foregroundStyle(.tertiary)
         }
-        if message.pending {
+        if pendingSlow {
             ProgressView().controlSize(.mini)
         }
     }
