@@ -851,6 +851,7 @@ struct MessageRow: View {
         )
         return Text(attributed)
             .flowFont(.callout)
+            .foregroundStyle(MC.ink)
             .textSelection(.enabled)
             // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
             // inside a Text, so linkCursor re-lays the string to find them.

@@ -221,6 +221,10 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 - Responsive/mobile layout (drawer nav, viewport-capped media and modals):
   web only, and inherently so — the native clients lay themselves out per
   platform, and the iOS app is the native phone experience. Not a gap.
+- macOS message body text is now pinned to `MC.ink` (fixing Dark Mode
+  invisibility). Web's message body has the same unstyled text, but isn't
+  exposed to the bug since it has no dark-mode theming to react to — not
+  fixed there.
 
 ## History
 
@@ -233,6 +237,14 @@ work after phase 16.
 | `CHANGES_ARCHIVE_PHASE12-16.log` | 2026-07-22 → 2026-07-26 | phases 12-16: #Activity feed, artifacts, signed macOS distribution, agent invites, Sign in with Google |
 
 Entries below start after phase 16.
+
+### 2026-08-05 — macOS message text invisible in Dark Mode
+
+- `[macos]` Fix message body text rendering white-on-white in Dark Mode. The
+  body `Text` was the only element in its row with no `.foregroundStyle`, so
+  it inherited SwiftUI's adaptive `.primary` color while the row's background
+  is a fixed light hex token — pinned it to `MC.ink` like its siblings.
+  VERSION → 2.2.14.
 
 ### 2026-07-30 — Landing page Sign up buttons go to the app
 
