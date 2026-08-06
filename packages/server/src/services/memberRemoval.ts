@@ -9,7 +9,18 @@ import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
-const { channels, channelMembers, notifications, workspaceMembers, users, agentTokens } = schema;
+const {
+  channels,
+  channelMembers,
+  notifications,
+  workspaceMembers,
+  users,
+  agentTokens,
+  sessions,
+  emailTokens,
+  appLinkCodes,
+  oauthIdentities,
+} = schema;
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -88,6 +99,34 @@ export async function removeMemberDeep(
     ts,
     data: { userId, workspaceId },
   });
+}
+
+/**
+ * Mark a user dead and free their address. Keeps the row (message authorship)
+ * but rewrites the unique `email` so the original string is available to a
+ * fresh registration, scrubs the password to an unusable sentinel, clears the
+ * profile fields that would otherwise linger (avatar URL, status), and drops
+ * every credential (sessions, email tokens, app-link codes, OAuth identities)
+ * so nothing that account held can still authenticate or re-match on a
+ * Google/Apple sign-in. The mangled email preserves the original for audit and
+ * can never collide (the user id prefix is unique).
+ */
+export async function tombstoneUser(tx: Tx, userId: string, email: string): Promise<void> {
+  await tx
+    .update(users)
+    .set({
+      deletedAt: new Date(),
+      email: `tombstone+${userId}+${email}`,
+      passwordHash: `!deleted:${userId}`,
+      avatarUrl: null,
+      statusEmoji: '',
+      statusText: '',
+    })
+    .where(eq(users.id, userId));
+  await tx.delete(sessions).where(eq(sessions.userId, userId));
+  await tx.delete(emailTokens).where(eq(emailTokens.userId, userId));
+  await tx.delete(appLinkCodes).where(eq(appLinkCodes.userId, userId));
+  await tx.delete(oauthIdentities).where(eq(oauthIdentities.userId, userId));
 }
 
 /** Revoke an agent's tokens and null its username/key so it can never authenticate again. */
