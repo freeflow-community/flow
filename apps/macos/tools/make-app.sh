@@ -44,7 +44,9 @@ cp "$BIN" "$APP/Contents/MacOS/Flow"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Ship the user-facing release notes so the "What's new" sheet (opened from the
 # Build label in the workspace menu) can render them. Read via Bundle.main.
-cp ../../FEATURES.md "$APP/Contents/Resources/FEATURES.md" 2>/dev/null || true
+# FEATURES.md is generated from changelog/ — build it fresh first.
+node ../../scripts/build-features.mjs
+cp ../../FEATURES.md "$APP/Contents/Resources/FEATURES.md"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

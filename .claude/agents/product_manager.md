@@ -56,8 +56,11 @@ Then, before writing a word:
   `curl -sL "<url>" -o /tmp/ticket-shot.png` then Read that path.
 - **Read `docs/specs/overview.md`.** It has an explicit *will not include* list.
   A ticket asking for something on it is not a spec you write — say so and stop.
-- **Check `FEATURES.md`** for what the product already claims to do, so your spec
-  builds on today's behavior rather than describing a parallel universe.
+- **Check what the product already claims to do**, so your spec builds on
+  today's behavior rather than describing a parallel universe. That is the
+  `## Feature` sections in `changelog/` entries plus
+  `changelog/FEATURES_ARCHIVE.md` (or run `node scripts/build-features.mjs`
+  and read the generated `FEATURES.md`).
 - **Establish current behavior**, by reading the relevant client code as a user
   would read a manual. You are answering "what happens today?", not "how is it
   built?".

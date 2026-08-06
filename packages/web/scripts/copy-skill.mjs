@@ -3,6 +3,8 @@
 // Keep this the ONLY writer of these public copies.
 //   - .claude/skills/flow-agent-member/SKILL.md → the logged-out agent-skill download
 //   - FEATURES.md (repo root)           → the "What's new" lightbox (Build label)
+//     FEATURES.md is itself generated from changelog/ by
+//     scripts/build-features.mjs, which predev/prebuild run just before this.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

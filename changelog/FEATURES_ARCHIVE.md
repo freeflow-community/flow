@@ -1,8 +1,3 @@
-# What's new in Flow
-
-A plain-language log of user-visible features and improvements, newest first.
-For the full technical changelog see `CHANGELOG.md`.
-
 ## 2026-08-06
 
 - **The Mac app tells you which version you're running.** The line at the

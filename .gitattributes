@@ -1,10 +1,11 @@
-# The three append-mostly ledgers use git's built-in union merge driver:
+# The remaining shared ledgers use git's built-in union merge driver:
 # overlapping additions from two branches are concatenated instead of
 # conflicting. This is only safe under the editing protocol in CLAUDE.md
-# (self-contained dated sections, no in-place edits in the same PR as an
+# (self-contained sections, no in-place edits in the same PR as an
 # addition). NOTE: GitHub's merge button ignores merge attributes — when a PR
 # shows a conflict in one of these files, resolve with a local
 # `git merge origin/main`, which applies the driver and auto-resolves.
+# (Changelog entries and FEATURES notes now live as one file per PR in
+# changelog/, so they can't conflict at all; FEATURES.md is generated.)
 CHANGELOG.md merge=union
-FEATURES.md merge=union
 decision_log.md merge=union
