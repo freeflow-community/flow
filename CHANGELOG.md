@@ -203,6 +203,9 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Multiple independent windows (⌘N, each with its own workspace/channel/thread
+  selection) are macOS-only: the browser already gives web this via tabs, and
+  the iPhone is a single-screen app. Inherent to the platforms, not a gap.
 - Text zoom (#105) is not built into the web client: the browser's own ⌘+/⌘−
   already zooms it, and an in-app control would fight it. Not a gap.
 - Google sign-in on macOS/iOS goes through the **browser handoff**, not a native

@@ -7,6 +7,7 @@ struct ThreadPanelView: View {
     /// header/tab strip and background, so we drop our own chrome.
     var embedded: Bool = false
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     @StateObject private var thread = DBObserved<[Message]>(initial: [])
     @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
@@ -34,7 +35,7 @@ struct ThreadPanelView: View {
                     }
                     Spacer()
                     Button {
-                        app.openThread(nil)
+                        win.openThread(nil)
                     } label: {
                         Image(systemName: "xmark")
                     }
@@ -84,13 +85,13 @@ struct ThreadPanelView: View {
                 .defaultScrollAnchor(.bottom) // open at the newest reply
                 .onChange(of: thread.value.last?.id) { _, newId in
                     // A pending jump owns the scroll position.
-                    guard app.focusMessageId == nil, let newId else { return }
+                    guard win.focusMessageId == nil, let newId else { return }
                     proxy.scrollTo(newId, anchor: .bottom)
                 }
                 // Jump-to-message (phase 12): scroll to + flash a thread reply
                 // reached from the Activity feed. The thread loads whole, so no
                 // paging is needed here (unlike the channel's main list).
-                .onChange(of: app.focusMessageId) { _, _ in tryFocus(proxy) }
+                .onChange(of: win.focusMessageId) { _, _ in tryFocus(proxy) }
                 .onChange(of: thread.value.count) { _, _ in tryFocus(proxy) }
                 .onAppear { tryFocus(proxy) }
             }
@@ -158,12 +159,12 @@ struct ThreadPanelView: View {
     /// Center + flash the jump-to-message target once the thread has loaded it,
     /// then release the shared target.
     private func tryFocus(_ proxy: ScrollViewProxy) {
-        guard let fid = app.focusMessageId, thread.value.contains(where: { $0.id == fid }) else { return }
+        guard let fid = win.focusMessageId, thread.value.contains(where: { $0.id == fid }) else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
             proxy.scrollTo(fid, anchor: .center)
         }
         flashId = fid
-        app.focusMessageId = nil
+        win.focusMessageId = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             withAnimation(.easeOut(duration: 0.6)) {
                 if flashId == fid { flashId = nil }

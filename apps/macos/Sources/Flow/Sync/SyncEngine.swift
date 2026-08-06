@@ -11,9 +11,6 @@ actor SyncEngine {
     private weak var appState: AppState?
 
     private var currentUser: User?
-    private var activeWorkspaceId: String?
-    private var activeChannelId: String?
-    private var openThreadRootId: String?
     private var socketConsumer: Task<Void, Never>?
     private var typingLastSent: [String: Date] = [:]
 
@@ -50,9 +47,6 @@ actor SyncEngine {
         socketConsumer?.cancel()
         socketConsumer = nil
         currentUser = nil
-        activeWorkspaceId = nil
-        activeChannelId = nil
-        openThreadRootId = nil
         await appState?.sessionExpired()
     }
 
@@ -157,9 +151,6 @@ actor SyncEngine {
         socketConsumer?.cancel()
         socketConsumer = nil
         currentUser = nil
-        activeWorkspaceId = nil
-        activeChannelId = nil
-        openThreadRootId = nil
         try? await db.writer.write { db in try AppDatabase.wipe(db) }
         await appState?.didSignOut()
     }
@@ -206,15 +197,17 @@ actor SyncEngine {
 
     private func backfillAfterReconnect() async {
         await refreshWorkspaces()
-        if let ws = activeWorkspaceId {
+        // Every workspace/channel/thread open in *some* window needs the gap
+        // filled — the windows are independent, so there can be several of each.
+        for ws in await appState?.openWorkspaceIds ?? [] {
             await refreshChannels(workspaceId: ws)
             await refreshMembers(workspaceId: ws)
             await refreshArtifacts(workspaceId: ws)
         }
-        if let ch = activeChannelId {
+        for ch in await appState?.openChannelIds ?? [] {
             await backfillChannel(ch)
         }
-        if let root = openThreadRootId {
+        for root in await appState?.openThreadRootIds ?? [] {
             await fetchThread(rootId: root)
         }
         await refreshNotificationBadge()
@@ -263,10 +256,10 @@ actor SyncEngine {
         }
     }
 
+    /// A window switched to this workspace: bring its data up to date. The
+    /// engine holds no "active" selection of its own any more — the windows
+    /// do, and `AppState` aggregates them for event scoping.
     func selectWorkspace(_ id: String?) async {
-        activeWorkspaceId = id
-        activeChannelId = nil
-        openThreadRootId = nil
         guard let id else { return }
         await refreshChannels(workspaceId: id)
         await refreshMembers(workspaceId: id)
@@ -441,8 +434,6 @@ actor SyncEngine {
     }
 
     func selectChannel(_ channelId: String?) async {
-        activeChannelId = channelId
-        openThreadRootId = nil
         guard let channelId else { return }
         do {
             let resp: MessagesResponse = try await api.get(
@@ -900,7 +891,7 @@ actor SyncEngine {
         guard let resp: ArtifactsResponse = try? await api.get(
             "/v1/workspaces/\(workspaceId)/artifacts"
         ) else { return }
-        await appState?.setArtifacts(resp.artifacts)
+        await appState?.setArtifacts(resp.artifacts, workspaceId: workspaceId)
     }
 
     /// Pins a file as a shared artifact in a channel (idempotent per
@@ -988,17 +979,14 @@ actor SyncEngine {
             try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [channelId])
             try db.execute(sql: "DELETE FROM message WHERE channelId = ?", arguments: [channelId])
         }
-        if activeChannelId == channelId {
-            await appState?.channelBecameUnavailable(channelId)
-        }
+        // Unconditional: each window checks its own selection.
+        await appState?.channelBecameUnavailable(channelId)
     }
 
     func archiveChannel(_ channelId: String) async throws {
         let ch: Channel = try await api.post("/v1/channels/\(channelId)/archive")
         try? await db.writer.write { db in try ch.save(db) }
-        if activeChannelId == channelId {
-            await appState?.channelBecameUnavailable(channelId)
-        }
+        await appState?.channelBecameUnavailable(channelId)
     }
 
     func setNotifyLevel(channelId: String, level: Int) async {
@@ -1083,7 +1071,9 @@ actor SyncEngine {
             before.map { URLQueryItem(name: "before", value: $0) },
         ].compactMap(\.self)
         let resp: NotificationsResponse = try await api.get("/v1/me/notifications", query: query)
-        await appState?.setNotificationUnread(resp.unreadCount, total: resp.totalUnreadCount)
+        await appState?.setNotificationUnread(
+            resp.unreadCount, workspaceId: workspaceId, total: resp.totalUnreadCount
+        )
         return resp
     }
 
@@ -1107,16 +1097,32 @@ actor SyncEngine {
         await refreshNotificationBadge()
     }
 
-    /// Both badges in one call: the selected workspace's count and the total.
+    /// Both badges: every open workspace's count plus the total. Windows can
+    /// show different workspaces, so each open one gets its own scoped fetch;
+    /// with none open a single unscoped fetch still keeps the dock badge live.
     func refreshNotificationBadge() async {
-        var query = [URLQueryItem(name: "limit", value: "1")]
-        if let workspaceId = await appState?.selectedWorkspaceId {
-            query.append(URLQueryItem(name: "workspaceId", value: workspaceId))
+        let workspaceIds = await appState?.openWorkspaceIds ?? []
+        if workspaceIds.isEmpty {
+            guard let resp: NotificationsResponse = try? await api.get(
+                "/v1/me/notifications", query: [URLQueryItem(name: "limit", value: "1")]
+            ) else { return }
+            await appState?.setNotificationUnread(
+                resp.unreadCount, workspaceId: nil, total: resp.totalUnreadCount
+            )
+            return
         }
-        guard let resp: NotificationsResponse = try? await api.get(
-            "/v1/me/notifications", query: query
-        ) else { return }
-        await appState?.setNotificationUnread(resp.unreadCount, total: resp.totalUnreadCount)
+        for workspaceId in workspaceIds {
+            guard let resp: NotificationsResponse = try? await api.get(
+                "/v1/me/notifications",
+                query: [
+                    URLQueryItem(name: "limit", value: "1"),
+                    URLQueryItem(name: "workspaceId", value: workspaceId),
+                ]
+            ) else { continue }
+            await appState?.setNotificationUnread(
+                resp.unreadCount, workspaceId: workspaceId, total: resp.totalUnreadCount
+            )
+        }
     }
 
     func editMessage(id: String, body: String) async {
@@ -1167,7 +1173,6 @@ actor SyncEngine {
     // MARK: - Threads
 
     func openThread(rootId: String?) async {
-        openThreadRootId = rootId
         guard let rootId else { return }
         await fetchThread(rootId: rootId)
     }
@@ -1259,7 +1264,7 @@ actor SyncEngine {
             }
 
         case .memberJoined(let mj):
-            if event.workspaceId == activeWorkspaceId {
+            if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                 await refreshMembers(workspaceId: event.workspaceId)
             }
             if mj.userId == currentUser?.id {
@@ -1274,7 +1279,7 @@ actor SyncEngine {
             if ml.channelId == nil {
                 // Workspace-level departure (member removed / app deleted):
                 // refresh so the member and mention lists drop them.
-                if event.workspaceId == activeWorkspaceId {
+                if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                     await refreshMembers(workspaceId: event.workspaceId)
                 }
             }
@@ -1283,9 +1288,7 @@ actor SyncEngine {
                     try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [chId])
                     try db.execute(sql: "DELETE FROM message WHERE channelId = ?", arguments: [chId])
                 }
-                if activeChannelId == chId {
-                    await appState?.channelBecameUnavailable(chId)
-                }
+                await appState?.channelBecameUnavailable(chId)
                 await refreshChannels(workspaceId: event.workspaceId)
             }
 
@@ -1303,9 +1306,7 @@ actor SyncEngine {
                 existing.archivedAt = ch.archivedAt
                 try existing.save(db)
             }
-            if activeChannelId == ch.id {
-                await appState?.channelBecameUnavailable(ch.id)
-            }
+            await appState?.channelBecameUnavailable(ch.id)
 
         case .reaction(let data, let added):
             await applyReactionEvent(data, added: added)
@@ -1320,9 +1321,9 @@ actor SyncEngine {
             // it as read swallowed DMs that landed while the app sat behind the
             // browser. Reading it here matters because a reaction moves no read
             // cursor, so nothing else would ever clear it.
-            let behindClosedThread =
-                n.message.threadRootId != nil && n.message.threadRootId != openThreadRootId
-            if !behindClosedThread, await appState?.isViewing(channelId: n.channelId) == true {
+            if await appState?.isViewingMessage(
+                channelId: n.channelId, threadRootId: n.message.threadRootId
+            ) == true {
                 await markNotificationRead(id: n.id)
                 return
             }
@@ -1365,8 +1366,8 @@ actor SyncEngine {
             await refreshNotificationBadge()
             // The rows can span channels (and workspaces, from the Activity
             // feed), and the event carries ids rather than a per-channel
-            // breakdown — refetch the list rather than guess at the deltas.
-            if let workspaceId = activeWorkspaceId {
+            // breakdown — refetch the lists rather than guess at the deltas.
+            for workspaceId in await appState?.openWorkspaceIds ?? [] {
                 await refreshChannels(workspaceId: workspaceId)
             }
 
@@ -1379,7 +1380,7 @@ actor SyncEngine {
             if change == .deleted {
                 await appState?.artifactBecameUnavailable(a.id)
             }
-            if event.workspaceId == activeWorkspaceId {
+            if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                 await refreshArtifacts(workspaceId: event.workspaceId)
                 // Auto-open an agent-created artifact for whoever is viewing its
                 // channel — the user who asked the agent to make it. Gated on

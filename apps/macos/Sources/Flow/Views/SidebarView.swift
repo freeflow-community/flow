@@ -15,6 +15,7 @@ struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable
 /// Design 3a column 2: violet gradient channel/DM list with the profile footer.
 struct SidebarView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.textZoom) private var textZoom
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
@@ -34,7 +35,7 @@ struct SidebarView: View {
     @State private var ensuredSelfDmWs: String?
 
     private var currentWorkspace: Workspace? {
-        workspaces.value.first { $0.id == app.selectedWorkspaceId }
+        workspaces.value.first { $0.id == win.selectedWorkspaceId }
     }
 
     private var palette: SidebarPalette {
@@ -169,11 +170,11 @@ struct SidebarView: View {
         // opened with nothing selected lands on #general; every workspace gets
         // a "<Name> (you)" DM (idempotent server upsert).
         .onChange(of: channels.value) { _, chans in
-            guard let wsId = app.selectedWorkspaceId, !chans.isEmpty else { return }
-            if app.selectedChannelId == nil {
+            guard let wsId = win.selectedWorkspaceId, !chans.isEmpty else { return }
+            if win.selectedChannelId == nil {
                 let target = chans.first { $0.isMember && $0.name == "general" }
                     ?? chans.first { $0.isMember && !$0.isDM }
-                if let target { app.selectChannel(target.id) }
+                if let target { win.selectChannel(target.id) }
             }
             if let me = app.currentUser?.id, ensuredSelfDmWs != wsId {
                 ensuredSelfDmWs = wsId
@@ -195,8 +196,8 @@ struct SidebarView: View {
                 )
             }
         }
-        .task(id: app.selectedWorkspaceId) {
-            guard let wsId = app.selectedWorkspaceId else { return }
+        .task(id: win.selectedWorkspaceId) {
+            guard let wsId = win.selectedWorkspaceId else { return }
             channels.start(db: app.db, reset: []) { db in
                 try Channel
                     .filter(Column("workspaceId") == wsId && Column("archivedAt") == nil)
@@ -219,19 +220,19 @@ struct SidebarView: View {
             }
         }
         .sheet(isPresented: $showCreateChannel) {
-            if let wsId = app.selectedWorkspaceId {
+            if let wsId = win.selectedWorkspaceId {
                 CreateChannelSheet(workspaceId: wsId)
             }
         }
         .sheet(isPresented: $showInvite) {
-            if let wsId = app.selectedWorkspaceId {
+            if let wsId = win.selectedWorkspaceId {
                 InviteSheetView(workspaceId: wsId)
             }
         }
         .sheet(isPresented: $showCreateWorkspace) { CreateWorkspaceSheet() }
         .sheet(isPresented: $showAcceptInvite) { AcceptInviteSheet() }
         .sheet(isPresented: $showNewDM) {
-            if let wsId = app.selectedWorkspaceId {
+            if let wsId = win.selectedWorkspaceId {
                 NewDMSheet(workspaceId: wsId, members: members.value)
             }
         }
@@ -242,7 +243,7 @@ struct SidebarView: View {
         }
         .sheet(isPresented: $showFeatures) { FeaturesView() }
         .sheet(isPresented: $showInviteAgent) {
-            if let wsId = app.selectedWorkspaceId {
+            if let wsId = win.selectedWorkspaceId {
                 InviteAgentSheetView(workspaceId: wsId)
             }
         }
@@ -289,7 +290,7 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(app.selectedWorkspaceId == nil)
+        .disabled(win.selectedWorkspaceId == nil)
         .padding(.horizontal, 14)
         .padding(.top, 8)
         .padding(.bottom, 6)
@@ -348,10 +349,10 @@ struct SidebarView: View {
     /// entry (no real channel). Carries the notification unread badge that used
     /// to live on the toolbar bell.
     private var activityRow: some View {
-        let active = app.showActivity
-        let unread = app.notificationUnread
+        let active = win.showActivity
+        let unread = app.notificationUnread(workspaceId: win.selectedWorkspaceId)
         return Button {
-            app.showActivityFeed()
+            win.showActivityFeed()
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: unread > 0 ? "bell.badge" : "bell")
@@ -380,11 +381,11 @@ struct SidebarView: View {
 
     private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
         let active = AppState.channelRowHighlighted(
-            rowId: channel.id, selectedChannelId: app.selectedChannelId,
-            selectedArtifactId: app.selectedArtifactId, showActivity: app.showActivity
+            rowId: channel.id, selectedChannelId: win.selectedChannelId,
+            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity
         )
         return Button {
-            app.selectChannel(channel.id)
+            win.selectChannel(channel.id)
         } label: {
             HStack(spacing: 9) {
                 Group {
@@ -439,13 +440,13 @@ struct SidebarView: View {
             userNames: userNames.value, currentUserId: app.currentUser?.id
         )
         let active = AppState.channelRowHighlighted(
-            rowId: channel.id, selectedChannelId: app.selectedChannelId,
-            selectedArtifactId: app.selectedArtifactId, showActivity: app.showActivity
+            rowId: channel.id, selectedChannelId: win.selectedChannelId,
+            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity
         )
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }
         return Button {
-            app.selectChannel(channel.id)
+            win.selectChannel(channel.id)
         } label: {
             HStack(spacing: 9) {
                 if channel.kind == "dm" {
@@ -516,7 +517,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func channelWithArtifacts(_ channel: Channel, @ViewBuilder row: () -> some View) -> some View {
         row()
-        ForEach(app.artifacts(inChannel: channel.id)) { artifact in
+        ForEach(win.artifacts(inChannel: channel.id)) { artifact in
             ArtifactSidebarRow(artifact: artifact)
         }
     }
@@ -535,7 +536,7 @@ struct SidebarView: View {
                 Task {
                     do {
                         let ch = try await app.engine.joinChannel(channel.id)
-                        app.selectChannel(ch.id)
+                        win.selectChannel(ch.id)
                     } catch {
                         app.showError(error.localizedDescription)
                     }
@@ -595,11 +596,11 @@ struct SidebarView: View {
     /// Member click (ruling 4): open (or create) the 1:1 DM with that user.
     /// Clicking yourself opens your self-DM.
     private func openDm(with userId: String) {
-        guard let wsId = app.selectedWorkspaceId else { return }
+        guard let wsId = win.selectedWorkspaceId else { return }
         Task {
             do {
                 let dm = try await app.engine.createDm(workspaceId: wsId, userIds: [userId])
-                app.selectChannel(dm.id)
+                win.selectChannel(dm.id)
             } catch {
                 app.showError(error.localizedDescription)
             }
@@ -673,9 +674,9 @@ struct SidebarView: View {
         Menu {
             ForEach(workspaces.value) { ws in
                 Button {
-                    app.selectWorkspace(ws.id)
+                    win.selectWorkspace(ws.id)
                 } label: {
-                    if ws.id == app.selectedWorkspaceId {
+                    if ws.id == win.selectedWorkspaceId {
                         Label(ws.name, systemImage: "checkmark")
                     } else {
                         Text(ws.name)
@@ -690,7 +691,7 @@ struct SidebarView: View {
             Button("Accept Invite…") { showAcceptInvite = true }
             Button("Invite People…") { showInvite = true }
             Divider()
-            Button("All Workspaces") { app.selectWorkspace(nil) }
+            Button("All Workspaces") { win.selectWorkspace(nil) }
             Divider()
             // Version tag (web parity): clicking it opens the "What's new" sheet.
             Button { showFeatures = true } label: {
@@ -725,6 +726,7 @@ struct StatusFooterView: View {
     /// Active workspace palette (badge ring matches the gradient bottom).
     var palette: SidebarPalette = SidebarPalette.palette(for: nil)
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var showPicker = false
     @State private var showAvatarMenu = false
     @State private var showMyProfile = false
@@ -940,6 +942,7 @@ struct ProfileTarget: Identifiable {
 struct WorkspaceColorSheet: View {
     let workspace: Workspace
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
 
@@ -1028,6 +1031,7 @@ struct WorkspaceColorSheet: View {
 struct CreateChannelSheet: View {
     let workspaceId: String
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var topic = ""
@@ -1064,7 +1068,7 @@ struct CreateChannelSheet: View {
                                 isPrivate: isPrivate
                             )
                             dismiss()
-                            app.selectChannel(ch.id)
+                            win.selectChannel(ch.id)
                         } catch {
                             self.error = error.localizedDescription
                         }
@@ -1084,15 +1088,16 @@ struct CreateChannelSheet: View {
 /// revealed on hover deletes the shared artifact (also in the context menu).
 private struct ArtifactSidebarRow: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     let artifact: Artifact
     @State private var hovering = false
 
-    private var active: Bool { app.selectedArtifactId == artifact.id }
+    private var active: Bool { win.selectedArtifactId == artifact.id }
 
     var body: some View {
         HStack(spacing: 0) {
             Button {
-                app.selectArtifact(artifact.id)
+                win.selectArtifact(artifact.id)
             } label: {
                 HStack(spacing: 9) {
                     Text(artifact.glyph)

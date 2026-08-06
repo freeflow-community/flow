@@ -12,7 +12,9 @@ struct FlowApp: App {
 
     var body: some Scene {
         WindowGroup(Profile.windowTitle) {
-            RootView()
+            // Each window gets its own RootView instance, which owns that
+            // window's WindowState — so ⌘N windows navigate independently.
+            RootView(app: app)
                 .environmentObject(app)
                 // One scale for the whole app (#105) — every font is drawn
                 // through `flowFont`, which reads this on the way past.
