@@ -4,6 +4,7 @@ import SwiftUI
 
 struct MainView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     // Ruling 5: sidebar width is a local per-device preference, clamped on use.
     @AppStorage("sidebarWidth" + Profile.suffix) private var sidebarWidth: Double = 240
@@ -112,16 +113,16 @@ struct MainView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if app.showActivity {
+        if win.showActivity {
             // Activity feed (phase 12) — the virtual channel that replaced the
             // bell. Covers the content pane; the channel stays put behind it.
             ActivityFeedView()
-        } else if let channelId = app.selectedChannelId {
+        } else if let channelId = win.selectedChannelId {
             HStack(spacing: 0) {
                 ChannelView(channelId: channelId)
                     .frame(maxWidth: .infinity)
                 // Tabbed side panel: Thread + the channel's artifacts (phase 13).
-                if app.openThreadRootId != nil || app.selectedArtifactId != nil {
+                if win.openThreadRootId != nil || win.selectedArtifactId != nil {
                     sidePanelResizer
                     SidePanelView()
                         .frame(width: clampedSidePanelWidth)
@@ -143,20 +144,21 @@ struct MainView: View {
 /// Design 3a column 1: the 64px violet workspace rail.
 struct WorkspaceRailView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
 
     /// Rail shade follows the active workspace's palette (violet default).
     private var railColor: Color {
-        let current = workspaces.value.first { $0.id == app.selectedWorkspaceId }
+        let current = workspaces.value.first { $0.id == win.selectedWorkspaceId }
         return SidebarPalette.palette(for: current?.sidebarColor).rail
     }
 
     var body: some View {
         VStack(spacing: 14) {
             ForEach(workspaces.value) { ws in
-                let active = ws.id == app.selectedWorkspaceId
+                let active = ws.id == win.selectedWorkspaceId
                 Button {
-                    if !active { app.selectWorkspace(ws.id) }
+                    if !active { win.selectWorkspace(ws.id) }
                 } label: {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(active ? Color.white : Color.white.opacity(0.15))
@@ -173,7 +175,7 @@ struct WorkspaceRailView: View {
                 .accessibilityAddTraits(active ? [.isSelected] : [])
             }
             Button {
-                app.selectWorkspace(nil)
+                win.selectWorkspace(nil)
             } label: {
                 RoundedRectangle(cornerRadius: 12)
                     .strokeBorder(.white.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))

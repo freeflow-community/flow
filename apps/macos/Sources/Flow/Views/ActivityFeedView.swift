@@ -11,6 +11,7 @@ import SwiftUI
 /// originating message (switching workspace / opening the thread as needed).
 struct ActivityFeedView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var items: [NotificationItem] = []
     @State private var userNames: [String: String] = [:]
     @State private var loading = true
@@ -45,10 +46,13 @@ struct ActivityFeedView: View {
         // task(id:) → refetches whenever a new notification arrives while we're
         // open, or the workspace changes; marking read below bumps the count to
         // 0, which settles here.
-        .task(id: FeedKey(unread: app.notificationUnread, workspaceId: app.selectedWorkspaceId)) {
+        .task(id: FeedKey(
+            unread: app.notificationUnread(workspaceId: win.selectedWorkspaceId),
+            workspaceId: win.selectedWorkspaceId
+        )) {
             defer { loading = false }
             if let resp = try? await app.engine.fetchNotifications(
-                workspaceId: app.selectedWorkspaceId
+                workspaceId: win.selectedWorkspaceId
             ) {
                 items = resp.notifications
             }
@@ -62,7 +66,7 @@ struct ActivityFeedView: View {
             if let newest = items.first, markedNewestId != newest.id {
                 markedNewestId = newest.id
                 await app.engine.markNotificationsRead(
-                    upToId: newest.id, workspaceId: app.selectedWorkspaceId
+                    upToId: newest.id, workspaceId: win.selectedWorkspaceId
                 )
             }
         }
@@ -97,7 +101,7 @@ struct ActivityFeedView: View {
         let actorId = n.actorUserId
         let sender = userNames[actorId] ?? "Someone"
         return Button {
-            app.openNotification(n)
+            win.openNotification(n)
             Task { await app.engine.markNotificationRead(id: n.id) }
         } label: {
             HStack(alignment: .top, spacing: 10) {

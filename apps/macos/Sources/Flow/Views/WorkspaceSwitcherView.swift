@@ -3,6 +3,7 @@ import SwiftUI
 
 struct WorkspaceSwitcherView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @State private var showCreate = false
     @State private var showAcceptInvite = false
@@ -20,7 +21,7 @@ struct WorkspaceSwitcherView: View {
             } else {
                 List(workspaces.value) { ws in
                     Button {
-                        app.selectWorkspace(ws.id)
+                        win.selectWorkspace(ws.id)
                     } label: {
                         HStack {
                             RoundedRectangle(cornerRadius: 6)
@@ -79,6 +80,7 @@ struct WorkspaceSwitcherView: View {
 
 struct CreateWorkspaceSheet: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var slug = ""
@@ -109,7 +111,7 @@ struct CreateWorkspaceSheet: View {
                         do {
                             let ws = try await app.engine.createWorkspace(name: name, slug: slug)
                             dismiss()
-                            app.selectWorkspace(ws.id)
+                            win.selectWorkspace(ws.id)
                         } catch {
                             self.error = error.localizedDescription
                         }
@@ -134,6 +136,7 @@ struct CreateWorkspaceSheet: View {
 
 struct AcceptInviteSheet: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var tokenText = ""
 

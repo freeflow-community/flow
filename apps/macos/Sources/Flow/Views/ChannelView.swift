@@ -4,6 +4,7 @@ import SwiftUI
 struct ChannelView: View {
     let channelId: String
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
@@ -37,7 +38,7 @@ struct ChannelView: View {
                     Task { await app.engine.loadOlder(channelId: channelId) }
                 },
                 onOpenThread: { rootId in
-                    app.openThread(rootId)
+                    win.openThread(rootId)
                 },
                 onEdit: { message in
                     editingMessage = message
@@ -51,8 +52,8 @@ struct ChannelView: View {
                 scrollKey: channelId,
                 // Jump-to-message (phase 12): the main list owns the target
                 // unless it's a thread reply (ThreadPanelView handles those).
-                focusMessageId: app.openThreadRootId == nil ? app.focusMessageId : nil,
-                onFocused: { app.focusMessageId = nil }
+                focusMessageId: win.openThreadRootId == nil ? win.focusMessageId : nil,
+                onFocused: { win.focusMessageId = nil }
             )
 
             TypingIndicatorView(channelId: channelId, userNames: userNames)
@@ -97,7 +98,7 @@ struct ChannelView: View {
         // Jump-to-message (phase 12): a target from the Activity feed may sit
         // beyond the loaded page — page older history until it's in the list,
         // then MessageListView scrolls to it. Give up once history is exhausted.
-        .onChange(of: app.focusMessageId) { _, _ in pageToFocusIfNeeded() }
+        .onChange(of: win.focusMessageId) { _, _ in pageToFocusIfNeeded() }
         .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
@@ -119,7 +120,7 @@ struct ChannelView: View {
                 userNames: userNames,
                 onSelect: { message in
                     guard let workspaceId = channel.value?.workspaceId else { return }
-                    app.openNotification(
+                    win.openNotification(
                         workspaceId: workspaceId,
                         channelId: message.channelId,
                         messageId: message.id,
@@ -151,12 +152,12 @@ struct ChannelView: View {
     /// Page older history toward a jump-to-message target until it's loaded
     /// (thread-reply targets are handled by ThreadPanelView, not here).
     private func pageToFocusIfNeeded() {
-        guard app.openThreadRootId == nil, let fid = app.focusMessageId else { return }
+        guard win.openThreadRootId == nil, let fid = win.focusMessageId else { return }
         if messages.value.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
         if app.hasMore[channelId] ?? false {
             Task { await app.engine.loadOlder(channelId: channelId) }
         } else {
-            app.focusMessageId = nil // not in this channel's history
+            win.focusMessageId = nil // not in this channel's history
         }
     }
 
@@ -425,6 +426,7 @@ struct PinnedMessagesSheet: View {
     let userNames: [String: String]
     let onSelect: (Message) -> Void
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -503,6 +505,7 @@ struct TypingIndicatorView: View {
     var threadRootId: String? = nil
     let userNames: [String: String]
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     var body: some View {
         let ids = app.typingUserIds(channelId: channelId, threadRootId: threadRootId)
@@ -535,6 +538,7 @@ struct TypingIndicatorView: View {
 struct EditMessageSheet: View {
     let message: Message
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var text: String
 
@@ -571,6 +575,7 @@ struct EditMessageSheet: View {
 struct ChannelEditSheet: View {
     let channel: Channel
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var topic: String

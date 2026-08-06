@@ -339,6 +339,7 @@ struct MessageRow: View {
     var onOpenProfile: (String) -> Void = { _ in }
 
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.textZoom) private var textZoom
     @State private var hovering = false
     @State private var showReactionPicker = false
@@ -764,7 +765,7 @@ struct MessageRow: View {
                 for file in files {
                     last = try await app.engine.createArtifact(channelId: channelId, fileId: file.id)
                 }
-                if let last { app.selectArtifact(last.id) }
+                if let last { win.selectArtifact(last.id) }
             } catch {
                 app.showError("Couldn't pin artifact: \(error.localizedDescription)")
             }
@@ -778,7 +779,7 @@ struct MessageRow: View {
         Task {
             do {
                 let artifact = try await app.engine.createLinkArtifact(channelId: channelId, url: url)
-                app.selectArtifact(artifact.id)
+                win.selectArtifact(artifact.id)
             } catch {
                 app.showError("Couldn't pin link: \(error.localizedDescription)")
             }
@@ -1020,6 +1021,7 @@ enum CollapsedImages {
 struct AttachmentView: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var opening = false
     @State private var saving = false
     @State private var hovering = false
@@ -1220,6 +1222,7 @@ struct AttachmentView: View {
 struct ImageLightboxView: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
 
