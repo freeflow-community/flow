@@ -15,8 +15,8 @@ CONF=${1:-debug}
 SERVER_URL=${FLOW_SERVER_URL:-https://app.freeflow.im}
 
 # Build tag = the short commit SHA of this build. `BUILD_SHA` env var overrides
-# for CI; `dev` outside a checkout. Surfaced at the bottom of the workspace menu
-# (see BuildInfo.swift).
+# for CI; `dev` outside a checkout. The workspace menu shows the marketing
+# version instead; this is its dev-build fallback (see BuildInfo.swift).
 BUILD_SHA=${BUILD_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}
 
 # Marketing version (VERSION file) + a MONOTONIC build number. Sparkle orders

@@ -256,6 +256,14 @@ work after phase 16.
 
 Entries below start after phase 16.
 
+### 2026-08-06 — Workspace menu shows the app version
+
+- `[macos]` The tag at the foot of the workspace menu reads `Version 2.2.18`
+  (`CFBundleShortVersionString`) instead of the commit SHA, which matches what
+  users see in the release notes and the Sparkle feed. Unbundled dev builds have
+  no plist, so they still fall back to `Build <sha>`.
+- `[macos]` VERSION 2.2.18.
+
 ### 2026-07-31 — Headings render on the native clients (#166)
 
 - `[macos]` `[ios]` `MarkdownBlocks` gains a `heading` segment, ported from

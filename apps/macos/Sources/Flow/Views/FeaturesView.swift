@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// "What's new" sheet: renders the user-facing FEATURES.md. Opened from the
-/// "Build …" label at the foot of the workspace menu (web parity). macOS's
+/// "Version …" label at the foot of the workspace menu (web parity). macOS's
 /// message MarkdownBlocks doesn't cover headings/lists, so this file carries a
 /// small renderer for the doc's subset (## / ### headings, `-` bullets,
 /// paragraphs) with inline **bold**/`code`/links via AttributedString.

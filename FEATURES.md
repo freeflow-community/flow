@@ -3,6 +3,13 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-08-06
+
+- **The Mac app tells you which version you're running.** The line at the
+  bottom of the workspace menu now reads something like "Version 2.2.18"
+  instead of a commit code, so it matches the version in the release notes.
+  Clicking it still opens "What's new".
+
 ## 2026-08-01
 
 - **Messages are readable again if your Mac or iPhone is set to Dark Mode.**

@@ -692,7 +692,7 @@ struct SidebarView: View {
             Divider()
             Button("All Workspaces") { app.selectWorkspace(nil) }
             Divider()
-            // Build tag (web parity): clicking it opens the "What's new" sheet.
+            // Version tag (web parity): clicking it opens the "What's new" sheet.
             Button { showFeatures = true } label: {
                 Text(BuildInfo.label).italic()
             }
