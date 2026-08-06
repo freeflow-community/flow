@@ -13,6 +13,11 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 ## Parity
 
 ### Gaps to close
+- Custom emoji (#175) are web-only: macOS and iOS render a custom reaction as
+  the literal text `:shortcode:` rather than the image. The reaction itself is
+  correct everywhere (count, who reacted, notifications) — only the glyph is
+  missing. Each client needs to fetch `GET /v1/workspaces/:id/emoji` and swap in
+  the image. Custom emoji inline in *message text* is unbuilt on every client.
 - Scroll-position memory exists on no client: leaving a channel mid-history and
   coming straight back always re-opens at the newest message. Tried on iOS
   (#159) and removed — tracking the on-screen row needs per-row geometry, which
@@ -240,6 +245,13 @@ the commit message, not here. This is a ledger to scan, not a narrative.
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
   support, so macOS shows the file chip (Download / open externally) for
   webm attachments (ruled — see decision_log 2026-07-20).
+- macOS + web upload images at full size and full bytes — #84 fixed iOS only.
+  The Mac composer also accepts `.heic` and sends it raw, so it lands with no
+  thumbnail (the same bug #84 fixed on iOS). `Support/ImagePrep.swift` is
+  ImageIO-based and already compiles for macOS, so the Mac side is a call-site
+  change; web needs a `canvas`/`createImageBitmap` equivalent in
+  `packages/web/src/lib/api.ts`. Board: "macOS + web: compress and convert
+  images on upload".
 - Responsive/mobile layout (drawer nav, viewport-capped media and modals):
   web only, and inherently so — the native clients lay themselves out per
   platform, and the iOS app is the native phone experience. Not a gap.
@@ -263,6 +275,44 @@ Entries below start after phase 16.
   users see in the release notes and the Sparkle feed. Unbundled dev builds have
   no plist, so they still fall back to `Build <sha>`.
 - `[macos]` VERSION 2.2.18.
+
+### 2026-08-05 — CI builds and tests every PR (#177)
+
+- `[qa]` New `ci` workflow builds every package and runs the whole test suite on
+  each PR to `main` (and on `main` itself), with postgres as a service so the
+  DB-backed server tests run unnarrowed. Catches build-only breakage like the
+  `copy-skill.mjs` path that reached `main` in #172 with all tests green.
+- `[qa]` Reports only — making it a required check is a branch-protection
+  setting, so it stays the operator's call.
+### 2026-08-03 — Custom emoji reactions (#175)
+
+- `[server]` `[web]` Workspace custom emoji: owners/admins upload an image under
+  a `:shortcode:`, anyone can react with it. `EmojiParam` now accepts a
+  shortcode as well as unicode; existence is checked when the reaction is added,
+  not by the shape validator.
+- `[server]` Images are ordinary `files` rows registered by id, so the existing
+  presign upload and blob storage are reused rather than duplicated.
+### 2026-08-02 — Web build fixed after the skills move (#172)
+
+- `[web]` `copy-skill.mjs` follows `skills/` → `.claude/skills/`. It runs on
+  `predev` and `prebuild`, so the stale path broke `pnpm dev` and `pnpm build`
+  for web — and with them the Railway deploy — on any checkout of `main`.
+- `[web]` A missing copy source now names the file and points at the list to
+  update, instead of a bare `ENOENT` from `copyFileSync`.
+
+### 2026-08-02 — iOS shares images compressed and converted (#84)
+
+- `[ios]` Photos downscale to 1024px on the longest edge and re-encode to JPEG
+  before upload — a 12MP HEIC goes up 5× smaller. Images already smaller than
+  the cap in a web-friendly format pass through untouched, not recompressed.
+- `[ios]` HEIC picked through the Files app used to upload raw, so it arrived
+  with no thumbnail and rendered as a generic file; it now converts like a
+  photo-library pick.
+- `[ios]` Transparent images convert to PNG rather than JPEG, which can't carry
+  an alpha channel.
+- `[macos]` New shared `Support/ImagePrep.swift` (ImageIO, cross-platform);
+  `.heic`/`.heif` now map to `image/heic` instead of `application/octet-stream`.
+  VERSION 2.2.17.
 
 ### 2026-07-31 — Headings render on the native clients (#166)
 

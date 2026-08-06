@@ -879,6 +879,7 @@ actor SyncEngine {
         case "jpg", "jpeg": "image/jpeg"
         case "gif": "image/gif"
         case "webp": "image/webp"
+        case "heic", "heif": "image/heic"
         case "pdf": "application/pdf"
         case "txt", "md", "log": "text/plain"
         case "json": "application/json"

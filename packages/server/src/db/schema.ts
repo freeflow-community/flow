@@ -275,6 +275,22 @@ export const files = pgTable('files', {
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
 
+/** Custom emoji (#175): a workspace-scoped image usable as a reaction. The
+ * `shortcode` is stored bare; reaction rows store the `:shortcode:` form. The
+ * image is an ordinary `files` row, so uploads reuse the presign flow. */
+export const workspaceEmoji = pgTable(
+  'workspace_emoji',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    shortcode: text('shortcode').notNull(),
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('workspace_emoji_code_idx').on(t.workspaceId, t.shortcode)],
+);
+
 export const messageFiles = pgTable(
   'message_files',
   {

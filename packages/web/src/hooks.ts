@@ -19,6 +19,7 @@ import type {
   OAuthIdentityDTO,
   UserDTO,
   WorkspaceDTO,
+  WorkspaceEmojiDTO,
   WorkspaceMemberDTO,
 } from '@flow/shared';
 import { api } from './lib/api';
@@ -133,6 +134,26 @@ export function useApps(workspaceId: string | null) {
     select: (d) => d.apps,
     enabled: workspaceId !== null,
   });
+}
+
+/** Workspace custom emoji (#175). Every member can read this — you need the
+ * images to render other people's reactions, not just to add your own. */
+export function useWorkspaceEmoji(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ['emoji', workspaceId],
+    queryFn: () => api<{ emoji: WorkspaceEmojiDTO[] }>('GET', `/v1/workspaces/${workspaceId}/emoji`),
+    select: (d) => d.emoji,
+    enabled: workspaceId !== null,
+  });
+}
+
+/** `:shortcode:` → emoji, for rendering reactions. Keyed on the colon form so a
+ * reaction string is a direct lookup. */
+export function useWorkspaceEmojiMap(workspaceId: string | null): Record<string, WorkspaceEmojiDTO> {
+  const q = useWorkspaceEmoji(workspaceId);
+  const map: Record<string, WorkspaceEmojiDTO> = {};
+  for (const e of q.data ?? []) map[e.emoji] = e;
+  return map;
 }
 
 /** Channel member ids — standard channels included (mention CTA, invite lists). */
