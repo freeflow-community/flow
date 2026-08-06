@@ -3,6 +3,8 @@ dist/
 *.log
 # …but frozen changelog archives are project history, not build noise.
 !CHANGES_ARCHIVE_*.log
+# generated from changelog/ by scripts/build-features.mjs — never hand-edited
+/FEATURES.md
 .DS_Store
 .env
 .env.local

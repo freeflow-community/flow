@@ -210,11 +210,13 @@ after the lowest issue number in the batch.
 Read `CLAUDE.md` first — it is the working-conventions contract and several of
 its rules block a merge. The ones that bite most often:
 
-- **`CHANGELOG.md` gets an entry** with platform tags (`[server]` `[web]`
-  `[macos]` `[ios]` `[bridge]` `[qa]`). One or two lines. A change that lands on
-  one client but not another **must** add a Parity line.
-- **`FEATURES.md` gets a friendly one-liner** if the change is user-visible.
-  Skip it for refactors, tests and infra.
+- **`changelog/` gets one new entry file** (`YYYY-MM-DD-short-slug.md`, format
+  in `changelog/README.md`) with platform tags (`[server]` `[web]` `[macos]`
+  `[ios]` `[bridge]` `[qa]`). One or two lines per bullet. A change that lands
+  on one client but not another **must** add a Parity line to `CHANGELOG.md`.
+- **The entry file gets a `## Feature` section** with a friendly one-liner if
+  the change is user-visible; skip the section for refactors, tests and infra.
+  `FEATURES.md` is generated from these — never edit it directly.
 - **Bump `apps/macos/VERSION` in any PR touching `apps/macos/**`**, including
   the shared Swift core iOS reuses.
 
