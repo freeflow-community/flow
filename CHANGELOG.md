@@ -258,6 +258,10 @@ This file keeps two things:
 - Responsive/mobile layout (drawer nav, viewport-capped media and modals):
   web only, and inherently so — the native clients lay themselves out per
   platform, and the iOS app is the native phone experience. Not a gap.
+- macOS message body text is now pinned to `MC.ink` (fixing Dark Mode
+  invisibility). Web's message body has the same unstyled text, but isn't
+  exposed to the bug since it has no dark-mode theming to react to — not
+  fixed there.
 
 ## History
 
