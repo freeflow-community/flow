@@ -339,11 +339,16 @@ struct MessageRow: View {
     var onOpenProfile: (String) -> Void = { _ in }
 
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.textZoom) private var textZoom
     @State private var hovering = false
     @State private var showReactionPicker = false
     @State private var showDeleteConfirm = false
     @State private var hoverHideWork: DispatchWorkItem?
+    /// A pending row renders at full strength; it only dims (and shows the
+    /// mini spinner) once the send has gone unconfirmed past this window.
+    private static let pendingDimDelay: TimeInterval = 3
+    @State private var pendingSlow = false
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
@@ -420,7 +425,7 @@ struct MessageRow: View {
                     let segments = MarkdownBlocks.segments(message.body)
                     if !segments.isEmpty {
                         bodyContent(segments)
-                    } else if message.pending {
+                    } else if pendingSlow {
                         ProgressView().controlSize(.mini)
                     }
 
@@ -501,7 +506,22 @@ struct MessageRow: View {
         .padding(.bottom, 1)
         .background(highlighted ? MC.unread.opacity(0.16) : Color.clear)
         .animation(.easeOut(duration: 0.6), value: highlighted)
-        .opacity(message.pending ? 0.55 : 1)
+        .opacity(pendingSlow ? 0.55 : 1)
+        // Keyed off createdAt so a row remount mid-wait doesn't restart the
+        // clock; the id change on pending -> confirmed resets the state.
+        .task(id: message.pending) {
+            guard message.pending else {
+                pendingSlow = false
+                return
+            }
+            let elapsed = ISO8601.parse(message.createdAt)
+                .map { Date().timeIntervalSince($0) } ?? 0
+            let remaining = Self.pendingDimDelay - elapsed
+            if remaining > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            }
+            if !Task.isCancelled { pendingSlow = true }
+        }
         .contentShape(Rectangle())
         .onHover { setHovering($0) }
         // Hover menu (web parity, ui_nits items 2+3): react / reply-in-thread,
@@ -764,7 +784,7 @@ struct MessageRow: View {
                 for file in files {
                     last = try await app.engine.createArtifact(channelId: channelId, fileId: file.id)
                 }
-                if let last { app.selectArtifact(last.id) }
+                if let last { win.selectArtifact(last.id) }
             } catch {
                 app.showError("Couldn't pin artifact: \(error.localizedDescription)")
             }
@@ -778,7 +798,7 @@ struct MessageRow: View {
         Task {
             do {
                 let artifact = try await app.engine.createLinkArtifact(channelId: channelId, url: url)
-                app.selectArtifact(artifact.id)
+                win.selectArtifact(artifact.id)
             } catch {
                 app.showError("Couldn't pin link: \(error.localizedDescription)")
             }
@@ -794,23 +814,35 @@ struct MessageRow: View {
     /// pills or markdown inside code).
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        if segments.count == 1, case .paragraph(let text) = segments[0] {
-            // Fast path: single plain paragraph keeps the original inline
-            // layout (baseline-aligned edited/pending markers).
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                paragraphText(text)
-                trailingMarkers
-            }
-        } else {
-            HStack(alignment: .bottom, spacing: 4) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(segment)
-                    }
+        Group {
+            if segments.count == 1, case .paragraph(let text) = segments[0] {
+                // Fast path: single plain paragraph keeps the original inline
+                // layout (baseline-aligned edited/pending markers).
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    paragraphText(text)
+                    trailingMarkers
                 }
-                trailingMarkers
+            } else {
+                HStack(alignment: .bottom, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                            segmentView(segment)
+                        }
+                    }
+                    trailingMarkers
+                }
             }
         }
+        // The body must never be the view that gives way (#161). It shares the
+        // row's VStack with attachments, unfurl cards and reactions, and a
+        // multiline `Text` is the only flexible one of them: when the row's
+        // ideal height exceeds the height the message list proposes, SwiftUI
+        // compresses the text and the body renders cut off partway through,
+        // with the card below it sitting where the rest of the prose should
+        // be. `fixedSize` vertically makes the body report its wrapped height
+        // as its ideal *and* its minimum, so the row grows instead. Width
+        // stays flexible, so wrapping is unchanged.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -827,6 +859,8 @@ struct MessageRow: View {
                     .foregroundStyle(MC.inkSoft)
             }
             .accessibilityIdentifier("msg.quoteBlock")
+        case .heading(let level, let text):
+            headingText(level: level, text: text)
         case .code(let text):
             Text(text.isEmpty ? " " : text)
                 .flowFont(size: 12, design: .monospaced)
@@ -843,6 +877,27 @@ struct MessageRow: View {
                 userNames: userNames, currentUserId: currentUserId
             )
         }
+    }
+
+    /// ATX headings, sized as the macOS analogue of web's scale rather than a
+    /// copy of its Tailwind classes: body text is `.callout` (13pt), so h1/h2
+    /// step up by web's own ratios (1.29×, 1.2×) and h3–h6 stay body-size,
+    /// distinguished by weight — which is what `HEADING_CLASS` does. Sizes go
+    /// through `flowFont(size:)` so text zoom (#105) still applies, and the
+    /// inline pass runs inside the heading so mentions and `**bold**` work.
+    private func headingText(level: Int, text: String) -> some View {
+        let size: CGFloat = level == 1 ? 17 : (level == 2 ? 15.5 : 13)
+        let attributed = MentionRendering.attributed(
+            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+        )
+        return Text(attributed)
+            .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
+            .foregroundStyle(MC.ink)
+            .textSelection(.enabled)
+            .linkCursor(attributed)
+            .padding(.top, level <= 2 ? 2 : 0) // web's mt-2 on h1/h2
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("msg.heading")
     }
 
     private func paragraphText(_ text: String) -> some View {
@@ -865,7 +920,7 @@ struct MessageRow: View {
                 .flowFont(.caption2)
                 .foregroundStyle(.tertiary)
         }
-        if message.pending {
+        if pendingSlow {
             ProgressView().controlSize(.mini)
         }
     }
@@ -986,6 +1041,7 @@ enum CollapsedImages {
 struct AttachmentView: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var opening = false
     @State private var saving = false
     @State private var hovering = false
@@ -1186,6 +1242,7 @@ struct AttachmentView: View {
 struct ImageLightboxView: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
 

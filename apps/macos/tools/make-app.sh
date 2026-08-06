@@ -15,8 +15,8 @@ CONF=${1:-debug}
 SERVER_URL=${FLOW_SERVER_URL:-https://app.freeflow.im}
 
 # Build tag = the short commit SHA of this build. `BUILD_SHA` env var overrides
-# for CI; `dev` outside a checkout. Surfaced at the bottom of the workspace menu
-# (see BuildInfo.swift).
+# for CI; `dev` outside a checkout. The workspace menu shows the marketing
+# version instead; this is its dev-build fallback (see BuildInfo.swift).
 BUILD_SHA=${BUILD_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}
 
 # Marketing version (VERSION file) + a MONOTONIC build number. Sparkle orders
@@ -44,7 +44,9 @@ cp "$BIN" "$APP/Contents/MacOS/Flow"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Ship the user-facing release notes so the "What's new" sheet (opened from the
 # Build label in the workspace menu) can render them. Read via Bundle.main.
-cp ../../FEATURES.md "$APP/Contents/Resources/FEATURES.md" 2>/dev/null || true
+# FEATURES.md is generated from changelog/ — build it fresh first.
+node ../../scripts/build-features.mjs
+cp ../../FEATURES.md "$APP/Contents/Resources/FEATURES.md"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

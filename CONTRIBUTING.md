@@ -28,15 +28,15 @@ result, so review it before you open the PR.
 
 `CLAUDE.md` is the full list. The two that block a merge:
 
-- **`CHANGELOG.md`** — every feature or fix adds an entry with platform tags
-  (`[server]` `[web]` `[macos]` `[ios]` `[bridge]` `[qa]`). If a change lands on
-  one client but not the others, add a line to the **Parity** section saying
-  whether that's a deliberate divergence or a gap to close. Keep entries very
-  succinct — one or two lines each. Reasoning goes in the commit message, not
-  here.
-- **`FEATURES.md`** — if the change is user-visible, add a friendly one-line
-  entry under today's date, written for users: no platform tags, file names, or
-  internals. Purely internal changes skip this file.
+- **A `changelog/` entry file** — every feature or fix PR adds one new file,
+  `changelog/YYYY-MM-DD-short-slug.md` (format in `changelog/README.md`):
+  a title plus succinct bullets with platform tags (`[server]` `[web]`
+  `[macos]` `[ios]` `[bridge]` `[qa]`). If the change is user-visible, add a
+  `## Feature` section with a friendly one-liner written for users — the
+  generated `FEATURES.md` is built from those sections, so never edit it
+  directly. If a change lands on one client but not the others, add a line to
+  the **Parity** section of `CHANGELOG.md` saying whether that's a deliberate
+  divergence or a gap to close.
 
 Key decisions and operator rulings go in `decision_log.md`.
 

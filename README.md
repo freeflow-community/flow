@@ -81,7 +81,7 @@ Generally our active work queue is on [Issues](https://github.com/freeflow-commu
 features can be found in [Discussions](https://github.com/freeflow-community/flow/discussions).
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how contributions are licensed and
-the `CHANGELOG.md` / `FEATURES.md` conventions every PR has to satisfy.
+the `changelog/` entry conventions every PR has to satisfy.
 
 ### Making code contributions
 

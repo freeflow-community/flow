@@ -12,14 +12,18 @@ import type { FlowApi } from '../src/api.js';
 import type { FlowSocket } from '../src/gateway.js';
 import type { ProgressMode } from '../src/config.js';
 
-function makeReporter(threadRootId: string | undefined, mode: ProgressMode = 'thinking') {
+function makeReporter(threadRootId: string | undefined, mode: ProgressMode = 'thinking', relayText = true) {
   const sendTyping = vi.fn();
   const socket = { sendTyping } as unknown as FlowSocket;
   const setChannelIndicator = vi.fn().mockResolvedValue({ state: null });
   const logs: string[] = [];
-  const api = { setChannelIndicator } as unknown as FlowApi;
-  const reporter = new ProgressReporter(api, socket, mode, 'chan-1', threadRootId, (m) => logs.push(m));
-  return { reporter, sendTyping, setChannelIndicator, logs };
+  let n = 0;
+  const sendMessage = vi.fn().mockImplementation(() => Promise.resolve({ id: `msg-${++n}` }));
+  const editMessage = vi.fn().mockResolvedValue({});
+  const deleteMessage = vi.fn().mockResolvedValue(undefined);
+  const api = { setChannelIndicator, sendMessage, editMessage, deleteMessage } as unknown as FlowApi;
+  const reporter = new ProgressReporter(api, socket, mode, relayText, 'chan-1', threadRootId, (m) => logs.push(m));
+  return { reporter, sendTyping, setChannelIndicator, sendMessage, editMessage, deleteMessage, logs };
 }
 
 const states = (fn: ReturnType<typeof vi.fn>): string[] => fn.mock.calls.map((c) => c[1] as string);
@@ -112,5 +116,138 @@ describe('ProgressReporter channel indicator', () => {
     reporter.start();
     await reporter.finish();
     expect(setChannelIndicator).not.toHaveBeenCalled();
+  });
+});
+
+// #162: the agent's interim text used to be parsed and thrown away, so a long
+// turn was silence followed by a wall of text. It is relayed now — and the
+// thing that must never happen is a turn that notifies once per sentence.
+describe('ProgressReporter relayed text', () => {
+  /** Body the narration message ended up with (no onStep in these, so every
+   * edit is a narration edit). */
+  const lastBody = (send: ReturnType<typeof vi.fn>, edit: ReturnType<typeof vi.fn>): string => {
+    const calls = edit.mock.calls.length > 0 ? edit.mock.calls : send.mock.calls;
+    return calls[calls.length - 1]![1] as string;
+  };
+
+  it('posts the first block as a message', async () => {
+    const { reporter, sendMessage } = makeReporter('root-42');
+    reporter.start();
+    reporter.onText('Reading the parser now.');
+    await reporter.finish();
+    expect(sendMessage).toHaveBeenCalledWith('chan-1', 'Reading the parser now.', 'root-42');
+  });
+
+  it('grows one message by editing instead of posting per block', async () => {
+    // The whole unread argument: an edit creates no notification row and cannot
+    // move a channel's unread count, where a post does both.
+    const { reporter, sendMessage, editMessage } = makeReporter(undefined);
+    reporter.start();
+    reporter.onText('First I will read the parser.');
+    await tick();
+    reporter.onText('Now writing the test.');
+    await reporter.finish();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(lastBody(sendMessage, editMessage)).toBe('First I will read the parser.\n\nNow writing the test.');
+  });
+
+  it('coalesces blocks that arrive inside the throttle window into one write', async () => {
+    const { reporter, sendMessage, editMessage } = makeReporter(undefined);
+    reporter.start();
+    reporter.onText('one');
+    await tick();
+    reporter.onText('two');
+    reporter.onText('three');
+    await reporter.finish();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(editMessage).toHaveBeenCalledTimes(1); // not one per block
+    expect(lastBody(sendMessage, editMessage)).toBe('one\n\ntwo\n\nthree');
+  });
+
+  it('never relays the block the final reply is about to repeat', async () => {
+    // Claude's terminal `result` text IS the last assistant text block.
+    const { reporter, sendMessage, editMessage } = makeReporter(undefined);
+    reporter.start();
+    reporter.onText('Looking at runtime.ts.');
+    await tick();
+    reporter.onText('Done — the parser now emits text.');
+    await reporter.finish('Done — the parser now emits text.');
+    expect(lastBody(sendMessage, editMessage)).toBe('Looking at runtime.ts.');
+  });
+
+  it('trims a repeat that was already relayed', async () => {
+    const { reporter, sendMessage, editMessage } = makeReporter(undefined);
+    reporter.start();
+    reporter.onText('Looking at runtime.ts.');
+    await tick();
+    reporter.onText('All done.');
+    await tick(); // the block lands on the server before the run ends
+    await reporter.finish('All done.');
+    expect(lastBody(sendMessage, editMessage)).toBe('Looking at runtime.ts.');
+  });
+
+  it('deletes the narration when the reply is all there was', async () => {
+    // A short turn must look exactly as it did before #162: one reply, nothing else.
+    const { reporter, sendMessage, deleteMessage } = makeReporter(undefined);
+    reporter.start();
+    reporter.onText('Yes — 8787 is taken by the dev server.');
+    await tick();
+    await reporter.finish('Yes — 8787 is taken by the dev server.');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(deleteMessage).toHaveBeenCalledWith('msg-1', { hard: true });
+  });
+
+  it('seals a long message and starts a new one', async () => {
+    const { reporter, sendMessage } = makeReporter(undefined);
+    reporter.start();
+    reporter.onText('a'.repeat(1500));
+    await tick();
+    reporter.onText('b'.repeat(900));
+    await reporter.finish();
+    // Two messages, not one 2400-character wall clients have to truncate.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage.mock.calls[1]![1]).toBe('b'.repeat(900));
+  });
+
+  it('keeps the ephemeral status row separate from the narration', async () => {
+    // The tool row is decoration and still vanishes; what the agent said stays.
+    const { reporter, sendMessage, deleteMessage } = makeReporter(undefined);
+    reporter.start();
+    reporter.onStep('Bash: pnpm test');
+    await tick();
+    reporter.onText('Tests are green.');
+    await reporter.finish();
+    const posted = sendMessage.mock.calls.map((c) => c[1] as string);
+    expect(posted).toEqual(['🤖 *thinking…* — Bash: pnpm test', 'Tests are green.']);
+    expect(deleteMessage).toHaveBeenCalledTimes(1);
+    expect(deleteMessage).toHaveBeenCalledWith('msg-1', { hard: true }); // the status row
+  });
+
+  it('says nothing mid-turn when relayText is off', async () => {
+    const { reporter, sendMessage, editMessage } = makeReporter(undefined, 'thinking', false);
+    reporter.start();
+    reporter.onText('narrating');
+    await reporter.finish();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(editMessage).not.toHaveBeenCalled();
+  });
+
+  it('says nothing mid-turn in typing or silent mode', async () => {
+    for (const mode of ['typing', 'silent'] as const) {
+      const { reporter, sendMessage } = makeReporter(undefined, mode);
+      reporter.start();
+      reporter.onText('narrating');
+      await reporter.finish();
+      expect(sendMessage).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not fail the turn when a relay write is rejected', async () => {
+    const { reporter, sendMessage, logs } = makeReporter(undefined);
+    sendMessage.mockRejectedValueOnce(new Error('503'));
+    reporter.start();
+    reporter.onText('narrating');
+    await expect(reporter.finish()).resolves.toBeUndefined();
+    expect(logs.some((l) => l.includes('relayed text failed'))).toBe(true);
   });
 });

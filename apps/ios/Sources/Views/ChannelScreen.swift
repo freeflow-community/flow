@@ -14,6 +14,17 @@ struct ChannelScreen: View {
     @State private var threadRoute: ThreadRoute?
     @State private var showPins = false
 
+    /// The open artifact (#157), presented as a sheet over the conversation.
+    /// Driven by `AppState.selectedArtifactId` — the same selection macOS uses
+    /// for its side panel — so an agent-created artifact auto-opens here too
+    /// (`maybeAutoOpenArtifact`), and switching channel closes it for free.
+    private var artifactRoute: Binding<ArtifactRoute?> {
+        Binding(
+            get: { app.selectedArtifactId.map(ArtifactRoute.init) },
+            set: { if $0 == nil { app.selectArtifact(nil) } }
+        )
+    }
+
     private var usersById: [String: User] {
         Dictionary(users.value.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     }
@@ -71,6 +82,9 @@ struct ChannelScreen: View {
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }
+        .sheet(item: artifactRoute) { route in
+            ArtifactSheet(artifactId: route.id)
+        }
         .sheet(isPresented: $showPins) {
             PinnedMessagesSheet(
                 messages: pinnedMessages.value,
@@ -126,8 +140,14 @@ struct ChannelScreen: View {
         }
         // Account/status live in the drawer's profile footer now (web/macOS
         // parity — the sidebar owns that affordance), reached from the header
-        // hamburger. The channel bar keeps just the title + that hamburger,
-        // which MainView supplies as the content pane's leading toolbar item.
+        // hamburger. The channel bar keeps the title + that hamburger, which
+        // MainView supplies as the content pane's leading toolbar item, plus
+        // the trailing Docs button below (#157).
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                ArtifactsMenuButton(channelId: channelId)
+            }
+        }
         .task {
             app.selectChannel(channelId)
             // Re-push the thread this channel had open before we left it (#89).

@@ -9,6 +9,7 @@ import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers,
 import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
 import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
+import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
 import { FeaturesModal } from './FeaturesModal';
 import StatusFooter from './StatusPicker';
@@ -81,6 +82,7 @@ export default function Sidebar() {
   const [showNewDm, setShowNewDm] = useState(false);
   const [showColor, setShowColor] = useState(false);
   const [showApps, setShowApps] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
   const [showInviteAgent, setShowInviteAgent] = useState(false);
   const [showFeatures, setShowFeatures] = useState(false);
@@ -244,6 +246,9 @@ export default function Sidebar() {
               <>
                 <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
                   Workspace color…
+                </MenuItem>
+                <MenuItem testid="menu-emoji" onClick={() => { setWsMenuOpen(false); setShowEmoji(true); }}>
+                  Custom Emoji…
                 </MenuItem>
                 <MenuItem testid="menu-apps" onClick={() => { setWsMenuOpen(false); setShowApps(true); }}>
                   Manage Apps…
@@ -438,6 +443,7 @@ export default function Sidebar() {
       {showNewDm && sel.workspaceId && <NewDmModal workspaceId={sel.workspaceId} onClose={() => setShowNewDm(false)} />}
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
+      {showEmoji && sel.workspaceId && <EmojiModal workspaceId={sel.workspaceId} onClose={() => setShowEmoji(false)} />}
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
       {showInviteAgent && sel.workspaceId && (
         <InviteAgentModal workspaceId={sel.workspaceId} onClose={() => setShowInviteAgent(false)} />

@@ -67,6 +67,13 @@ export interface BridgeConfig {
   /** Max conversations processed concurrently (serial within one conversation). */
   concurrency: number;
   progress: ProgressMode;
+  /**
+   * Relay the agent's interim text into the conversation as it arrives (#162),
+   * rather than only its final reply. Default true, and only meaningful under
+   * `progress: "thinking"` — `typing` and `silent` post nothing mid-turn by
+   * definition. Set false for the pre-#162 quiet turn (tool status row only).
+   */
+  relayText: boolean;
 }
 
 interface RawConfig {
@@ -78,6 +85,7 @@ interface RawConfig {
   respondToAgents?: boolean;
   concurrency?: number;
   progress?: string;
+  relayText?: boolean;
 }
 
 export function loadConfig(configPath: string): BridgeConfig {
@@ -152,5 +160,6 @@ export function loadConfig(configPath: string): BridgeConfig {
     respondToAgents: raw.respondToAgents ?? false,
     concurrency: Math.max(1, raw.concurrency ?? 4),
     progress,
+    relayText: raw.relayText ?? true,
   };
 }

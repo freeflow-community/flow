@@ -1,7 +1,67 @@
-# What's new in Flow
+## 2026-08-06
 
-A plain-language log of user-visible features and improvements, newest first.
-For the full technical changelog see `CHANGELOG.md`.
+- **The Mac app tells you which version you're running.** The line at the
+  bottom of the workspace menu now reads something like "Version 2.2.18"
+  instead of a commit code, so it matches the version in the release notes.
+  Clicking it still opens "What's new".
+
+## 2026-08-03
+
+- **Your team's own emoji.** Workspace admins can upload images as custom emoji
+  under a name like `:party-parrot:` (workspace menu → Custom Emoji), and anyone
+  can then react to a message with them. On the web for now — the Mac and iPhone
+  apps show the name rather than the picture until they catch up.
+
+## 2026-08-02
+
+- **Sharing a photo from your iPhone is much faster.** Photos are now scaled
+  down and compressed before they're sent, so a shot straight off the camera
+  uploads around five times smaller — and iPhone photos in Apple's HEIC format
+  now show up as pictures in the conversation instead of as a file you have to
+  download to look at.
+
+## 2026-08-01
+
+- **Messages are readable again if your Mac or iPhone is set to Dark Mode.**
+  Flow's look is light, but it wasn't telling your device that — so on a dark
+  system the text of a message could come out white on white and vanish. Flow
+  now always shows its own light theme, whichever mode you're in.
+
+## 2026-07-31
+
+- **Headings look like headings on Mac and iPhone.** A message written with
+  `#` headings — most agent replies, for instance — used to show the raw `##`
+  marks. Now it renders as a proper heading, the way it always has on the web.
+
+## 2026-07-31
+
+- **Channels open where the conversation is, on iPhone.** Opening a channel
+  takes you to the newest message instead of leaving you part-way up its
+  history, and a message you send always scrolls into view. Scroll back to read
+  older messages and Flow stays put, as before.
+
+## 2026-07-31
+
+- **Long messages show all the way to the end again.** On Mac and iPhone, a long
+  message that had a link preview attached could stop partway through, with the
+  preview card sitting where the rest of the text should be. The whole message
+  now renders.
+- **Agents think out loud.** When an agent takes a while, you can now watch it
+  work: what it says along the way appears in the conversation as it happens,
+  instead of the channel sitting silent and then dropping everything at once at
+  the end. It fills in one message as it goes rather than sending a stream of
+  new ones, so it won't flood your unreads — and its final answer no longer
+  repeats what you already read.
+
+## 2026-07-30
+
+- **Documents on your iPhone.** Channels with pinned documents now show a Docs
+  button at the top right, with a count. Tap it for the list, tap one to read it
+  full screen — and when an agent makes something for you, it opens by itself.
+  Before this, anything an agent created was only reachable on a computer.
+- **Browse a pinned link together, from your phone.** Pinned links open in
+  Flow's shared mini-browser on iPhone now, the same one the Mac app has —
+  whoever moves to a new page moves it for everyone looking.
 
 ## 2026-07-30
 

@@ -6,9 +6,10 @@ import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
-import { useSendMessage, useTogglePin, useToggleReaction } from '../hooks';
+import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
+import { EmojiGlyph } from './CustomEmoji';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
 import { UnfurlCard } from './UnfurlCard';
@@ -19,6 +20,31 @@ import { UnfurlCard } from './UnfurlCard';
  * ignored and you snap back to the bottom, the freshest place to be. */
 const SCROLL_MEMORY_TTL = 5 * 60_000;
 const scrollMemory = new Map<string, { top: number; ts: number; pinned: boolean }>();
+
+/** How long an optimistic row keeps full strength before dimming. Most sends
+ * confirm well inside this window, so the row never visibly flickers. */
+const PENDING_DIM_DELAY_MS = 3000;
+
+/** True once a row has been pending longer than PENDING_DIM_DELAY_MS —
+ * only then does it dim to signal the send hasn't committed yet. Keyed off
+ * createdAt so a remount mid-wait doesn't restart the clock. */
+function usePendingSlow(pending: boolean, createdAt: string): boolean {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!pending) {
+      setSlow(false);
+      return;
+    }
+    const remaining = PENDING_DIM_DELAY_MS - (Date.now() - Date.parse(createdAt));
+    if (remaining <= 0) {
+      setSlow(true);
+      return;
+    }
+    const t = setTimeout(() => setSlow(true), remaining);
+    return () => clearTimeout(t);
+  }, [pending, createdAt]);
+  return slow;
+}
 
 export default function MessageList({
   messages,
@@ -330,6 +356,9 @@ function MessageRow({
   const qc = useQueryClient();
   const toggle = useToggleReaction();
   const togglePin = useTogglePin();
+  // Shared query cache, so this is one fetch per workspace however many rows
+  // are mounted (#175).
+  const customEmoji = useWorkspaceEmojiMap(sel.workspaceId);
   const [showPicker, setShowPicker] = useState(false);
   // Clicking the sender's avatar opens their profile card (ui_nits).
   const [showCard, setShowCard] = useState(false);
@@ -341,8 +370,10 @@ function MessageRow({
   const mine = message.userId === auth.user.id;
   const sender = names[message.userId] ?? 'Unknown';
   const member = membersById[message.userId];
-  // Optimistic row awaiting the server echo: dimmed, actions suppressed.
+  // Optimistic row awaiting the server echo: actions suppressed. It renders
+  // at full strength and only dims if the commit is slow (>3s) or fails.
   const pending = (message as LocalMessage).pending === true;
+  const pendingSlow = usePendingSlow(pending, message.createdAt);
   // Optimistic row whose POST errored out: kept in place with Retry/discard.
   const failed = (message as LocalMessage).failed === true;
   const send = useSendMessage(message.channelId);
@@ -375,7 +406,7 @@ function MessageRow({
     <div
       data-testid={`message-${message.id}`}
       data-pending={pending || undefined}
-      className={`group relative flex gap-2.5 px-[22px] ${editing ? 'bg-accent/5' : 'hover:bg-daypill/40'} ${showHeader ? 'mt-3' : 'py-px'} ${pending ? 'opacity-55' : ''}`}
+      className={`group relative flex gap-2.5 px-[22px] ${editing ? 'bg-accent/5' : 'hover:bg-daypill/40'} ${showHeader ? 'mt-3' : 'py-px'} ${pendingSlow ? 'opacity-55' : ''}`}
     >
       <div className="w-[38px] shrink-0">
         {showHeader && (
@@ -507,7 +538,7 @@ function MessageRow({
                       }`}
                       onClick={() => toggle.mutate({ message, emoji: r.emoji, mine: mineR })}
                     >
-                      {r.emoji}{' '}
+                      <EmojiGlyph emoji={r.emoji} customEmoji={customEmoji} />{' '}
                       <span className={`font-bold ${mineR ? 'text-accent-soft' : 'text-ink-soft'}`}>{r.count}</span>
                     </button>
                   );
@@ -658,6 +689,7 @@ function MessageRow({
       {showPicker && (
         <div className="absolute top-6 right-[22px] z-30">
           <EmojiPicker
+            workspaceId={sel.workspaceId}
             onPick={(emoji) => {
               setShowPicker(false);
               const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;

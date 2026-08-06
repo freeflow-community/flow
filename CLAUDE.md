@@ -1,43 +1,33 @@
 # Flow — working conventions
 
-- **Keep CHANGELOG.md up to date.** Every feature or fix commit adds an entry
-  with platform tags (`[server]` `[web]` `[macos]` `[qa]`). A change that lands
-  on one client but not the other MUST add a line to the Parity section
-  (deliberate divergence vs gap to close) — that section is the client-sync
-  mechanism and should trend toward empty. QA verifies this at phase
-  checkpoints; a shipped change with no entry fails the close-out.
-- **Keep CHANGELOG entries very succinct** — one or two lines per bullet:
+- **Every feature or fix PR adds one file to `changelog/`** — named
+  `YYYY-MM-DD-short-slug.md`, format in `changelog/README.md`: a `#` title,
+  then succinct bullets with platform tags (`[server]` `[web]` `[macos]`
+  `[ios]` `[bridge]` `[qa]`). One file per PR, never edit another PR's file —
+  that is what makes concurrent PRs conflict-free. Do NOT append entries to
+  CHANGELOG.md; its history is frozen in the `CHANGES_ARCHIVE_*.log` files.
+  A shipped change with no entry file fails the QA close-out.
+- **Keep entry bullets very succinct** — one or two lines per bullet:
   what changed, and the *why* only when it isn't obvious from the what. No
   narrating the investigation, no restating the diff, no listing every file
   touched. The commit message is where reasoning belongs; the changelog is a
   scannable ledger. If an entry needs more than three lines, that's a sign it
   belongs in the commit body or `decision_log.md` instead.
-- **Keep FEATURES.md up to date, alongside CHANGELOG.md.** When a change is
-  user-visible, add a friendly one-line entry under the current date (reverse
-  chronological, newest date on top; add a new `## YYYY-MM-DD` separator when
-  the date changes). This file is written *for users*: no platform tags, file
-  names, migrations, or other internals — just what someone can now do or will
+- **CHANGELOG.md is now only the Parity ledger.** A change that lands on one
+  client but not the others MUST add a line to its Parity section (deliberate
+  divergence vs gap to close) — that section is the client-sync mechanism and
+  should trend toward empty. QA verifies this at phase checkpoints. Parity
+  edits are in-place, so keep them small and merge promptly (the file is
+  union-merged; if GitHub still shows a conflict, a local
+  `git merge origin/main` auto-resolves it — same for `decision_log.md`).
+- **FEATURES.md is generated — NEVER edit it by hand.** When a change is
+  user-visible, put a friendly note in a `## Feature` section of your
+  `changelog/` entry file, written *for users*: no platform tags, file names,
+  migrations, or other internals — just what someone can now do or will
   notice. Purely internal changes (refactors, tests, infra, bridge plumbing)
-  get a CHANGELOG entry but nothing here. Mention a platform only when the
-  feature is specific to it (e.g. a Mac- or iPhone-only improvement).
-- **Concurrent-edit protocol for the ledgers** (`CHANGELOG.md`, `FEATURES.md`,
-  `decision_log.md` — union-merged via `.gitattributes`, so overlapping
-  additions concatenate instead of conflicting). The rules that keep that safe:
-  - Every PR adds a **complete, self-contained dated section** (`### YYYY-MM-DD
-    — title` in CHANGELOG, its own `## YYYY-MM-DD` header in FEATURES, its own
-    `##` ruling in decision_log) with a blank line before and after. Never
-    append bullets into a section your PR didn't create. Duplicate same-date
-    headers are by design, not a mess to fix in-PR.
-  - **Never reword, move, or delete existing entries in a PR that adds one** —
-    in-place edits are the one case union merge mangles silently. Tidy-ups and
-    Parity-section edits ride in their own small PRs, merged promptly.
-  - Scatter the insertion point: place your section among the current date's
-    sections by PR-number parity — **even PR → above today's existing sections,
-    odd PR → below them** (but above the previous date).
-  - The PM compacts at QA phase checkpoints (merge duplicate date headers,
-    dedupe, reorder) in one serialized commit.
-  - GitHub's merge button ignores the union driver; if a PR still shows a
-    conflict in a ledger, a local `git merge origin/main` auto-resolves it.
+  omit the section. Mention a platform only when the feature is specific to
+  it. `scripts/build-features.mjs` builds FEATURES.md (gitignored) from those
+  sections on every web predev/prebuild and in `make-app.sh`.
 - **Every PR description carries a client-impact checklist.** List all four
   surfaces and tick the ones where someone should see a difference:
 

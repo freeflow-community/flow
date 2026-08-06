@@ -7,6 +7,7 @@ struct NewDMSheet: View {
     let workspaceId: String
     let members: [MemberInfo]
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<String> = []
     @State private var busy = false
@@ -55,7 +56,7 @@ struct NewDMSheet: View {
                                 workspaceId: workspaceId, userIds: Array(selected)
                             )
                             dismiss()
-                            app.selectChannel(ch.id)
+                            win.selectChannel(ch.id)
                         } catch {
                             self.error = error.localizedDescription
                         }
@@ -77,6 +78,7 @@ struct AddMemberSheet: View {
     let channel: Channel
     let members: [MemberInfo]
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var busy: Set<String> = []
     @State private var added: Set<String> = []
@@ -136,6 +138,7 @@ struct AddMemberSheet: View {
 struct MemberProfileSheet: View {
     let userId: String
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var user: User?
     @State private var sponsor: User?
@@ -169,7 +172,7 @@ struct MemberProfileSheet: View {
                 Text(error).flowFont(.callout).foregroundStyle(.red)
             }
             HStack {
-                if userId != app.currentUser?.id, let wsId = app.selectedWorkspaceId {
+                if userId != app.currentUser?.id, let wsId = win.selectedWorkspaceId {
                     Button("Message") {
                         Task {
                             do {
@@ -177,7 +180,7 @@ struct MemberProfileSheet: View {
                                     workspaceId: wsId, userIds: [userId]
                                 )
                                 dismiss()
-                                app.selectChannel(ch.id)
+                                win.selectChannel(ch.id)
                             } catch {
                                 self.error = error.localizedDescription
                             }
@@ -267,6 +270,7 @@ struct MemberProfileSheet: View {
 
 struct MyProfileSheet: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var displayName = ""
     @State private var timezone = TimeZone.current.identifier

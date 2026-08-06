@@ -7,6 +7,7 @@ import {
   CreateDmBody,
   CreateInviteBody,
   CreateWorkspaceBody,
+  CreateWorkspaceEmojiBody,
   EditMessageBody,
   EmojiParam,
   ListMessagesQuery,
@@ -65,6 +66,7 @@ import * as ch from '../services/channels.js';
 import * as ci from '../services/channelIndicators.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
+import * as wse from '../services/workspaceEmoji.js';
 import * as fl from '../services/files.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
@@ -662,6 +664,27 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id, emoji } = req.params as { id: string; emoji: string };
     const parsed = parse(EmojiParam, decodeURIComponent(emoji));
     return { reactions: await rx.removeReaction(id, req.user.id, parsed) };
+  });
+
+  // ---- custom emoji (#175) -------------------------------------
+  // Listing is member-level (you need the images to render other people's
+  // reactions); create/delete are owner/admin, enforced in the service.
+  app.get('/v1/workspaces/:id/emoji', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { emoji: await wse.listEmoji(id, req.user.id) };
+  });
+
+  app.post('/v1/workspaces/:id/emoji', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(CreateWorkspaceEmojiBody, req.body);
+    const dto = await wse.createEmoji(id, req.user.id, body.shortcode, body.fileId);
+    return reply.status(201).send(dto);
+  });
+
+  app.delete('/v1/workspaces/:id/emoji/:emojiId', { preHandler: requireAuth }, async (req) => {
+    const { emojiId } = req.params as { emojiId: string };
+    await wse.deleteEmoji(emojiId, req.user.id);
+    return { ok: true };
   });
 
   // ---- files (phase2.md §3; presigned direct uploads 2026-07-20) ----
