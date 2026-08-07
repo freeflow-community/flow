@@ -12,6 +12,10 @@ struct MessageListView: View {
     var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
     let hasMore: Bool
+    /// The channel's history page is still in flight (#191). Drives the loading
+    /// states below — an empty transcript with no explanation reads as a lost
+    /// conversation, which on a slow link is what it was reported as.
+    var isLoadingHistory: Bool = false
     let showThreadAffordances: Bool
     let onLoadOlder: () -> Void
     let onOpenThread: (String) -> Void
@@ -55,7 +59,15 @@ struct MessageListView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if hasMore {
+                    // With something cached, the top of the list says the rest
+                    // is still coming, instead of the transcript simply
+                    // starting wherever the cache happens to end (#191). With
+                    // nothing cached the centered state below speaks instead,
+                    // so the two never both appear. Once the page lands this
+                    // becomes the ordinary "Load earlier messages" affordance.
+                    if isLoadingHistory, !messages.isEmpty {
+                        loadingRow("Loading earlier messages…")
+                    } else if hasMore {
                         HStack {
                             Spacer()
                             Button("Load earlier messages", action: onLoadOlder)
@@ -108,6 +120,7 @@ struct MessageListView: View {
                         .onChange(of: geo.size.height) { _, new in viewportHeight = new }
                 }
             )
+            .overlay { emptyTranscriptState }
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
             .animation(.easeOut(duration: 0.15), value: pinToBottom)
             // Only a finger on the glass may stop the list following the end.
@@ -168,6 +181,40 @@ struct MessageListView: View {
             pinToBottom = false
         } else if distanceFromBottom <= Self.bottomSlack {
             pinToBottom = true
+        }
+    }
+
+    /// A spinner and a line of text, for the two places the list has to say
+    /// "still arriving" rather than render nothing (#191).
+    private func loadingRow(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Spacer()
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(MC.faint)
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("msg.loading")
+    }
+
+    /// Nothing to show yet. An empty transcript is two different situations —
+    /// history still on its way, or a conversation with nothing in it — and the
+    /// bug this fixes is that both used to render as bare background, so a slow
+    /// link looked exactly like a lost conversation (#191).
+    @ViewBuilder
+    private var emptyTranscriptState: some View {
+        if messages.isEmpty {
+            if isLoadingHistory {
+                loadingRow("Loading conversation…")
+            } else {
+                Text("No messages yet")
+                    .font(.callout)
+                    .foregroundStyle(MC.faint)
+                    .accessibilityIdentifier("msg.emptyChannel")
+            }
         }
     }
 

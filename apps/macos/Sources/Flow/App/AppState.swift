@@ -60,6 +60,11 @@ final class AppState: ObservableObject {
     @Published private(set) var busyChannelIds: Set<String> = []
     /// channelId -> more history available on the server
     @Published private(set) var hasMore: [String: Bool] = [:]
+    /// Channels whose history page is in flight (#191). A transcript with
+    /// nothing cached yet is indistinguishable from a lost conversation, so the
+    /// clients render a loading state instead of bare background while this
+    /// holds the channel.
+    @Published private(set) var loadingHistory: Set<String> = []
     /// Unread notifications per workspace — each window's sidebar Activity
     /// badge reads its own workspace's count.
     @Published private(set) var notificationUnreadByWorkspace: [String: Int] = [:]
@@ -231,6 +236,7 @@ final class AppState: ObservableObject {
         typing = [:]
         busyChannelIds = []
         hasMore = [:]
+        loadingHistory = []
         notificationUnreadByWorkspace = [:]
         notificationUnreadTotal = 0
         Banners.setBadge(0)
@@ -246,6 +252,14 @@ final class AppState: ObservableObject {
 
     func setHasMore(channelId: String, _ value: Bool) {
         hasMore[channelId] = value
+    }
+
+    func setLoadingHistory(channelId: String, _ value: Bool) {
+        if value {
+            loadingHistory.insert(channelId)
+        } else {
+            loadingHistory.remove(channelId)
+        }
     }
 
     func typingReceived(channelId: String, threadRootId: String? = nil, userId: String) {

@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- A transcript with no history cached yet renders as bare background on web and
+  macOS while the first page is in flight (#191) — on a slow link that reads as
+  a lost conversation. iOS now shows a loading state instead; the shared
+  `AppState.loadingHistory` the engine publishes is client-agnostic, so both are
+  a pure client port.
 - Custom emoji (#175) are web-only: macOS and iOS render a custom reaction as
   the literal text `:shortcode:` rather than the image. The reaction itself is
   correct everywhere (count, who reacted, notifications) — only the glyph is
