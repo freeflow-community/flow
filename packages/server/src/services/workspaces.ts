@@ -17,7 +17,7 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
-import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents } from './memberRemoval.js';
+import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents, tombstoneUser } from './memberRemoval.js';
 
 const {
   workspaces,
@@ -27,9 +27,6 @@ const {
   channels,
   channelMembers,
   users,
-  sessions,
-  emailTokens,
-  appLinkCodes,
   oauthIdentities,
 } = schema;
 
@@ -227,7 +224,7 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
   }));
 }
 
-async function toMemberDTO(workspaceId: string, userId: string): Promise<WorkspaceMemberDTO> {
+export async function toMemberDTO(workspaceId: string, userId: string): Promise<WorkspaceMemberDTO> {
   const rows = await db
     .select({ m: workspaceMembers, u: users })
     .from(workspaceMembers)
@@ -324,24 +321,6 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
     if (stillMember.length > 0) return;
     await tombstoneUser(tx, targetId, u.email);
   });
-}
-
-/**
- * Mark a user dead and free their address. Keeps the row (message authorship)
- * but rewrites the unique `email` so the original string is available to a
- * fresh registration, scrubs the password to an unusable sentinel, and drops
- * every credential (sessions, email tokens, app-link codes) so nothing that
- * account held can still authenticate. The mangled email preserves the original
- * for audit and can never collide (the user id prefix is unique).
- */
-async function tombstoneUser(tx: Tx, userId: string, email: string): Promise<void> {
-  await tx
-    .update(users)
-    .set({ deletedAt: new Date(), email: `tombstone+${userId}+${email}`, passwordHash: `!deleted:${userId}` })
-    .where(eq(users.id, userId));
-  await tx.delete(sessions).where(eq(sessions.userId, userId));
-  await tx.delete(emailTokens).where(eq(emailTokens.userId, userId));
-  await tx.delete(appLinkCodes).where(eq(appLinkCodes.userId, userId));
 }
 
 /** Owner/admin only (spec permission rules). Returns invite URL with raw token (shown once). */

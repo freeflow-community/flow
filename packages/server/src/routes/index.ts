@@ -70,6 +70,8 @@ import * as wse from '../services/workspaceEmoji.js';
 import * as fl from '../services/files.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
+import { deleteMyAccount } from '../services/accountDeletion.js';
+import { disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
@@ -280,6 +282,17 @@ export function registerRoutes(app: FastifyInstance): void {
   app.patch('/v1/me', { preHandler: requireAuth }, async (req) => {
     const body = parse(PatchMeBody, req.body);
     return us.patchMe(req.user.id, body);
+  });
+
+  // Self-service account deletion (App Store 5.1.1(v)). The clients gate this
+  // behind an explicit confirmation; the server just needs a valid session.
+  app.delete('/v1/me', { preHandler: requireAuth }, async (req) => {
+    if (!rateAllow(`delete-me:${req.user.id}`, 3, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
+    }
+    await deleteMyAccount(req.user.id);
+    disconnectUser(req.user.id);
+    return { ok: true };
   });
 
   app.post('/v1/me/avatar', { preHandler: requireAuth }, async (req) => {

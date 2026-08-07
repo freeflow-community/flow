@@ -158,6 +158,8 @@ struct MyProfileView: View {
     @State private var avatarBusy = false
     @State private var error: String?
     @State private var photoItem: PhotosPickerItem?
+    @State private var confirmDelete = false
+    @State private var deleteBusy = false
 
     private static let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
 
@@ -211,9 +213,28 @@ struct MyProfileView: View {
                     .foregroundStyle(MC.inkSoft)
             }
 
+            // App Store 5.1.1(v): account deletion must be reachable in-app.
+            Section {
+                Button(role: .destructive) {
+                    confirmDelete = true
+                } label: {
+                    Text(deleteBusy ? "Deleting Account…" : "Delete Account…")
+                }
+                .disabled(deleteBusy || busy)
+                .accessibilityIdentifier("profile.deleteAccount")
+            } footer: {
+                Text("Permanently deletes your account, removes you from every workspace, and frees your email address for future use. Your past messages remain, attributed to your name.")
+            }
+
             if let error {
                 Section { Text(error).font(.callout).foregroundStyle(.red) }
             }
+        }
+        .alert("Delete your account?", isPresented: $confirmDelete) {
+            Button("Delete Account", role: .destructive) { deleteAccount() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account. It cannot be undone.")
         }
         .navigationTitle("My Profile")
         .navigationBarTitleDisplayMode(.inline)
@@ -231,6 +252,21 @@ struct MyProfileView: View {
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             uploadAvatar(item)
+        }
+    }
+
+    /// On success the engine's teardown flips the app to signed-out, which
+    /// dismisses this whole sheet — no local navigation needed.
+    private func deleteAccount() {
+        deleteBusy = true
+        error = nil
+        Task {
+            defer { deleteBusy = false }
+            do {
+                try await app.engine.deleteAccount()
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 

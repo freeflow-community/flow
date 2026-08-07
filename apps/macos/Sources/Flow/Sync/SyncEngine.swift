@@ -144,6 +144,18 @@ actor SyncEngine {
 
     func logout() async {
         let _: OkResponse? = try? await api.post("/v1/auth/logout")
+        await tearDownSession()
+    }
+
+    /// Account deletion (App Store 5.1.1(v)): DELETE /v1/me, then the same
+    /// local teardown as sign-out. Throws if the server refuses — the account
+    /// is untouched and the session stays signed in.
+    func deleteAccount() async throws {
+        let _: OkResponse = try await api.delete("/v1/me")
+        await tearDownSession()
+    }
+
+    private func tearDownSession() async {
         Keychain.deleteToken()
         UserDefaults.standard.removeObject(forKey: Self.currentUserIdKey)
         await api.setToken(nil)

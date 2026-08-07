@@ -580,8 +580,23 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
   const [timezone, setTimezone] = useState(auth.user.timezone || 'UTC');
   const [error, setError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const timezones = Intl.supportedValuesOf('timeZone');
   const prefs = auth.user.notificationPrefs;
+
+  /** App Store 5.1.1(v) parity: the same self-service deletion the apps offer. */
+  const deleteAccount = async () => {
+    setDeleteBusy(true);
+    setError(null);
+    try {
+      await api('DELETE', '/v1/me');
+      auth.signOut(); // local teardown; its logout POST failing on the dead session is fine
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setDeleteBusy(false);
+    }
+  };
 
   const save = async () => {
     try {
@@ -662,6 +677,30 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.reaction !== false} onChange={(v) => void setPref('reaction', v)} />
       <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
         checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
+
+      <div className="mt-3 border-t border-hairline pt-3">
+        {confirmingDelete ? (
+          <div data-testid="profile-delete-confirm">
+            <p className="mb-2 text-sm text-red-600">
+              Permanently delete your account? You leave every workspace, your email is freed for future
+              use, and this cannot be undone. Past messages remain, attributed to your name.
+            </p>
+            <div className="flex gap-2">
+              <button data-testid="profile-delete-really"
+                className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                disabled={deleteBusy} onClick={() => void deleteAccount()}>
+                {deleteBusy ? 'Deleting…' : 'Delete my account'}
+              </button>
+              <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={deleteBusy}
+                onClick={() => setConfirmingDelete(false)}>Keep my account</button>
+            </div>
+          </div>
+        ) : (
+          <button data-testid="profile-delete"
+            className="text-sm text-red-600 hover:underline"
+            onClick={() => setConfirmingDelete(true)}>Delete account…</button>
+        )}
+      </div>
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <div className="mt-3 flex justify-end gap-2">

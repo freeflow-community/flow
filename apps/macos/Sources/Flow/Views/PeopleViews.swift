@@ -277,6 +277,8 @@ struct MyProfileSheet: View {
     @State private var busy = false
     @State private var error: String?
     @State private var avatarBusy = false
+    @State private var confirmDelete = false
+    @State private var deleteBusy = false
 
     private static let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
 
@@ -314,6 +316,13 @@ struct MyProfileSheet: View {
             }
 
             HStack {
+                // App Store 5.1.1(v) parity: the same self-service account
+                // deletion the iOS app offers.
+                Button(deleteBusy ? "Deleting…" : "Delete Account…", role: .destructive) {
+                    confirmDelete = true
+                }
+                .disabled(deleteBusy || busy)
+                .accessibilityIdentifier("profile.deleteAccount")
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Save") {
@@ -339,9 +348,30 @@ struct MyProfileSheet: View {
         }
         .padding(20)
         .frame(width: 380)
+        .alert("Delete your account?", isPresented: $confirmDelete) {
+            Button("Delete Account", role: .destructive) { deleteAccount() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Permanently deletes your account, removes you from every workspace, and frees your email address. It cannot be undone.")
+        }
         .onAppear {
             displayName = app.currentUser?.displayName ?? ""
             timezone = app.currentUser?.timezone ?? TimeZone.current.identifier
+        }
+    }
+
+    /// On success the engine's teardown flips the app to signed-out, which
+    /// tears down this sheet with the rest of the signed-in UI.
+    private func deleteAccount() {
+        deleteBusy = true
+        error = nil
+        Task {
+            defer { deleteBusy = false }
+            do {
+                try await app.engine.deleteAccount()
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 

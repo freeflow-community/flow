@@ -34,6 +34,7 @@ interface SocketState {
   /** channels the user is a member of */
   member: Set<string>;
   subs: { unsubscribe(): void }[];
+  sock: WebSocket;
 }
 
 // single-node presence: the userId -> socket-count map lives in ../presence.js
@@ -43,6 +44,16 @@ const socketsByUser = new Map<string, Set<SocketState>>();
 
 function send(sock: WebSocket, frame: ServerFrame): void {
   if (sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify(frame));
+}
+
+/**
+ * Force-close every live socket a user holds (account deletion). The close
+ * handler does the usual bookkeeping (presence fan-out, sub teardown).
+ */
+export function disconnectUser(userId: string): void {
+  for (const s of socketsByUser.get(userId) ?? []) {
+    s.sock.close(4003, 'account deleted');
+  }
 }
 
 async function loadState(userId: string): Promise<Pick<SocketState, 'workspaces' | 'chans' | 'member'>> {
@@ -189,6 +200,7 @@ export function attachGateway(server: HttpServer): { close(): void } {
               userId: user.id,
               ...loaded,
               subs: [],
+              sock,
             };
             const s = state;
 

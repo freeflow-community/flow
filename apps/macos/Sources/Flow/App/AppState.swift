@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -116,6 +117,51 @@ final class AppState: ObservableObject {
         if let keyWindow { return keyWindow }
         return windows.first
     }
+
+#if os(iOS)
+    // MARK: - Single-window bridge (iOS)
+
+    // iOS has exactly one window, so AppState owns its WindowState and keeps
+    // the pre-window-split member names the phone views were written against.
+    // WindowState's changes are re-published through AppState (the sink below)
+    // because those views observe AppState, not the window.
+    private var _window: WindowState?
+    private var windowBridge: AnyCancellable?
+    var window: WindowState {
+        if let w = _window { return w }
+        let w = WindowState(app: self)
+        windowBridge = w.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        _window = w
+        return w
+    }
+
+    var selectedWorkspaceId: String? { window.selectedWorkspaceId }
+    var selectedChannelId: String? { window.selectedChannelId }
+    var openThreadRootId: String? { window.openThreadRootId }
+    var selectedArtifactId: String? { window.selectedArtifactId }
+    var showActivity: Bool {
+        get { window.showActivity }
+        set { window.showActivity = newValue }
+    }
+    var focusMessageId: String? {
+        get { window.focusMessageId }
+        set { window.focusMessageId = newValue }
+    }
+    /// The selected workspace's visible artifacts (newest first).
+    var artifacts: [Artifact] { window.artifacts() }
+    /// Unread notifications in the selected workspace (the Activity badge).
+    var notificationUnread: Int {
+        selectedWorkspaceId.flatMap { notificationUnreadByWorkspace[$0] } ?? 0
+    }
+
+    func selectWorkspace(_ id: String?) { window.selectWorkspace(id) }
+    func restoreActiveWorkspace() { window.restoreActiveWorkspace() }
+    func selectChannel(_ id: String?) { window.selectChannel(id) }
+    func openThread(_ rootId: String?) { window.openThread(rootId) }
+    func selectArtifact(_ id: String?) { window.selectArtifact(id) }
+    func showActivityFeed() { window.showActivityFeed() }
+    func artifacts(inChannel channelId: String) -> [Artifact] { window.artifacts(inChannel: channelId) }
+#endif
 
     /// Workspaces open in any window — what the engine keeps fresh and applies
     /// workspace-scoped events for.

@@ -1,5 +1,23 @@
 # Decision log
 
+## 2026-08-06 — Account deletion: owners hand off, never blocked (5.1.1(v))
+
+App Review rejected iOS 2.0 (3) for offering account creation without account
+deletion. The server side reuses the last-workspace tombstone (2026-07-21):
+`DELETE /v1/me` leaves every workspace, then tombstones the row (kept for
+message authorship, email vacated, credentials dropped).
+
+- **Deletion must always complete in-app** (Apple's requirement), so unlike the
+  admin removal path there is no "owner cannot be removed" refusal. A departing
+  owner's workspace passes to the longest-standing human admin, else the
+  longest-standing human member; with nobody left it is simply left empty, the
+  same end state the admin path already produces.
+- **Tombstoning now also drops OAuth identities and clears avatar/status** —
+  previously a Google/Apple re-sign-in could match the dead row by provider
+  subject. Applies to the admin removal path too.
+- Agents/bots cannot self-delete via `/v1/me`; their sponsor/admin lifecycles
+  (removeAgent / deleteApp) remain the only exit.
+
 ## 2026-08-06 — Changelog entries move to one file per PR; FEATURES.md is generated
 
 Operator ruling. The union-merge protocol reduced ledger conflicts but never
