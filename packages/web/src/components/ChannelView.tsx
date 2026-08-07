@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
-import { useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
+import { useArtifacts, useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import ChannelMembersPopover, { type MemberRow } from './ChannelMembersPopover';
+import ChannelOverflowMenu from './ChannelOverflowMenu';
 import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
-import { EditChannelModal, Modal, UserCard } from './modals';
+import { ChannelOptionsModal, Modal, UserCard } from './modals';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -25,9 +26,16 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const [cardUserId, setCardUserId] = useState<string | null>(null);
   const [editChannel, setEditChannel] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [pinsOpen, setPinsOpen] = useState(false);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
+  // This channel's artifacts, for the "⋯" menu's Artifacts section (#188).
+  const artifacts = useArtifacts(sel.workspaceId);
+  const channelArtifacts = useMemo(
+    () => (artifacts.data ?? []).filter((a) => a.channelId === channelId),
+    [artifacts.data, channelId],
+  );
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
 
   // Mark read whenever the newest visible message changes — but only while
@@ -134,18 +142,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">
-          <button
-            type="button"
-            data-testid="channel-pins-trigger"
-            title="Pinned messages"
-            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold hover:bg-daypill/60 ${
-              (pins.data?.length ?? 0) > 0 ? 'text-accent-soft' : 'text-muted'
-            }`}
-            onClick={() => setPinsOpen(true)}
-          >
-            <PinIcon filled={(pins.data?.length ?? 0) > 0} />
-            {(pins.data?.length ?? 0) > 0 && <span>{pins.data!.length}</span>}
-          </button>
           {/* member stack — opens the roster; dropped on mobile so the title gets the room */}
           <button
             data-testid="channel-members-trigger"
@@ -175,12 +171,36 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             {/* nothing to stack yet (fetch in flight) — keep a clickable target */}
             {shown.length === 0 && <span className="text-sm text-muted">👥</span>}
           </button>
+          {/* #188: pins, artifacts and channel options share one "⋯" menu */}
+          <button
+            type="button"
+            data-testid="channel-menu-trigger"
+            data-overflow-trigger
+            title="Channel menu"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="rounded-lg px-1.5 py-1 text-[17px] leading-none text-muted hover:bg-daypill/60 hover:text-ink"
+            onClick={() => { setMenuOpen((v) => !v); setMembersOpen(false); }}
+          >
+            ⋯
+          </button>
           {membersOpen && (
             <ChannelMembersPopover
               rows={memberRows}
               loading={chanMembers.isLoading}
               onClose={() => setMembersOpen(false)}
               onSelect={(id) => { setMembersOpen(false); setCardUserId(id); }}
+            />
+          )}
+          {menuOpen && (
+            <ChannelOverflowMenu
+              artifacts={channelArtifacts}
+              pinCount={pins.data?.length ?? 0}
+              showOptions={channel?.kind === 'standard'}
+              onOpenPins={() => setPinsOpen(true)}
+              onOpenArtifact={(id) => sel.selectArtifact(id)}
+              onOpenOptions={() => setEditChannel(true)}
+              onClose={() => setMenuOpen(false)}
             />
           )}
         </div>
@@ -223,7 +243,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       )}
 
       {cardUserId && <UserCard userId={cardUserId} onClose={() => setCardUserId(null)} />}
-      {editChannel && channel && <EditChannelModal channel={channel} onClose={() => setEditChannel(false)} />}
+      {editChannel && channel && <ChannelOptionsModal channel={channel} onClose={() => setEditChannel(false)} />}
       {pinsOpen && (
         <PinnedMessagesModal
           messages={pins.data ?? []}

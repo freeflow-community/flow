@@ -7,19 +7,20 @@ import WebKit
 
 /// iOS artifacts UI (#157). A phone has no room for the macOS/web shape —
 /// nested sidebar rows plus a persistent side panel — so the channel header
-/// carries the whole affordance: a Docs button with a count badge, a dropdown
-/// of that channel's artifacts, and a full-screen viewer sheet.
+/// carries the whole affordance: the channel's artifacts listed in the header
+/// "⋯" menu (#188), and a full-screen viewer sheet.
 ///
 /// Read-only this round: no pin-as-artifact, and link artifacts open in Safari
 /// rather than a co-browsing mini-browser (a stray tap on a phone would
 /// re-point the artifact for everyone). See CHANGELOG Parity.
 
-// MARK: - Header button
+// MARK: - Header menu
 
-/// The Docs button: a dropdown of the channel's artifacts, badged with how many
-/// there are. Always present, so the affordance is discoverable in an empty
-/// channel too; the badge appears only when there's something to count.
-struct ArtifactsMenuButton: View {
+/// The channel's artifacts, as a submenu of the header's "⋯" menu (#188 — it
+/// used to be a toolbar button of its own). Always present, so the affordance
+/// is discoverable in an empty channel too. The count rides in the label, since
+/// a submenu row has nowhere to hang a badge.
+struct ArtifactsMenu: View {
     let channelId: String
     @EnvironmentObject private var app: AppState
 
@@ -28,7 +29,7 @@ struct ArtifactsMenuButton: View {
     var body: some View {
         Menu {
             if artifacts.isEmpty {
-                Text("No documents yet")
+                Text("No artifacts yet")
             } else {
                 ForEach(artifacts) { artifact in
                     Button {
@@ -40,34 +41,13 @@ struct ArtifactsMenuButton: View {
                 }
             }
         } label: {
-            // The badge sits *inside* the label's own bounds (padding, not a
-            // negative offset) — a toolbar item clips anything hanging past its
-            // frame, which lops the corner off the count.
-            Image(systemName: "doc.text")
-                .padding(.trailing, artifacts.isEmpty ? 0 : 11)
-                .padding(.top, artifacts.isEmpty ? 0 : 6)
-                .overlay(alignment: .topTrailing) { badge }
+            // The count rides in the title: a submenu row's accessibilityValue
+            // is dropped by the menu, so the label is the only place both
+            // VoiceOver and the UI tests can read it.
+            Label(artifacts.isEmpty ? "Artifacts" : "Artifacts (\(artifacts.count))",
+                  systemImage: "doc.text")
         }
-        .accessibilityIdentifier("channel.docs")
-        .accessibilityLabel("Documents")
-        // The count is the thing worth asserting, and VoiceOver should read it
-        // rather than leave the badge as decoration.
-        .accessibilityValue("\(artifacts.count)")
-    }
-
-    @ViewBuilder
-    private var badge: some View {
-        if !artifacts.isEmpty {
-            Text(artifacts.count > 99 ? "99+" : "\(artifacts.count)")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(Capsule().fill(MC.accent))
-                .fixedSize()
-                .accessibilityHidden(true)
-                .accessibilityIdentifier("channel.docs.badge")
-        }
+        .accessibilityIdentifier("channel.artifacts")
     }
 }
 
@@ -110,7 +90,7 @@ struct ArtifactSheet: View {
                 }
             }
             .background(MC.base)
-            .navigationTitle(artifact?.name ?? "Document")
+            .navigationTitle(artifact?.name ?? "Artifact")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

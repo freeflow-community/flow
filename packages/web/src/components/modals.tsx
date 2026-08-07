@@ -84,13 +84,31 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
   );
 }
 
-/** Edit a standard channel's name + topic (ui_nits item 5); any member. */
-export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
+/**
+ * Channel options (#188): name, topic and delete, reached from the header's
+ * "⋯" menu — the same three on every client. Deleting is the server's archive
+ * (soft: the channel leaves the sidebar and goes read-only), and #general
+ * can be neither renamed nor deleted.
+ */
+export function ChannelOptionsModal({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
   const qc = useQueryClient();
+  const sel = useSelection();
   const [name, setName] = useState(channel.name ?? '');
   const [topic, setTopic] = useState(channel.topic ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const isGeneral = channel.name === 'general';
+
+  const remove = async () => {
+    try {
+      await api('POST', `/v1/channels/${channel.id}/archive`);
+      await qc.invalidateQueries({ queryKey: ['channels', channel.workspaceId] });
+      if (sel.channelId === channel.id) sel.selectChannel(null);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
 
   const save = async () => {
     try {
@@ -106,8 +124,8 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
   };
 
   return (
-    <Modal onClose={onClose} testid="edit-channel-modal">
-      <h3 className="mb-3 font-bold">Channel settings</h3>
+    <Modal onClose={onClose} testid="channel-options-modal">
+      <h3 className="mb-3 font-bold">Channel options</h3>
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Name</label>
       <input data-testid="edit-channel-name" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm disabled:opacity-60"
         placeholder="name (lowercase, a-z 0-9 - _)" value={name} disabled={isGeneral}
@@ -119,11 +137,24 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
         onChange={(e) => setTopic(e.target.value)} autoFocus={isGeneral}
         onKeyDown={(e) => { if (e.key === 'Enter') void save(); }} />
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
-        <button data-testid="edit-channel-save"
-          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-          disabled={!isGeneral && !name.trim()} onClick={() => void save()}>Save</button>
+      <div className="flex items-center justify-between gap-2">
+        {isGeneral ? (
+          <span />
+        ) : confirmDelete ? (
+          <button data-testid="channel-delete-confirm"
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700"
+            onClick={() => void remove()}>Really delete?</button>
+        ) : (
+          <button data-testid="channel-delete"
+            className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+            onClick={() => setConfirmDelete(true)}>Delete channel</button>
+        )}
+        <div className="flex gap-2">
+          <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
+          <button data-testid="edit-channel-save"
+            className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+            disabled={!isGeneral && !name.trim()} onClick={() => void save()}>Save</button>
+        </div>
       </div>
     </Modal>
   );
