@@ -20,6 +20,9 @@ struct ThreadScreen: View {
     @StateObject private var channelId = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var flashId: String?
+    /// Viewport height, watched so the keyboard's resize can re-stick the list
+    /// to the newest reply (#191).
+    @State private var viewportHeight: CGFloat = 0
 
     private var userNames: [String: String] {
         Dictionary(users.value.map { ($0.id, $0.displayNameWithBadge) }, uniquingKeysWith: { a, _ in a })
@@ -69,20 +72,31 @@ struct ThreadScreen: View {
                                 .padding(.vertical, 6)
                             }
                         }
-                        Color.clear.frame(height: 1).id("bottom")
                     }
                     .padding(.vertical, 8)
                 }
-                .onChange(of: thread.value.last?.id) { _, newId in
-                    if newId != nil {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { viewportHeight = geo.size.height }
+                            .onChange(of: geo.size.height) { _, new in
+                                viewportHeight = new
+                                // Same glue as the channel transcript (#191):
+                                // the keyboard resizes the viewport without
+                                // changing the content, and a position worked
+                                // out from a LazyVStack's estimates lands past
+                                // the end of everything laid out.
+                                if let lastId = thread.value.last?.id {
+                                    proxy.scrollTo(lastId, anchor: .bottom)
+                                }
+                            }
                     }
-                }
-                .task(id: thread.value.count) {
-                    try? await Task.sleep(for: .milliseconds(350))
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                )
+                .onChange(of: thread.value.last?.id) { _, newId in
+                    guard let newId else { return }
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo(newId, anchor: .bottom)
+                    }
                 }
                 .defaultScrollAnchor(.bottom)
                 .onChange(of: app.focusMessageId) { _, _ in focusPinnedMessage(proxy) }

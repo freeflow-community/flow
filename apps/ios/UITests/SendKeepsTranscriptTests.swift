@@ -90,6 +90,57 @@ final class SendKeepsTranscriptTests: XCTestCase {
             """)
     }
 
+    /// Rule 1b. Focusing the composer keeps the transcript on screen. Reported
+    /// from the phone with a screen recording: tapping into the composer blanked
+    /// the chat, tapping out brought it back.
+    ///
+    /// Asserted on *geometry*, not `exists` — the rows stay in the accessibility
+    /// tree the whole time, laid out past the end of the viewport, so an
+    /// existence check passes on a broken build. Needs a channel whose messages
+    /// are several screens tall: the failure is the scroll position being
+    /// recomputed from estimated row heights, and short rows estimate fine.
+    func testKeyboardDoesNotBlankTranscript() {
+        let app = launch()
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 60),
+                      "never reached a channel — is the dev server seeded?")
+        XCTAssertTrue(anchor(app).waitForExistence(timeout: 60),
+                      "precondition: the transcript should be on screen before focusing")
+        XCTAssertTrue(isOnScreen(anchor(app), in: app),
+                      "precondition: the newest message is on screen at rest")
+
+        composer(app).tap() // raises the keyboard
+
+        var blankSamples = 0
+        for _ in 0..<20 {
+            if !isOnScreen(anchor(app), in: app) { blankSamples += 1 }
+            Thread.sleep(forTimeInterval: 0.15)
+        }
+        if blankSamples > 0 {
+            add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()))
+        }
+        XCTAssertEqual(blankSamples, 0, """
+            the transcript scrolled out of view for \(blankSamples) sample(s) after the composer \
+            took focus — the messages are still in the list, just not in the viewport
+            """)
+    }
+
+    /// Is this element actually within the window, above the keyboard? `exists`
+    /// is not enough — a row scrolled past the end of the viewport still exists,
+    /// which is precisely how this bug hid from an existence check. One element
+    /// query on purpose: a channel of screens-tall messages makes walking the
+    /// whole accessibility tree slow enough to time the test out.
+    private func isOnScreen(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard element.exists else { return false }
+        let window = app.windows.firstMatch.frame
+        let keyboardTop = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame.minY : window.maxY
+        let chatArea = CGRect(
+            x: window.minX, y: window.minY,
+            width: window.width, height: max(0, keyboardTop - window.minY)
+        )
+        let f = element.frame
+        return f.width > 0 && f.height > 0 && f.intersects(chatArea)
+    }
+
     /// Rule 2. Sending keeps what was already on screen. Sampling matters more
     /// than a single end-state assertion: the reported symptom is a transient,
     /// and a check that only looks once the dust settles passes on a broken

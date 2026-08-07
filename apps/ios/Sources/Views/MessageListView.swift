@@ -100,15 +100,27 @@ struct MessageListView: View {
                         }
                         .id(message.id)
                     }
-                    Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.vertical, 8)
                 .background(
                     GeometryReader { geo in
-                        let bottom = geo.frame(in: .named(Self.scrollSpace)).maxY
+                        let frame = geo.frame(in: .named(Self.scrollSpace))
                         Color.clear
-                            .onAppear { contentBottom = bottom }
-                            .onChange(of: bottom) { _, new in contentBottom = new }
+                            .onAppear { contentBottom = frame.maxY }
+                            .onChange(of: frame) { old, new in
+                                contentBottom = new.maxY
+                                // Post-layout correction (#191), the same glue
+                                // macOS uses. The id-driven follow above fires
+                                // before the new geometry exists, and not at all
+                                // when the *viewport* is what changed — which is
+                                // the keyboard. Re-stick to the end here, once
+                                // the numbers are real and the rows near the end
+                                // are laid out, so a `LazyVStack`'s estimates for
+                                // everything above can't put us in empty space.
+                                guard focusMessageId == nil, pinToBottom, !isDragging else { return }
+                                guard new != old, let lastId = messages.last?.id else { return }
+                                proxy.scrollTo(lastId, anchor: .bottom)
+                            }
                     }
                 )
             }
@@ -117,7 +129,16 @@ struct MessageListView: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { viewportHeight = geo.size.height }
-                        .onChange(of: geo.size.height) { _, new in viewportHeight = new }
+                        .onChange(of: geo.size.height) { _, new in
+                            viewportHeight = new
+                            // The keyboard raising or dropping is a viewport
+                            // change with no content change, so the glue above
+                            // may not fire — re-stick explicitly (#191).
+                            guard focusMessageId == nil, pinToBottom, !isDragging else { return }
+                            if let lastId = messages.last?.id {
+                                proxy.scrollTo(lastId, anchor: .bottom)
+                            }
+                        }
                 }
             )
             .overlay { emptyTranscriptState }
@@ -145,21 +166,16 @@ struct MessageListView: View {
                 // Otherwise follow the end only when we were already there:
                 // someone reading back-scroll keeps their place (#111).
                 guard pinToBottom else { return }
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                if let lastId = messages.last?.id {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
                 }
             }
-            // First open must land on the newest message (same rationale as
-            // macOS: scrollTo from onAppear runs before lazy rows lay out).
-            .task(id: messages.count) {
-                guard focusMessageId == nil, pinToBottom else { return }
-                proxy.scrollTo("bottom", anchor: .bottom)
-                // Rows keep growing after that first layout as avatars and
-                // attachments arrive, so come back once things have settled.
-                try? await Task.sleep(for: .milliseconds(350))
-                guard pinToBottom else { return }
-                proxy.scrollTo("bottom", anchor: .bottom)
-            }
+            // The single scroll driver. Everything else that moves this list
+            // targets the same bottom edge, so nothing can disagree with it —
+            // macOS blanked its transcript exactly this way by installing a
+            // second one (see the NOTE in its MessageListView).
             .defaultScrollAnchor(.bottom)
             // Keyboard dismissal (tap + scroll) is applied by the screen that
             // owns the composer, so it can cover the whole chat area rather
@@ -225,8 +241,10 @@ struct MessageListView: View {
         if !pinToBottom, !messages.isEmpty {
             Button {
                 pinToBottom = true
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                if let lastId = messages.last?.id {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
                 }
             } label: {
                 Text("Latest msgs ↓")
