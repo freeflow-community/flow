@@ -1,11 +1,11 @@
 import XCTest
 
-/// #157 — the iOS artifacts UI: a Docs button in the channel header badged with
-/// the channel's artifact count, a dropdown listing them, and a full-screen
-/// viewer. None of it is assertable from outside the simulator (the menu is a
-/// system popover and the viewer is a sheet), so this is the acceptance
-/// criteria written down — and the source of the PR screenshots, which it
-/// attaches at each step.
+/// #157 — the iOS artifacts UI: the channel's artifacts (reached through the
+/// header's "⋯" menu since #188, counted in its label), a list of them, and a
+/// full-screen viewer. None of it is assertable from
+/// outside the simulator (the menu is a system popover and the viewer is a
+/// sheet), so this is the acceptance criteria written down — and the source of
+/// the PR screenshots, which it attaches at each step.
 ///
 /// Needs a dev server with `qa-seed.mjs` *and* `qa-seed-artifacts.mjs`
 /// fixtures — the latter creates the `docs157` channel this drives. Override
@@ -39,6 +39,15 @@ final class ArtifactsTests: XCTestCase {
         return app
     }
 
+    /// Artifacts moved under the header's "⋯" menu (#188) — open that first,
+    /// then the Artifacts submenu.
+    private func openArtifactsMenu(_ app: XCUIApplication) {
+        app.buttons["channel.menu"].tap()
+        let artifacts = app.buttons["channel.artifacts"]
+        XCTAssertTrue(artifacts.waitForExistence(timeout: 10), "no Artifacts item in the channel menu")
+        artifacts.tap()
+    }
+
     private func attach(_ name: String) {
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         shot.name = name
@@ -46,29 +55,35 @@ final class ArtifactsTests: XCTestCase {
         add(shot)
     }
 
-    /// Acceptance: the header carries a Docs button, and its badge counts every
-    /// artifact in the channel (four, in the fixture — including the link one).
-    func testDocsButtonBadgeCountsChannelArtifacts() {
+    /// Acceptance: the header's "⋯" menu carries an Artifacts item counting
+    /// every artifact in the channel (four, in the fixture — the link one too).
+    func testArtifactsMenuItemCountsChannelArtifacts() {
         let app = launchInFixtureChannel()
 
-        let docs = app.buttons["channel.docs"]
-        XCTAssertTrue(docs.waitForExistence(timeout: 15), "no Docs button in the channel header")
-        XCTAssertEqual(docs.value as? String, "4", "badge should count every artifact in the channel")
-        attach("01-docs-badge")
+        let menu = app.buttons["channel.menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 15), "no ⋯ menu in the channel header")
+        menu.tap()
+        let artifacts = app.buttons["channel.artifacts"]
+        XCTAssertTrue(artifacts.waitForExistence(timeout: 10), "no Artifacts item in the channel menu")
+        XCTAssertTrue(artifacts.label.contains("4"),
+                      "the item should count every artifact in the channel — got \(artifacts.label)")
+        XCTAssertTrue(app.buttons["channel.pins"].exists, "pins live in the same menu now (#188)")
+        XCTAssertTrue(app.buttons["channel.options"].exists, "channel options live in the same menu (#188)")
+        attach("01-channel-menu")
     }
 
-    /// Acceptance: tapping Docs lists the channel's artifacts, one row each.
-    func testDocsMenuListsArtifacts() {
+    /// Acceptance: opening Artifacts lists the channel's artifacts, one row each.
+    func testArtifactsMenuListsArtifacts() {
         let app = launchInFixtureChannel()
 
-        app.buttons["channel.docs"].tap()
+        openArtifactsMenu(app)
 
         let board = app.buttons["artifact.row.task-board.html"]
         XCTAssertTrue(board.waitForExistence(timeout: 10), "the dropdown didn't list the artifacts")
         XCTAssertTrue(app.buttons["artifact.row.release-notes.md"].exists)
         XCTAssertTrue(app.buttons["artifact.row.brand-swatch.png"].exists)
         XCTAssertTrue(app.buttons["artifact.row.freeflow.im"].exists, "link artifacts are listed too")
-        attach("02-docs-menu")
+        attach("02-artifacts-menu")
     }
 
     /// Acceptance: selecting an HTML artifact shows it, rendered — the agent
@@ -77,14 +92,14 @@ final class ArtifactsTests: XCTestCase {
     func testOpeningHtmlArtifactShowsItAndClosing() {
         let app = launchInFixtureChannel()
 
-        app.buttons["channel.docs"].tap()
+        openArtifactsMenu(app)
         app.buttons["artifact.row.task-board.html"].tap()
 
         let sheet = app.otherElements["artifact.sheet"]
         XCTAssertTrue(sheet.waitForExistence(timeout: 15), "the artifact viewer didn't open")
         XCTAssertTrue(app.staticTexts["task-board.html"].waitForExistence(timeout: 10),
                       "viewer isn't titled with the artifact name")
-        // The sandboxed web view renders the document's own text.
+        // The sandboxed web view renders the artifact's own text.
         XCTAssertTrue(app.webViews.staticTexts["Flow work queue"].waitForExistence(timeout: 20),
                       "HTML artifact didn't render in the sandboxed web view")
         attach("03-html-artifact")
@@ -99,7 +114,7 @@ final class ArtifactsTests: XCTestCase {
     func testOpeningTextArtifactRendersInline() {
         let app = launchInFixtureChannel()
 
-        app.buttons["channel.docs"].tap()
+        openArtifactsMenu(app)
         app.buttons["artifact.row.release-notes.md"].tap()
 
         XCTAssertTrue(app.otherElements["artifact.sheet"].waitForExistence(timeout: 15))
@@ -115,7 +130,7 @@ final class ArtifactsTests: XCTestCase {
     func testOpeningImageArtifactShowsIt() {
         let app = launchInFixtureChannel()
 
-        app.buttons["channel.docs"].tap()
+        openArtifactsMenu(app)
         app.buttons["artifact.row.brand-swatch.png"].tap()
 
         XCTAssertTrue(app.otherElements["artifact.sheet"].waitForExistence(timeout: 15))
@@ -134,7 +149,7 @@ final class ArtifactsTests: XCTestCase {
     func testLinkArtifactOpensCoBrowser() {
         let app = launchInFixtureChannel()
 
-        app.buttons["channel.docs"].tap()
+        openArtifactsMenu(app)
         app.buttons["artifact.row.freeflow.im"].tap()
 
         XCTAssertTrue(app.otherElements["artifact.sheet"].waitForExistence(timeout: 15))

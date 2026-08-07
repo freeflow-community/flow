@@ -232,27 +232,70 @@ struct ChannelView: View {
                 }
             }
             Spacer()
-            Button {
-                showPins = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: pinnedMessages.value.isEmpty ? "pin" : "pin.fill")
-                    if !pinnedMessages.value.isEmpty {
-                        Text("\(pinnedMessages.value.count)")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                }
-                .foregroundStyle(pinnedMessages.value.isEmpty ? MC.muted : MC.accentSoft)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Pinned messages")
-            .accessibilityIdentifier("channel.pins")
             headerAvatars
+            channelMenu
         }
         .padding(.horizontal, 22)
         .frame(height: 60)
         .background(MC.base)
+    }
+
+    /// The header's "⋯" menu (#188): pinned messages, this channel's artifacts
+    /// and channel options in one place, matching web and iOS. Replaces the
+    /// standalone pin button that used to sit next to the avatars.
+    private var channelMenu: some View {
+        Menu {
+            Button {
+                showPins = true
+            } label: {
+                Label(
+                    pinnedMessages.value.isEmpty
+                        ? "Pinned Messages"
+                        : "Pinned Messages (\(pinnedMessages.value.count))",
+                    systemImage: pinnedMessages.value.isEmpty ? "pin" : "pin.fill"
+                )
+            }
+            .accessibilityIdentifier("channel.pins")
+
+            let artifacts = win.artifacts(inChannel: channelId)
+            Menu {
+                if artifacts.isEmpty {
+                    Text("No artifacts yet")
+                } else {
+                    ForEach(artifacts) { artifact in
+                        Button {
+                            win.selectArtifact(artifact.id)
+                        } label: {
+                            Text("\(artifact.glyph)  \(artifact.name)")
+                        }
+                        .accessibilityIdentifier("artifact.row.\(artifact.name)")
+                    }
+                }
+            } label: {
+                Label(artifacts.isEmpty ? "Artifacts" : "Artifacts (\(artifacts.count))",
+                      systemImage: "doc.text")
+            }
+            .accessibilityIdentifier("channel.artifacts")
+
+            if channel.value?.kind == "standard" {
+                Divider()
+                Button {
+                    showChannelEdit = true
+                } label: {
+                    Label("Channel Options…", systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("channel.options")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .flowFont(size: 13)
+                .foregroundStyle(MC.muted)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 20)
+        .help("Channel menu")
+        .accessibilityIdentifier("channel.menu")
     }
 
     /// Design 3a: overlapping member avatars + "+N" at the header's right edge —
@@ -570,8 +613,10 @@ struct EditMessageSheet: View {
     }
 }
 
-/// Edit a standard channel's name + topic (ui_nits item 5); any member.
-/// Empty topic clears the sub-headline; #general keeps its name.
+/// Channel options (#188): name, topic and delete, reached from the header's
+/// "⋯" menu — the same three on every client. Empty topic clears the
+/// sub-headline; #general can be neither renamed nor deleted. "Delete" is the
+/// server's archive (soft: the channel leaves the sidebar and goes read-only).
 struct ChannelEditSheet: View {
     let channel: Channel
     @EnvironmentObject private var app: AppState
@@ -581,6 +626,7 @@ struct ChannelEditSheet: View {
     @State private var topic: String
     @State private var error: String?
     @State private var saving = false
+    @State private var confirmDelete = false
 
     init(channel: Channel) {
         self.channel = channel
@@ -592,7 +638,7 @@ struct ChannelEditSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Channel settings").flowFont(.headline)
+            Text("Channel options").flowFont(.headline)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Name").flowFont(.caption).foregroundStyle(.secondary)
                 TextField("name (lowercase, a-z 0-9 - _)", text: $name)
@@ -611,6 +657,11 @@ struct ChannelEditSheet: View {
                 Text(error).flowFont(.caption).foregroundStyle(.red)
             }
             HStack {
+                if !isGeneral {
+                    Button("Delete Channel…", role: .destructive) { confirmDelete = true }
+                        .disabled(saving)
+                        .accessibilityIdentifier("channel.edit.delete")
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -623,6 +674,31 @@ struct ChannelEditSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+        .confirmationDialog(
+            "Delete #\(channel.name ?? "")?",
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Channel", role: .destructive) { remove() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It leaves everyone's sidebar and becomes read-only. Its history is kept.")
+        }
+    }
+
+    /// Archive — the server's delete for a channel (see the type comment).
+    private func remove() {
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                try await app.engine.archiveChannel(channel.id)
+                if win.selectedChannelId == channel.id { win.selectChannel(nil) }
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func save() {

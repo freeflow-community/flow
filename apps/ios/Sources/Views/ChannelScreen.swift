@@ -13,6 +13,7 @@ struct ChannelScreen: View {
     @State private var editingMessage: Message?
     @State private var threadRoute: ThreadRoute?
     @State private var showPins = false
+    @State private var showChannelOptions = false
 
     /// The open artifact (#157), presented as a sheet over the conversation.
     /// Driven by `AppState.selectedArtifactId` — the same selection macOS uses
@@ -85,6 +86,11 @@ struct ChannelScreen: View {
         .sheet(item: artifactRoute) { route in
             ArtifactSheet(artifactId: route.id)
         }
+        .sheet(isPresented: $showChannelOptions) {
+            if let c = channel.value {
+                ChannelOptionsSheet(channel: c)
+            }
+        }
         .sheet(isPresented: $showPins) {
             PinnedMessagesSheet(
                 messages: pinnedMessages.value,
@@ -121,31 +127,43 @@ struct ChannelScreen: View {
         .background(MC.base)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showPins = true
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: pinnedMessages.value.isEmpty ? "pin" : "pin.fill")
-                        if !pinnedMessages.value.isEmpty {
-                            Text("\(pinnedMessages.value.count)")
-                                .font(.caption2.weight(.semibold))
-                        }
-                    }
-                }
-                .accessibilityLabel("Pinned messages")
-                .accessibilityIdentifier("channel.pins")
-            }
-        }
         // Account/status live in the drawer's profile footer now (web/macOS
         // parity — the sidebar owns that affordance), reached from the header
         // hamburger. The channel bar keeps the title + that hamburger, which
         // MainView supplies as the content pane's leading toolbar item, plus
-        // the trailing Docs button below (#157).
+        // the trailing "⋯" menu below (#188): pins, artifacts and channel
+        // options in one place, matching web and macOS.
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                ArtifactsMenuButton(channelId: channelId)
+                Menu {
+                    Button {
+                        showPins = true
+                    } label: {
+                        Label(
+                            pinnedMessages.value.isEmpty
+                                ? "Pinned Messages"
+                                : "Pinned Messages (\(pinnedMessages.value.count))",
+                            systemImage: pinnedMessages.value.isEmpty ? "pin" : "pin.fill"
+                        )
+                    }
+                    .accessibilityIdentifier("channel.pins")
+
+                    ArtifactsMenu(channelId: channelId)
+
+                    if channel.value?.kind == "standard" {
+                        Divider()
+                        Button {
+                            showChannelOptions = true
+                        } label: {
+                            Label("Channel Options…", systemImage: "gearshape")
+                        }
+                        .accessibilityIdentifier("channel.options")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityIdentifier("channel.menu")
+                .accessibilityLabel("Channel menu")
             }
         }
         .task {
@@ -249,6 +267,126 @@ private struct PinnedMessagesSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+        }
+    }
+}
+
+/// Channel options (#188): name, topic and delete, reached from the header's
+/// "⋯" menu — the same three on every client, and the first time iOS could
+/// rename a channel or set its topic at all. "Delete" is the server's archive
+/// (soft: the channel leaves the sidebar and goes read-only); #general can be
+/// neither renamed nor deleted.
+struct ChannelOptionsSheet: View {
+    let channel: Channel
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var topic: String
+    @State private var busy = false
+    @State private var confirmDelete = false
+    @State private var error: String?
+
+    init(channel: Channel) {
+        self.channel = channel
+        _name = State(initialValue: channel.name ?? "")
+        _topic = State(initialValue: channel.topic ?? "")
+    }
+
+    private var isGeneral: Bool { channel.name == "general" }
+
+    private var normalized: String {
+        name.trimmingCharacters(in: .whitespaces)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("name (lowercase, a-z 0-9 - _)", text: $name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .disabled(isGeneral)
+                        .accessibilityIdentifier("channel.edit.name")
+                    if isGeneral {
+                        Text("#general cannot be renamed.")
+                            .font(.caption)
+                            .foregroundStyle(MC.faint)
+                    }
+                }
+                Section("Topic") {
+                    TextField("What's this channel about?", text: $topic)
+                        .accessibilityIdentifier("channel.edit.topic")
+                }
+                if !isGeneral {
+                    Section {
+                        Button("Delete Channel", role: .destructive) { confirmDelete = true }
+                            .disabled(busy)
+                            .accessibilityIdentifier("channel.edit.delete")
+                    } footer: {
+                        Text("It leaves everyone's sidebar and becomes read-only. Its history is kept.")
+                    }
+                }
+                if let error {
+                    Section { Text(error).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("Channel Options")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Save") { save() }
+                        .disabled(busy || (!isGeneral && normalized.isEmpty))
+                        .accessibilityIdentifier("channel.edit.save")
+                }
+            }
+            .confirmationDialog(
+                "Delete #\(channel.name ?? "")?",
+                isPresented: $confirmDelete,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Channel", role: .destructive) { remove() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("It leaves everyone's sidebar and becomes read-only. Its history is kept.")
+            }
+        }
+    }
+
+    private func save() {
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await app.engine.updateChannel(
+                    channelId: channel.id,
+                    name: isGeneral ? nil : normalized,
+                    topic: topic // "" clears
+                )
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func remove() {
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await app.engine.archiveChannel(channel.id)
+                if app.selectedChannelId == channel.id { app.selectChannel(nil) }
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
             }
         }
     }
