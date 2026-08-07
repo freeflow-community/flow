@@ -57,6 +57,7 @@ struct ChannelScreen: View {
                     userStatuses: statusesById,
                     currentUserId: app.currentUser?.id,
                     hasMore: app.hasMore[channelId] ?? false,
+                    isLoadingHistory: app.loadingHistory.contains(channelId),
                     showThreadAffordances: true,
                     onLoadOlder: {
                         Task { await app.engine.loadOlder(channelId: channelId) }
@@ -174,7 +175,11 @@ struct ChannelScreen: View {
             }
             users.start(db: app.db) { try User.fetchAll($0) }
             channel.start(db: app.db) { try Channel.filter(key: channelId).fetchOne($0) }
-            messages.start(db: app.db, reset: []) { db in
+            // No `reset:` — this screen's identity is the channel id (MainView
+            // keys it), so anything already rendered belongs to *this* channel
+            // and must survive the observation restarting. Clearing it first
+            // was a self-inflicted blank (#191).
+            messages.start(db: app.db) { db in
                 try Message
                     .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
                     .order(Column("id"))

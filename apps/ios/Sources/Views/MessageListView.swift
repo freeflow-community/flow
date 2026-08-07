@@ -12,6 +12,10 @@ struct MessageListView: View {
     var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
     let hasMore: Bool
+    /// The channel's history page is still in flight (#191). Drives the loading
+    /// states below — an empty transcript with no explanation reads as a lost
+    /// conversation, which on a slow link is what it was reported as.
+    var isLoadingHistory: Bool = false
     let showThreadAffordances: Bool
     let onLoadOlder: () -> Void
     let onOpenThread: (String) -> Void
@@ -55,7 +59,15 @@ struct MessageListView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if hasMore {
+                    // With something cached, the top of the list says the rest
+                    // is still coming, instead of the transcript simply
+                    // starting wherever the cache happens to end (#191). With
+                    // nothing cached the centered state below speaks instead,
+                    // so the two never both appear. Once the page lands this
+                    // becomes the ordinary "Load earlier messages" affordance.
+                    if isLoadingHistory, !messages.isEmpty {
+                        loadingRow("Loading earlier messages…")
+                    } else if hasMore {
                         HStack {
                             Spacer()
                             Button("Load earlier messages", action: onLoadOlder)
@@ -88,15 +100,27 @@ struct MessageListView: View {
                         }
                         .id(message.id)
                     }
-                    Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.vertical, 8)
                 .background(
                     GeometryReader { geo in
-                        let bottom = geo.frame(in: .named(Self.scrollSpace)).maxY
+                        let frame = geo.frame(in: .named(Self.scrollSpace))
                         Color.clear
-                            .onAppear { contentBottom = bottom }
-                            .onChange(of: bottom) { _, new in contentBottom = new }
+                            .onAppear { contentBottom = frame.maxY }
+                            .onChange(of: frame) { old, new in
+                                contentBottom = new.maxY
+                                // Post-layout correction (#191), the same glue
+                                // macOS uses. The id-driven follow above fires
+                                // before the new geometry exists, and not at all
+                                // when the *viewport* is what changed — which is
+                                // the keyboard. Re-stick to the end here, once
+                                // the numbers are real and the rows near the end
+                                // are laid out, so a `LazyVStack`'s estimates for
+                                // everything above can't put us in empty space.
+                                guard focusMessageId == nil, pinToBottom, !isDragging else { return }
+                                guard new != old, let lastId = messages.last?.id else { return }
+                                proxy.scrollTo(lastId, anchor: .bottom)
+                            }
                     }
                 )
             }
@@ -105,9 +129,19 @@ struct MessageListView: View {
                 GeometryReader { geo in
                     Color.clear
                         .onAppear { viewportHeight = geo.size.height }
-                        .onChange(of: geo.size.height) { _, new in viewportHeight = new }
+                        .onChange(of: geo.size.height) { _, new in
+                            viewportHeight = new
+                            // The keyboard raising or dropping is a viewport
+                            // change with no content change, so the glue above
+                            // may not fire — re-stick explicitly (#191).
+                            guard focusMessageId == nil, pinToBottom, !isDragging else { return }
+                            if let lastId = messages.last?.id {
+                                proxy.scrollTo(lastId, anchor: .bottom)
+                            }
+                        }
                 }
             )
+            .overlay { emptyTranscriptState }
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
             .animation(.easeOut(duration: 0.15), value: pinToBottom)
             // Only a finger on the glass may stop the list following the end.
@@ -132,21 +166,16 @@ struct MessageListView: View {
                 // Otherwise follow the end only when we were already there:
                 // someone reading back-scroll keeps their place (#111).
                 guard pinToBottom else { return }
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                if let lastId = messages.last?.id {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
                 }
             }
-            // First open must land on the newest message (same rationale as
-            // macOS: scrollTo from onAppear runs before lazy rows lay out).
-            .task(id: messages.count) {
-                guard focusMessageId == nil, pinToBottom else { return }
-                proxy.scrollTo("bottom", anchor: .bottom)
-                // Rows keep growing after that first layout as avatars and
-                // attachments arrive, so come back once things have settled.
-                try? await Task.sleep(for: .milliseconds(350))
-                guard pinToBottom else { return }
-                proxy.scrollTo("bottom", anchor: .bottom)
-            }
+            // The single scroll driver. Everything else that moves this list
+            // targets the same bottom edge, so nothing can disagree with it —
+            // macOS blanked its transcript exactly this way by installing a
+            // second one (see the NOTE in its MessageListView).
             .defaultScrollAnchor(.bottom)
             // Keyboard dismissal (tap + scroll) is applied by the screen that
             // owns the composer, so it can cover the whole chat area rather
@@ -171,6 +200,40 @@ struct MessageListView: View {
         }
     }
 
+    /// A spinner and a line of text, for the two places the list has to say
+    /// "still arriving" rather than render nothing (#191).
+    private func loadingRow(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Spacer()
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(MC.faint)
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("msg.loading")
+    }
+
+    /// Nothing to show yet. An empty transcript is two different situations —
+    /// history still on its way, or a conversation with nothing in it — and the
+    /// bug this fixes is that both used to render as bare background, so a slow
+    /// link looked exactly like a lost conversation (#191).
+    @ViewBuilder
+    private var emptyTranscriptState: some View {
+        if messages.isEmpty {
+            if isLoadingHistory {
+                loadingRow("Loading conversation…")
+            } else {
+                Text("No messages yet")
+                    .font(.callout)
+                    .foregroundStyle(MC.faint)
+                    .accessibilityIdentifier("msg.emptyChannel")
+            }
+        }
+    }
+
     /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
     /// of the transcript (#111). Tapping it returns to the newest message.
     @ViewBuilder
@@ -178,8 +241,10 @@ struct MessageListView: View {
         if !pinToBottom, !messages.isEmpty {
             Button {
                 pinToBottom = true
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                if let lastId = messages.last?.id {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
                 }
             } label: {
                 Text("Latest msgs ↓")

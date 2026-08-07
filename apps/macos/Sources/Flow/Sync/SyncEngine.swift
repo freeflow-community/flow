@@ -447,25 +447,34 @@ actor SyncEngine {
 
     func selectChannel(_ channelId: String?) async {
         guard let channelId else { return }
-        do {
-            let resp: MessagesResponse = try await api.get(
-                "/v1/channels/\(channelId)/messages",
-                query: [URLQueryItem(name: "limit", value: "50")]
-            )
-            await storeMessages(resp.messages)
-            await appState?.setHasMore(channelId: channelId, resp.hasMore)
-            if let newest = resp.messages.first?.id {
-                await markRead(channelId: channelId, lastReadMsgId: newest)
-            } else {
-                try? await db.writer.write { db in
-                    try db.execute(
-                        sql: "UPDATE channel SET unreadCount = 0 WHERE id = ?",
-                        arguments: [channelId]
-                    )
-                }
+        // The clients render a loading transcript rather than bare background
+        // while this page is in flight (#191) — on a slow link it is the whole
+        // difference between "still arriving" and "the conversation is gone".
+        await appState?.setLoadingHistory(channelId: channelId, true)
+        let resp: MessagesResponse? = try? await api.get(
+            "/v1/channels/\(channelId)/messages",
+            query: [URLQueryItem(name: "limit", value: "50")]
+        )
+        guard let resp else {
+            // Offline: render from cache — which is all there is going to be,
+            // so stop claiming the transcript is still on its way.
+            await appState?.setLoadingHistory(channelId: channelId, false)
+            return
+        }
+        // Rows first, then drop the loading state: clearing it while the
+        // transcript is still empty would flash the very blank this avoids.
+        await storeMessages(resp.messages)
+        await appState?.setLoadingHistory(channelId: channelId, false)
+        await appState?.setHasMore(channelId: channelId, resp.hasMore)
+        if let newest = resp.messages.first?.id {
+            await markRead(channelId: channelId, lastReadMsgId: newest)
+        } else {
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE channel SET unreadCount = 0 WHERE id = ?",
+                    arguments: [channelId]
+                )
             }
-        } catch {
-            // Offline: render from cache.
         }
     }
 
