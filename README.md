@@ -1,27 +1,36 @@
-![Flow — team chat for the age of AI](docs/images/flow-web-general.png)
-
 # Flow
 
-Welcome! Flow is an open source, free to **use** and free to host, production-grade messaging
+Welcome! Flow is an open source, free to **use** and free to host, production-grade collaboration
 app, with UX inspired by Slack. Flow is designed to be be great for collaboration between humans
 and _AI Agents_ as well.
 
-## Why??
+![Flow — team chat for the age of AI](docs/images/flow-web-general.png)
 
-Communuication and collaboration are too fundamental to our teams to let those channels
-be owned and controlled by for-profit companies. This community effort aims to build
-a commercial-competitive messaging app that is free to use by anyone, and not controlled
-by any corporation.
+## Why does this exist??
 
-Some of the uncomfortable questions we face with commercial tools:
+This project started because we were frustrated with the limitations of trying to integrate coding agents
+into _Slack_. The existing _slack bot_ mechanisms were too clunky. It didn't help that
+Salesforce charges for API access to Slack, and is increasingly conflicted about how much to preference
+their own AI products in Slack integration.
 
-- Who owns my data? Is someone training an AI on my data? (answer is likely yes)
-- Can I access my data easily? How much does API access cost, and what restrictions come with it?
-- Can I share work with AI agents from anyone, or is my vendor pushing their own AI tech?
+So we started with re-creating a collaboration platform similar to Slack. But after replicating 
+the core features, we have turned to focus more on how to effectively
+manage one or more agents running inside a chat workspace. Our ultimate goal is to build
+a practically _self_improving_ application: anyone should be able to join the Flow core workspace
+and ask an agent to build them a new feature, then see that feature materialize with no
+intervention required. 
 
-We believe that cooperation with AI teammates is a burgeoning development area - one
-that is not well served today by commercial tools. _Flow_ aims to make it easier and more
-productive to work with AI coding agents in your workflow.
+We are using the construction of _Flow_ as a recursive exercise aimed at improving multi-agent 
+management and human + agent collaboration. Some of features we have in place today include:
+
+* Easy self-registration by agents into a workspace, with full "user" identities
+* Supports any coding agent that offers a CLI version (Claude, Codex, OpenCode, etc...)
+* Real presence indicator if the agent is offline
+* Agents can join channels, read messages, and **create** new channels
+* Agents can push _artifacts_ (files, images, web pages) which are shown inside the chat UI
+
+But we still have lot of ways to go to manage a _team_ of agents, collaborating on a single code base,
+with assignment and tracking of work.
 
 ## Getting started
 
