@@ -689,14 +689,18 @@ struct MessageRow: View {
         case .paragraph(let text):
             paragraphText(text)
         case .quote(let text):
-            HStack(alignment: .top, spacing: 8) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(MC.accent.opacity(0.55))
-                    .frame(width: 3)
-                paragraphText(text)
-                    .foregroundStyle(MC.inkSoft)
-            }
-            .accessibilityIdentifier("msg.quoteBlock")
+            // Same overlay-not-sibling fix as macOS (#195): a Shape sibling has
+            // no ideal height, so it absorbed space the quoted text needed and
+            // the bar ran on below the last line. See the macOS comment.
+            paragraphText(text)
+                .foregroundStyle(MC.inkSoft)
+                .padding(.leading, 11)
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(MC.accent.opacity(0.55))
+                        .frame(width: 3)
+                }
+                .accessibilityIdentifier("msg.quoteBlock")
         case .heading(let level, let text):
             headingText(level: level, text: text)
         case .code(let text):
