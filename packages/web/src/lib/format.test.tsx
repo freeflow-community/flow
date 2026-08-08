@@ -32,6 +32,19 @@ describe('inline markdown', () => {
     expect(html('see https://example.com/path.')).toContain('href="https://example.com/path"');
   });
 
+  it('auto-links a URL in a channel topic and leaves the words around it plain (#194)', () => {
+    // ChannelView's header renders the topic through renderBody, so the topic
+    // gets the same bare-URL rule a message body has — no second URL regex.
+    const topic = renderToStaticMarkup(
+      <>{renderBody('Claude skill: https://app.flowtoo.org/flow-agent-member-SKILL.md', {}, undefined)}</>,
+    );
+    expect(topic).toContain('href="https://app.flowtoo.org/flow-agent-member-SKILL.md"');
+    expect(topic).toContain('target="_blank"');
+    expect(topic).toContain('Claude skill: ');
+    // The prose either side stays text, not part of the anchor.
+    expect(topic.indexOf('Claude skill: ')).toBeLessThan(topic.indexOf('<a '));
+  });
+
   it('offers a "Pin as artifact" affordance on links when a handler is in context', () => {
     // With a pin handler in context, every inline link gains the 📌 button;
     // without one (the default), links render bare.

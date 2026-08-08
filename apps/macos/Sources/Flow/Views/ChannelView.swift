@@ -184,6 +184,26 @@ struct ChannelView: View {
             : "#\(c.name ?? "")"
     }
 
+    /// The header topic, run through the same inline renderer as a message body
+    /// (#194) so a URL in it is a real link that opens in the system browser
+    /// instead of inert grey text.
+    ///
+    /// The colours are set per run rather than with a view-level
+    /// `.foregroundStyle`, which would paint the link muted grey too and leave
+    /// it looking exactly as unclickable as before. Runs that already carry a
+    /// colour are mention pills — `MentionRendering` owns those.
+    private var headerTopic: AttributedString? {
+        guard let raw = channel.value?.topic, !raw.isEmpty else { return nil }
+        var topic = MentionRendering.attributed(
+            raw, names: userNames, currentUserId: app.currentUser?.id
+        )
+        let uncoloured = topic.runs.filter { $0.foregroundColor == nil }.map { ($0.range, $0.link) }
+        for (range, link) in uncoloured {
+            topic[range].foregroundColor = link == nil ? MC.muted : MC.accent
+        }
+        return topic
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
@@ -224,11 +244,11 @@ struct ChannelView: View {
                             .foregroundStyle(MC.ink)
                     }
                 }
-                if let topic = channel.value?.topic, !topic.isEmpty {
+                if let topic = headerTopic {
                     Text(topic)
                         .flowFont(size: 12)
-                        .foregroundStyle(MC.muted)
                         .lineLimit(1)
+                        .accessibilityIdentifier("channel.topic")
                 }
             }
             Spacer()
