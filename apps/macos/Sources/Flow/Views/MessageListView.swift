@@ -851,14 +851,23 @@ struct MessageRow: View {
         case .paragraph(let text):
             paragraphText(text)
         case .quote(let text):
-            HStack(alignment: .top, spacing: 8) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(MC.accent.opacity(0.55))
-                    .frame(width: 3)
-                paragraphText(text)
-                    .foregroundStyle(MC.inkSoft)
-            }
-            .accessibilityIdentifier("msg.quoteBlock")
+            // The accent bar is an overlay, not an HStack sibling (#195). A
+            // Shape has no ideal height, so as a sibling it reported an
+            // unbounded height range and the body VStack handed it space the
+            // quoted text needed — the bar ran on below the last line and the
+            // prose above it truncated. As an overlay it is proposed the
+            // text's own size, so the text alone sets the block height and the
+            // bar spans exactly the quote. Leading padding = bar width + the
+            // old HStack spacing, so the text sits where it always did.
+            paragraphText(text)
+                .foregroundStyle(MC.inkSoft)
+                .padding(.leading, 11)
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(MC.accent.opacity(0.55))
+                        .frame(width: 3)
+                }
+                .accessibilityIdentifier("msg.quoteBlock")
         case .heading(let level, let text):
             headingText(level: level, text: text)
         case .code(let text):
