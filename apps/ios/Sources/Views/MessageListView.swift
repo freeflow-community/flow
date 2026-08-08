@@ -715,7 +715,36 @@ struct MessageRow: View {
                 header: header, align: align, rows: rows,
                 userNames: userNames, currentUserId: currentUserId
             )
+        case .ulist(let items):
+            listView(items.map { (marker: "•", text: $0) })
+        case .olist(let start, let items):
+            listView(items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) })
+        case .hr:
+            Rectangle()
+                .fill(MC.hairline)
+                .frame(height: 1)
+                .padding(.vertical, 3) // web's my-2 on <hr>
+                .accessibilityIdentifier("msg.rule")
         }
+    }
+
+    /// macOS-parity lists: a marker column plus the normal inline pass on each
+    /// item, so mentions and `**bold**` still render inside items. Markers are
+    /// right-aligned in a fixed column to keep multi-digit numbers lined up.
+    private func listView(_ items: [(marker: String, text: String)]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.marker)
+                        .font(.callout)
+                        .foregroundStyle(MC.inkSoft)
+                        .frame(minWidth: 16, alignment: .trailing)
+                    paragraphText(item.text)
+                }
+            }
+        }
+        .padding(.leading, 2)
+        .accessibilityIdentifier("msg.list")
     }
 
     /// ATX headings at macOS parity, rebased on iOS's larger body text:

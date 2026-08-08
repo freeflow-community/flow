@@ -876,7 +876,38 @@ struct MessageRow: View {
                 header: header, align: align, rows: rows,
                 userNames: userNames, currentUserId: currentUserId
             )
+        case .ulist(let items):
+            listView(items.map { (marker: "•", text: $0) })
+        case .olist(let start, let items):
+            listView(items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) })
+        case .hr:
+            Rectangle()
+                .fill(MC.hairline)
+                .frame(height: 1)
+                .padding(.vertical, 3) // web's my-2 on <hr>
+                .accessibilityIdentifier("msg.rule")
         }
+    }
+
+    /// Bullet and numbered lists: web uses `<ul class="list-disc pl-5">` /
+    /// `<ol start=…>`, so the native analogue is a marker column plus the
+    /// normal inline pass on each item — mentions and `**bold**` still work
+    /// inside items. Markers are right-aligned in a fixed column so multi-digit
+    /// numbers keep their text edges lined up.
+    private func listView(_ items: [(marker: String, text: String)]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.marker)
+                        .flowFont(.callout)
+                        .foregroundStyle(MC.inkSoft)
+                        .frame(minWidth: 14, alignment: .trailing)
+                    paragraphText(item.text)
+                }
+            }
+        }
+        .padding(.leading, 2)
+        .accessibilityIdentifier("msg.list")
     }
 
     /// ATX headings, sized as the macOS analogue of web's scale rather than a
