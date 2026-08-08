@@ -30,6 +30,15 @@ enum MarkdownBlocks {
         /// A GFM pipe table. `align` is per column and may be shorter than
         /// `header` when the separator row has fewer cells; nil = unset.
         case table(header: [String], align: [CellAlign?], rows: [[String]])
+        /// A run of bullet-list lines with their markers stripped. `-`, `*`
+        /// and `+` are one list, as on web — mixing them doesn't split it.
+        case ulist(items: [String])
+        /// A run of numbered lines, markers stripped. `start` is the first
+        /// item's number, so `3.` `4.` renders starting at 3 (web's `<ol
+        /// start>`); the rest are numbered sequentially from it.
+        case olist(start: Int, items: [String])
+        /// A horizontal rule (`---`, `***`, `___`).
+        case hr
     }
 
     /// Splits into lines KEEPING each line's trailing "\n" so concatenating
@@ -110,7 +119,8 @@ enum MarkdownBlocks {
 
     /// Block segments for message rendering: fenced code blocks (markers
     /// hidden), runs of consecutive quote lines (markers stripped), ATX
-    /// headings (hashes stripped), GFM tables, and plain paragraph runs.
+    /// headings (hashes stripped), GFM tables, bullet and numbered list runs
+    /// (markers stripped), horizontal rules, and plain paragraph runs.
     /// Whitespace-only paragraph runs are dropped.
     static func segments(_ body: String) -> [Segment] {
         let raw = lines(body)
@@ -162,24 +172,53 @@ enum MarkdownBlocks {
                         j += 1
                         continue
                     }
-                    guard isTableStart(text, ks, j) else {
-                        content.append(text[j])
+                    // Rules are checked before tables, as on web: `a | b`
+                    // followed by `---` is prose plus a rule, not a table,
+                    // because the separator carries no pipe.
+                    if isHorizontalRule(text[j]) {
+                        flushParagraph()
+                        segs.append(.hr)
                         j += 1
                         continue
                     }
-                    flushParagraph()
-                    let header = parseTableRow(text[j])
-                    let align = parseTableRow(text[j + 1]).map(parseTableAlign)
-                    var k = j + 2
-                    var rows: [[String]] = []
-                    // Body rows run until a line stops looking like one.
-                    while k < raw.count, ks[k] == .plain, text[k].contains("|"),
-                          !text[k].trimmingCharacters(in: .whitespaces).isEmpty {
-                        rows.append(parseTableRow(text[k]))
-                        k += 1
+                    if isTableStart(text, ks, j) {
+                        flushParagraph()
+                        let header = parseTableRow(text[j])
+                        let align = parseTableRow(text[j + 1]).map(parseTableAlign)
+                        var k = j + 2
+                        var rows: [[String]] = []
+                        // Body rows run until a line stops looking like one.
+                        while k < raw.count, ks[k] == .plain, text[k].contains("|"),
+                              !text[k].trimmingCharacters(in: .whitespaces).isEmpty {
+                            rows.append(parseTableRow(text[k]))
+                            k += 1
+                        }
+                        segs.append(.table(header: header, align: align, rows: rows))
+                        j = k
+                        continue
                     }
-                    segs.append(.table(header: header, align: align, rows: rows))
-                    j = k
+                    if parseBulletItem(text[j]) != nil {
+                        flushParagraph()
+                        var items: [String] = []
+                        while j < raw.count, ks[j] == .plain, let item = parseBulletItem(text[j]) {
+                            items.append(item)
+                            j += 1
+                        }
+                        segs.append(.ulist(items: items))
+                        continue
+                    }
+                    if let first = parseNumberedItem(text[j]) {
+                        flushParagraph()
+                        var items: [String] = []
+                        while j < raw.count, ks[j] == .plain, let item = parseNumberedItem(text[j]) {
+                            items.append(item.text)
+                            j += 1
+                        }
+                        segs.append(.olist(start: first.start, items: items))
+                        continue
+                    }
+                    content.append(text[j])
+                    j += 1
                 }
                 flushParagraph()
                 i = j
@@ -209,6 +248,55 @@ enum MarkdownBlocks {
         guard level > 0, i < line.endIndex, line[i].isWhitespace else { return nil }
         // `\s+` is greedy on web, so the content never keeps leading spaces.
         return (level, String(line[i...].drop(while: \.isWhitespace)))
+    }
+
+    // MARK: - Lists and rules
+    //
+    // Same grammar as the web client (packages/web/src/lib/format.tsx), and
+    // deliberately as shallow as it is there: no nesting, no lazy
+    // continuation lines. Callers pass only `.plain` lines, which is what
+    // keeps a marker inside a fence code.
+
+    /// A bullet-list item's content, or nil. Mirrors web's
+    /// `ULIST_RE = /^\s*[-*+]\s+(.*)$/`: optional indent, one of `-`/`*`/`+`,
+    /// then at least one space. So `-no-space` is prose and `---` is a rule,
+    /// not a one-item list.
+    static func parseBulletItem(_ line: String) -> String? {
+        var i = line.startIndex
+        while i < line.endIndex, line[i].isWhitespace { i = line.index(after: i) }
+        guard i < line.endIndex, line[i] == "-" || line[i] == "*" || line[i] == "+" else { return nil }
+        i = line.index(after: i)
+        guard i < line.endIndex, line[i].isWhitespace else { return nil }
+        // `\s+` is greedy on web, so the content keeps no leading spaces.
+        return String(line[i...].drop(while: \.isWhitespace))
+    }
+
+    /// A numbered item's start index and content, or nil. Mirrors web's
+    /// `OLIST_RE = /^\s*(\d+)\.\s+(.*)$/` — ASCII digits only, a literal dot,
+    /// then whitespace.
+    static func parseNumberedItem(_ line: String) -> (start: Int, text: String)? {
+        var i = line.startIndex
+        while i < line.endIndex, line[i].isWhitespace { i = line.index(after: i) }
+        var digits = ""
+        while i < line.endIndex, line[i].isASCII, line[i].isNumber {
+            digits.append(line[i])
+            i = line.index(after: i)
+        }
+        guard !digits.isEmpty, i < line.endIndex, line[i] == "." else { return nil }
+        i = line.index(after: i)
+        guard i < line.endIndex, line[i].isWhitespace else { return nil }
+        // An unrepresentable index falls back to 1, as web's !isFinite does.
+        return (Int(digits) ?? 1, String(line[i...].drop(while: \.isWhitespace)))
+    }
+
+    /// A horizontal rule: three or more of `-`, `*` or `_`, all the same,
+    /// with nothing but trailing whitespace after them. Web's
+    /// `HR_RE = /^(-{3,}|\*{3,}|_{3,})\s*$/` — note no leading indent.
+    static func isHorizontalRule(_ line: String) -> Bool {
+        guard let marker = line.first, marker == "-" || marker == "*" || marker == "_" else { return false }
+        let run = line.prefix(while: { $0 == marker })
+        guard run.count >= 3 else { return false }
+        return line[run.endIndex...].allSatisfy(\.isWhitespace)
     }
 
     // MARK: - GFM pipe tables

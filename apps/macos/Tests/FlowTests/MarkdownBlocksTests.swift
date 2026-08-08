@@ -264,6 +264,116 @@ final class MarkdownBlocksTests: XCTestCase {
         )
     }
 
+    // MARK: - Lists and horizontal rules
+    //
+    // Mirrors packages/web/src/lib/format.test.tsx:73-84 and 108-119.
+
+    func testBulletListFromDashStarAndPlus() {
+        // Web: "-", "*" and "+" are one list, not three.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("- one\n* two\n+ three"),
+            [.ulist(items: ["one", "two", "three"])]
+        )
+    }
+
+    func testNumberedListPreservesItsStartIndex() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("3. third\n4. fourth"),
+            [.olist(start: 3, items: ["third", "fourth"])]
+        )
+    }
+
+    func testListMarkersNeedFollowingWhitespace() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("-nope\n1.nope"),
+            [.paragraph("-nope\n1.nope")]
+        )
+    }
+
+    func testListsSplitSurroundingProse() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("before\n- one\n- two\nafter"),
+            [.paragraph("before"), .ulist(items: ["one", "two"]), .paragraph("after")]
+        )
+    }
+
+    func testIndentedListItemsJoinTheSameList() {
+        // Nesting is out of scope (web doesn't do it either): an indented item
+        // is just another item, with its marker and indent stripped.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("- one\n  - two"),
+            [.ulist(items: ["one", "two"])]
+        )
+    }
+
+    func testBulletAndNumberedRunsAreSeparateSegments() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("- a\n1. b"),
+            [.ulist(items: ["a"]), .olist(start: 1, items: ["b"])]
+        )
+    }
+
+    func testHorizontalRuleFromDashesStarsAndUnderscores() {
+        for body in ["---", "***", "___", "----- "] {
+            XCTAssertEqual(MarkdownBlocks.segments(body), [.hr], "body: \(body)")
+        }
+    }
+
+    func testTwoDashesAreNotARule() {
+        XCTAssertEqual(MarkdownBlocks.segments("--"), [.paragraph("--")])
+    }
+
+    func testPipeLineFollowedByDashesIsARuleNotATable() {
+        // format.test.tsx:108-112 — the separator carries no pipe, so "a | b"
+        // stays prose and the dashes are a rule.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("a | b\n---"),
+            [.paragraph("a | b"), .hr]
+        )
+    }
+
+    func testTableSeparatorIsStillATableNotARule() {
+        // The mirror image: with a pipe in it, the dashes are a separator.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("a | b\n--- | ---"),
+            [.table(header: ["a", "b"], align: [nil, nil], rows: [])]
+        )
+    }
+
+    func testRuleSeparatesTwoParagraphs() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("above\n---\nbelow"),
+            [.paragraph("above"), .hr, .paragraph("below")]
+        )
+    }
+
+    func testListsAndRulesInsideFencedCodeAreNotParsed() {
+        // format.test.tsx:114-119 — a marker inside a fence stays code.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("```\n- not a list\n1. not a list\n---\n```"),
+            [.code("- not a list\n1. not a list\n---")]
+        )
+    }
+
+    func testListMarkerInsideQuoteStaysQuoteContent() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("> - not a list"),
+            [.quote("- not a list")]
+        )
+    }
+
+    func testMixedBlockRunKeepsWebsOrdering() {
+        let body = "intro\n# Title\n- one\n- two\n1. first\n2. second\n---\noutro"
+        XCTAssertEqual(MarkdownBlocks.segments(body), [
+            .paragraph("intro"),
+            .heading(level: 1, text: "Title"),
+            .ulist(items: ["one", "two"]),
+            .olist(start: 1, items: ["first", "second"]),
+            .hr,
+            .paragraph("outro"),
+        ])
+    }
+
     // MARK: - UTF-16 ranges (composer attribute pass)
 
     func testClassifiedLineRangesAreContiguousUTF16() {
