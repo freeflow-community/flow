@@ -87,6 +87,16 @@ checks")`, the simulator is wedged from a previous run:
   changed) run against whatever `FLOW_TEST_PDF_ARTIFACT` names, pinned as an
   artifact *and* posted as a message attachment; they skip if it is absent.
 
+- `ThreadNavTests` — thread navigation stays healthy: open a thread, come back
+  (Back button, edge swipe, cancelled half-swipe, rapid open/close cycles),
+  then reopen a thread and switch channels. Needs two channels in the QA Lab
+  workspace: one with a threaded message (`nav205a`, override with
+  `FLOW_TEST_THREAD_CHANNEL`) and one with the message "Hello from nav205b"
+  (`nav205b`, override with `FLOW_TEST_SECOND_CHANNEL`). Note XCUITest waits
+  for app quiescence before each tap, so it cannot tap mid-animation — the
+  push-during-pop race these tests guard against was only reproducible on a
+  device with a slow link.
+
 These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —
 passing them as trailing `xcodebuild` arguments looks right and silently does

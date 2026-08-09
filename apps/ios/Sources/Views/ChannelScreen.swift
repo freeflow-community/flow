@@ -12,6 +12,13 @@ struct ChannelScreen: View {
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var threadRoute: ThreadRoute?
+    /// The parked-thread restore (#89) must run only on the *first* appearance
+    /// of this screen — entering the channel. `.task` re-runs every time a
+    /// popped thread reveals this screen again, and re-pushing there races the
+    /// pop itself: with slow fetches the stale `openThreadRootId` pushes a
+    /// destination mid-pop, which corrupts the NavigationStack and leaves the
+    /// whole content pane unable to push, pop, or even hit-test (nav "stuck").
+    @State private var restoredParkedThread = false
     @State private var showPins = false
     @State private var showChannelOptions = false
 
@@ -147,12 +154,21 @@ struct ChannelScreen: View {
         .navigationDestination(item: $threadRoute) { route in
             ThreadScreen(rootId: route.rootId)
         }
+        // This binding is the single owner of the app-level thread state: a
+        // set pushes and records the open thread, a pop clears it. It used to
+        // be split — ThreadScreen recorded the open on *its* appearance — and
+        // the two halves raced around a pop (see `restoredParkedThread`).
+        //
         // Popping the thread (Back/swipe) closes it for real — issue #89 parks
         // an open thread per channel, and only this screen knows the difference
         // between "the user went back" and "the whole channel screen was
         // replaced by a channel switch", which must leave the parked thread be.
         .onChange(of: threadRoute) { _, route in
-            if route == nil, app.selectedChannelId == channelId { app.openThread(nil) }
+            if let route {
+                app.openThread(route.rootId)
+            } else if app.selectedChannelId == channelId {
+                app.openThread(nil)
+            }
         }
         // Jump-to-message (phase 12): page older history until the target is
         // loaded, then MessageListView scrolls to it; give up when exhausted.
@@ -204,9 +220,13 @@ struct ChannelScreen: View {
         }
         .task {
             app.selectChannel(channelId)
-            // Re-push the thread this channel had open before we left it (#89).
-            if let rootId = app.openThreadRootId {
-                threadRoute = ThreadRoute(rootId: rootId)
+            // Re-push the thread this channel had open before we left it (#89)
+            // — first appearance only; see `restoredParkedThread`.
+            if !restoredParkedThread {
+                restoredParkedThread = true
+                if let rootId = app.openThreadRootId {
+                    threadRoute = ThreadRoute(rootId: rootId)
+                }
             }
             users.start(db: app.db) { try User.fetchAll($0) }
             channel.start(db: app.db) { try Channel.filter(key: channelId).fetchOne($0) }
