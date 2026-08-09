@@ -12,5 +12,3 @@
 - **Lists and dividers now look like lists and dividers in the Mac and iPhone
   apps.** Bullets, numbered lists and `---` separators used to arrive as raw
   markdown characters; they now render the way they always have on the web.
-</content>
-</invoke>
