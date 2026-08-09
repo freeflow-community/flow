@@ -21,6 +21,7 @@ struct SidebarDrawer: View {
 
     @State private var showCreateChannel = false
     @State private var showAddWorkspace = false
+    @State private var showFeatures = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
 
@@ -129,6 +130,7 @@ struct SidebarDrawer: View {
             }
         }
         .sheet(isPresented: $showAddWorkspace) { AddWorkspaceSheet() }
+        .sheet(isPresented: $showFeatures) { FeaturesSheet() }
     }
 
     // MARK: - Sidebar column
@@ -207,6 +209,15 @@ struct SidebarDrawer: View {
             }
             Divider()
             Button("Add Workspace…") { showAddWorkspace = true }
+            Divider()
+            // Version tag + release notes (web + macOS parity: macOS hangs the
+            // sheet off the version label at the foot of this same menu).
+            Button { showFeatures = true } label: {
+                Text("What's new")
+                Text(BuildInfo.label)
+                Image(systemName: "sparkles")
+            }
+            .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
             HStack(spacing: 4) {
                 Text(currentWorkspace?.name ?? "Flow")

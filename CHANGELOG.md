@@ -50,10 +50,6 @@ This file keeps two things:
   no invite surface at all to hang it on. Server API is done and client-agnostic
   (`/v1/workspaces/:id/join-link`), so this is a pure client port. Following a
   join link still works on iOS — it opens the web app, which redeems it.
-- iOS: no build tag or "What's new" notes in the UI — web + macOS show the
-  build's short commit SHA at the foot of the workspace menu, and clicking it
-  opens a FEATURES.md lightbox. iOS has no workspace dropdown to hang either on;
-  needs a home for them (an About/settings row) plus the plist/env plumbing.
 - iOS: optimistic-send failures aren't recoverable — web + macOS keep a failed
   message in the stream with a Retry/Discard affordance (retry re-POSTs with the
   original `clientMsgId`); iOS still needs the `failed` flag on its message row,
