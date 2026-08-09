@@ -75,7 +75,16 @@ checks")`, the simulator is wedged from a previous run:
   attach the screenshots the PR uses; pull them out of the result bundle with
   `xcrun xcresulttool export attachments --path <run>.xcresult --output-path <dir>`.
 
-Both suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
+- `HeaderTopicAndZoomTests` — #202: the channel topic under the channel name,
+  and pinch/double-tap/pan zoom in both full-screen image viewers. Needs two
+  extra channels in the QA Lab workspace, which no seed script creates yet:
+  `topic202` (a topic long enough to truncate, one image message, the same
+  image and a PDF pinned as artifacts) and `notopic202` (no topic). Override
+  the names with `FLOW_TEST_TOPIC_CHANNEL` / `FLOW_TEST_NO_TOPIC_CHANNEL`. Use
+  a detailed image, not a flat colour — a zoomed swatch looks identical to an
+  unzoomed one, and the screenshots are the evidence. Attaches them too.
+
+These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —
 passing them as trailing `xcodebuild` arguments looks right and silently does
 nothing (the app just talks to the default server):

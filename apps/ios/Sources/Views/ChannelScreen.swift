@@ -45,8 +45,43 @@ struct ChannelScreen: View {
         return "# \(ch.name ?? "channel")"
     }
 
+    /// The topic, when there is one worth a line. DMs have none, and an empty
+    /// or whitespace topic means "cleared" — not "blank second line".
+    private var topic: String? {
+        guard let ch = channel.value, !ch.isDM else { return nil }
+        let text = ch.topic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
+    }
+
+    /// The topic line, under the channel name — the macOS header shape
+    /// (`ChannelView.swift:227`) as a phone header allows.
+    ///
+    /// It sits just under the navigation bar rather than inside it. A
+    /// `ToolbarItem(placement: .principal)` is the obvious way to stack two
+    /// lines in the bar and it does not survive this screen: the nav bar is
+    /// shared with `MainView` (hamburger) and the channel row arrives after
+    /// the first frame, and in that order UIKit keeps the title view it first
+    /// sized — leaving a header with no topic *and no name*. A plain view in
+    /// the content has no such install-once problem, keeps the bar exactly as
+    /// it is today when there is no topic, and updates live with the row.
+    @ViewBuilder private var topicLine: some View {
+        if let topic {
+            Text(topic)
+                .font(.system(size: 12))
+                .foregroundStyle(MC.muted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 5)
+                .background(MC.base)
+                .accessibilityIdentifier("channel.header.topic")
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            topicLine
             // The chat area — everything above the composer. Tapping or
             // scrolling any of it puts the keyboard away (#139); the composer
             // is deliberately outside, since tapping it means "type".
