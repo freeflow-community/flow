@@ -10,6 +10,7 @@ import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
 import { ChannelOptionsModal, Modal, UserCard } from './modals';
+import { renderBody } from '../lib/format';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -138,7 +139,13 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           >
             {channel?.kind === 'standard' ? <><span className="text-muted"># </span>{title}</> : title}
           </h2>
-          {channel?.topic && <p className="truncate text-xs text-muted">{channel.topic}</p>}
+          {/* #194: the topic runs through the same inline renderer as a message
+              body, so a URL in it is a real link (new tab) instead of grey text. */}
+          {channel?.topic && (
+            <p data-testid="channel-topic" className="truncate text-xs text-muted">
+              {renderBody(channel.topic, names, auth.user.id)}
+            </p>
+          )}
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">

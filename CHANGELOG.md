@@ -13,6 +13,13 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Auto-linked channel topics (#194) land on web and macOS only, because **iOS
+  does not render a channel topic at all** — `ChannelScreen` sets only
+  `.navigationTitle`, and the topic exists there solely as a field in the
+  Channel Options sheet. Nothing to link, rather than a client that renders it
+  worse. The link logic lives in the shared `Support/MentionRendering.swift`,
+  which the iOS target compiles, so adding the topic to the iOS header closes
+  this gap with no rendering work of its own.
 - A transcript with no history cached yet renders as bare background on web and
   macOS while the first page is in flight (#191) — on a slow link that reads as
   a lost conversation. iOS now shows a loading state instead; the shared
