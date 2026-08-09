@@ -134,8 +134,10 @@ final class ArtifactsTests: XCTestCase {
         app.buttons["artifact.row.brand-swatch.png"].tap()
 
         XCTAssertTrue(app.otherElements["artifact.sheet"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.images["artifact.image.brand-swatch.png"].waitForExistence(timeout: 20),
-                      "image artifact didn't render")
+        // The pane is a zoom scroll view around the image since #202, so match
+        // on the identifier rather than the element type.
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "artifact.image.brand-swatch.png")
+            .firstMatch.waitForExistence(timeout: 20), "image artifact didn't render")
         attach("05-image-artifact")
     }
 

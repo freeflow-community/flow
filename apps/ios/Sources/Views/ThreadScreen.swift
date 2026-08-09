@@ -114,7 +114,11 @@ struct ThreadScreen: View {
         .navigationTitle("Thread")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: rootId) {
-            app.openThread(rootId)
+            // No app.openThread here: ChannelScreen's threadRoute onChange owns
+            // that record. Writing it from this screen's appearance raced the
+            // pop — a Back tap landing before this task ran left a stale
+            // openThreadRootId behind, which the channel screen then re-pushed
+            // mid-pop, corrupting the NavigationStack (nav "stuck").
             thread.start(db: app.db, reset: []) { db in
                 try Message
                     .filter(Column("id") == rootId || Column("threadRootId") == rootId)

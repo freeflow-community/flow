@@ -13,17 +13,14 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- Auto-linked channel topics (#194) land on web and macOS only, because **iOS
-  does not render a channel topic at all** — `ChannelScreen` sets only
-  `.navigationTitle`, and the topic exists there solely as a field in the
-  Channel Options sheet. Nothing to link, rather than a client that renders it
-  worse. The link logic lives in the shared `Support/MentionRendering.swift`,
-  which the iOS target compiles, so adding the topic to the iOS header closes
-  this gap with no rendering work of its own.
-- A transcript with no history cached yet renders as bare background on web
-  while the first page is in flight (#191) — on a slow link that reads as a
-  lost conversation. iOS and macOS now show a loading state instead; the shared
-  `AppState.loadingHistory` the engine publishes is client-agnostic, so web is
+- Auto-linked channel topics (#194) land on web and macOS only. iOS now shows
+  the topic in its header (#202) but as plain text — the link logic lives in
+  the shared `Support/MentionRendering.swift`, which the iOS target already
+  compiles, so this is a small port rather than new work.
+- A transcript with no history cached yet renders as bare background on web and
+  macOS while the first page is in flight (#191) — on a slow link that reads as
+  a lost conversation. iOS now shows a loading state instead; the shared
+  `AppState.loadingHistory` the engine publishes is client-agnostic, so both are
   a pure client port.
 - Custom emoji (#175) are web-only: macOS and iOS render a custom reaction as
   the literal text `:shortcode:` rather than the image. The reaction itself is

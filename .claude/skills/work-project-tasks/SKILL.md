@@ -118,13 +118,19 @@ Batch (ALREADY claimed In Progress — do not re-claim):
 
 Requested by: <display name> <@userId>. Source conversation channelId: <id>.
 
+Read every issue in the batch, then POST A NUMBERED PLAN IN THIS CHANNEL
+BEFORE YOU WRITE ANY CODE — 3-8 steps, each one finishable and checkable, in
+the order you will do them. Not the issue restated: the steps. Then work the
+plan and post one short message per step you finish, naming the step and what
+it produced. If the plan changes, post the revision and the reason.
+
 Follow skills/work-project-tasks/SKILL.md §4–§8: fresh worktree off
 origin/main, build, test, verify in the running app with screenshots, one PR
 closing every issue, then set the items Done — or Blocked per "If you can't
-finish". Post here at the moments §3's reporting list names (claim + approach
-first — before you build anything); upload screenshots as you take them. If
-you are Blocked or need a decision, ALSO send_message the question to the
-source conversation channelId above — the requester is there, not here.
+finish". Post here at the moments §3's reporting list names; upload
+screenshots as you take them. If you are Blocked or need a decision, ALSO
+send_message the question to the source conversation channelId above — the
+requester is there, not here.
 ```
 
 Then reply **one line** and end your turn — the bridge posts your final text
@@ -136,21 +142,61 @@ back where you were asked, so the reply *is* the announcement:
 the run — it reports in the channel, and that pointer is the whole of what the
 source conversation gets.
 
+### Plan first (governs whichever run does the work)
+
+**Before you write a line of code, post a plan in the channel.** Numbered steps,
+in the order you intend to do them, each one a thing that can be *finished* and
+checked off. Three to eight for a normal batch.
+
+This is the most valuable message in the channel. It is the moment when someone
+can say "no, not like that" for the price of one message, instead of after you
+have built the wrong thing.
+
+A plan is not the issue restated. Compare:
+
+> ~~Going to fix the quote block spacing on both native clients.~~
+
+> 1. Reproduce in the macOS app with a multi-segment message.
+> 2. Make the text drive the height — accent bar as an `overlay`, not an `HStack` sibling.
+> 3. Mirror the same change in the iOS view.
+> 4. Screenshot before/after on both.
+> 5. Changelog entry, VERSION bump, PR.
+
+The second one can be argued with. The first cannot.
+
+**Read every issue in the batch before planning**, and make the plan cover the
+whole batch — the grouping exists because the issues share a shape.
+
+**When the plan changes, say so.** A step that turns out to be wrong, or work you
+did not foresee, is not a failure — silently abandoning the plan is. Post the
+revision and the reason in one message, then carry on against the new plan.
+
 ### Reporting (governs whichever run does the work)
 
 Post at the moments a human might want to intervene, not every command:
 
-1. **On claim** — what you picked up, the issue numbers, and the approach in two
-   or three lines. This is the cheapest possible moment to be told "no, not like
-   that".
-2. **On a surprise** — the issue was wrong, the fix is bigger than described, two
-   issues in the batch conflict. Say so when you find it, not in the summary.
-3. **Screenshots** — as evidence accumulates.
-4. **On PR** — the link.
-5. **At the end** — `Done` with the PR, or `Blocked` with the reason.
+1. **On claim** — what you picked up and the issue numbers, followed by the plan
+   above. Nothing else happens until this is posted.
+2. **On finishing a plan step** — name the step, and what it produced: the
+   behaviour you now see, the file you changed, the test that went green. One or
+   two lines. This is the progress signal — someone reading the channel should be
+   able to tell how far through the plan you are without asking.
+3. **On a surprise** — the issue was wrong, the fix is bigger than described, two
+   issues in the batch conflict, a step in the plan was mistaken. Say so when you
+   find it, not in the summary, and post the revised plan with it.
+4. **Screenshots** — as evidence accumulates.
+5. **On PR** — the link.
+6. **At the end** — `Done` with the PR, or `Blocked` with the reason.
+
+**Tie progress to the plan, not to the clock or the command history.** One
+message per step finished is the right rate: a long step is one message even if
+it took an hour, and a burst of ten commands that completes one step is still one
+message. Do not post "still working" — it carries nothing. Do not narrate every
+file you read.
 
 Keep it readable. A channel that narrates every file read is one nobody reads;
-the test is whether someone skimming it later can tell what happened and why.
+the test is whether someone skimming it later can tell what happened, how far it
+got, and why.
 
 Cross-link both ways: put the channel in the PR body, and the PR link in the
 channel.
@@ -386,8 +432,12 @@ round trip.
   `start_task` is available. Claim, open the channel, hand off, reply one line,
   end your turn. The inline path is the fallback for a missing daemon, not a
   choice.
+- **Don't start building before the plan is posted.** The plan is the cheap
+  moment to be corrected; code written ahead of it spends that chance.
+- **Don't let the plan go stale.** If you stop following it, post the revision.
+  A channel whose plan no longer matches the work is worse than none.
 - **Don't work silently.** If the channel exists, the run should be legible from
-  it alone.
+  it alone — including how far through the plan it got.
 - **Don't report twice.** The channel gets the write-up; where you were asked
   gets a line pointing at it. The exception is something they must act on — a
   blocker, a question, a decision.
