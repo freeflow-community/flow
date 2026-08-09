@@ -33,6 +33,7 @@ struct ChannelView: View {
                 userStatuses: userStatuses,
                 currentUserId: app.currentUser?.id,
                 hasMore: app.hasMore[channelId] ?? false,
+                isLoadingHistory: app.loadingHistory.contains(channelId),
                 showThreadAffordances: true,
                 onLoadOlder: {
                     Task { await app.engine.loadOlder(channelId: channelId) }
