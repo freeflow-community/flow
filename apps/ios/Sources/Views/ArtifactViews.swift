@@ -172,14 +172,16 @@ private struct ArtifactContentPane: View {
     }
 }
 
-/// Pinch-to-zoom is what a phone expects of a full-screen image, and a
-/// `ScrollView` with `magnificationGesture` is more code than it's worth —
-/// `.scaledToFit` in a zoomable scroll view is what UIKit gives for free.
+/// Pinch, double-tap and pan come from the shared `ZoomableImageView` — a
+/// `UIScrollView` around the image. Nothing here is free: a plain
+/// `.scaledToFit` image has no zoom at all, which is what this pane shipped
+/// with until #202.
 private struct ArtifactImagePane: View {
     let file: FileAttachment
+    @State private var zoomed = false
 
     var body: some View {
-        Group {
+        ZoomableImageView(contentId: file.id, isZoomed: $zoomed) {
             if file.mimeType == "image/gif" {
                 AnimatedAuthImage(path: "/v1/files/\(file.id)")
             } else {
@@ -192,6 +194,8 @@ private struct ArtifactImagePane: View {
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MC.daypill.opacity(0.4))
+        // While zoomed, a downward pan is a pan — not the sheet's dismiss.
+        .interactiveDismissDisabled(zoomed)
         .accessibilityIdentifier("artifact.image.\(file.name)")
     }
 }
