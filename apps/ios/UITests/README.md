@@ -82,7 +82,10 @@ checks")`, the simulator is wedged from a previous run:
   image and a PDF pinned as artifacts) and `notopic202` (no topic). Override
   the names with `FLOW_TEST_TOPIC_CHANNEL` / `FLOW_TEST_NO_TOPIC_CHANNEL`. Use
   a detailed image, not a flat colour — a zoomed swatch looks identical to an
-  unzoomed one, and the screenshots are the evidence. Attaches them too.
+  unzoomed one, and the screenshots are the evidence. Attaches them too. The
+  two PDF cases (artifact pane and chat attachment, neither of which #202
+  changed) run against whatever `FLOW_TEST_PDF_ARTIFACT` names, pinned as an
+  artifact *and* posted as a message attachment; they skip if it is absent.
 
 These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —

@@ -26,6 +26,13 @@ final class HeaderTopicAndZoomTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLOW_TEST_NO_TOPIC_CHANNEL"] ?? "notopic202"
     }
 
+    /// The PDF artifact to drive acceptance 9 against. Any real PDF will do —
+    /// point it at one with dense text, which is what makes a zoom screenshot
+    /// worth looking at.
+    private var pdfArtifact: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_PDF_ARTIFACT"] ?? "zoom-doc.pdf"
+    }
+
     private func launch(inChannel name: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = [
@@ -155,17 +162,40 @@ final class HeaderTopicAndZoomTests: XCTestCase {
 
         app.buttons["channel.menu"].tap()
         app.buttons["channel.artifacts"].tap()
-        let row = app.buttons["artifact.row.zoom-doc.pdf"]
+        let row = app.buttons["artifact.row.\(pdfArtifact)"]
         guard row.waitForExistence(timeout: 10) else {
             throw XCTSkip("no PDF artifact fixture in this workspace")
         }
         row.tap()
 
-        let pdf = element(app, "artifact.pdf.zoom-doc.pdf")
+        let pdf = element(app, "artifact.pdf.\(pdfArtifact)")
         XCTAssertTrue(pdf.waitForExistence(timeout: 25), "the PDF pane didn't open")
         attach("11-pdf-fit")
         pdf.pinch(withScale: 3, velocity: 2)
         attach("12-pdf-zoomed")
         app.buttons["artifact.close"].tap()
+    }
+
+    /// The other way a PDF reaches a viewer: attached to a message, where the
+    /// file chip hands it to QuickLook. QuickLook brings its own zoom, so this
+    /// is verification that the chat path was left alone — no code of ours.
+    func testPdfChatAttachmentOpensQuickLookAndZooms() throws {
+        let app = launch(inChannel: topicChannel)
+
+        let chip = element(app, "msg.file.\(pdfArtifact)")
+        guard chip.waitForExistence(timeout: 20) else {
+            throw XCTSkip("no PDF message attachment in #\(topicChannel)")
+        }
+        chip.tap()
+
+        // QuickLook's chrome is a system view controller, so key off its Done
+        // button rather than anything of ours.
+        let done = app.buttons["QLOverlayDoneButtonAccessibilityIdentifier"]
+        XCTAssertTrue(done.waitForExistence(timeout: 30), "QuickLook never opened for the PDF")
+        attach("13-quicklook-fit")
+
+        app.pinch(withScale: 3, velocity: 2)
+        attach("14-quicklook-zoomed")
+        done.tap()
     }
 }
