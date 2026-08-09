@@ -10,6 +10,8 @@
   leaves the header blank.
 - `[qa]` `HeaderTopicAndZoomTests` drives both, pinch included, and attaches the
   screenshots.
+- `[ios]` Bump the build number to 2.0 (16) for the App Store Connect upload
+  carrying these two changes.
 
 ## Feature
 
