@@ -6,6 +6,10 @@
 - `[macos]` Ported the iOS #191 loading states: "Loading conversation…" /
   "Loading earlier messages…" while the first page is in flight, "No messages
   yet" for a truly empty channel.
+- `[macos]` `[qa]` `Banners.available` now also requires a real `.app` bundle,
+  so `swift test` no longer crashes when a signed-in bootstrap reaches the
+  notification-permission request (the xctest runner has a bundle identifier
+  but no app bundle).
 
 ## Feature
 

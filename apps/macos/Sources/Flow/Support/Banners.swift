@@ -4,10 +4,15 @@ import AppKit
 
 /// Local OS notification banners (phase2.md §4 — UNUserNotificationCenter,
 /// no APNs). UserNotifications requires a real .app bundle; when running as a
-/// bare SwiftPM executable (dev/QA path) `Bundle.main.bundleIdentifier` is nil
-/// and every call here becomes a no-op — in-app notification UI still works.
+/// bare SwiftPM executable (dev/QA path) or inside `swift test` every call
+/// here becomes a no-op — in-app notification UI still works. The identifier
+/// check alone is not enough: the xctest runner *has* a bundle identifier but
+/// no app bundle, and `UNUserNotificationCenter.current()` throws there,
+/// killing whichever test is running when a signed-in bootstrap reaches it.
 enum Banners {
-    static var available: Bool { Bundle.main.bundleIdentifier != nil }
+    static var available: Bool {
+        Bundle.main.bundleIdentifier != nil && Bundle.main.bundleURL.pathExtension == "app"
+    }
 
     @MainActor private static var permissionRequested = false
 
