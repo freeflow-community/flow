@@ -89,13 +89,20 @@ checks")`, the simulator is wedged from a previous run:
 
 - `ThreadNavTests` — thread navigation stays healthy: open a thread, come back
   (Back button, edge swipe, cancelled half-swipe, rapid open/close cycles),
-  then reopen a thread and switch channels. Needs two channels in the QA Lab
-  workspace: one with a threaded message (`nav205a`, override with
-  `FLOW_TEST_THREAD_CHANNEL`) and one with the message "Hello from nav205b"
-  (`nav205b`, override with `FLOW_TEST_SECOND_CHANNEL`). Note XCUITest waits
-  for app quiescence before each tap, so it cannot tap mid-animation — the
-  push-during-pop race these tests guard against was only reproducible on a
-  device with a slow link.
+  then reopen a thread and switch channels. Fixtures come from
+  `node packages/server/scripts/qa-seed-nav.mjs` (channels `nav205a` /
+  `nav205b`; override with `FLOW_TEST_THREAD_CHANNEL` /
+  `FLOW_TEST_SECOND_CHANNEL`). Note XCUITest waits for app quiescence before
+  each tap, so it cannot tap mid-animation — the push-during-pop race these
+  tests guard against was only reproducible on a device with a slow link.
+
+- `ScrollBounceTests` — a short back-pull through history stays where the
+  finger left it instead of snapping back to the newest message. Fixture is
+  `qa-seed-nav.mjs`'s `scroll209` channel (40 messages; override with
+  `FLOW_TEST_SCROLL_CHANNEL`). Same caveat: the synthesized slow drag has no
+  deceleration frames, so the release-time snap the fix removes was only
+  fully reproducible with a real flick on a device — the test pins the fixed
+  behaviour rather than discriminating the old code.
 
 These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —

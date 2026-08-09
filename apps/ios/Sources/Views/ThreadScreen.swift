@@ -98,7 +98,9 @@ struct ThreadScreen: View {
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
                 }
-                .defaultScrollAnchor(.bottom)
+                // Size-change role removed on iOS 18+ — same short-back-pull
+                // bounce as the channel list (see BottomAnchor).
+                .modifier(BottomAnchor())
                 .onChange(of: app.focusMessageId) { _, _ in focusPinnedMessage(proxy) }
                 .onChange(of: thread.value.count) { _, _ in focusPinnedMessage(proxy) }
                 .onAppear { focusPinnedMessage(proxy) }
