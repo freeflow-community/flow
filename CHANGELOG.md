@@ -20,10 +20,10 @@ This file keeps two things:
   worse. The link logic lives in the shared `Support/MentionRendering.swift`,
   which the iOS target compiles, so adding the topic to the iOS header closes
   this gap with no rendering work of its own.
-- A transcript with no history cached yet renders as bare background on web and
-  macOS while the first page is in flight (#191) — on a slow link that reads as
-  a lost conversation. iOS now shows a loading state instead; the shared
-  `AppState.loadingHistory` the engine publishes is client-agnostic, so both are
+- A transcript with no history cached yet renders as bare background on web
+  while the first page is in flight (#191) — on a slow link that reads as a
+  lost conversation. iOS and macOS now show a loading state instead; the shared
+  `AppState.loadingHistory` the engine publishes is client-agnostic, so web is
   a pure client port.
 - Custom emoji (#175) are web-only: macOS and iOS render a custom reaction as
   the literal text `:shortcode:` rather than the image. The reaction itself is
