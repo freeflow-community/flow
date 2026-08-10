@@ -117,8 +117,34 @@ struct MessageListView: View {
                                 // the numbers are real and the rows near the end
                                 // are laid out, so a `LazyVStack`'s estimates for
                                 // everything above can't put us in empty space.
+                                //
+                                // Two extra gates so an ordinary scroll can't
+                                // trigger this (the "short pull bounces back"
+                                // bug — any pull under `minBackScroll` got
+                                // yanked to the bottom on release):
+                                // growth — the frame also changes from plain
+                                // scrolling, and mid-scroll a LazyVStack even
+                                // *grows* as real row heights replace its
+                                // estimates; near the bottom — inside the same
+                                // slack that counts as "at the bottom"
+                                // everywhere else. A reader who has pulled past
+                                // the slack has left the end on purpose, pinned
+                                // or not; a new message must not drag them
+                                // back. macOS gets this for free by unpinning
+                                // on any upward scroll, which iOS deliberately
+                                // doesn't (see the Parity note on #159). The
+                                // keyboard stays covered by the viewport
+                                // observer below.
+                                // The near-bottom check reads the OLD frame:
+                                // "was the reader at the bottom when the
+                                // content grew" — a tall new row pushes the
+                                // new frame's bottom far past the slack even
+                                // for a reader who was sitting right at the
+                                // end, and the glue exists for exactly them.
                                 guard focusMessageId == nil, pinToBottom, !isDragging else { return }
-                                guard new != old, let lastId = messages.last?.id else { return }
+                                guard old.maxY - viewportHeight <= Self.bottomSlack,
+                                      new.height > old.height + 1,
+                                      let lastId = messages.last?.id else { return }
                                 proxy.scrollTo(lastId, anchor: .bottom)
                             }
                     }
@@ -176,7 +202,15 @@ struct MessageListView: View {
             // targets the same bottom edge, so nothing can disagree with it —
             // macOS blanked its transcript exactly this way by installing a
             // second one (see the NOTE in its MessageListView).
-            .defaultScrollAnchor(.bottom)
+            //
+            // On iOS 18+ the anchor is scoped to initial offset + alignment
+            // only. The default all-roles form also re-anchors on *content
+            // size changes*, and a LazyVStack resizes mid-scroll as real row
+            // heights replace its estimates — the framework itself yanked any
+            // short back-pull (under `minBackScroll`) straight back to the
+            // bottom on release. Following new messages is our follow/glue's
+            // job, which respects the pin state; the anchor must not compete.
+            .modifier(BottomAnchor())
             // Keyboard dismissal (tap + scroll) is applied by the screen that
             // owns the composer, so it can cover the whole chat area rather
             // than just this list — see ChannelScreen (#139).
@@ -296,6 +330,23 @@ struct MessageListView: View {
         guard let prev = ISO8601.parse(messages[index - 1].createdAt),
               let cur = ISO8601.parse(messages[index].createdAt) else { return false }
         return !Calendar.current.isDate(prev, inSameDayAs: cur)
+    }
+}
+
+/// Bottom scroll anchor with the size-change role removed on iOS 18+ (see the
+/// comment at the use site in MessageListView: the all-roles form re-anchors
+/// on content size changes, which bounces a short back-pull). iOS 17 has no
+/// role API and keeps the all-roles form.
+struct BottomAnchor: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .alignment)
+        } else {
+            content.defaultScrollAnchor(.bottom)
+        }
     }
 }
 
