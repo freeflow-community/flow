@@ -11,17 +11,15 @@ enum FeatureBlock {
 /// Loading + parsing for FEATURES.md, shared by the macOS sheet (`FeaturesView`)
 /// and the iOS sheet (`FeaturesSheet`). The doc is generated from the
 /// `## Feature` sections of `changelog/` by `scripts/build-features.mjs`, so it
-/// is never in the repo — each client gets it a different way:
-///
-/// - macOS bundles it (`tools/make-app.sh` copies it into Resources) → `load()`.
-/// - iOS fetches it from the server, like the web client → `fetch()`. iOS
-///   archives straight through `xcodebuild` with no shell wrapper to run the
-///   generator, and fetched notes stay current between TestFlight builds.
+/// is never in the repo — both native clients bundle it at build time instead:
+/// macOS in `tools/make-app.sh`, iOS in the "Bundle FEATURES.md" build phase in
+/// `apps/ios/project.yml`. Bundling is what keeps the notes honest: a client
+/// shows the notes of the build you are running, and needs no network to do it.
 ///
 /// The block renderer lives in each client's view; only the parse is shared,
 /// because macOS's message `MarkdownBlocks` doesn't cover headings/lists.
 enum FeatureNotes {
-    /// Loads the bundled FEATURES.md (macOS). Dev fallback (bare `swift run`, no
+    /// Loads the bundled FEATURES.md. Dev fallback (bare `swift run`, no
     /// bundle): walk from this source file up to the repo root — resolves only
     /// on the build machine, harmless otherwise. Empty when there is none.
     static func load() -> String {
@@ -33,31 +31,6 @@ enum FeatureNotes {
         // …/Sources/Flow/Support/FeatureNotes.swift → repo root (6 levels up).
         for _ in 0..<6 { root.deleteLastPathComponent() }
         return (try? String(contentsOf: root.appendingPathComponent("FEATURES.md"), encoding: .utf8)) ?? ""
-    }
-
-    /// Fetches FEATURES.md from the server the app is signed in to (iOS). The
-    /// server serves it as a static file out of the web dist, unauthenticated —
-    /// same URL the web client's "What's new" lightbox uses.
-    static func fetch() async throws -> String {
-        var url = Server.baseURL.appendingPathComponent("FEATURES.md")
-        #if DEBUG
-        // QA hook (DEBUG-only, like FLOW_DEBUG_EMAIL): point *only* the notes
-        // fetch somewhere else, so the failure path can be exercised with the
-        // app still signed in — see UITests/FeaturesSheetTests.
-        if let raw = ProcessInfo.processInfo.environment["FLOW_DEBUG_FEATURES_URL"],
-           let override = URL(string: raw) {
-            url = override
-        }
-        #endif
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadRevalidatingCacheData
-        request.timeoutInterval = 15
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard code == 200, let text = String(data: data, encoding: .utf8) else {
-            throw URLError(.badServerResponse)
-        }
-        return text
     }
 
     /// Inline markdown → AttributedString (**bold**, *italic*, `code`, links).

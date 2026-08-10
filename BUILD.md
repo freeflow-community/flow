@@ -179,6 +179,11 @@ xcodebuild -exportArchive -archivePath build/Flow.xcarchive \
   -exportOptionsPlist ExportOptions.plist -allowProvisioningUpdates
 ```
 
+The archive needs **Node on `PATH`**: a "Bundle FEATURES.md" build phase runs
+`scripts/build-features.mjs` and copies the result into the app, so the
+"What's new" screen ships the notes of that exact build. The phase fails the
+build with a clear message if it can't find `node`.
+
 The second command signs with an auto-provisioned Apple Distribution
 cert/profile and **uploads straight to App Store Connect** (that's the
 `destination: upload` in `ExportOptions.plist`); the build lands in TestFlight

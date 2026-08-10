@@ -33,6 +33,29 @@ targets:
         excludes: [Banners.swift, Updater.swift]
     dependencies:
       - package: GRDB
+    # Ship the user-facing release notes inside the app, so the "What's new"
+    # screen shows exactly the notes of the installed build and needs no
+    # network — the same two steps tools/make-app.sh runs for macOS.
+    # FEATURES.md is generated from changelog/ and gitignored, so it can't be
+    # listed as a source file; this phase builds it and copies it in.
+    postBuildScripts:
+      - name: Bundle FEATURES.md
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          ROOT="$SRCROOT/../.."
+          NODE="$(command -v node || true)"
+          if [ -z "$NODE" ]; then
+            for candidate in /opt/homebrew/bin/node /usr/local/bin/node; do
+              if [ -x "$candidate" ]; then NODE="$candidate"; break; fi
+            done
+          fi
+          if [ -z "$NODE" ]; then
+            echo "error: node not found. The What's new screen needs FEATURES.md, which scripts/build-features.mjs generates. Install Node or put it on PATH."
+            exit 1
+          fi
+          "$NODE" "$ROOT/scripts/build-features.mjs"
+          cp "$ROOT/FEATURES.md" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/FEATURES.md"
     # Sign in with Apple. XcodeGen writes the entitlements file; the App ID's
     # capability must also be enabled in the developer portal (automatic
     # signing handles this when archiving in Xcode).

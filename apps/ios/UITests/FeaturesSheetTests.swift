@@ -1,13 +1,12 @@
 import XCTest
 
 /// #206 — the "What's new" sheet, iOS's parity with the web lightbox and the
-/// macOS sheet. iOS fetches FEATURES.md from the server, so the acceptance
-/// criteria are: the drawer's workspace menu offers it, real notes render, and
-/// a server it can't reach produces a readable failure — not a blank page.
+/// macOS sheet. FEATURES.md is bundled into the app by the "Bundle FEATURES.md"
+/// build phase, so the acceptance criteria are: the drawer's workspace menu
+/// offers it, and real notes render out of the bundle — no server involved.
 ///
-/// Needs a dev server (which serves `/FEATURES.md` out of the web dist) with
-/// the `qa-seed.mjs` fixtures. Override the server with `FLOW_TEST_SERVER_URL`
-/// when 8787 is taken.
+/// Sign-in still needs a dev server with the `qa-seed.mjs` fixtures. Override
+/// it with `FLOW_TEST_SERVER_URL` when 8787 is taken.
 final class FeaturesSheetTests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
@@ -17,20 +16,13 @@ final class FeaturesSheetTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLOW_TEST_SERVER_URL"] ?? "http://127.0.0.1:8787"
     }
 
-    /// A port nothing listens on. `FLOW_DEBUG_FEATURES_URL` redirects only the
-    /// notes fetch, so the app still signs in normally — which is what losing
-    /// the network looks like to this screen.
-    private let deadNotesURL = "http://127.0.0.1:1/FEATURES.md"
-
-    private func launch(notesURL: String? = nil) -> XCUIApplication {
+    private func launch() -> XCUIApplication {
         let app = XCUIApplication()
-        var env = [
+        app.launchEnvironment = [
             "FLOW_SERVER_URL": serverURL,
             "FLOW_DEBUG_EMAIL": "alice@qa.local",
             "FLOW_DEBUG_PASSWORD": "qa-password-1",
         ]
-        if let notesURL { env["FLOW_DEBUG_FEATURES_URL"] = notesURL }
-        app.launchEnvironment = env
         app.launch()
         let menu = app.buttons["nav.menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 60), "never signed in — is the dev server up?")
@@ -70,13 +62,14 @@ final class FeaturesSheetTests: XCTestCase {
     }
 
     /// Acceptance: the notes actually render — headings and bullets from the
-    /// fetched FEATURES.md, not an empty scroll view.
-    func testNotesRenderFromTheServer() {
+    /// bundled FEATURES.md, not an empty scroll view. Nothing fetches them, so
+    /// rendering at all is what proves the build phase bundled the file.
+    func testNotesRenderFromTheBundle() {
         let app = launch()
         openWorkspaceMenu(app).tap()
 
         let notes = app.scrollViews["features.notes"]
-        XCTAssertTrue(notes.waitForExistence(timeout: 30), "the notes never loaded from \(serverURL)")
+        XCTAssertTrue(notes.waitForExistence(timeout: 30), "no notes — did the Bundle FEATURES.md phase run?")
         XCTAssertGreaterThan(
             notes.staticTexts.count, 5,
             "the sheet loaded but rendered almost nothing — check the markdown parse"
@@ -85,22 +78,5 @@ final class FeaturesSheetTests: XCTestCase {
 
         app.buttons["features.done"].tap()
         XCTAssertFalse(app.scrollViews["features.notes"].waitForExistence(timeout: 5), "Done didn't dismiss the sheet")
-    }
-
-    /// Acceptance: an unreachable server gives a message and a retry, because
-    /// this screen needs the network and a blank page is the likely defect.
-    func testUnreachableServerShowsMessageNotBlankScreen() {
-        let app = launch(notesURL: deadNotesURL)
-
-        openWorkspaceMenu(app).tap()
-
-        let headline = app.descendants(matching: .any)
-            .matching(identifier: "features.error.title").firstMatch
-        XCTAssertTrue(headline.waitForExistence(timeout: 40), "a dead server produced no error state — blank screen?")
-        XCTAssertTrue(
-            app.descendants(matching: .any).matching(identifier: "features.retry").firstMatch.exists,
-            "the failure explains itself but offers no way to try again"
-        )
-        attach("03-whats-new-offline")
     }
 }

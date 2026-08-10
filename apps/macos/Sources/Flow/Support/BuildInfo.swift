@@ -15,10 +15,25 @@ enum BuildInfo {
         Bundle.main.object(forInfoDictionaryKey: "FlowBuild") as? String ?? "dev"
     }
 
+    /// `CFBundleVersion` — the build number App Store Connect keys on.
+    static var build: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+    }
+
     /// Menu-ready label, e.g. `Version 2.2.16`; `Build a1b2c3d` when there is no
-    /// version to show (dev build).
+    /// version to show (dev build). iOS appends the build number
+    /// (`Version 2.0 (21)`): every TestFlight build of a release shares one
+    /// marketing version, so the version alone doesn't identify which one a
+    /// tester is running.
     static var label: String {
-        if let version, !version.isEmpty { return "Version \(version)" }
+        if let version, !version.isEmpty {
+            #if os(iOS)
+            if let build, !build.isEmpty, build != version {
+                return "Version \(version) (\(build))"
+            }
+            #endif
+            return "Version \(version)"
+        }
         return "Build \(sha)"
     }
 }
