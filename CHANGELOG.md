@@ -208,6 +208,10 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The version label shows the build number on iOS (`Version 2.0 (21)`) but not
+  on macOS: every TestFlight build of a release shares one marketing version, so
+  the number is what identifies which build a tester is running. macOS versions
+  are unique per release and already carry a commit SHA.
 - Multiple independent windows (⌘N, each with its own workspace/channel/thread
   selection) are macOS-only: the browser already gives web this via tabs, and
   the iPhone is a single-screen app. Inherent to the platforms, not a gap.
