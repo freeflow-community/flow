@@ -13,7 +13,7 @@ If you only want to run Flow locally, you want
 | Artifact | Build | Release | Automatic? |
 |---|---|---|---|
 | Server + web client | `pnpm build` | `git push origin main` | **Yes** — Railway builds every push to `main` |
-| macOS app | `apps/macos/tools/make-app.sh` | `apps/macos/tools/publish-dmg.sh --build` | No — run locally, needs signing credentials |
+| macOS app | `apps/macos/tools/make-app.sh` | `apps/macos/tools/release-macos.sh` | No — run locally, needs signing credentials |
 | iOS app | `xcodegen generate` + Xcode | archive + `xcodebuild -exportArchive` (see below) | No — run locally, needs the signing account |
 | `flow-agent-bridge` (npm) | `pnpm --filter flow-agent-bridge build` | bump `version`, merge to `main` | **Yes** — GitHub Actions publishes |
 | Marketing site (`flowlandingpage/`) | `pnpm build` (in `flowlandingpage/`) | merge to `main` | **Yes** — GitHub Actions deploys to Cloudflare Pages |
