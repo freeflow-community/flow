@@ -33,6 +33,9 @@ targets:
         excludes: [Banners.swift, Updater.swift]
     dependencies:
       - package: GRDB
+      # Embeds FlowShare.appex in the app's PlugIns folder. A share extension
+      # is only installed as part of its host app.
+      - target: FlowShare
     # Ship the user-facing release notes inside the app, so the "What's new"
     # screen shows exactly the notes of the installed build and needs no
     # network — the same two steps tools/make-app.sh runs for macOS.
@@ -63,6 +66,12 @@ targets:
       path: Sources/Flow.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # Shared with the share extension. The group is the app's own id, so
+        # tokens already written by the app are inside it and no migration is
+        # needed (issue #214, failure mode 1).
+        keychain-access-groups: [$(AppIdentifierPrefix)im.freeflow.app]
+        # Carries the last-used channel between the app and the extension.
+        com.apple.security.application-groups: [group.im.freeflow.app]
     info:
       path: Sources/Generated-Info.plist
       properties:
@@ -102,6 +111,83 @@ targets:
         # Capabilities, or via DEVELOPMENT_TEAM). Simulator CLI builds pass
         # CODE_SIGNING_ALLOWED=NO on the xcodebuild invocation instead, so the
         # committed project stays device-ready by default.
+
+  # Share extension (issue #214). Its own process, its own bundle and its own
+  # App ID — hence the duplicated entitlements and the FlowServerURL below.
+  FlowShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    # Only the layers a one-shot POST needs. No SyncEngine, no GRDB cache, no
+    # socket: this process exists for a few seconds and has a ~120 MB ceiling.
+    sources:
+      - path: ShareExtension
+      - path: ../macos/Sources/Flow/Models
+      - path: ../macos/Sources/Flow/Networking/APIClient.swift
+      - path: ../macos/Sources/Flow/Support/Server.swift
+      - path: ../macos/Sources/Flow/Support/Profile.swift
+      - path: ../macos/Sources/Flow/Support/Keychain.swift
+      - path: ../macos/Sources/Flow/Support/ImagePrep.swift
+      - path: ../macos/Sources/Flow/Support/ISO8601.swift
+      - path: ../macos/Sources/Flow/Support/UUIDv7.swift
+      - path: ../macos/Sources/Flow/Support/AgentStatus.swift
+    dependencies:
+      # Models.swift declares GRDB record conformances. The extension never
+      # opens a database; it links the library for the type conformances only.
+      - package: GRDB
+    # Failure mode 2 is invisible at runtime — a missing FlowServerURL just
+    # makes the extension talk to localhost and look signed out. Catch it where
+    # it cannot be missed instead: the build.
+    postBuildScripts:
+      - name: Assert FlowServerURL is stamped
+        basedOnDependencyAnalysis: false
+        # Declared so this phase is ordered *after* the Info.plist is written.
+        # Without it the check can run against a plist that doesn't exist yet
+        # and pass by accident.
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          set -euo pipefail
+          PLIST="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          if ! /usr/libexec/PlistBuddy -c 'Print :FlowServerURL' "$PLIST" >/dev/null 2>&1; then
+            echo "error: FlowServerURL is missing from $PRODUCT_NAME's Info.plist. Bundle.main in an extension is the extension's own bundle, so without this key Server.baseURL falls back to 127.0.0.1:8787 and Server.storageSuffix changes the Keychain account name — the extension silently reads no token. Add it to the target's info: properties in apps/ios/project.yml."
+            exit 1
+          fi
+    entitlements:
+      path: ShareExtension/FlowShare.entitlements
+      properties:
+        # Same group as the app: this is what lets the extension read the
+        # session token the app wrote (issue #214, failure mode 1).
+        keychain-access-groups: [$(AppIdentifierPrefix)im.freeflow.app]
+        com.apple.security.application-groups: [group.im.freeflow.app]
+    info:
+      path: ShareExtension/Generated-Info.plist
+      properties:
+        CFBundleDisplayName: Flow
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Bundle.main in an extension is the *extension's* bundle, so the app's
+        # copy of this key is invisible here. Without it Server.baseURL falls
+        # back to 127.0.0.1:8787 and, worse, Server.storageSuffix changes — so
+        # the Keychain account name changes and the token is not found even
+        # with the access group right (issue #214, failure mode 2).
+        FlowServerURL: https://app.freeflow.im
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsImageWithMaxCount: 1
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.share
+        DEVELOPMENT_TEAM: RP5QYMYA4Z
+        MARKETING_VERSION: "2.0"
+        CURRENT_PROJECT_VERSION: "21"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
 
   # XCUITest target: taps happen inside the simulator, so iOS UI checks don't
   # need the operator's desktop the way the macOS AX harness does. Runs against

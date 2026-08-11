@@ -13,6 +13,10 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- "Share to Flow" from the system share sheet is iOS-only (#214). macOS supports
+  share extensions too and the extension's logic is platform-agnostic
+  (`APIClient` + `ImagePrep` + a channel picker), so this is a target and an
+  entitlement rather than new work. Web has no OS share sheet to hook.
 - Auto-linked channel topics (#194) land on web and macOS only. iOS now shows
   the topic in its header (#202) but as plain text — the link logic lives in
   the shared `Support/MentionRendering.swift`, which the iOS target already
