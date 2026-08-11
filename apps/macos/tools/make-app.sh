@@ -23,6 +23,9 @@ BUILD_SHA=${BUILD_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}
 # updates by CFBundleVersion, so it must always increase: the commit count on
 # the current branch does that without any state to keep. A SHA cannot be
 # compared, which is why FlowBuild alone was never enough to detect "newer".
+# FLOW_APP_VERSION is how a release supplies the marketing version:
+# tools/release-macos.sh derives it from the live appcast and passes it in. The
+# VERSION file is only the fallback for local builds — do not bump it in a PR.
 SHORT_VERSION=${FLOW_APP_VERSION:-$(cat VERSION 2>/dev/null || echo "2.0.0")}
 BUILD_NUMBER=${FLOW_BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo "1")}
 

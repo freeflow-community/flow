@@ -111,30 +111,49 @@ against different servers coexist on one Mac without interfering.
 
 ### Release
 
-One command, from the repo root:
+One command, from the repo root, on a clean `main` that matches origin:
 
 ```sh
-apps/macos/tools/publish-dmg.sh --build
+apps/macos/tools/release-macos.sh              # patch bump  (2.2.24 -> 2.2.25)
+apps/macos/tools/release-macos.sh --minor      # 2.2.24 -> 2.3.0
+apps/macos/tools/release-macos.sh 2.5.0        # explicit
+apps/macos/tools/release-macos.sh --dry-run    # show the plan, build nothing
 ```
 
-That runs the whole chain — release build, sign, notarize, staple, DMG, signed
-Sparkle appcast — and uploads the update archives, deltas, appcast and DMG to
-R2. Do not run `dist.sh` and `publish-dmg.sh` as separate steps unless you have
-a reason to; `--build` already defaults the signing identity and the notarytool
-profile, and publishing a DMG without the appcast ships a build that no existing
-install is ever offered.
+**Releasing is a separate act from merging, and the version comes from the live
+appcast — not from a file in the repo.** The script reads
+`https://app.freeflow.im/download/mac/appcast.xml` to learn what is actually
+published, adds one, prints the commits since the last tag, asks you to confirm,
+then runs the full chain via `publish-dmg.sh --build`: release build, sign,
+notarize, staple, DMG, signed Sparkle appcast, and the uploads to R2. On success
+— and only then — it tags the commit `macos-v<version>` and pushes the tag.
 
-Three things to know:
+That ordering is the point. A `macos-v*` tag always means "this exact commit is
+live", never "someone tried". It is also the only thing that records *which
+commit* a release contains; `apps/macos/VERSION` never did.
 
-- **Bump `apps/macos/VERSION` first.** `CFBundleVersion` is the commit count so
-  it always increases, and Sparkle will offer the update either way — but the
-  release notes users see are keyed to the short version, and reusing it puts
-  two identically-titled items in the feed.
+Four things to know:
+
+- **Don't bump `apps/macos/VERSION` in a PR.** It is now just a fallback for
+  local `make-app.sh` builds. The release version arrives through
+  `FLOW_APP_VERSION`, which `make-app.sh` already prefers.
+- **`CFBundleVersion` is untouched** — still `git rev-list --count HEAD`, which
+  is derived and monotonic. Sparkle orders updates by it.
 - **Run it in a terminal you can see.** The appcast is signed with an EdDSA key
   in the login keychain, which can raise a GUI prompt (`-25320` if unanswered).
+  `--yes` skips the confirmation but cannot answer a keychain prompt.
 - **One-time credentials:** a Developer ID Application certificate, a
-  `flow-notary` notarytool profile, `dmgbuild`, and R2 keys in the repo-root
-  `.env`. Setup is in [docs/specs/phase14.md](docs/specs/phase14.md) §2.
+  `flow-notary` notarytool profile, `dmgbuild` importable by the `python3` on
+  PATH, and R2 keys in the repo-root `.env`. Setup is in
+  [docs/specs/phase14.md](docs/specs/phase14.md) §2.
+
+**The Sparkle EdDSA private key lives in one login keychain on one Mac.** If
+that machine is lost, no future appcast can be signed and every installed copy
+stops receiving updates permanently. Keep a backup of that key somewhere safe.
+
+`publish-dmg.sh --build` still works on its own if you need to re-upload without
+cutting a version. It just won't tag, and it will reuse whatever version is in
+`VERSION` — which is why `release-macos.sh` is the normal path.
 
 `.github/workflows/dist-macos.yml` mirrors this in CI, but it is
 `workflow_dispatch` only and **has never been run** — every release so far has
