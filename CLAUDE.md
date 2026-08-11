@@ -53,13 +53,22 @@
   by, and which ones ship automatically. Two rules worth knowing without
   opening it: merging to `main` deploys the server + web client (Railway) but
   does **not** release the macOS or iOS app, and shipping macOS is one command,
-  `apps/macos/tools/publish-dmg.sh --build` (never `dist.sh` + publish as
-  separate steps, and bump `apps/macos/VERSION` first).
-- **ALWAYS bump `apps/macos/VERSION` in any PR that modifies the macOS app**
-  (`apps/macos/**`, including the shared Swift core iOS reuses). The bump rides
-  the same PR so the next `publish-dmg.sh` run can't reuse a released version's
-  number — release notes are keyed to the short version, and reusing one puts
-  two identically-titled items in the Sparkle feed.
+  `apps/macos/tools/release-macos.sh` (never `dist.sh` + `publish-dmg.sh` as
+  separate steps).
+- **NEVER bump a native app's version in a feature PR.** Releasing is a
+  separate act from merging, and the version belongs to the release, not to
+  whoever last touched the code. `release-macos.sh` reads the **live appcast**
+  to learn what is actually published, adds one, builds that commit, and tags
+  it `macos-v<version>` only after the upload succeeds — so a tag always means
+  "this commit is live", and it names the commit, which no version file ever
+  did. `apps/macos/VERSION` is now only a fallback for local `make-app.sh`
+  builds; leave it alone.
+  (Why the old rule went: bumping in PRs recorded an intention rather than a
+  fact, and it failed twice in one day — two PRs bumped to the same 2.2.24 and
+  the second merged as a silent no-op, and that release actually carried three
+  PRs' worth of code. iOS had the mirror-image failure: `project.yml` said
+  build 12 while App Store Connect already held 13, so the upload was rejected.
+  A number in the repo cannot see the server that owns it.)
 - **`flow-agent-bridge` publishes itself.** Never run `npm publish` by hand.
   `.github/workflows/publish-bridge.yml` fires on any push to `main` touching
   `packages/agent-bridge/**` and publishes via npm trusted publishing (OIDC —
