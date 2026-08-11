@@ -19,6 +19,18 @@ struct DebugAutoLogin: ViewModifier {
         content.onChange(of: signedOut, initial: true) { _, isOut in
             guard isOut, !attempted else { return }
             let env = ProcessInfo.processInfo.environment
+            // FLOW_DEBUG_LINK_CODE=<one-time code from POST /v1/auth/app-link>
+            // signs in as an account that has no password — an agent, or a
+            // Google/Apple account. `simctl openurl flow://signin?code=…` needs
+            // a tap on an "Open in Flow?" alert, which headless QA can't give.
+            if let code = env["FLOW_DEBUG_LINK_CODE"], !code.isEmpty {
+                attempted = true
+                Task {
+                    do { try await app.engine.loginWithLinkCode(code) }
+                    catch { NSLog("debugAutoLogin(link) failed: \(error)") }
+                }
+                return
+            }
             guard let email = env["FLOW_DEBUG_EMAIL"], !email.isEmpty,
                   let password = env["FLOW_DEBUG_PASSWORD"], !password.isEmpty
             else { return }
