@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Share-extension QA (issue #214), end to end on a simulator.
 #
-# Builds the app + FlowShare against a REMOTE server, installs it, puts a 12 MP
-# HEIC in the photo library, signs the app in, and runs ShareExtensionTests.
+# Builds the app + FlowShare against a REMOTE server, installs it, seeds the
+# simulator, signs the app in, and runs ShareExtensionTests. Seeded (issue
+# #219 added the last three):
+#
+#   - a 12 MP HEIC and a short movie in the photo library (`simctl addmedia`)
+#   - a PDF in the Files app's "On My iPhone"
+#   - a 600 MB file there too, for the over-size error
 #
 # The server must not be localhost. `Server.storageSuffix` is empty for
 # 127.0.0.1:8787, so a local build makes the app and the extension agree on the
@@ -27,6 +32,9 @@ SERVER="${FLOW_QA_SERVER:-https://app.freeflow.im}"
 DEVICE="${1:-${FLOW_QA_DEVICE:-}}"
 CHANNEL="${FLOW_QA_CHANNEL:-}"
 IMAGE="${FLOW_QA_IMAGE:-/tmp/qa-12mp.heic}"
+VIDEO="${FLOW_QA_VIDEO:-/tmp/qa-share-219.mp4}"
+DOCUMENT="${FLOW_QA_DOCUMENT:-/tmp/qa-share-219.pdf}"
+OVERSIZE="${FLOW_QA_OVERSIZE:-/tmp/qa-oversize-219.bin}"
 DD="${FLOW_QA_DERIVED_DATA:-/tmp/dd-share}"
 
 case "$SERVER" in
@@ -51,6 +59,20 @@ if [ ! -f "$IMAGE" ]; then
   exit 1
 fi
 
+# The rest of the fixtures are cheap enough to make here rather than demand.
+if [ ! -f "$VIDEO" ]; then
+  echo "==> making a test movie at $VIDEO"
+  swift tools/make-test-video.swift "$VIDEO" >/dev/null
+fi
+if [ ! -f "$DOCUMENT" ]; then
+  echo "==> making a test PDF at $DOCUMENT"
+  printf 'Flow QA — issue 219\nShared from the Files app.\n' > "${DOCUMENT%.pdf}.txt"
+  cupsfilter "${DOCUMENT%.pdf}.txt" > "$DOCUMENT" 2>/dev/null
+fi
+# Sparse — 600 MB of address space, ~16 KB on disk. The size check reads the
+# file's *reported* size, which is the number under test.
+[ -f "$OVERSIZE" ] || mkfile -n 600m "$OVERSIZE"
+
 echo "==> pointing the build at $SERVER"
 trap 'git checkout -- project.yml 2>/dev/null || true' EXIT
 sed -i '' "s|FlowServerURL: https://[^ ]*|FlowServerURL: $SERVER|g" project.yml
@@ -63,7 +85,29 @@ xcodebuild build -project FlowiOS.xcodeproj -scheme Flow \
 echo "==> installing + seeding the photo library"
 xcrun simctl boot "$DEVICE" 2>/dev/null || true
 xcrun simctl install "$DEVICE" "$DD/Build/Products/Debug-iphonesimulator/Flow.app"
-xcrun simctl addmedia "$DEVICE" "$IMAGE"
+# Order is irrelevant — the tests pick a tile by "Photo, …"/"Video, …" label,
+# not by position.
+xcrun simctl addmedia "$DEVICE" "$IMAGE" "$VIDEO"
+
+# "On My iPhone" is the Files app's local storage: an app group container whose
+# metadata names it. Found rather than hardcoded — the group's directory is a
+# fresh UUID on every simulator.
+echo "==> seeding the Files app"
+STORAGE=""
+for group in "$HOME/Library/Developer/CoreSimulator/Devices/$DEVICE/data/Containers/Shared/AppGroup"/*; do
+  meta="$group/.com.apple.mobile_container_manager.metadata.plist"
+  id="$(/usr/libexec/PlistBuddy -c 'Print :MCMMetadataIdentifier' "$meta" 2>/dev/null || true)"
+  if [ "$id" = "group.com.apple.FileProvider.LocalStorage" ]; then
+    STORAGE="$group/File Provider Storage"
+    break
+  fi
+done
+if [ -z "$STORAGE" ]; then
+  echo "error: no FileProvider.LocalStorage group on $DEVICE. Open the Files app once and re-run." >&2
+  exit 1
+fi
+mkdir -p "$STORAGE"
+cp "$DOCUMENT" "$OVERSIZE" "$STORAGE/"
 
 echo "==> minting a sign-in credential"
 if [ -n "${FLOW_QA_TOKEN:-}" ]; then
@@ -83,6 +127,8 @@ fi
 # TEST_RUNNER_ is the only way environment reaches the test runner; a plain
 # build setting on the xcodebuild line is ignored.
 export TEST_RUNNER_FLOW_TEST_LINK_CODE="$CODE"
+export TEST_RUNNER_FLOW_TEST_DOCUMENT="$(basename "$DOCUMENT")"
+export TEST_RUNNER_FLOW_TEST_OVERSIZE="$(basename "$OVERSIZE")"
 [ -n "$CHANNEL" ] && export TEST_RUNNER_FLOW_TEST_CHANNEL="$CHANNEL"
 
 echo "==> running ShareExtensionTests against $SERVER"

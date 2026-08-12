@@ -23,13 +23,23 @@ final class ShareStore: ObservableObject {
     @Published var caption: String = ""
 
     private(set) var payload: SharePayload?
+    /// Size of the file being shared, 0 for a text share. Shown in the preview
+    /// and used for the pre-flight limit check.
+    private(set) var fileSize: Int64 = 0
+    private(set) var maxFileBytes: Int64 = ShareStore.fallbackMaxFileBytes
     private let api = APIClient(baseURL: Server.baseURL)
     /// Display names for DM titles — DMs carry member ids, not a name.
     private var memberNames: [String: String] = [:]
 
+    /// What the server ships with (`FLOW_MAX_FILE_MB ?? 500`). Only used when
+    /// `/v1/config` cannot be reached or predates the field — the real limit
+    /// comes from the server, so a deployment that raises or lowers it does not
+    /// leave the extension enforcing a different number (issue #219).
+    static let fallbackMaxFileBytes: Int64 = 500 * 1024 * 1024
+
     var canSend: Bool {
         guard case .ready = phase, channelId != nil else { return false }
-        if case .image = payload { return true }
+        if payload?.fileURL != nil { return fileSize <= maxFileBytes }
         return !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -60,6 +70,19 @@ final class ShareStore: ObservableObject {
         }
         self.payload = payload
         caption = payload.initialCaption
+
+        // A 4K video can be gigabytes. Refuse it here, named and measured,
+        // rather than after a long upload that the server rejects at presign.
+        if let fileURL = payload.fileURL {
+            fileSize = Self.size(of: fileURL)
+            maxFileBytes = await uploadLimit()
+            if fileSize > maxFileBytes {
+                phase = .failed(
+                    ShareError.fileTooLarge(size: fileSize, limit: maxFileBytes).localizedDescription
+                )
+                return
+            }
+        }
 
         do {
             let resp: WorkspacesResponse = try await api.get("/v1/me/workspaces")
@@ -111,12 +134,15 @@ final class ShareStore: ObservableObject {
         do {
             var fileIds: [String] = []
             var body = caption.trimmingCharacters(in: .whitespacesAndNewlines)
-            if case .image(let fileURL) = payload {
+            // One path for every kind of file — image, video, document. Only
+            // the *preparation* differs, and that already happened in the
+            // loader.
+            if let fileURL = payload.fileURL {
                 let file = try await uploadFile(workspaceId: workspaceId, fileURL: fileURL)
                 fileIds = [file.id]
             }
-            // The server requires a non-empty body; an image with no caption
-            // posts the same way the composer does.
+            // The server requires a non-empty body; an attachment with no
+            // caption posts the same way the composer does.
             if body.isEmpty { body = " " }
             let _: Message = try await api.post(
                 "/v1/channels/\(channelId)/messages",
@@ -135,34 +161,60 @@ final class ShareStore: ObservableObject {
     }
 
     /// Same three steps as `SyncEngine.uploadFile`, minus the cache write:
-    /// presign → PUT the bytes from disk → complete. The PUT streams, so the
-    /// image never lands in this process's memory.
+    /// presign → PUT the bytes from disk → complete. The PUT streams from the
+    /// file, so a gigabyte video never lands in this process's memory — which
+    /// is what keeps a share extension under its ~120 MB ceiling.
     private func uploadFile(workspaceId: String, fileURL: URL) async throws -> FileAttachment {
         struct PresignBody: Encodable, Sendable {
             let filename: String
             let mimeType: String
             let sizeBytes: Int
         }
-        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let pres: PresignedUpload = try await api.post(
             "/v1/workspaces/\(workspaceId)/files/presign",
             body: PresignBody(
                 filename: fileURL.lastPathComponent,
                 mimeType: Self.mimeType(for: fileURL),
-                sizeBytes: (attrs[.size] as? Int) ?? 0
+                sizeBytes: Int(Self.size(of: fileURL))
             )
         )
         try await api.putRaw(pres.upload.url, headers: pres.upload.headers, fromFile: fileURL)
         return try await api.post("/v1/files/\(pres.file.id)/complete")
     }
 
+    /// The server's own limit, so the client and the presign check agree even
+    /// where `FLOW_MAX_FILE_MB` is set. `/v1/config` is public and cheap; a
+    /// server that predates the field decodes as nil and gets the fallback.
+    private func uploadLimit() async -> Int64 {
+        struct PublicConfig: Decodable, Sendable {
+            let maxFileBytes: Int64?
+        }
+        let config: PublicConfig? = try? await api.get("/v1/config")
+        return config?.maxFileBytes ?? Self.fallbackMaxFileBytes
+    }
+
+    private static func size(of url: URL) -> Int64 {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    /// Guessed from the extension, which the system's own type table answers
+    /// well: `.mov` → `video/quicktime`, `.mp4` → `video/mp4`,
+    /// `.pdf` → `application/pdf`, `.docx` →
+    /// `application/vnd.openxmlformats-officedocument.wordprocessingml.document`.
+    /// An extension the system does not know has no preferred MIME type, and
+    /// `application/octet-stream` is the honest answer for it.
     private static func mimeType(for url: URL) -> String {
         UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
     }
 
     private func message(for error: Error) -> String {
-        if let api = error as? APIError, api.status == 401 {
-            return ShareError.notSignedIn.localizedDescription
+        guard let api = error as? APIError else { return error.localizedDescription }
+        if api.status == 401 { return ShareError.notSignedIn.localizedDescription }
+        // The server states the limit in bytes ("files are limited to
+        // 524288000 bytes"). Say it the way the pre-flight check does.
+        if api.code == "file_too_large" {
+            return ShareError.fileTooLarge(size: fileSize, limit: maxFileBytes).localizedDescription
         }
         return error.localizedDescription
     }
