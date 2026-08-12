@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Profile website + bio (#220) are visible for *other* people on web and macOS
+  only. iOS has no member profile card at all — no `fetchUser` call, no sheet —
+  so on iOS you can see and edit your own profile but cannot view anyone else's.
+  The gap predates this change; the fields just make it visible. macOS's
+  `MemberProfileSheet` is the model to port.
 - "Share to Flow" from the system share sheet is iOS-only (#214). macOS supports
   share extensions too and the extension's logic is platform-agnostic
   (`APIClient` + `ImagePrep` + a channel picker), so this is a target and an

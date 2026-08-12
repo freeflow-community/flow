@@ -372,6 +372,10 @@ actor SyncEngine {
                     timezone: existing?.timezone,
                     statusEmoji: m.statusEmoji,
                     statusText: m.statusText,
+                    // #220: the roster payload carries neither, so keep what the
+                    // profile fetch already cached rather than blanking it.
+                    website: existing?.website,
+                    bio: existing?.bio,
                     isAgent: m.isAgent ?? existing?.isAgent ?? false,
                     createdAt: existing?.createdAt
                 ).save(db)
@@ -1029,10 +1033,14 @@ actor SyncEngine {
 
     // MARK: - Profile (phase2.md §6)
 
-    func updateProfile(displayName: String?, timezone: String?) async throws {
+    func updateProfile(
+        displayName: String?, timezone: String?, website: String? = nil, bio: String? = nil
+    ) async throws {
         let me: User = try await api.patch(
             "/v1/me",
-            body: PatchMeBody(displayName: displayName, timezone: timezone)
+            body: PatchMeBody(
+                displayName: displayName, timezone: timezone, website: website, bio: bio
+            )
         )
         currentUser = me
         try? await db.writer.write { db in try me.save(db) }

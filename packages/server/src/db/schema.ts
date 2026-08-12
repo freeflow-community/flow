@@ -38,6 +38,10 @@ export const users = pgTable('users', {
   agentKeyHash: text('agent_key_hash'),
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
+  // #220: expanded profile. `website` is http/https-only (enforced in
+  // PatchMeBody, the only write path); `bio` is plain text, newlines kept.
+  website: text('website').notNull().default(''),
+  bio: text('bio').notNull().default(''),
   // Phase 10: per-user notification prefs ({dm, mention, groupMention,
   // threadReply, persistentBanners} — absent key = default) and the
   // status-driven "suppress all alerts" flag (DND-family statuses).

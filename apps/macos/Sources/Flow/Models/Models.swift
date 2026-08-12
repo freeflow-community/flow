@@ -18,6 +18,12 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var timezone: String?
     var statusEmoji: String? // "" / nil = no status
     var statusText: String?
+    // Expanded profile (#220). Optional so a client pointed at a server
+    // predating the fields still decodes. `website` is always an absolute
+    // http(s) URL — the server rejects every other scheme — and `bio` is plain
+    // text with significant newlines, never markdown.
+    var website: String?
+    var bio: String?
     var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
     var sponsorId: String? // agents only: the human member who sponsored them
     var createdAt: String?
@@ -722,17 +728,24 @@ struct PatchMeBody: Encodable, Sendable {
     /// Phase 10: DND-family statuses pause alerts. Omitted = server keeps the
     /// current value, so senders that support the flag must always send it.
     let statusSuppressAlerts: Bool?
+    /// #220: "" clears either field. The server rejects a `website` that is not
+    /// an absolute http(s) URL, so the sheets check before they send.
+    let website: String?
+    let bio: String?
 
     init(
         displayName: String? = nil, timezone: String? = nil,
         statusEmoji: String? = nil, statusText: String? = nil,
-        statusSuppressAlerts: Bool? = nil
+        statusSuppressAlerts: Bool? = nil,
+        website: String? = nil, bio: String? = nil
     ) {
         self.displayName = displayName
         self.timezone = timezone
         self.statusEmoji = statusEmoji
         self.statusText = statusText
         self.statusSuppressAlerts = statusSuppressAlerts
+        self.website = website
+        self.bio = bio
     }
 }
 /// POST /v1/me/notifications/read — a cursor (`upToId`, opening the Activity

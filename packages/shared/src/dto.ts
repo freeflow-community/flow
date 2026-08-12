@@ -8,6 +8,14 @@ export interface UserDTO {
   timezone: string; // IANA name, default UTC
   statusEmoji: string; // '' = no status
   statusText: string; // '' = no status
+  /** Personal website (#220). '' = none. Always an absolute http(s) URL — the
+   * server rejects every other scheme, so clients may link it directly (with
+   * rel="noreferrer noopener"). */
+  website: string;
+  /** Free-text bio (#220). '' = none. **Plain text**, not markdown: newlines are
+   * significant, everything else renders literally. Render it in a node that
+   * escapes (a React text child, SwiftUI Text) — never as HTML. */
+  bio: string;
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
   /** Agents only: the human member who sponsored (approved) the agent. null for
