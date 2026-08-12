@@ -13,7 +13,8 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- "Share to Flow" from the system share sheet is iOS-only (#214). macOS supports
+- "Share to Flow" from the system share sheet is iOS-only (#214, extended to
+  videos and documents in #219). macOS supports
   share extensions too and the extension's logic is platform-agnostic
   (`APIClient` + `ImagePrep` + a channel picker), so this is a target and an
   entitlement rather than new work. Web has no OS share sheet to hook.

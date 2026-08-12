@@ -133,6 +133,7 @@ export function registerRoutes(app: FastifyInstance): void {
     google: config.googleEnabled,
     googleClientId: config.googleClientId ?? null,
     apple: config.appleEnabled,
+    maxFileBytes: config.maxFileBytes,
   }));
 
   // Public macOS app download (operator feature): 302 to a short-lived signed

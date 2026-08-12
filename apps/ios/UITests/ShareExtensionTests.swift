@@ -23,6 +23,7 @@ final class ShareExtensionTests: XCTestCase {
     private let photosBundleId = "com.apple.mobileslideshow"
     private let springboardBundleId = "com.apple.springboard"
     private let safariBundleId = "com.apple.mobilesafari"
+    private let filesBundleId = "com.apple.DocumentsApp"
 
     override func setUp() {
         continueAfterFailure = false
@@ -39,6 +40,19 @@ final class ShareExtensionTests: XCTestCase {
     /// Distinctive enough to find in the channel afterwards.
     static let captionText = "12 MP HEIC from the share sheet"
     static let sharedURL = "https://example.com/flow-share-214"
+    static let videoCaption = "video from the share sheet (#219)"
+    static let documentCaption = "PDF from Files (#219)"
+
+    /// Seeded by `tools/qa-share-extension.sh`: a short movie in the photo
+    /// library, and two files in the Files app's "On My iPhone" — a small PDF
+    /// and one deliberately over the upload limit.
+    private var documentName: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_DOCUMENT"] ?? "qa-share-219.pdf"
+    }
+
+    private var oversizeName: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_OVERSIZE"] ?? "qa-oversize-219.bin"
+    }
 
     // MARK: - Sign the app in, so the extension has a token to find
 
@@ -70,7 +84,7 @@ final class ShareExtensionTests: XCTestCase {
         signInApp()
 
         let photos = openPhotos()
-        openNewestPhoto(photos)
+        openNewest("Photo", in: photos)
         tap(
             photos.buttons["PUOneUpBarButtonItemIdentifierShare"],
             in: photos, name: "Share"
@@ -183,7 +197,197 @@ final class ShareExtensionTests: XCTestCase {
         XCTAssertEqual(status.label, "Sent to Flow", "the extension reported an error")
     }
 
+    // MARK: - Issue #219: video and documents
+
+    /// The failure this test exists for is silent: a video shared from Photos
+    /// offers the movie *and* a preview frame, so an image-first precedence
+    /// rule posts a still and still says "Sent to Flow". The assertion is
+    /// therefore on the attachment row, not on the outcome.
+    func testShareVideoFromPhotos() throws {
+        signInApp()
+
+        let photos = openPhotos()
+        openNewest("Video", in: photos)
+        tap(
+            photos.buttons["PUOneUpBarButtonItemIdentifierShare"],
+            in: photos, name: "Share"
+        )
+
+        let flowActivity = photos.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Flow")).firstMatch
+        XCTAssertTrue(
+            flowActivity.waitForExistence(timeout: 20),
+            "Flow is missing from the share sheet for a video — check "
+                + "NSExtensionActivationSupportsMovieWithMaxCount"
+        )
+        flowActivity.tap()
+
+        selectChannel(in: photos)
+
+        // The movie, not the poster frame.
+        let name = photos.staticTexts["share.attachment.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 30), "no attachment preview")
+        let ext = (name.label as NSString).pathExtension.lowercased()
+        XCTAssertTrue(
+            ["mov", "mp4", "m4v"].contains(ext),
+            "the video posted as \(name.label) — precedence put the preview image first"
+        )
+        // Duration is only in the row when AVFoundation read the asset, which a
+        // still frame would not have.
+        let meta = photos.staticTexts["share.attachment.meta"]
+        XCTAssertTrue(meta.label.contains("·"), "no duration in \(meta.label) — not read as a movie")
+        attachScreenshot("share-sheet-video")
+
+        caption(in: photos, Self.videoCaption)
+        sendAndExpectSent(in: photos, timeout: 300)
+    }
+
+    /// A PDF has no image representation at all, so this is the plain-document
+    /// path: the `File` activation rule, the document pass in the loader, and
+    /// `application/pdf` from the extension.
+    func testSharePDFFromFiles() throws {
+        signInApp()
+
+        let files = openFiles()
+        shareDocument(named: documentName, in: files)
+
+        let flowActivity = files.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Flow")).firstMatch
+        XCTAssertTrue(
+            flowActivity.waitForExistence(timeout: 20),
+            "Flow is missing from the Files share sheet — check "
+                + "NSExtensionActivationSupportsFileWithMaxCount"
+        )
+        flowActivity.tap()
+
+        selectChannel(in: files)
+
+        let name = files.staticTexts["share.attachment.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 30), "no attachment preview")
+        XCTAssertEqual(name.label, documentName, "a different file was picked up")
+        attachScreenshot("share-sheet-pdf")
+
+        caption(in: files, Self.documentCaption)
+        sendAndExpectSent(in: files, timeout: 120)
+    }
+
+    /// Over the limit has to *say so*. Before #219 an over-size file was a
+    /// silent no-op or a jetsam, and both look identical to a slow upload.
+    func testOversizeFileIsRefusedWithAReadableError() throws {
+        signInApp()
+
+        let files = openFiles()
+        shareDocument(named: oversizeName, in: files)
+
+        let flowActivity = files.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Flow")).firstMatch
+        XCTAssertTrue(flowActivity.waitForExistence(timeout: 20), "Flow is missing from the share sheet")
+        flowActivity.tap()
+
+        // The check runs before the channel list, so the error is the first
+        // thing drawn — and no bytes leave the device.
+        let status = files.staticTexts["share.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 60), "no error shown for an over-size file")
+        attachScreenshot("share-sheet-oversize")
+        XCTAssertTrue(
+            status.label.contains("accepts files up to"),
+            "the error does not name the limit: \(status.label)"
+        )
+        XCTAssertFalse(
+            files.buttons["share.send"].isEnabled,
+            "Send is still live on a file that cannot be posted"
+        )
+    }
+
     // MARK: - Helpers
+
+    /// Kept in the result bundle so the sheet that was actually on screen can
+    /// be looked at afterwards:
+    ///
+    ///   xcrun xcresulttool export attachments --path <result>.xcresult \
+    ///     --output-path /tmp/shots
+    private func attachScreenshot(_ name: String) {
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    /// The channel picker, plus the selection the sheet remembers between runs.
+    private func selectChannel(in app: XCUIApplication, timeout: TimeInterval = 90) {
+        let picker = app.buttons["share.channel"]
+        XCTAssertTrue(
+            picker.waitForExistence(timeout: timeout),
+            "the extension did not reach its channel picker — it is signed out, "
+                + "or pointed at the wrong server"
+        )
+        let wanted = "#\(channelName)"
+        if (picker.value as? String) != wanted {
+            picker.tap()
+            let channelRow = app.buttons[wanted]
+            XCTAssertTrue(channelRow.waitForExistence(timeout: 20), "\(wanted) is not in the picker")
+            channelRow.tap()
+        }
+        XCTAssertEqual(picker.value as? String, wanted, "channel not selected")
+    }
+
+    private func caption(in app: XCUIApplication, _ text: String) {
+        let field = app.textFields["share.caption"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "caption field is missing")
+        field.tap()
+        field.typeText(text)
+    }
+
+    /// The upload has to finish before the sheet closes: there is no background
+    /// session, so a jetsam or a timeout leaves "Sent" undrawn.
+    private func sendAndExpectSent(in app: XCUIApplication, timeout: TimeInterval) {
+        let send = app.buttons["share.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 10), "Send is missing")
+        send.tap()
+
+        let status = app.staticTexts["share.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: timeout), "nothing posted")
+        XCTAssertEqual(status.label, "Sent to Flow", "the extension reported an error")
+    }
+
+    private func openFiles() -> XCUIApplication {
+        dismissStraySystemAlert()
+        let files = XCUIApplication(bundleIdentifier: filesBundleId)
+        files.terminate()
+        files.launch()
+        XCTAssertTrue(files.wait(for: .runningForeground, timeout: 20), "Files did not open")
+        dismissStraySystemAlert()
+
+        // The tab bar, specifically: Files restores the last location, and the
+        // back button in that state is *also* labelled "Browse".
+        let browse = files.tabBars.buttons["Browse"].firstMatch
+        if browse.waitForExistence(timeout: 10), browse.isHittable { browse.tap() }
+        // On a simulator "On My iPhone" is usually the only location, and
+        // Browse opens straight into it.
+        let onMyPhone = files.cells.staticTexts["On My iPhone"]
+        if onMyPhone.waitForExistence(timeout: 5), onMyPhone.isHittable { onMyPhone.tap() }
+        return files
+    }
+
+    /// Long-press → Share is the reliable route: tapping a document opens a
+    /// preview whose toolbar differs per file type, and a `.bin` has no
+    /// preview at all.
+    ///
+    /// Matched on the cell's *label*, which starts with the base name — the
+    /// visible static text drops the extension ("qa-share-219"), so a match on
+    /// the full filename finds nothing.
+    private func shareDocument(named name: String, in files: XCUIApplication) {
+        let base = (name as NSString).deletingPathExtension
+        let item = files.cells.matching(NSPredicate(format: "label BEGINSWITH %@", base)).firstMatch
+        XCTAssertTrue(
+            item.waitForExistence(timeout: 20),
+            "\(name) is not in On My iPhone — run qa-share-extension.sh to seed it"
+        )
+        item.press(forDuration: 1.2)
+        let share = files.buttons["Share"].firstMatch
+        XCTAssertTrue(share.waitForExistence(timeout: 20), "no Share in the context menu")
+        share.tap()
+    }
 
     private func openPhotos() -> XCUIApplication {
         dismissStraySystemAlert()
@@ -194,23 +398,51 @@ final class ShareExtensionTests: XCTestCase {
         photos.launch()
         XCTAssertTrue(photos.wait(for: .runningForeground, timeout: 20), "Photos did not open")
         dismissStraySystemAlert()
-        let back = photos.buttons["PUOneUpBarButtonItemIdentifierDone"]
-        if back.waitForExistence(timeout: 3), back.isHittable { back.tap() }
+        // "What's New in Photos" after an OS update. It covers the grid, and
+        // the tiles are still visible *behind* it — so the tile assertion
+        // passes and the coordinate tap lands on the sheet instead.
+        let whatsNew = photos.buttons["Continue"]
+        if whatsNew.waitForExistence(timeout: 3), whatsNew.isHittable { whatsNew.tap() }
+        returnToGrid(photos)
         return photos
     }
 
-    /// Opens the newest photo — `simctl addmedia` appends, so the HEIC this
-    /// test cares about is last. The grid is not a collection view: the tiles
-    /// are `Image` elements under one layout group, and they report as not
-    /// hittable, so the tap has to go through a coordinate.
-    private func openNewestPhoto(_ photos: XCUIApplication) {
+    /// Photos survives `terminate()` with its screen intact, and a *video*
+    /// left open resumes playing full screen with the chrome hidden — no Done
+    /// button, no grid, and the next test reports an empty library. A tap
+    /// brings the chrome back, and Done returns to the grid.
+    private func returnToGrid(_ photos: XCUIApplication) {
+        let tiles = photos.images.matching(identifier: "PXGGridLayout-Info")
+        for _ in 0..<4 {
+            if tiles.firstMatch.waitForExistence(timeout: 3) { return }
+            photos.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let done = photos.buttons["PUOneUpBarButtonItemIdentifierDone"]
+            if done.waitForExistence(timeout: 3), done.isHittable { done.tap() }
+        }
+    }
+
+    /// Opens the newest photo, or the newest video. The grid is not a
+    /// collection view: the tiles are `Image` elements under one layout group,
+    /// and they report as not hittable, so the tap has to go through a
+    /// coordinate.
+    ///
+    /// The *kind* matters since #219 seeds a movie into the same library —
+    /// "the last tile" would hand the HEIC test a video. Each tile's label
+    /// begins with "Photo, " or "Video, ", which is the only thing here that
+    /// distinguishes them.
+    private func openNewest(_ kind: String, in photos: XCUIApplication) {
         let libraryTab = photos.buttons["LibraryTab"]
         if libraryTab.exists, libraryTab.isHittable { libraryTab.tap() }
 
-        let tiles = photos.images.matching(identifier: "PXGGridLayout-Info")
+        let all = photos.images.matching(identifier: "PXGGridLayout-Info")
         XCTAssertTrue(
-            tiles.firstMatch.waitForExistence(timeout: 20),
-            "no photo in the library — run simctl addmedia first"
+            all.firstMatch.waitForExistence(timeout: 20),
+            "no media in the library — run simctl addmedia first"
+        )
+        let tiles = all.matching(NSPredicate(format: "label BEGINSWITH %@", "\(kind), "))
+        XCTAssertGreaterThan(
+            tiles.count, 0,
+            "no \(kind.lowercased()) in the library — run qa-share-extension.sh to seed one"
         )
         tiles.element(boundBy: tiles.count - 1)
             .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))

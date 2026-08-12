@@ -379,6 +379,10 @@ export interface PublicConfigDTO {
   googleClientId: string | null;
   /** Sign in with Apple is configured server-side (native iOS flow). */
   apple: boolean;
+  /** Largest file the presigned upload path accepts, in bytes. Public so a
+   * client can refuse an over-size file before the round trip and say what the
+   * limit is — the iOS share extension does this for videos (issue #219). */
+  maxFileBytes: number;
 }
 
 /** GET /v1/me/identities — external identities linked to the signed-in user.

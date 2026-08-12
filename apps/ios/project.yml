@@ -176,8 +176,15 @@ targets:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
           NSExtensionAttributes:
+            # Movie and File open the sheet for videos and documents (issue
+            # #219). File is the catch-all — a PDF, a .docx or a .zip only
+            # matches this key — and it also matches images and movies, so the
+            # loader's precedence rule, not the activation rule, decides what
+            # gets posted.
             NSExtensionActivationRule:
               NSExtensionActivationSupportsImageWithMaxCount: 1
+              NSExtensionActivationSupportsMovieWithMaxCount: 1
+              NSExtensionActivationSupportsFileWithMaxCount: 1
               NSExtensionActivationSupportsWebURLWithMaxCount: 1
               NSExtensionActivationSupportsText: true
     settings:
