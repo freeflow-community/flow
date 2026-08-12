@@ -25,6 +25,8 @@ struct MessageListView: View {
     /// it's in the list, then call onFocused. Nil in the normal case.
     var focusMessageId: String? = nil
     var onFocused: () -> Void = {}
+    /// Passed straight to each row: tapping a sender opens their card (#223).
+    var onOpenProfile: (String) -> Void = { _ in }
 
     /// The row currently flashing after a jump (fades out on a timer).
     @State private var flashId: String?
@@ -94,7 +96,8 @@ struct MessageListView: View {
                                     highlighted: message.id == flashId,
                                     onOpenThread: onOpenThread,
                                     onEdit: onEdit,
-                                    onDelete: onDelete
+                                    onDelete: onDelete,
+                                    onOpenProfile: onOpenProfile
                                 )
                             }
                         }
@@ -407,6 +410,10 @@ struct MessageRow: View {
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
     let onDelete: (Message) -> Void
+    /// Tapping the sender's avatar or name opens their profile card (#223).
+    /// The presenting screen owns the sheet — a sheet per row would mean one
+    /// presentation per message in the transcript.
+    var onOpenProfile: (String) -> Void = { _ in }
 
     @EnvironmentObject private var app: AppState
     @State private var showReactionPicker = false
@@ -422,13 +429,20 @@ struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             if showHeader {
-                AvatarChip(
-                    userId: message.userId,
-                    name: senderName,
-                    avatarPath: app.avatarPaths[message.userId],
-                    size: 38,
-                    radius: 11
-                )
+                Button {
+                    onOpenProfile(message.userId)
+                } label: {
+                    AvatarChip(
+                        userId: message.userId,
+                        name: senderName,
+                        avatarPath: app.avatarPaths[message.userId],
+                        size: 38,
+                        radius: 11
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("msg.avatar.\(message.id)")
+                .accessibilityLabel("\(senderName)'s profile")
             } else {
                 Color.clear.frame(width: 38, height: 1)
             }
@@ -436,9 +450,16 @@ struct MessageRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 if showHeader {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(senderName)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(MC.ink)
+                        Button {
+                            onOpenProfile(message.userId)
+                        } label: {
+                            Text(senderName)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(MC.ink)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("msg.sender.\(message.id)")
+                        .accessibilityLabel("\(senderName)'s profile")
                         if let emoji = userStatuses[message.userId], !emoji.isEmpty {
                             Text(emoji).font(.system(size: 14))
                         }
