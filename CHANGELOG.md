@@ -18,7 +18,6 @@ This file keeps two things:
   so on iOS you can see and edit your own profile but cannot view anyone else's.
   The gap predates this change; the fields just make it visible. macOS's
   `MemberProfileSheet` is the model to port.
-- "Share to Flow" from the system share sheet is iOS-only (#214). macOS supports
 - "Share to Flow" from the system share sheet is iOS-only (#214, extended to
   videos and documents in #219). macOS supports
   share extensions too and the extension's logic is platform-agnostic
