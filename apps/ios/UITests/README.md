@@ -104,6 +104,15 @@ checks")`, the simulator is wedged from a previous run:
   fully reproducible with a real flick on a device — the test pins the fixed
   behaviour rather than discriminating the old code.
 
+- `MemberProfileCardTests` — #223, the member profile card: both tap targets
+  (avatar and sender name), the same from a thread, a profile with a website
+  and a bio, one with neither, and the website handing off to Safari. Fixtures
+  come from `node packages/server/scripts/qa-seed-profiles.mjs` after
+  `qa-seed.mjs` — channel `profiles223`, Bob with both fields set and Alice
+  with neither (override the channel with `FLOW_TEST_PROFILE_CHANNEL`).
+  Attaches the screenshots. Note SwiftUI's `Link` is a **button** to
+  XCUITest, not a link.
+
 These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —
 passing them as trailing `xcodebuild` arguments looks right and silently does

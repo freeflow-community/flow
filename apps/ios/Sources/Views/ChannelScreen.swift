@@ -21,6 +21,9 @@ struct ChannelScreen: View {
     @State private var restoredParkedThread = false
     @State private var showPins = false
     @State private var showChannelOptions = false
+    /// The member whose profile card is open (#223). One sheet for the whole
+    /// transcript, driven by whichever row was tapped.
+    @State private var profileRoute: ProfileRoute?
 
     /// The open artifact (#157), presented as a sheet over the conversation.
     /// Driven by `AppState.selectedArtifactId` — the same selection macOS uses
@@ -115,7 +118,8 @@ struct ChannelScreen: View {
                     // target for top-level messages on iOS (thread replies live
                     // in a separate pushed screen — see CHANGELOG Parity).
                     focusMessageId: app.focusMessageId,
-                    onFocused: { app.focusMessageId = nil }
+                    onFocused: { app.focusMessageId = nil },
+                    onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
                 )
                 TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
             }
@@ -128,6 +132,9 @@ struct ChannelScreen: View {
         }
         .sheet(item: artifactRoute) { route in
             ArtifactSheet(artifactId: route.id)
+        }
+        .sheet(item: $profileRoute) { route in
+            MemberProfileSheet(userId: route.userId)
         }
         .sheet(isPresented: $showChannelOptions) {
             if let c = channel.value {
@@ -176,6 +183,7 @@ struct ChannelScreen: View {
         .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
         .modifier(DebugTestSend(channelId: channelId, app: app))
         .modifier(DebugMessageActions(channelId: channelId, app: app) { threadRoute = ThreadRoute(rootId: $0) })
+        .modifier(DebugOpenProfile(app: app) { profileRoute = ProfileRoute(userId: $0) })
         .background(MC.base)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)

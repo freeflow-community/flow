@@ -20,6 +20,9 @@ struct ThreadScreen: View {
     @StateObject private var channelId = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var flashId: String?
+    /// The member whose profile card is open (#223) — same card the channel
+    /// shows, presented over the thread instead of pushed on top of it.
+    @State private var profileRoute: ProfileRoute?
     /// Viewport height, watched so the keyboard's resize can re-stick the list
     /// to the newest reply (#191).
     @State private var viewportHeight: CGFloat = 0
@@ -56,7 +59,8 @@ struct ThreadScreen: View {
                                 onEdit: { editingMessage = $0 },
                                 onDelete: { msg in
                                     Task { await app.engine.deleteMessage(id: msg.id) }
-                                }
+                                },
+                                onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
                             )
                             .id(message.id)
                             if message.id == rootId {
@@ -143,6 +147,14 @@ struct ThreadScreen: View {
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }
+        .sheet(item: $profileRoute) { route in
+            MemberProfileSheet(userId: route.userId)
+        }
+        .modifier(
+            DebugOpenProfile(app: app, envVar: "FLOW_DEBUG_OPEN_MEMBER_IN_THREAD") {
+                profileRoute = ProfileRoute(userId: $0)
+            }
+        )
     }
 
     private func focusPinnedMessage(_ proxy: ScrollViewProxy) {
