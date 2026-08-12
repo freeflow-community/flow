@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GoogleAuthResponse } from '@flow/shared';
 import { setToken } from '../lib/api';
 import { GoogleButton } from './AuthScreen';
-import { MAC_DOWNLOAD_URL, openInApp } from './OpenInApp';
+import { MAC_DOWNLOAD_URL, isIOSDevice, openInApp } from './OpenInApp';
 
 type Phase = 'choose' | 'handing-off' | 'sent' | 'no-app' | 'error';
 
@@ -94,13 +94,17 @@ export default function NativeSignIn({ signedIn }: { signedIn: boolean }) {
             <p className="mb-3 text-sm text-muted">
               You&rsquo;re signed in, but Flow didn&rsquo;t open — is it installed?
             </p>
-            <a
-              data-testid="native-download"
-              href={MAC_DOWNLOAD_URL}
-              className="text-sm font-semibold text-accent-soft hover:underline"
-            >
-              Download for Mac ↓
-            </a>
+            {isIOSDevice ? (
+              <p className="text-sm text-muted">Make sure the Flow app is installed.</p>
+            ) : (
+              <a
+                data-testid="native-download"
+                href={MAC_DOWNLOAD_URL}
+                className="text-sm font-semibold text-accent-soft hover:underline"
+              >
+                Download for Mac ↓
+              </a>
+            )}
             <button
               className="mt-3 block w-full rounded border border-hairline2 py-2 text-sm font-semibold text-ink hover:bg-base"
               onClick={handOff}

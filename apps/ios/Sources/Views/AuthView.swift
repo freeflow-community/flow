@@ -1,13 +1,17 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Sign-in only (registration is web-first on real servers — the email-first
-/// flow lives on app.freeflow.im, then the flow://signin handoff brings you
-/// into the app). Mirrors the macOS auth screen's server-aware behavior.
+/// Sign-in and email-first registration. Everything runs in the app (App
+/// Store Guideline 4): email+password and Sign in with Apple are native,
+/// Google runs in an in-app ASWebAuthenticationSession sheet, and Register
+/// sends the signup email from here — the emailed link finishes account
+/// setup on the web and hands the session back via flow://signin.
 struct AuthView: View {
-    @EnvironmentObject var app: AppState
-    @Environment(\.openURL) private var openURL
+    private enum Mode { case signIn, register }
 
+    @EnvironmentObject var app: AppState
+
+    @State private var mode: Mode = .signIn
     @State private var email = ""
     @State private var password = ""
     @State private var busy = false
@@ -15,11 +19,13 @@ struct AuthView: View {
     /// Whether this server offers Google sign-in (GET /v1/config). A failed
     /// check leaves it false, so the button is absent rather than broken.
     @State private var googleEnabled = false
-    /// Same for Sign in with Apple — native flow, no Safari roundtrip.
+    /// Same for Sign in with Apple — native flow, no web roundtrip at all.
     @State private var appleEnabled = false
     /// True after a sign-in link was requested — swaps the form for a neutral
     /// "check your email" confirmation.
     @State private var linkSent = false
+    /// True after a signup email was requested — same swap for Register.
+    @State private var signupSent = false
 
     private var formValid: Bool { !email.isEmpty && !password.isEmpty }
     private var emailValid: Bool { email.contains("@") && !email.hasSuffix("@") }
@@ -45,13 +51,11 @@ struct AuthView: View {
 
             if linkSent {
                 linkSentCard
+            } else if signupSent {
+                signupSentCard
             } else {
-                signInForm
-            }
-
-            if !Server.isDefaultLocal {
-                Link("New to Flow? Create your account on the web", destination: Server.baseURL)
-                    .font(.callout)
+                modePicker
+                if mode == .signIn { signInForm } else { registerForm }
             }
             Spacer()
             Text("Server: \(Server.displayName)")
@@ -67,26 +71,37 @@ struct AuthView: View {
         }
     }
 
-    /// Google sign-in (phase16 §9): iOS carries no Google SDK, so this opens
-    /// Safari at the Flow handoff page, which signs in and returns via
-    /// flow://signin?code=… — the deep link the app already handles.
-    private var googleButton: some View {
-        VStack(spacing: 6) {
-            Button {
-                openURL(Server.nativeGoogleSignInURL)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "globe")
-                    Text("Continue with Google").bold()
-                }
-                .frame(maxWidth: 320).frame(height: 22).padding(.vertical, 8)
-            }
-            .buttonStyle(.bordered)
-            .tint(MC.accent)
-            .disabled(busy)
-            Text("Opens Safari, then brings you back to Flow.")
-                .font(.caption).foregroundStyle(MC.muted)
+    private var modePicker: some View {
+        HStack(spacing: 8) {
+            Button("Sign In") { switchMode(.signIn) }
+                .fontWeight(mode == .signIn ? .semibold : .regular)
+                .foregroundStyle(mode == .signIn ? MC.accent : MC.muted)
+            Text("·").foregroundStyle(MC.muted)
+            Button("Register") { switchMode(.register) }
+                .fontWeight(mode == .register ? .semibold : .regular)
+                .foregroundStyle(mode == .register ? MC.accent : MC.muted)
         }
+        .font(.callout)
+        .disabled(busy)
+    }
+
+    /// Google sign-in (phase16 §9): iOS carries no Google SDK, so the Flow
+    /// handoff page runs in an in-app ASWebAuthenticationSession sheet. It
+    /// signs in and ends at flow://signin?code=…, which the sheet intercepts —
+    /// no trip through Safari (App Store Guideline 4).
+    private var googleButton: some View {
+        Button {
+            signInWithGoogle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "globe")
+                Text("Continue with Google").bold()
+            }
+            .frame(maxWidth: 320).frame(height: 22).padding(.vertical, 8)
+        }
+        .buttonStyle(.bordered)
+        .tint(MC.accent)
+        .disabled(busy)
     }
 
     private var signInForm: some View {
@@ -128,6 +143,49 @@ struct AuthView: View {
             .tint(MC.accent)
             .disabled(busy || !emailValid)
 
+            if appleEnabled || googleEnabled {
+                Divider().frame(maxWidth: 320)
+            }
+            if appleEnabled { appleButton }
+            if googleEnabled { googleButton }
+        }
+    }
+
+    /// Email-first registration, matching the web: the only input is the
+    /// address. Name and password are chosen from the emailed link, which
+    /// proves address ownership first.
+    private var registerForm: some View {
+        VStack(spacing: 22) {
+            Text("Enter your email and we'll send you a link to set up your account.")
+                .font(.callout).foregroundStyle(MC.muted)
+                .multilineTextAlignment(.center).frame(maxWidth: 320)
+
+            TextField("Email", text: $email)
+                .textContentType(.username)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 320)
+                .onSubmit(sendSignup)
+
+            if let error {
+                Text(error).font(.callout).foregroundStyle(.red)
+                    .multilineTextAlignment(.center).frame(maxWidth: 320)
+            }
+
+            Button(action: sendSignup) {
+                Group {
+                    if busy { ProgressView() } else { Text("Send me a link").bold() }
+                }
+                .frame(maxWidth: 320).frame(height: 22).padding(.vertical, 8)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(MC.accent)
+            .disabled(busy || !emailValid)
+
+            // Google and Apple create the account in one step — offer them
+            // here too, exactly like the web Register panel.
             if appleEnabled || googleEnabled {
                 Divider().frame(maxWidth: 320)
             }
@@ -198,6 +256,29 @@ struct AuthView: View {
         .frame(maxWidth: 320)
     }
 
+    private var signupSentCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "envelope.badge.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(MC.accent)
+            Text("Check your email").font(.title3.bold()).foregroundStyle(MC.ink)
+            Text("We sent a link to \(email). Open it to finish creating your account — you'll land right back here, signed in.")
+                .font(.callout).foregroundStyle(MC.muted)
+                .multilineTextAlignment(.center).frame(maxWidth: 320)
+            Button("Back to sign in") {
+                signupSent = false
+                switchMode(.signIn)
+            }
+            .font(.callout).tint(MC.accent).padding(.top, 4)
+        }
+        .frame(maxWidth: 320)
+    }
+
+    private func switchMode(_ m: Mode) {
+        mode = m
+        error = nil
+    }
+
     private func submit() {
         guard formValid, !busy else { return }
         busy = true
@@ -206,6 +287,39 @@ struct AuthView: View {
             defer { busy = false }
             do {
                 try await app.engine.login(email: email, password: password)
+            } catch {
+                self.error = (error as? APIError)?.message ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func sendSignup() {
+        guard emailValid, !busy else { return }
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await app.engine.requestSignup(email: email)
+                signupSent = true
+            } catch {
+                self.error = (error as? APIError)?.message ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func signInWithGoogle() {
+        guard !busy else { return }
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do {
+                // nil = the user closed the sheet; not an error worth showing.
+                guard let code = try await WebAuthSession.signInCode(
+                    startingAt: Server.nativeGoogleSignInURL
+                ) else { return }
+                try await app.engine.loginWithLinkCode(code)
             } catch {
                 self.error = (error as? APIError)?.message ?? error.localizedDescription
             }
