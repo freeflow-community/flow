@@ -103,12 +103,21 @@ the DMG stored in R2 at key **`downloads/Flow.dmg`**. Publishing a new build is
 one command, no code deploy:
 
 ```sh
-# Build the notarized DMG and upload it to R2 in one shot.
+# Cut a release: derive the next version from the live appcast, build,
+# notarize, publish, and tag the commit. This is the normal path.
+apps/macos/tools/release-macos.sh
+
+# Re-upload at the current version, without cutting a new one.
 apps/macos/tools/publish-dmg.sh --build
 
 # Or, if you already ran dist.sh, just upload the current DMG:
 apps/macos/tools/publish-dmg.sh
 ```
+
+`release-macos.sh` wraps `publish-dmg.sh --build` and supplies the version via
+`FLOW_APP_VERSION`, so everything below applies to both. See
+[BUILD.md](../../BUILD.md) § *macOS app* for why the version comes from the
+appcast rather than a file in the repo.
 
 `publish-dmg.sh` reads the R2 creds from repo-root `.env` (the same
 `CLOUDFLARE_*` vars the server uses), maps them onto the `AWS_*` names the AWS
