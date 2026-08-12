@@ -223,6 +223,10 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['members'] });
         void qc.invalidateQueries({ queryKey: ['me'] });
         break;
+      case 'workspace.joined':
+        // this user joined a workspace in another session/tab — refresh the list
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
+        break;
       case 'workspace.updated':
         void qc.invalidateQueries({ queryKey: ['workspaces'] });
         // Custom emoji (#175) ride this event rather than a new type, so a

@@ -825,6 +825,7 @@ enum EventPayload: Sendable {
     case notificationRead(NotificationReadData)
     case userUpdated(User)
     case workspaceUpdated(Workspace)
+    case workspaceJoined
     case artifact(Artifact, change: ArtifactChange)
     case unknown
 }
@@ -880,6 +881,10 @@ struct EventDTO: Decodable, Sendable {
             payload = .userUpdated(try c.decode(User.self, forKey: .data))
         case "workspace.updated":
             payload = .workspaceUpdated(try c.decode(Workspace.self, forKey: .data))
+        case "workspace.joined":
+            // this user joined a workspace in another session; the envelope's
+            // workspaceId is all we need
+            payload = .workspaceJoined
         case "artifact.created":
             payload = .artifact(try c.decode(Artifact.self, forKey: .data), change: .created)
         case "artifact.updated":

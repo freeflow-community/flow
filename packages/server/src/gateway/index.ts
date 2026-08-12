@@ -229,6 +229,9 @@ export function attachGateway(server: HttpServer): { close(): void } {
                     );
                   }
                   sendPresenceSnapshot(s, sock, event.workspaceId);
+                  // forward after the subs are attached so the client's refetch
+                  // lands on a socket that already receives the new workspace
+                  send(sock, { op: 'event', event });
                 } catch {
                   /* skip malformed */
                 }

@@ -1292,6 +1292,11 @@ actor SyncEngine {
                 }
             }
 
+        case .workspaceJoined:
+            // this user entered a workspace from another session (e.g. accepted
+            // an invite on the web) — pull the new row so the switcher shows it
+            await refreshWorkspaces()
+
         case .memberJoined(let mj):
             if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                 await refreshMembers(workspaceId: event.workspaceId)
