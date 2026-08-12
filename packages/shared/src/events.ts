@@ -36,7 +36,7 @@ export type EventType =
   | 'artifact.deleted' // per-channel subject
   | 'user.updated' // meta subject of every workspace the user belongs to
   | 'workspace.updated' // meta subject; workspace-level changes (e.g. sidebar color)
-  | 'workspace.joined'; // per-user subject; consumed by the gateway, not forwarded to clients
+  | 'workspace.joined'; // per-user subject; gateway attaches the new workspace's subs, then forwards so other sessions refresh their workspace list
 
 export interface Event<T = unknown> {
   type: EventType;
