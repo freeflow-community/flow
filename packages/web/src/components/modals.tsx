@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { SIDEBAR_COLORS } from '@flow/shared';
+import { SIDEBAR_COLORS, PROFILE_BIO_MAX, PROFILE_WEBSITE_MAX, isProfileWebsiteUrl } from '@flow/shared';
 import type { ChannelDTO, InviteDTO, JoinLinkDTO, NotificationPrefs, UserDTO } from '@flow/shared';
 import { api, uploadAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
@@ -609,6 +609,8 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [displayName, setDisplayName] = useState(auth.user.displayName);
   const [timezone, setTimezone] = useState(auth.user.timezone || 'UTC');
+  const [website, setWebsite] = useState(auth.user.website ?? '');
+  const [bio, setBio] = useState(auth.user.bio ?? '');
   const [error, setError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -629,9 +631,18 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // #220: the server rejects anything that isn't an absolute http(s) URL, so say
+  // so here rather than letting Save fail with a raw validation error.
+  const websiteInvalid = website.trim() !== '' && !isProfileWebsiteUrl(website.trim());
+
   const save = async () => {
     try {
-      const me = await api<UserDTO>('PATCH', '/v1/me', { displayName, timezone });
+      const me = await api<UserDTO>('PATCH', '/v1/me', {
+        displayName,
+        timezone,
+        website: website.trim(),
+        bio,
+      });
       auth.setUser(me);
       await qc.invalidateQueries({ queryKey: ['members'] });
       onClose();
@@ -692,6 +703,28 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
       </select>
 
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Website</label>
+      <input data-testid="profile-website" type="url" placeholder="https://example.com"
+        maxLength={PROFILE_WEBSITE_MAX}
+        className={`w-full rounded border px-3 py-2 text-sm ${websiteInvalid ? 'border-red-500' : 'border-hairline2'}`}
+        value={website} onChange={(e) => setWebsite(e.target.value)} />
+      <p data-testid="profile-website-error"
+        className={`mb-3 mt-1 text-xs ${websiteInvalid ? 'text-red-600' : 'text-faint'}`}>
+        {websiteInvalid ? 'Must be a full link starting with http:// or https://' : 'Shown on your profile card.'}
+      </p>
+
+      <div className="mb-1 flex items-baseline justify-between">
+        <label className="block text-xs font-semibold text-faint uppercase">Bio</label>
+        <span data-testid="profile-bio-count"
+          className={`text-xs ${bio.length >= PROFILE_BIO_MAX ? 'text-red-600' : 'text-faint'}`}>
+          {bio.length}/{PROFILE_BIO_MAX}
+        </span>
+      </div>
+      <textarea data-testid="profile-bio" rows={3} maxLength={PROFILE_BIO_MAX}
+        placeholder="A sentence or two about you."
+        className="mb-3 w-full resize-y rounded border border-hairline2 px-3 py-2 text-sm"
+        value={bio} onChange={(e) => setBio(e.target.value)} />
+
       <div className="mt-2 mb-1 border-t border-hairline pt-3 text-xs font-semibold text-faint uppercase">
         Notifications
       </div>
@@ -738,7 +771,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
         <button data-testid="profile-save"
           className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-          disabled={!displayName.trim()} onClick={() => void save()}>Save</button>
+          disabled={!displayName.trim() || websiteInvalid} onClick={() => void save()}>Save</button>
       </div>
     </Modal>
   );
@@ -802,6 +835,27 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
           {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
           <p className="text-sm text-muted select-all">{user.email}</p>
           <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>
+          {/* #220: the server only stores http(s) URLs, but re-check before
+              making it clickable — a row written before that rule must not
+              become a javascript: link in someone else's page. */}
+          {user.website &&
+            (isProfileWebsiteUrl(user.website) ? (
+              <a data-testid="user-card-website" href={user.website} target="_blank" rel="noreferrer noopener"
+                className="max-w-full truncate text-sm text-accent-deep underline">
+                {user.website.replace(/^https?:\/\//i, '')}
+              </a>
+            ) : (
+              <span data-testid="user-card-website" className="max-w-full truncate text-sm text-muted">
+                {user.website}
+              </span>
+            ))}
+          {/* Plain text, not markdown: a React text child escapes it, and
+              whitespace-pre-wrap is what keeps the author's line breaks. */}
+          {user.bio && (
+            <p data-testid="user-card-bio" className="mt-1 max-w-xs whitespace-pre-wrap text-left text-sm text-ink-soft">
+              {user.bio}
+            </p>
+          )}
           {sponsor && (
             <div
               data-testid="user-card-sponsor"

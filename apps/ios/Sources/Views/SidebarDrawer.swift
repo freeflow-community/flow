@@ -588,6 +588,13 @@ private struct DrawerStatusFooter: View {
             .accessibilityIdentifier("sidebar.statusFooter")
         }
         .sheet(isPresented: $showAccount) { AccountSheet() }
+        // QA: FLOW_DEBUG_OPEN_PROFILE=1 opens the account sheet on launch; the
+        // sheet then pushes My Profile itself.
+        .onAppear {
+            if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_PROFILE"] == "1" {
+                showAccount = true
+            }
+        }
     }
 }
 

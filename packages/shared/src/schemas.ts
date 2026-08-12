@@ -358,9 +358,44 @@ export const NotificationPrefsBody = z.object({
   persistentBanners: z.boolean().optional(),
 });
 
+/** #220: the only schemes a profile website may use.
+ *
+ * A profile website is rendered as a clickable link by every client, so an
+ * arbitrary string here is stored XSS: `javascript:` and `data:` URLs run in
+ * the viewer's page, not the author's. The allowlist lives on the write path
+ * (below) so nothing unsafe is ever stored; clients re-check at render only as
+ * defence in depth for rows written before this rule. */
+export const PROFILE_WEBSITE_MAX = 200;
+export const PROFILE_BIO_MAX = 500;
+
+/** Absolute http(s) URL: a literal `http://` or `https://` prefix, a non-empty
+ * host, and no whitespace anywhere.
+ *
+ * A regex rather than `new URL()` because this package compiles with `lib:
+ * ES2024` and no DOM or node types, so `URL` is not in scope. Requiring the
+ * string to *start* with the scheme is the property that matters: no amount of
+ * trailing junk can turn `https://…` back into `javascript:…`, and leading
+ * whitespace or control characters — which a browser would strip before
+ * parsing an href — fail the match instead of being normalised away. */
+const PROFILE_WEBSITE_RE = /^https?:\/\/[^\s/?#]+[^\s]*$/i;
+
+/** True only for an absolute `http:` or `https:` URL. Everything else — other
+ * schemes, relative paths, bare hostnames — is false. */
+export function isProfileWebsiteUrl(s: string): boolean {
+  return PROFILE_WEBSITE_RE.test(s);
+}
+
 export const PatchMeBody = z
   .object({
     displayName: z.string().min(1).max(80).optional(),
+    // #220: '' clears the link; anything else must be an absolute http(s) URL.
+    website: z
+      .string()
+      .max(PROFILE_WEBSITE_MAX)
+      .refine((s) => s === '' || isProfileWebsiteUrl(s), 'must start with http:// or https://')
+      .optional(),
+    // #220: plain text, newlines preserved. '' clears it.
+    bio: z.string().max(PROFILE_BIO_MAX).optional(),
     timezone: z
       .string()
       .max(64)
@@ -391,6 +426,8 @@ export const PatchMeBody = z
   .refine(
     (b) =>
       b.displayName !== undefined ||
+      b.website !== undefined ||
+      b.bio !== undefined ||
       b.timezone !== undefined ||
       b.statusEmoji !== undefined ||
       b.statusText !== undefined ||

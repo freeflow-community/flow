@@ -211,6 +211,13 @@ struct AppDatabase: Sendable {
                 t.add(column: "pinnedBy", .text)
             }
         }
+        // Expanded user profiles (#220): personal website link + free-text bio.
+        migrator.registerMigration("v14") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "website", .text)
+                t.add(column: "bio", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

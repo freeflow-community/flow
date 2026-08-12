@@ -42,6 +42,8 @@ export async function patchMe(
     timezone?: string | undefined;
     statusEmoji?: string | undefined;
     statusText?: string | undefined;
+    website?: string | undefined;
+    bio?: string | undefined;
     notificationPrefs?: NotificationPrefs | undefined;
     statusSuppressAlerts?: boolean | undefined;
     unfurlOwnLinks?: boolean | undefined;
@@ -52,6 +54,8 @@ export async function patchMe(
     timezone: string;
     statusEmoji: string;
     statusText: string;
+    website: string;
+    bio: string;
     statusSuppressAlerts: boolean;
     unfurlOwnLinks: boolean;
     notificationPrefs: SQL;
@@ -61,6 +65,8 @@ export async function patchMe(
   if (patch.timezone !== undefined) set.timezone = patch.timezone;
   if (patch.statusEmoji !== undefined) set.statusEmoji = patch.statusEmoji;
   if (patch.statusText !== undefined) set.statusText = patch.statusText;
+  if (patch.website !== undefined) set.website = patch.website;
+  if (patch.bio !== undefined) set.bio = patch.bio;
   if (patch.statusSuppressAlerts !== undefined) set.statusSuppressAlerts = patch.statusSuppressAlerts;
   // shallow-merge over the stored prefs: only the keys sent change
   if (patch.notificationPrefs !== undefined) {
