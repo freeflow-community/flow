@@ -374,6 +374,44 @@ final class MarkdownBlocksTests: XCTestCase {
         ])
     }
 
+    // MARK: - Mermaid fences (#229)
+
+    func testFenceLanguageReadsTheInfoString() {
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```mermaid"), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```Mermaid  "), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```mermaid theme=forest"), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("  ```mermaid"), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```swift"), "swift")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```"), "")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("not a fence"), "")
+    }
+
+    func testMermaidFenceBecomesItsOwnSegment() {
+        let source = "flowchart LR\n  A[Client] --> B[Bridge]"
+        XCTAssertEqual(
+            MarkdownBlocks.segments("```mermaid\n" + source + "\n```"),
+            [.mermaid(source)]
+        )
+    }
+
+    func testOnlyMermaidFencesBecomeDiagrams() {
+        XCTAssertEqual(MarkdownBlocks.segments("```\nplain\n```"), [.code("plain")])
+        XCTAssertEqual(MarkdownBlocks.segments("```swift\nlet x = 1\n```"), [.code("let x = 1")])
+        // Nothing to draw — stays a code block, as on web.
+        XCTAssertEqual(MarkdownBlocks.segments("```mermaid\n\n```"), [.code("")])
+    }
+
+    func testMermaidFenceDoesNotDisturbNeighbouringBlocks() {
+        let segs = MarkdownBlocks.segments("# T\n```mermaid\npie\n```\n- a")
+        XCTAssertEqual(segs, [.heading(level: 1, text: "T"), .mermaid("pie"), .ulist(items: ["a"])])
+    }
+
+    func testMermaidFenceIsStillCodeForOutgoingTransforms() {
+        // The composer must not expand :smile: or @Name inside a diagram.
+        let body = "```mermaid\nflowchart LR\n  A[:smile:] --> B\n```"
+        XCTAssertEqual(MarkdownBlocks.mapNonCode(body) { _ in "REPLACED" }, body)
+    }
+
     // MARK: - UTF-16 ranges (composer attribute pass)
 
     func testClassifiedLineRangesAreContiguousUTF16() {
