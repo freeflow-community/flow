@@ -91,6 +91,18 @@ actor SyncEngine {
         await didSignIn(user: resp.user, token: resp.token)
     }
 
+    /// Email-first registration (production servers): asks the server to send
+    /// the signup email. No session results — the account is created by
+    /// whoever opens the emailed link, and the web-to-app handoff brings them
+    /// back here. The server never reveals whether the address already has an
+    /// account, so success just means "the request was accepted".
+    func requestSignup(email: String) async throws {
+        let _: RegisterPendingResponse = try await api.post(
+            "/v1/auth/register",
+            body: EmailRegisterBody(email: email)
+        )
+    }
+
     func login(email: String, password: String) async throws {
         let resp: AuthResponse = try await api.post(
             "/v1/auth/login",

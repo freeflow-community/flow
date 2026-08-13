@@ -135,7 +135,12 @@ This file keeps two things:
 - macOS has no in-app registration, password-reset, or passwordless sign-in
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
-  server. (iOS same — auth is web-driven.)
+  server. iOS diverged 2026-08-12 (App Review Guideline 4 rejection): it now
+  registers in-app (email-first Register tab) and runs Google sign-in in an
+  in-app web-auth sheet instead of Safari. Deliberate for macOS — it ships
+  outside the App Store, and the browser handoff is normal there. iOS still
+  has no in-app password reset (the emailed flows land on the web, which is
+  fine — App Review only flagged browser-based sign-in/registration).
 - iOS: no inline video preview/playback card — video attachments render as a
   name+size chip that opens in QuickLook (which does play them); web/macOS
   render inline players with an expand affordance.

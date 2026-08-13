@@ -658,6 +658,18 @@ struct RegisterBody: Encodable, Sendable {
     // email driver). Production registration happens on the web, which verifies.
     let autoVerify = true
 }
+/// POST /v1/auth/register on production servers: email-first, address only.
+/// Name and password are set by whoever clicks the emailed link.
+struct EmailRegisterBody: Encodable, Sendable {
+    let email: String
+}
+/// Its response — no session yet, just confirmation the email went out. The
+/// server answers the same whether or not the address already has an account
+/// (no enumeration).
+struct RegisterPendingResponse: Decodable, Sendable {
+    let requiresVerification: Bool
+    let email: String
+}
 struct LoginBody: Encodable, Sendable {
     let email: String
     let password: String
