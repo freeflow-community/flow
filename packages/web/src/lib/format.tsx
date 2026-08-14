@@ -12,6 +12,7 @@ import { createContext, Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { WorkspaceMemberDTO } from '@flow/shared';
 import { expandShortcodes } from '@flow/shared';
+import { MermaidBlock } from '../components/MermaidBlock';
 
 /** Lets a message row offer "Pin as artifact" on every inline link it renders,
  * without threading a callback through the recursive renderer. Rendering sites
@@ -148,6 +149,7 @@ export type CellAlign = 'left' | 'center' | 'right' | null;
 
 export type BodySegment =
   | { kind: 'code'; content: string } // fence marker lines stripped
+  | { kind: 'mermaid'; content: string } // ```mermaid — rendered as a diagram
   | { kind: 'quote'; content: string } // leading "> " stripped per line
   | { kind: 'heading'; level: number; content: string } // "#"…"######" stripped
   | { kind: 'ulist'; items: string[] } // "- "/"* "/"+ " markers stripped
@@ -160,6 +162,17 @@ const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const HR_RE = /^(-{3,}|\*{3,}|_{3,})\s*$/;
 const ULIST_RE = /^\s*[-*+]\s+(.*)$/;
 const OLIST_RE = /^\s*(\d+)\.\s+(.*)$/;
+
+/**
+ * The info string of an opening fence — `mermaid` in "```mermaid". Case and
+ * surrounding space are ignored, and only the first word counts, so
+ * "```Mermaid  " and "```mermaid theme=x" are both diagrams. Kept in step with
+ * `MarkdownBlocks.fenceLanguage` on the Swift side so all three clients agree
+ * on what is a diagram.
+ */
+export function fenceLanguage(line: string): string {
+  return line.slice(3).trim().split(/\s+/)[0]!.toLowerCase();
+}
 
 /** A GFM table separator row: pipes, dashes, optional colons — and at least one of each. */
 function isTableSep(line: string): boolean {
@@ -210,6 +223,7 @@ export function segmentBody(body: string): BodySegment[] {
   while (i < lines.length) {
     const line = lines[i]!;
     if (line.startsWith('```')) {
+      const lang = fenceLanguage(line);
       const content: string[] = [];
       i++; // opening fence
       while (i < lines.length && !lines[i]!.startsWith('```')) {
@@ -217,7 +231,13 @@ export function segmentBody(body: string): BodySegment[] {
         i++;
       }
       if (i < lines.length) i++; // closing fence
-      segments.push({ kind: 'code', content: content.join('\n') });
+      const body = content.join('\n');
+      // An empty ```mermaid block has nothing to draw — leave it a code block.
+      segments.push(
+        lang === 'mermaid' && body.trim() !== ''
+          ? { kind: 'mermaid', content: body }
+          : { kind: 'code', content: body },
+      );
     } else if (line.startsWith('>')) {
       const content: string[] = [];
       while (i < lines.length && lines[i]!.startsWith('>')) {
@@ -288,7 +308,8 @@ const ALIGN_CLASS: Record<'left' | 'center' | 'right', string> = {
 
 /**
  * Block-level body renderer: code → <pre><code> (no mention pills, fences
- * hidden), quotes → <blockquote>, headings → sized/bold, lists → <ul>/<ol>,
+ * hidden), ```mermaid → a sandboxed diagram frame, quotes → <blockquote>,
+ * headings → sized/bold, lists → <ul>/<ol>,
  * tables → a scrollable <table>, rules → <hr>, plain text through renderBody.
  * Inline content (mention pills + inline markdown) runs through renderBody
  * inside every text-bearing block. Render inside a whitespace-pre-wrap
@@ -312,6 +333,9 @@ export function renderBlocks(
           <code>{seg.content}</code>
         </pre>
       );
+    }
+    if (seg.kind === 'mermaid') {
+      return <MermaidBlock key={key} source={seg.content} />;
     }
     if (seg.kind === 'quote') {
       return (

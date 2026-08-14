@@ -14,6 +14,7 @@
   "dependencies": {
     "@flow/shared": "workspace:*",
     "@tanstack/react-query": "^5.62.0",
+    "mermaid": "^11.16.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

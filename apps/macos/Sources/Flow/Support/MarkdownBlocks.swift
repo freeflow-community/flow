@@ -24,6 +24,9 @@ enum MarkdownBlocks {
         case paragraph(String)
         case quote(String) // ">"/"> " markers stripped, lines joined with \n
         case code(String)  // fence marker lines dropped
+        /// A ```mermaid fence (#229). Held apart from `.code` so the views can
+        /// draw it as a diagram; the payload is the source, verbatim.
+        case mermaid(String)
         /// An ATX heading. `level` is 1...6; the hashes and the whitespace
         /// after them are stripped, so `text` is the inline content.
         case heading(level: Int, text: String)
@@ -132,6 +135,7 @@ enum MarkdownBlocks {
         while i < raw.count {
             switch ks[i] {
             case .fence:
+                let language = fenceLanguage(text[i])
                 var content: [Substring] = []
                 var j = i + 1
                 while j < raw.count, ks[j] == .code {
@@ -139,7 +143,12 @@ enum MarkdownBlocks {
                     j += 1
                 }
                 if j < raw.count, ks[j] == .fence { j += 1 } // closing fence
-                segs.append(.code(content.joined(separator: "\n")))
+                let body = content.joined(separator: "\n")
+                // An empty ```mermaid block has nothing to draw, so it stays a
+                // code block — same rule as web's segmentBody.
+                let isDiagram = language == "mermaid"
+                    && !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                segs.append(isDiagram ? .mermaid(body) : .code(body))
                 i = j
             case .quote:
                 var content: [String] = []
@@ -227,6 +236,21 @@ enum MarkdownBlocks {
             }
         }
         return segs
+    }
+
+    // MARK: - Fence info strings
+
+    /// The info string of an opening fence — `mermaid` in "```mermaid". Case
+    /// and surrounding space are ignored and only the first word counts, so
+    /// "```Mermaid  " and "```mermaid theme=x" both name mermaid. The twin of
+    /// web's `fenceLanguage` (packages/web/src/lib/format.tsx), so all three
+    /// clients agree on what is a diagram.
+    static func fenceLanguage(_ line: String) -> String {
+        let afterIndent = line.drop(while: { $0 == " " || $0 == "\t" })
+        guard afterIndent.hasPrefix("```") else { return "" }
+        let info = afterIndent.dropFirst(3).trimmingCharacters(in: .whitespaces)
+        let firstWord = info.prefix(while: { !$0.isWhitespace })
+        return firstWord.lowercased()
     }
 
     // MARK: - ATX headings

@@ -927,6 +927,8 @@ struct MessageRow: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(MC.codeBg))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
                 .accessibilityIdentifier("msg.codeBlock")
+        case .mermaid(let source):
+            MermaidDiagramView(source: source)
         case .table(let header, let align, let rows):
             MarkdownTableView(
                 header: header, align: align, rows: rows,
