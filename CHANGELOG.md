@@ -38,6 +38,10 @@ This file keeps two things:
   makes every layout pass touch every row and freezes the app on a channel
   switch. Needs a `UIViewRepresentable` over `UICollectionView` (or the web
   equivalent) to do safely.
+- Reopening the last-viewed channel on launch is iOS-only (#242). The storage
+  and the validation live in the shared `WindowState`, so macOS is one call to
+  `restorableLastChannel` away — it deliberately still opens on the workspace
+  it remembers and nothing more. Web has no launch-restore either.
 - The two native clients decide "follow the newest message?" differently since
   #159: iOS keys off a deliberate 200pt finger-drag, macOS classifies content
   growth vs user scroll (`classify` in its `MessageListView`). Same intent,

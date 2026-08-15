@@ -73,6 +73,24 @@ final class WindowState: ObservableObject {
 
     // MARK: - Channel
 
+    private static let lastChannelKey = "lastChannelId" + Profile.suffix
+
+    /// The channel to reopen on the next launch, or nil if there isn't one.
+    /// Written on every selection (so backgrounding needs no hook of its own)
+    /// and cleared when the selection goes away — leaving, archiving, or
+    /// signing out. Same storage shape as `activeWorkspaceKey` above, and
+    /// shared across windows for the same reason: the *last* pick wins.
+    static var lastChannelId: String? {
+        get { UserDefaults.standard.string(forKey: lastChannelKey) }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue, forKey: lastChannelKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: lastChannelKey)
+            }
+        }
+    }
+
     func selectChannel(_ id: String?) {
         // Selecting a channel always closes an open artifact panel or the
         // activity feed — even when it's the same channel that's behind them.
@@ -88,6 +106,7 @@ final class WindowState: ObservableObject {
     private func switchChannel(to id: String?) {
         rememberOpenThread()
         selectedChannelId = id
+        Self.lastChannelId = id
         openThreadRootId = id.flatMap { openThreadByChannel[$0] }
         let restored = openThreadRootId
         // Local capture: the task must not retain the window (a closed one
@@ -108,10 +127,28 @@ final class WindowState: ObservableObject {
     /// Active channel was archived or left — drop the selection.
     func channelBecameUnavailable(_ channelId: String) {
         openThreadByChannel.removeValue(forKey: channelId) // nothing to come back to
+        if Self.lastChannelId == channelId { Self.lastChannelId = nil } // don't reopen it next launch
         if selectedChannelId == channelId {
             selectedChannelId = nil
             openThreadRootId = nil
         }
+    }
+
+    /// The stored last channel, if it is still a channel this user can open:
+    /// it exists in the local cache, they're a member, and it belongs to the
+    /// workspace this window is showing. Anything else returns nil, and the
+    /// caller falls back to its usual landing channel.
+    ///
+    /// `channels` is the caller's already-observed list rather than a fresh
+    /// query, so restoring costs nothing beyond a lookup.
+    func restorableLastChannel(from channels: [Channel]) -> String? {
+        guard selectedChannelId == nil, !showActivity,
+              let saved = Self.lastChannelId,
+              let channel = channels.first(where: { $0.id == saved }),
+              channel.isMember, channel.archivedAt == nil,
+              channel.workspaceId == selectedWorkspaceId
+        else { return nil }
+        return saved
     }
 
     // MARK: - Threads
@@ -226,6 +263,9 @@ final class WindowState: ObservableObject {
     // MARK: - Sign-out
 
     func clearForSignOut() {
+        // The next person to sign in on this device gets their own landing
+        // channel, not the last one this account was reading.
+        Self.lastChannelId = nil
         selectedWorkspaceId = nil
         selectedChannelId = nil
         openThreadRootId = nil
