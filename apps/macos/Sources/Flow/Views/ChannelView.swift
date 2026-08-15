@@ -26,6 +26,7 @@ struct ChannelView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            SyncBar(syncing: app.isSyncing)
 
             MessageListView(
                 messages: messages.value,
