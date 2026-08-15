@@ -26,6 +26,14 @@ const { files, messageFiles, messages, artifacts } = schema;
 
 type FileRow = typeof files.$inferSelect;
 
+// What we ask sharp to thumbnail. Deliberately no HEIC (#243): the prebuilt
+// libvips parses the HEIF container but can't decode HEVC pixels, so
+// `metadata()` succeeds and `toBuffer()` throws `bad seek` — adding it here
+// would buy the same null sidecar for the cost of pulling every photo into
+// memory. All three clients now downscale and re-encode before upload
+// (`ImagePrep` on macOS/iOS, `lib/imagePrep.ts` on web), so a raw .heic only
+// reaches us from a browser that can't decode it either, and the server has no
+// way to rescue that one.
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export function toFileDTO(f: FileRow): FileDTO {
