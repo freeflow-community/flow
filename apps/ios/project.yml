@@ -80,7 +80,7 @@ targets:
         # Version + build come from the MARKETING_VERSION / CURRENT_PROJECT_VERSION
         # build settings below. Without these, XcodeGen writes literal "1.0"/"1"
         # into the plist, which override the settings and pin every archive to
-        # 1.0 (1) — bump CURRENT_PROJECT_VERSION per TestFlight upload.
+        # 1.0 (1).
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
@@ -103,7 +103,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app
         DEVELOPMENT_TEAM: RP5QYMYA4Z # App Store signing team (clean 2026-07 account)
         MARKETING_VERSION: "2.0"
-        CURRENT_PROJECT_VERSION: "27"
+        # Fallback only. Releases derive the build number from the commit
+        # count and pass it to xcodebuild, which outranks this — see
+        # apps/ios/tools/release-ios.sh. Do not bump this per upload.
+        CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -192,7 +195,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.share
         DEVELOPMENT_TEAM: RP5QYMYA4Z
         MARKETING_VERSION: "2.0"
-        CURRENT_PROJECT_VERSION: "27"
+        # Fallback only. Releases derive the build number from the commit
+        # count and pass it to xcodebuild, which outranks this — see
+        # apps/ios/tools/release-ios.sh. Do not bump this per upload.
+        CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
 
