@@ -61,7 +61,13 @@ struct MainView: View {
                 app.selectWorkspace(first.id)
             }
         }
-        .onChange(of: allChannels.value) { _, list in debugAutoOpen(list) }
+        .onChange(of: allChannels.value) { _, list in
+            debugAutoOpen(list)
+            restoreLastChannel(list)
+        }
+        // The workspace and the cached channel rows arrive in either order on a
+        // cold launch, and the restore needs both — so try again from this side.
+        .onChange(of: app.selectedWorkspaceId) { _, _ in restoreLastChannel(allChannels.value) }
         .environmentObject(app)
     }
 
@@ -114,6 +120,28 @@ struct MainView: View {
         drawerOpen = true
     }
     private func closeDrawer() { drawerOpen = false }
+
+    /// Reopen the channel this device was last reading (#242). Runs whenever
+    /// the channel list changes, because on a cold launch the workspace, the
+    /// cached rows and the first sync all land at different moments — the
+    /// first pass that has a usable row wins, and the rest no-op.
+    ///
+    /// It only ever fills an *empty* selection (the guard lives in
+    /// `restorableLastChannel`), which is what keeps the priority order right:
+    /// a deep link, a tapped notification or the debug hook has already put
+    /// something on screen, so restoring is skipped — and if one of those
+    /// arrives later it simply navigates over the restored channel.
+    private func restoreLastChannel(_ channels: [Channel]) {
+        #if DEBUG
+        // A launch-hook destination outranks the restore and may land on a
+        // later pass than this one, so don't take the slot from it.
+        let env = ProcessInfo.processInfo.environment
+        if let key = env["FLOW_DEBUG_OPEN_CHANNEL"], !key.isEmpty { return }
+        if env["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" { return }
+        #endif
+        guard let id = app.window.restorableLastChannel(from: channels) else { return }
+        app.selectChannel(id)
+    }
 
     // DEBUG QA: FLOW_DEBUG_OPEN_CHANNEL=<name or channel id> auto-selects that
     // channel so the simulator can be screenshot-verified without a UI tap
