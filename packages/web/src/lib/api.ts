@@ -1,5 +1,6 @@
 // REST client: same-origin (Vite proxy in dev, Fastify static in prod).
 import type { FileDTO, PresignedUploadDTO } from '@flow/shared';
+import { prepareImageForUpload } from './imagePrep';
 
 export class ApiError extends Error {
   constructor(
@@ -50,9 +51,15 @@ export function fileStreamUrl(fileId: string): Promise<{ url: string | null; exp
   return api('GET', `/v1/files/${fileId}/url`);
 }
 
-/** Presigned upload: reserve → PUT the bytes (direct to R2, or the server-proxied
- * fallback in local dev) → complete (server verifies + thumbnails). */
-export async function uploadFile(workspaceId: string, file: File): Promise<FileDTO> {
+/** Presigned upload: prepare (downscale/convert oversized images) → reserve →
+ * PUT the bytes (direct to R2, or the server-proxied fallback in local dev) →
+ * complete (server verifies + thumbnails).
+ *
+ * `prepareImageForUpload` sits at this one funnel rather than at each composer
+ * call site, the rule the native clients settled on in #84: it can't be
+ * forgotten by a new caller, and the presign has to see the *final* size. */
+export async function uploadFile(workspaceId: string, original: File): Promise<FileDTO> {
+  const file = await prepareImageForUpload(original);
   const pres = await api<PresignedUploadDTO>('POST', `/v1/workspaces/${workspaceId}/files/presign`, {
     filename: file.name,
     mimeType: file.type || 'application/octet-stream',

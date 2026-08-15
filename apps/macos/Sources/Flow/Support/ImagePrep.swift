@@ -90,6 +90,13 @@ enum ImagePrep {
         return dest
     }
 
+    /// Deletes a temp file `prepareForUpload` produced, and the private
+    /// directory it was written into. Only ever pass that return value: it
+    /// removes the *enclosing directory*, which is ours alone.
+    static func discard(_ url: URL) {
+        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
+
     /// Pixel dimensions as displayed — swapped when EXIF orientation is one of
     /// the four rotated cases, so a portrait photo stored landscape-plus-tag
     /// measures portrait here and picks the right axis to cap.

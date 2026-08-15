@@ -271,13 +271,10 @@ This file keeps two things:
 - webm videos play inline on web only: AVFoundation has no VP8/VP9/webm
   support, so macOS shows the file chip (Download / open externally) for
   webm attachments (ruled — see decision_log 2026-07-20).
-- macOS + web upload images at full size and full bytes — #84 fixed iOS only.
-  The Mac composer also accepts `.heic` and sends it raw, so it lands with no
-  thumbnail (the same bug #84 fixed on iOS). `Support/ImagePrep.swift` is
-  ImageIO-based and already compiles for macOS, so the Mac side is a call-site
-  change; web needs a `canvas`/`createImageBitmap` equivalent in
-  `packages/web/src/lib/api.ts`. Board: "macOS + web: compress and convert
-  images on upload".
+- A `.heic` uploaded from Chrome or Firefox still lands with no thumbnail and
+  no dimensions, where macOS, iOS and Safari convert it to JPEG first (#243).
+  Neither end can fix it: those browsers can't decode HEIC, and the server's
+  prebuilt libvips reads the HEIF container but can't decode HEVC pixels.
 - Responsive/mobile layout (drawer nav, viewport-capped media and modals):
   web only, and inherently so — the native clients lay themselves out per
   platform, and the iOS app is the native phone experience. Not a gap.

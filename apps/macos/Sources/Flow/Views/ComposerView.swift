@@ -285,15 +285,26 @@ struct ComposerView: View {
         }
     }
 
-    /// Shared upload pipeline (paperclip, image paste, drag-and-drop).
+    /// The one funnel every upload goes through — paperclip, image paste and
+    /// drag-and-drop. `ImagePrep` belongs here rather than at each call site,
+    /// the rule #84 settled on for iOS: it can't be forgotten by a new caller.
+    /// Non-images and already-small images come back `nil` and upload untouched.
     private func uploadFiles(_ urls: [URL]) {
         guard let wsId = workspaceId else { return }
         uploading += urls.count
         for url in urls {
             Task { @MainActor in
                 defer { uploading -= 1 }
+                // Off the main actor: decoding and re-encoding a 12MP photo is
+                // long enough to drop frames, and the composer stays live.
+                let prepared = await Task.detached(priority: .userInitiated) {
+                    ImagePrep.prepareForUpload(url)
+                }.value
+                defer { if let prepared { ImagePrep.discard(prepared) } }
                 do {
-                    let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: url)
+                    let file = try await app.engine.uploadFile(
+                        workspaceId: wsId, fileURL: prepared ?? url
+                    )
                     if attachments.count < 10 { attachments.append(file) }
                 } catch {
                     app.showError("Couldn't upload \(url.lastPathComponent): \(error.localizedDescription)")
@@ -367,25 +378,13 @@ struct ComposerView: View {
     }
 
     private func pickFiles() {
-        guard let wsId = workspaceId else { return }
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.begin { response in
             guard response == .OK else { return }
             let urls = panel.urls
-            uploading += urls.count
-            for url in urls {
-                Task { @MainActor in
-                    defer { uploading -= 1 }
-                    do {
-                        let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: url)
-                        if attachments.count < 10 { attachments.append(file) }
-                    } catch {
-                        app.showError("Couldn't upload \(url.lastPathComponent): \(error.localizedDescription)")
-                    }
-                }
-            }
+            Task { @MainActor in uploadFiles(urls) }
         }
     }
 
@@ -396,21 +395,10 @@ struct ComposerView: View {
     /// uploading counter — same pipeline as the paperclip picker); false lets
     /// the text view paste normally (plain text).
     private func handlePasteImages(_ pasteboard: NSPasteboard) -> Bool {
-        guard let wsId = workspaceId else { return false }
+        guard workspaceId != nil else { return false }
         let urls = Self.pastedImageFileURLs(from: pasteboard)
         guard !urls.isEmpty else { return false }
-        uploading += urls.count
-        for url in urls {
-            Task { @MainActor in
-                defer { uploading -= 1 }
-                do {
-                    let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: url)
-                    if attachments.count < 10 { attachments.append(file) }
-                } catch {
-                    app.showError("Couldn't paste image: \(error.localizedDescription)")
-                }
-            }
-        }
+        uploadFiles(urls)
         return true
     }
 
