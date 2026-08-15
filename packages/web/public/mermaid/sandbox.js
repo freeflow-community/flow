@@ -3,16 +3,22 @@
 //
 // Protocol, both directions, identical for the iframe host and the WKWebView
 // host:
-//   host → here   {flowMermaid:'render', id, source, theme}
+//   host → here   {flowMermaid:'render', id, source, theme, fit}
 //                 (native calls window.flowMermaidRender(jsonString) instead —
 //                  a WKWebView has no parent window to postMessage from)
+//                 fit:'window' is the zoomed copy (#232): fill the frame
+//                 instead of capping at MAX_HEIGHT.
 //   here → host   {flowMermaid:'ready'}
 //                 {flowMermaid:'result', id, ok:true,  height}
 //                 {flowMermaid:'result', id, ok:false, error}
 //                 {flowMermaid:'resize', id, height}   width changed
+//                 {flowMermaid:'activate', id}         inline diagram clicked
+//                 {flowMermaid:'dismiss', id}          zoomed backdrop clicked
 //
 // The SVG is never handed out. The host gets a height, lays out a frame of
-// that height, and the diagram is drawn in here.
+// that height, and the diagram is drawn in here. Zooming keeps that boundary:
+// the overlay is a *second* frame of this page rendering the same source, not
+// the SVG lifted out into the host document.
 (function () {
   'use strict';
 
@@ -30,6 +36,7 @@
   var out = document.getElementById('out');
   var current = null; // id of the diagram on screen, for resize reports
   var lastTheme = null;
+  var fitWindow = false; // zoomed copy: fill the frame rather than cap height
 
   function post(message) {
     // Native host first: a WKWebView is a top-level document, so `parent` is
@@ -124,6 +131,33 @@
     svg.style.maxWidth = Math.floor(width * (MAX_HEIGHT / h)) + 'px';
   }
 
+  /** Zoomed copy (#232): scale the diagram to the frame, which is the whole
+   *  overlay. Unlike fitHeight this may scale *up* — a small diagram enlarged
+   *  is the point, and an SVG stays sharp at any size. The viewBox carries the
+   *  natural aspect ratio, so the two axes need no separate measurement. */
+  function fitToFrame() {
+    var svg = out.querySelector('svg');
+    if (!svg) return;
+    svg.style.maxWidth = 'none';
+    var box = svg.viewBox && svg.viewBox.baseVal;
+    var vw = document.documentElement.clientWidth;
+    var vh = document.documentElement.clientHeight;
+    if (!box || !box.width || !box.height) {
+      // No viewBox to reason from (a diagram type that omits it): fall back to
+      // the frame width and let the aspect ratio look after the height.
+      svg.style.width = vw + 'px';
+      return;
+    }
+    var scale = Math.min(vw / box.width, vh / box.height);
+    svg.style.width = Math.floor(box.width * scale) + 'px';
+    svg.style.height = Math.floor(box.height * scale) + 'px';
+  }
+
+  function fit() {
+    if (fitWindow) fitToFrame();
+    else fitHeight();
+  }
+
   function fail(id, error) {
     current = null;
     out.replaceChildren();
@@ -162,6 +196,8 @@
     }
 
     applyTheme(request.theme);
+    fitWindow = request.fit === 'window';
+    document.documentElement.setAttribute('data-fit', fitWindow ? 'window' : 'inline');
     var svgId = 'mmd-' + String(id).replace(/[^a-zA-Z0-9_-]/g, '') + '-' + Math.floor(performance.now());
 
     withTimeout(
@@ -174,7 +210,7 @@
         // into *this* document and never returned to the host.
         out.innerHTML = result.svg;
         current = id;
-        fitHeight();
+        fit();
         post({ flowMermaid: 'result', id: id, ok: true, height: height() });
       })
       .catch(function (error) {
@@ -187,19 +223,50 @@
   // host needs the new height to resize its frame.
   if (window.ResizeObserver) {
     var lastWidth = 0;
+    var lastHeight = 0;
     // Watch the *frame*, not `#out` — fitHeight() resizes `#out`, so observing
     // it would re-enter this on every fit and oscillate.
     new ResizeObserver(function () {
       var width = document.documentElement.clientWidth;
-      if (!current || width === lastWidth) return;
+      var height_ = document.documentElement.clientHeight;
+      // Zoomed, the frame's own height is a live input to the scale, so a
+      // window resized only vertically has to re-fit as well.
+      var changed = width !== lastWidth || (fitWindow && height_ !== lastHeight);
+      if (!current || !changed) return;
       lastWidth = width;
+      lastHeight = height_;
       requestAnimationFrame(function () {
         if (!current) return;
-        fitHeight();
-        post({ flowMermaid: 'resize', id: current, height: height() });
+        fit();
+        // A zoomed frame is sized by its host, not by the diagram, so there is
+        // no height worth reporting.
+        if (!fitWindow) post({ flowMermaid: 'resize', id: current, height: height() });
       });
     }).observe(document.documentElement);
   }
+
+  // Clicks (#232). Both hosts mount this page in a frame — an iframe on web, a
+  // WKWebView on the native clients — and a frame swallows the click, so
+  // neither host can see one of its own. Reporting it is what lets a click on
+  // the diagram open the overlay, and a click beside the zoomed diagram close
+  // it again.
+  document.addEventListener('click', function (event) {
+    if (!current) return;
+    if (!fitWindow) {
+      // The whole frame, not only the SVG: the frame holds nothing else, and a
+      // click that lands in the margin of a narrow diagram should still zoom.
+      post({ flowMermaid: 'activate', id: current });
+      return;
+    }
+    var onDiagram = event.target && event.target.closest && event.target.closest('svg');
+    if (!onDiagram) post({ flowMermaid: 'dismiss', id: current });
+  });
+
+  // Escape while the pointer sits over the zoomed frame: the keydown lands
+  // here, not on the host, so the host would never hear it.
+  document.addEventListener('keydown', function (event) {
+    if (fitWindow && current && event.key === 'Escape') post({ flowMermaid: 'dismiss', id: current });
+  });
 
   window.addEventListener('message', function (event) {
     var data = event.data;

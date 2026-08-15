@@ -30,7 +30,7 @@ struct MermaidDiagramView: View {
 
     @State private var height: CGFloat = 24
     @State private var failure: String?
-    @State private var copied = false
+    @State private var zoomed = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -44,6 +44,17 @@ struct MermaidDiagramView: View {
                         .accessibilityIdentifier("msg.mermaidError")
                 }
                 Spacer(minLength: 4)
+                if failure == nil {
+                    // The click that zooms is reported by the page, so it is
+                    // out of reach of the keyboard and of VoiceOver. This is
+                    // the way in for both.
+                    Button { zoomed = true } label: {
+                        Text("Zoom").flowFont(size: 11).foregroundStyle(MC.inkSoft)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Zoom diagram")
+                    .accessibilityIdentifier("msg.mermaidZoom")
+                }
                 copyButton
             }
             if failure == nil {
@@ -51,7 +62,8 @@ struct MermaidDiagramView: View {
                     source: source,
                     dark: colorScheme == .dark,
                     onHeight: { height = max($0, 24) },
-                    onFailure: { failure = $0 }
+                    onFailure: { failure = $0 },
+                    onActivate: { zoomed = true }
                 )
                 .frame(height: height)
                 .accessibilityIdentifier("msg.mermaidDiagram")
@@ -61,31 +73,20 @@ struct MermaidDiagramView: View {
                 codeFallback
             }
         }
+        .sheet(isPresented: $zoomed) {
+            MermaidZoomView(source: source, dark: colorScheme == .dark)
+        }
         .task(id: source) {
             // A body edit re-renders from scratch, so a fixed diagram stops
             // showing the old diagram's error.
             failure = nil
+            zoomed = false
             try? await Task.sleep(nanoseconds: UInt64(Self.replyTimeout * 1_000_000_000))
             if height <= 24, failure == nil { failure = "The diagram renderer did not answer." }
         }
     }
 
-    private var copyButton: some View {
-        Button {
-            copy(source)
-            copied = true
-            Task {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                copied = false
-            }
-        } label: {
-            Text(copied ? "Copied" : "Copy source")
-                .flowFont(size: 11)
-                .foregroundStyle(MC.inkSoft)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("msg.mermaidCopy")
-    }
+    private var copyButton: some View { MermaidCopyButton(source: source) }
 
     @ViewBuilder
     private var codeFallback: some View {
@@ -113,13 +114,100 @@ struct MermaidDiagramView: View {
         #endif
     }
 
-    private func copy(_ text: String) {
-        #if os(iOS)
-        UIPasteboard.general.string = text
-        #else
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+}
+
+/// Copies the diagram source, with a moment of "Copied" feedback. A diagram
+/// hides its source completely, so this is the only way to reach something the
+/// reader cannot otherwise see — which is why it is also in the zoom overlay.
+struct MermaidCopyButton: View {
+    let source: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            #if os(iOS)
+            UIPasteboard.general.string = source
+            #else
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(source, forType: .string)
+            #endif
+            copied = true
+            Task {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                copied = false
+            }
+        } label: {
+            Text(copied ? "Copied" : "Copy source")
+                .flowFont(size: 11)
+                .foregroundStyle(MC.inkSoft)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("msg.mermaidCopy")
+    }
+}
+
+/// The zoomed diagram (#232), presented by the *native* host rather than by
+/// the page. The inline web view is sized to the diagram's own height, so an
+/// overlay drawn inside it could never be larger than the thing it enlarges.
+/// This is the same `.sheet` the image and video lightboxes use, holding a
+/// second web view of the same sandbox page with `fit: "window"`.
+struct MermaidZoomView: View {
+    let source: String
+    let dark: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var failure: String?
+
+    #if !os(iOS)
+    /// As large as the window it opens over. A fixed size is the wrong answer:
+    /// a wide diagram already fills the message column, so a sheet narrower
+    /// than that column would *shrink* the thing the reader asked to enlarge.
+    /// macOS clamps a sheet to its parent window, which makes "the window"
+    /// the largest honest ask. `mainWindow` first — once the sheet is up it is
+    /// the key window, and the parent is the main one.
+    private var frameSize: CGSize {
+        let host = NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible }
+        let bounds = host?.frame.size ?? NSScreen.main?.visibleFrame.size ?? CGSize(width: 1000, height: 700)
+        return CGSize(width: max(640, bounds.width - 48), height: max(420, bounds.height - 72))
+    }
+    #endif
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                if let failure {
+                    Text("Mermaid: \(failure)")
+                        .flowFont(size: 11)
+                        .foregroundStyle(MC.danger)
+                        .accessibilityIdentifier("mermaidLightbox.error")
+                }
+                Spacer(minLength: 4)
+                MermaidCopyButton(source: source)
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help("Close")
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("mermaidLightbox.close")
+            }
+            MermaidWebView(
+                source: source,
+                dark: dark,
+                fit: "window",
+                onHeight: { _ in },
+                onFailure: { failure = $0 },
+                // The page reports a click beside the diagram, and Escape
+                // pressed while the pointer is over the web view — neither
+                // reaches this view on its own.
+                onDismiss: { dismiss() }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(14)
+        #if !os(iOS)
+        .frame(width: frameSize.width, height: frameSize.height)
         #endif
+        .accessibilityIdentifier("mermaidLightbox")
     }
 }
 
@@ -134,16 +222,31 @@ private var sandboxURL: URL {
 private final class MermaidCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     var source: String
     var dark: Bool
+    /// "window" for the zoom overlay; nil for an inline diagram.
+    let fit: String?
     let onHeight: (CGFloat) -> Void
     let onFailure: (String) -> Void
+    let onActivate: () -> Void
+    let onDismiss: () -> Void
     weak var webView: WKWebView?
     private var loaded = false
 
-    init(source: String, dark: Bool, onHeight: @escaping (CGFloat) -> Void, onFailure: @escaping (String) -> Void) {
+    init(
+        source: String,
+        dark: Bool,
+        fit: String?,
+        onHeight: @escaping (CGFloat) -> Void,
+        onFailure: @escaping (String) -> Void,
+        onActivate: @escaping () -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
         self.source = source
         self.dark = dark
+        self.fit = fit
         self.onHeight = onHeight
         self.onFailure = onFailure
+        self.onActivate = onActivate
+        self.onDismiss = onDismiss
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -163,7 +266,8 @@ private final class MermaidCoordinator: NSObject, WKScriptMessageHandler, WKNavi
     /// into markup, so a diagram cannot break out of its own render call.
     func render() {
         guard loaded, let webView else { return }
-        let request: [String: Any] = ["id": "native", "source": source, "theme": dark ? "dark" : "light"]
+        var request: [String: Any] = ["id": "native", "source": source, "theme": dark ? "dark" : "light"]
+        if let fit { request["fit"] = fit }
         guard let data = try? JSONSerialization.data(withJSONObject: request),
               let json = String(data: data, encoding: .utf8),
               let literal = try? JSONSerialization.data(withJSONObject: [json]),
@@ -190,6 +294,10 @@ private final class MermaidCoordinator: NSObject, WKScriptMessageHandler, WKNavi
             }
         case "resize":
             onHeight(CGFloat((body["height"] as? NSNumber)?.doubleValue ?? 24))
+        case "activate":
+            onActivate()
+        case "dismiss":
+            onDismiss()
         default:
             break
         }
@@ -220,11 +328,17 @@ private func makeMermaidWebView(_ coordinator: MermaidCoordinator) -> WKWebView 
 private struct MermaidWebView: UIViewRepresentable {
     let source: String
     let dark: Bool
+    var fit: String?
     let onHeight: (CGFloat) -> Void
     let onFailure: (String) -> Void
+    var onActivate: () -> Void = {}
+    var onDismiss: () -> Void = {}
 
     func makeCoordinator() -> MermaidCoordinator {
-        MermaidCoordinator(source: source, dark: dark, onHeight: onHeight, onFailure: onFailure)
+        MermaidCoordinator(
+            source: source, dark: dark, fit: fit,
+            onHeight: onHeight, onFailure: onFailure, onActivate: onActivate, onDismiss: onDismiss
+        )
     }
 
     func makeUIView(context: Context) -> WKWebView { makeMermaidWebView(context.coordinator) }
@@ -240,11 +354,17 @@ private struct MermaidWebView: UIViewRepresentable {
 private struct MermaidWebView: NSViewRepresentable {
     let source: String
     let dark: Bool
+    var fit: String?
     let onHeight: (CGFloat) -> Void
     let onFailure: (String) -> Void
+    var onActivate: () -> Void = {}
+    var onDismiss: () -> Void = {}
 
     func makeCoordinator() -> MermaidCoordinator {
-        MermaidCoordinator(source: source, dark: dark, onHeight: onHeight, onFailure: onFailure)
+        MermaidCoordinator(
+            source: source, dark: dark, fit: fit,
+            onHeight: onHeight, onFailure: onFailure, onActivate: onActivate, onDismiss: onDismiss
+        )
     }
 
     func makeNSView(context: Context) -> WKWebView { makeMermaidWebView(context.coordinator) }

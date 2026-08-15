@@ -9,6 +9,7 @@ import { useAuth, useSelection } from '../state';
 import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
 import type { LocalMessage } from '../lib/messageCache';
 import { Avatar, AuthImg } from './Avatar';
+import { LightboxButton, LightboxShell } from './Lightbox';
 import { EmojiGlyph } from './CustomEmoji';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
@@ -910,46 +911,19 @@ function VideoLightbox({
   onClose: () => void;
   onDownload: () => Promise<void>;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
   return (
-    <div
-      data-testid="video-lightbox"
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75"
-      onMouseDown={onClose}
-    >
-      <div className="absolute top-4 right-5 flex gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
-        <button
-          data-testid="video-lightbox-download"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Download"
-          onClick={() => void onDownload()}
-        >
+    <LightboxShell
+      testId="video-lightbox"
+      onClose={onClose}
+      caption={file.name}
+      actions={
+        <LightboxButton testId="video-lightbox-download" title="Download" onClick={() => void onDownload()}>
           ⤓
-        </button>
-        <button
-          data-testid="video-lightbox-close"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Close"
-          onClick={onClose}
-        >
-          ✕
-        </button>
-      </div>
-      <video
-        src={url}
-        controls
-        autoPlay
-        className="max-h-[85vh] max-w-[88vw] rounded-lg bg-black"
-        onMouseDown={(e) => e.stopPropagation()}
-      />
-      <span className="mt-3 max-w-[80vw] truncate text-xs text-white/70" onMouseDown={(e) => e.stopPropagation()}>
-        {file.name}
-      </span>
-    </div>
+        </LightboxButton>
+      }
+    >
+      <video src={url} controls autoPlay className="max-h-[85vh] max-w-[88vw] rounded-lg bg-black" />
+    </LightboxShell>
   );
 }
 
@@ -1157,58 +1131,33 @@ function ImageLightbox({
   useEffect(() => {
     let alive = true;
     void blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); }).catch(() => {});
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      alive = false;
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [file.id, onClose]);
+    return () => { alive = false; };
+  }, [file.id]);
   return (
-    <div
-      data-testid="lightbox"
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75"
-      onMouseDown={onClose}
+    <LightboxShell
+      testId="lightbox"
+      onClose={onClose}
+      caption={file.name}
+      actions={
+        <>
+          <LightboxButton
+            testId="lightbox-open-external"
+            title="Open external"
+            onClick={() => { if (url) window.open(url, '_blank'); }}
+          >
+            ↗
+          </LightboxButton>
+          <LightboxButton testId="lightbox-download" title="Download" onClick={() => void onDownload()}>
+            ⤓
+          </LightboxButton>
+        </>
+      }
     >
-      <div className="absolute top-4 right-5 flex gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
-        <button
-          data-testid="lightbox-open-external"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Open external"
-          onClick={() => { if (url) window.open(url, '_blank'); }}
-        >
-          ↗
-        </button>
-        <button
-          data-testid="lightbox-download"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Download"
-          onClick={() => void onDownload()}
-        >
-          ⤓
-        </button>
-        <button
-          data-testid="lightbox-close"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Close"
-          onClick={onClose}
-        >
-          ✕
-        </button>
-      </div>
       {url ? (
-        <img
-          src={url}
-          alt={file.name}
-          className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain"
-          onMouseDown={(e) => e.stopPropagation()}
-        />
+        <img src={url} alt={file.name} className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain" />
       ) : (
         <span className="text-sm text-white/70">Loading…</span>
       )}
-      <span className="mt-3 max-w-[80vw] truncate text-xs text-white/70" onMouseDown={(e) => e.stopPropagation()}>
-        {file.name}
-      </span>
-    </div>
+    </LightboxShell>
   );
 }

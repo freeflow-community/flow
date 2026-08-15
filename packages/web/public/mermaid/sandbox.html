@@ -59,6 +59,29 @@
       #out {
         display: block;
       }
+      /* Zoomed (#232): the frame is the whole overlay, so the diagram is
+         centred in it and the script sizes the SVG to fit. */
+      html[data-fit='window'],
+      html[data-fit='window'] body,
+      html[data-fit='window'] #out {
+        height: 100%;
+      }
+      html[data-fit='window'] #out {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      /* Opaque when zoomed. Inline the frame is transparent so a diagram sits
+         on the message background; over a dimmed overlay that same
+         transparency lets the conversation show through the diagram. */
+      html[data-fit='window'] body {
+        background: var(--base);
+      }
+      /* The whole inline frame is the affordance — clicking it asks the host
+         for the overlay, the way clicking an image opens the lightbox. */
+      html[data-fit='inline'] body {
+        cursor: zoom-in;
+      }
       #out svg {
         display: block;
         /* Mermaid's `useMaxWidth` puts the diagram's natural width in an
