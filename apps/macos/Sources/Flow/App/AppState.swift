@@ -52,6 +52,10 @@ final class AppState: ObservableObject {
     /// show two workspaces at once; each window reads its own slice.
     @Published private(set) var artifactsByWorkspace: [String: [Artifact]] = [:]
     @Published private(set) var connection: Connection = .connecting
+    /// How many catch-up passes are in flight (#234). A *count*, not a flag:
+    /// a second reconnect can start while the first backfill is still paging,
+    /// and a Bool would let the first one to finish declare the app caught up.
+    @Published private(set) var catchUpCount: Int = 0
     /// userId -> online?
     @Published private(set) var presence: [String: Bool] = [:]
     /// channelId -> (userId -> last typing event time)
@@ -239,11 +243,41 @@ final class AppState: ObservableObject {
         loadingHistory = []
         notificationUnreadByWorkspace = [:]
         notificationUnreadTotal = 0
+        catchUpCount = 0
         Banners.setBadge(0)
     }
 
     func setConnection(_ c: Connection) {
         connection = c
+    }
+
+    /// Bracket a catch-up pass (the post-connect backfill). Paired calls only —
+    /// see `catchUpCount`.
+    func beginCatchUp() {
+        catchUpCount += 1
+    }
+
+    func endCatchUp() {
+        catchUpCount = max(0, catchUpCount - 1)
+    }
+
+    /// Is the chat behind the server right now (#234) — the reconnect bar's
+    /// input, before any show/hide timing is applied.
+    ///
+    /// Connected-but-catching-up counts: `SyncEngine` reports `.connected` the
+    /// moment the socket says hello, then spends real time refetching channels
+    /// and paging messages. A bar tied to the socket alone disappears while the
+    /// transcript on screen is still stale, which is exactly the launch delay
+    /// this was filed about.
+    ///
+    /// Static and pure so the rule is one testable thing rather than a
+    /// condition retyped in the macOS and iOS views.
+    nonisolated static func isSyncing(connection: Connection, catchUpCount: Int) -> Bool {
+        connection != .connected || catchUpCount > 0
+    }
+
+    var isSyncing: Bool {
+        Self.isSyncing(connection: connection, catchUpCount: catchUpCount)
     }
 
     func showError(_ message: String) {

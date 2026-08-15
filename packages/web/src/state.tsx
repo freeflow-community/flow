@@ -72,6 +72,9 @@ export interface Selection {
 
 export interface LiveState {
   status: SocketStatus;
+  /** Socket down *or* a post-connect refetch still running (#234) — what the
+   * reconnect bar reads. Connected alone isn't caught up. */
+  syncing: boolean;
   presence: Record<string, boolean>;
   /** typingKey(channelId, threadRootId) -> userId -> ts(ms). Keyed by composer,
    * not by channel, so a thread's indicator never shows in the main view. */

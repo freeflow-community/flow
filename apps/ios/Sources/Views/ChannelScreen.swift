@@ -92,6 +92,7 @@ struct ChannelScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             topicLine
+            SyncBar(syncing: app.isSyncing)
             // The chat area — everything above the composer. Tapping or
             // scrolling any of it puts the keyboard away (#139); the composer
             // is deliberately outside, since tapping it means "type".

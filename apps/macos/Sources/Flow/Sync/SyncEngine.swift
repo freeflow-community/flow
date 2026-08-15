@@ -220,6 +220,12 @@ actor SyncEngine {
     }
 
     private func backfillAfterReconnect() async {
+        // The reconnect bar stays up for the whole catch-up, not just until the
+        // socket says hello (#234). `defer` so a cancelled backfill — sign-out
+        // mid-page — still clears it.
+        await appState?.beginCatchUp()
+        let state = appState
+        defer { Task { @MainActor in state?.endCatchUp() } }
         await refreshWorkspaces()
         // Every workspace/channel/thread open in *some* window needs the gap
         // filled — the windows are independent, so there can be several of each.

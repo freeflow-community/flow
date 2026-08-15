@@ -31,6 +31,8 @@ export default function Main() {
   const sel = useSelection();
   const qc = useQueryClient();
   const [status, setStatus] = useState<SocketStatus>('connecting');
+  // Post-connect refetches in flight (#234) — see the socket effect below.
+  const [catchUpCount, setCatchUpCount] = useState(0);
   const [presence, setPresence] = useState<Record<string, boolean>>({});
   const [typing, setTyping] = useState<Record<string, Record<string, number>>>({});
   const [notificationUnread, setNotificationUnread] = useState(0);
@@ -104,8 +106,12 @@ export default function Main() {
       onStatus: (s) => {
         setStatus(s);
         if (s === 'connected') {
-          // reconnect backfill = refetch everything (online-only client)
-          void qc.invalidateQueries();
+          // reconnect backfill = refetch everything (online-only client).
+          // The refetch is what the reconnect bar waits on (#234): the socket
+          // says hello long before the screen stops being stale. Counted, not
+          // flagged, so a second reconnect mid-refetch can't clear the first.
+          setCatchUpCount((n) => n + 1);
+          void qc.invalidateQueries().finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
         }
       },
       onEvent: (event: Event) => handleEvent(event),
@@ -350,6 +356,7 @@ export default function Main() {
   const live = useMemo(
     () => ({
       status,
+      syncing: status !== 'connected' || catchUpCount > 0,
       presence,
       typing,
       notificationUnread,
@@ -357,7 +364,7 @@ export default function Main() {
       sendTyping: (channelId: string, threadRootId?: string) =>
         socketRef.current?.sendTyping(channelId, threadRootId),
     }),
-    [status, presence, typing, notificationUnread],
+    [status, catchUpCount, presence, typing, notificationUnread],
   );
 
   const mobileNav = useMemo(
