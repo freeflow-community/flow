@@ -20,6 +20,7 @@ struct SidebarDrawer: View {
     @StateObject private var users = DBObserved<[User]>(initial: [])
 
     @State private var showCreateChannel = false
+    @State private var showNewDm = false
     @State private var showAddWorkspace = false
     @State private var showFeatures = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
@@ -129,7 +130,13 @@ struct SidebarDrawer: View {
                 NewChannelSheet(workspaceId: wsId, onCreated: { open($0) })
             }
         }
+        .sheet(isPresented: $showNewDm) {
+            if let wsId = app.selectedWorkspaceId {
+                NewDmSheet(workspaceId: wsId, onCreated: { open($0) })
+            }
+        }
         .sheet(isPresented: $showAddWorkspace) { AddWorkspaceSheet() }
+        .modifier(DebugOpenNewDm { showNewDm = true })
         .sheet(isPresented: $showFeatures) { FeaturesSheet() }
     }
 
@@ -147,26 +154,24 @@ struct SidebarDrawer: View {
                     activityRow
 
                     sectionHeader("Channels") {
-                        Button {
+                        addButton(id: "channel.create", label: "New channel") {
                             showCreateChannel = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.6))
-                                .frame(width: 28, height: 28)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("channel.create")
-                        .accessibilityLabel("New channel")
                     }
                     ForEach(standard, id: \.channel.id) { channelRow($0.channel, isNested: $0.isNested) }
 
-                    if !dms.isEmpty {
-                        sectionHeader("Direct Messages") { EmptyView() }
-                        ForEach(dms) { dm in
-                            dmRow(dm)
-                            ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
+                    // The header renders whether or not there are DMs yet: its
+                    // "+" is the only way in to a first conversation (#257), so
+                    // it must not be the thing that disappears when the list is
+                    // empty. Channels behaves the same way.
+                    sectionHeader("Direct Messages") {
+                        addButton(id: "dm.create", label: "New direct message") {
+                            showNewDm = true
                         }
+                    }
+                    ForEach(dms) { dm in
+                        dmRow(dm)
+                        ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
                     }
 
                     if !browsable.isEmpty {
@@ -246,6 +251,20 @@ struct SidebarDrawer: View {
         .padding(.horizontal, 8)
         .padding(.top, 14)
         .padding(.bottom, 3)
+    }
+
+    /// The "+" that hangs off a section header. One helper so Channels and
+    /// Direct Messages can't drift apart in weight or tap target.
+    private func addButton(id: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+        .accessibilityLabel(label)
     }
 
     // MARK: - Rows

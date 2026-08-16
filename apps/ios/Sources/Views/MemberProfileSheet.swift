@@ -22,6 +22,8 @@ struct MemberProfileSheet: View {
     @State private var user: User?
     @State private var sponsor: User?
     @State private var error: String?
+    /// A DM create in flight, so the button can't be pressed twice.
+    @State private var startingDm = false
     /// Measured height of the card's content. The sheet is sized to it, so a
     /// profile with no bio and no website is a short card rather than a half
     /// screen of white below three lines (#223, criterion 5).
@@ -94,6 +96,12 @@ struct MemberProfileSheet: View {
                             .foregroundStyle(MC.muted)
                             .accessibilityIdentifier("profile.localTime")
                     }
+                    // The second way into a DM (#257), and the one that reads as
+                    // an action on *this person* — macOS puts the same button
+                    // on the same card (`PeopleViews.swift:207`).
+                    if userId != app.currentUser?.id {
+                        messageButton
+                    }
                     // Website and bio are both optional and usually both empty.
                     // They live in one card that is simply absent when there is
                     // nothing to put in it, so an empty profile ends after the
@@ -144,6 +152,42 @@ struct MemberProfileSheet: View {
                 if u.isAgent == true, let sid = u.sponsorId {
                     sponsor = try? await app.engine.fetchUser(sid)
                 }
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// "Message" — open the DM with this person, creating it if there isn't one.
+    /// The server route dedupes by member set, so the existing conversation is
+    /// what comes back for someone already messaged; there is nothing to check
+    /// for first.
+    private var messageButton: some View {
+        Button {
+            startDm()
+        } label: {
+            Label("Message", systemImage: "bubble.left.and.bubble.right")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(MC.accent)
+        .disabled(startingDm)
+        .padding(.top, 4)
+        .accessibilityIdentifier("profile.message")
+    }
+
+    private func startDm() {
+        guard let wsId = app.selectedWorkspaceId else { return }
+        startingDm = true
+        error = nil
+        Task {
+            defer { startingDm = false }
+            do {
+                let ch = try await app.engine.createDm(workspaceId: wsId, userIds: [userId])
+                dismiss()
+                app.selectChannel(ch.id)
             } catch {
                 self.error = error.localizedDescription
             }

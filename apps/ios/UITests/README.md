@@ -113,6 +113,17 @@ checks")`, the simulator is wedged from a previous run:
   Attaches the screenshots. Note SwiftUI's `Link` is a **button** to
   XCUITest, not a link.
 
+- `NewDmTests` — #257, starting a DM: the sidebar "+", search, a 1:1, the
+  same person twice (which must reuse the conversation, not duplicate it), a
+  group DM, and the profile card's Message button. Fixtures are plain
+  `qa-seed.mjs` — Bob and Scott (override with `FLOW_TEST_DM_PERSON` /
+  `FLOW_TEST_DM_PERSON_2`). Two things these tests have to work around and any
+  new sidebar test will too: the Direct Messages section sits below the fold
+  once a workspace has many channels, and **XCUITest does not scroll to an
+  element for you**; and both the sidebar and the picker are lazy, so an
+  off-screen row does not merely fail to be hittable — it does not exist to
+  query. Hence `openDrawerAtDms` and picking people by searching first.
+
 These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —
 passing them as trailing `xcodebuild` arguments looks right and silently does
