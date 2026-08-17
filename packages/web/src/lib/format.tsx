@@ -12,6 +12,7 @@ import { createContext, Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { WorkspaceMemberDTO } from '@flow/shared';
 import { expandShortcodes } from '@flow/shared';
+import { CodeBlock } from '../components/CodeBlock';
 import { MermaidBlock } from '../components/MermaidBlock';
 
 /** Lets a message row offer "Pin as artifact" on every inline link it renders,
@@ -307,8 +308,8 @@ const ALIGN_CLASS: Record<'left' | 'center' | 'right', string> = {
 };
 
 /**
- * Block-level body renderer: code → <pre><code> (no mention pills, fences
- * hidden), ```mermaid → a sandboxed diagram frame, quotes → <blockquote>,
+ * Block-level body renderer: code → a CodeBlock (no mention pills, fences
+ * hidden, copy button), ```mermaid → a sandboxed diagram frame, quotes → <blockquote>,
  * headings → sized/bold, lists → <ul>/<ol>,
  * tables → a scrollable <table>, rules → <hr>, plain text through renderBody.
  * Inline content (mention pills + inline markdown) runs through renderBody
@@ -324,15 +325,7 @@ export function renderBlocks(
   return segmentBody(body).map((seg, i): ReactNode => {
     const key = `b${i}`;
     if (seg.kind === 'code') {
-      return (
-        <pre
-          key={key}
-          data-testid="code-block"
-          className="my-1 max-w-full overflow-x-auto rounded-lg bg-[#f4f2ee] px-3 py-2 font-mono text-[13px] leading-relaxed whitespace-pre"
-        >
-          <code>{seg.content}</code>
-        </pre>
-      );
+      return <CodeBlock key={key} source={seg.content} />;
     }
     if (seg.kind === 'mermaid') {
       return <MermaidBlock key={key} source={seg.content} />;

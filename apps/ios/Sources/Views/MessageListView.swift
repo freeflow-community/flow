@@ -776,15 +776,24 @@ struct MessageRow: View {
         case .heading(let level, let text):
             headingText(level: level, text: text)
         case .code(let text):
+            // The copy button (#260) overlays the scroller, not its content —
+            // pinned to the block's corner, it stays put while the code scrolls
+            // under it, which is the whole point of it on a phone. Bottom
+            // trailing to match macOS and web, where the row's hover menu owns
+            // the top-trailing corner.
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(text.isEmpty ? " " : text)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(MC.ink)
-                    .padding(.horizontal, 10)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 36)
                     .padding(.vertical, 8)
             }
             .background(RoundedRectangle(cornerRadius: 8).fill(MC.codeBg))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+            .overlay(alignment: .bottomTrailing) {
+                CodeCopyButton(source: text).padding(4)
+            }
             .accessibilityIdentifier("msg.codeBlock")
         case .mermaid(let source):
             MermaidDiagramView(source: source)
