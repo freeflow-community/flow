@@ -57,7 +57,7 @@ gh auth status          # want: Token scopes include 'project'
 ## 1. Find the next batch
 
 ```sh
-bash skills/work-project-tasks/next-batch.sh
+bash .claude/skills/work-project-tasks/next-batch.sh
 ```
 
 It prints a JSON array of the batch members (`itemId`, `number`, `title`,
@@ -78,7 +78,7 @@ Claiming is **two steps in this order**: take the lock, then set the status.
 ### 2a. Take the cross-machine lock
 
 ```sh
-bash skills/work-project-tasks/task-lock.sh claim <lowest issue number>
+bash .claude/skills/work-project-tasks/task-lock.sh claim <lowest issue number>
 ```
 
 **If this exits non-zero, another machine owns the batch. Stop — that is not an
@@ -97,7 +97,7 @@ a batch is impossible.
 ### 2b. Set the status
 
 ```sh
-bash skills/work-project-tasks/set-status.sh "In Progress" <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/set-status.sh "In Progress" <itemId> [<itemId> ...]
 ```
 
 Claim the **whole batch in one go**. `next-batch.sh` only lists members that are
@@ -144,7 +144,7 @@ the order you will do them. Not the issue restated: the steps. Then work the
 plan and post one short message per step you finish, naming the step and what
 it produced. If the plan changes, post the revision and the reason.
 
-Follow skills/work-project-tasks/SKILL.md §4–§8: fresh worktree off
+Follow .claude/skills/work-project-tasks/SKILL.md §4–§8: fresh worktree off
 origin/main, build, test, verify in the running app with screenshots, one PR
 closing every issue, then set the items Done — or Blocked per "If you can't
 finish". Post here at the moments §3's reporting list names; upload
@@ -382,8 +382,8 @@ close all of them.
 Only after the PR is open (and merged, if you were asked to merge):
 
 ```sh
-bash skills/work-project-tasks/set-status.sh Done <itemId> [<itemId> ...]
-bash skills/work-project-tasks/task-lock.sh release <lowest issue number>
+bash .claude/skills/work-project-tasks/set-status.sh Done <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/task-lock.sh release <lowest issue number>
 ```
 
 **Release the lock, always** — on `Done` and on `Blocked` alike. A lock left
@@ -410,8 +410,8 @@ Both steps are required. The status is the signal, the comment is the reason,
 and a status with no reason just hands a human the same puzzle you had.
 
 ```sh
-bash skills/work-project-tasks/set-status.sh Blocked <itemId> [<itemId> ...]
-bash skills/work-project-tasks/task-lock.sh release <lowest issue number>
+bash .claude/skills/work-project-tasks/set-status.sh Blocked <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/task-lock.sh release <lowest issue number>
 
 gh issue comment <n> --repo freeflow-community/flow --body "$(cat <<'EOF'
 **Blocked:** <the one-line reason>
