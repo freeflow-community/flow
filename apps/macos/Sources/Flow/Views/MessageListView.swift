@@ -918,14 +918,23 @@ struct MessageRow: View {
         case .heading(let level, let text):
             headingText(level: level, text: text)
         case .code(let text):
+            // Trailing padding is wider than the leading side to leave the copy
+            // button (#260) a lane of its own, so it never lands on the code.
+            // Bottom rather than top: the row's hover menu is a `.topTrailing`
+            // overlay, and a button you reach for by hovering cannot sit under
+            // the toolbar that hovering summons.
             Text(text.isEmpty ? " " : text)
                 .flowFont(size: 12, design: .monospaced)
                 .foregroundStyle(MC.ink)
                 .textSelection(.enabled)
-                .padding(.horizontal, 10)
+                .padding(.leading, 10)
+                .padding(.trailing, 36)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(MC.codeBg))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+                .overlay(alignment: .bottomTrailing) {
+                    CodeCopyButton(source: text).padding(4)
+                }
                 .accessibilityIdentifier("msg.codeBlock")
         case .mermaid(let source):
             MermaidDiagramView(source: source)
