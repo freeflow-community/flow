@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Queue dispatcher. Copy to ~/Library/LaunchAgents/ and load:
+
+    cp .claude/skills/work-project-tasks/com.freeflow.flow-dispatcher.plist ~/Library/LaunchAgents/
+    launchctl load  ~/Library/LaunchAgents/com.freeflow.flow-dispatcher.plist
+    launchctl unload ~/Library/LaunchAgents/com.freeflow.flow-dispatcher.plist   # stop it
+
+  StartInterval, NOT `launchctl submit`. A submit job relaunches the instant it
+  exits, which is a trap for anything one-shot — it made release-macos.sh
+  publish 2.2.27 and then loop trying to publish 2.2.28. Here, re-running on a
+  timer is exactly what we want, so a timer is what we ask for.
+
+  Edit HOME below if the account is not `rentamac`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.freeflow.flow-dispatcher</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>/Users/rentamac/flow/.claude/skills/work-project-tasks/dispatch.sh</string>
+  </array>
+
+  <!-- Every 3 minutes. The work itself takes 20+, so a shorter tick buys
+       nothing and a longer one is barely noticed. -->
+  <key>StartInterval</key><integer>180</integer>
+  <key>RunAtLoad</key><true/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FLOW_REPO_ROOT</key><string>/Users/rentamac/flow</string>
+    <!-- How many batches may be In Progress across all machines at once. -->
+    <key>FLOW_MAX_ACTIVE</key><string>2</string>
+    <key>PATH</key><string>/Users/rentamac/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StandardOutPath</key><string>/Users/rentamac/flow-dispatcher.log</string>
+  <key>StandardErrorPath</key><string>/Users/rentamac/flow-dispatcher.log</string>
+</dict>
+</plist>
