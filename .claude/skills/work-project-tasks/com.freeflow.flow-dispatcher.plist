@@ -34,6 +34,10 @@
     <key>FLOW_REPO_ROOT</key><string>/Users/rentamac/flow</string>
     <!-- How many batches may be In Progress across all machines at once. -->
     <key>FLOW_MAX_ACTIVE</key><string>2</string>
+    <!-- Who gets invited to each task channel. Without this the run still
+         creates the channel, but nobody is added to it and the work is
+         effectively invisible again. -->
+    <key>FLOW_DISPATCH_INVITE_USER</key><string>019f7d15-4106-7c1a-9f8e-64bae430b447</string>
     <key>PATH</key><string>/Users/rentamac/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
