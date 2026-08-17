@@ -9,6 +9,27 @@
 # com.freeflow.flow-dispatcher.plist. Nothing here is Flow-specific: it decides
 # *whether* to dispatch, and `claude -p` plus SKILL.md do the rest.
 #
+# PERMISSIONS: THE DISPATCHED RUN BYPASSES THEM
+#
+# The run takes a batch all the way to a PR, so it needs git, pnpm, swift,
+# xcodebuild and gh — and it is unattended, so there is nobody to answer a
+# prompt. The first live run proved the failure mode: it wrote the whole of
+# #260, then could not commit, build or push, and blocked itself with the code
+# stranded in a worktree.
+#
+# `claude -p` gets no Flow MCP tools (those come from the agent-bridge, not
+# from any .mcp.json), so it cannot create_channel or start_task. It therefore
+# takes SKILL.md's inline fallback and does the work itself. Two consequences
+# worth being clear about:
+#
+#   - There is no #task-N channel for a dispatched batch. Progress lives in
+#     this log and in the PR, not in Flow. Wiring the bridge's MCP into this
+#     invocation would restore the hand-off, and is the better long-term shape.
+#   - bypassPermissions means an unattended agent can run anything on this
+#     machine as this user. Operator decision, taken knowingly (Scott,
+#     2026-08-16). The guards below are what bounds it: no dispatch during a
+#     release, a concurrency cap, and one run at a time per machine.
+#
 # WHAT THIS DOES NOT DO
 #
 # It does not claim the batch. Claiming belongs with the run that does the work,
@@ -85,8 +106,9 @@ fi
 
 say "dispatching batch task-$KEY ($COUNT issue(s)); $ACTIVE active, cap $MAX_ACTIVE"
 
-# The skill claims, opens the channel, hands the work off with start_task and
-# exits — usually inside a minute. The long run lives in the task channel, not
-# here, so this call is not what takes 20 minutes.
-claude -p "$PROMPT" --permission-mode acceptEdits 2>&1 | sed 's/^/    /'
+# This blocks for as long as the batch takes — tens of minutes, not seconds,
+# because with no Flow MCP the run cannot hand off and does the work itself.
+# That is fine: the pid guard at the top makes the next tick a no-op, and the
+# board's In Progress count stops a second batch starting behind it.
+claude -p "$PROMPT" --permission-mode bypassPermissions 2>&1 | sed 's/^/    /'
 say "dispatch run finished (exit ${PIPESTATUS[0]})"
