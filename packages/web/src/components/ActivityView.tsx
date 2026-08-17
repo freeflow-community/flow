@@ -12,16 +12,20 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { displayTime, plainBody } from '../lib/format';
 import { useLive, useSelection } from '../state';
-import { useMemberMap, useNameMap, useNotifications } from '../hooks';
+import { useChannels, useMemberMap, useNameMap, useNotifications } from '../hooks';
 import { Avatar } from './Avatar';
 import { MobileMenuButton } from './MobileMenuButton';
 
-const kindLabel = (kind: number, sender: string, emoji: string | null) =>
-  kind === 1 ? `${sender} sent you a direct message`
-  : kind === 2 ? `${sender} replied in a thread`
-  : kind === 3 ? `${sender} posted`
-  : kind === 4 ? `${sender} reacted ${emoji ?? ''} to your message`.replace('  ', ' ')
-  : `${sender} mentioned you`;
+/** Row title. `channel` names where it happened — omitted on DM rows (which
+ * already say so) and when the channel isn't in this workspace's list. */
+export const kindLabel = (kind: number, sender: string, emoji: string | null, channel: string | null) => {
+  const where = kind !== 1 && channel ? ` in #${channel}` : '';
+  return kind === 1 ? `${sender} sent you a direct message`
+    : kind === 2 ? `${sender} replied in a thread${where}`
+    : kind === 3 ? `${sender} posted${where}`
+    : kind === 4 ? `${sender} reacted ${emoji ?? ''} to your message${where}`.replace('  ', ' ')
+    : `${sender} mentioned you${where}`;
+};
 
 export default function ActivityView() {
   const sel = useSelection();
@@ -30,7 +34,10 @@ export default function ActivityView() {
   const notifications = useNotifications(true, sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
+  const channels = useChannels(sel.workspaceId);
   const rows = notifications.data?.notifications ?? [];
+  const channelNames: Record<string, string> = {};
+  for (const c of channels.data ?? []) if (c.name) channelNames[c.id] = c.name;
 
   // Opening the feed marks everything up to the newest row read (channel
   // semantics), clearing the sidebar badge. Guarded by a ref so a re-render
@@ -93,7 +100,7 @@ export default function ActivityView() {
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2">
                   <span className={`truncate text-sm ${n.readAt === null ? 'font-semibold' : ''}`}>
-                    {kindLabel(n.kind, sender, n.reactionEmoji)}
+                    {kindLabel(n.kind, sender, n.reactionEmoji, channelNames[n.channelId] ?? null)}
                   </span>
                   <span className="ml-auto shrink-0 text-xs text-faint">{displayTime(n.createdAt)}</span>
                 </span>
