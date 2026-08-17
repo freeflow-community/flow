@@ -46,6 +46,24 @@ REPO_ROOT=${FLOW_REPO_ROOT:-$HOME/flow}
 MAX_ACTIVE=${FLOW_MAX_ACTIVE:-2}
 LOG=${FLOW_DISPATCH_LOG:-$HOME/flow-dispatcher.log}
 PROMPT=${FLOW_DISPATCH_PROMPT:-"work on the next task from the active queue"}
+# Flow credentials for the run's MCP server, and who to invite to the channel.
+AGENT_JSON=${FLOW_AGENT_JSON:-$HOME/agent.json}
+# Use the bridge build that is actually running, not the repo's dist/. They are
+# not the same thing: the repo copy is stale because `pnpm --filter
+# flow-agent-bridge build` currently fails (TS2339, ChannelDTO.parentId), and a
+# stale build silently advertises FEWER tools — create_channel and
+# invite_to_channel are missing from it, which is exactly the feature we need.
+# Resolution order: explicit override, the running daemon's own entrypoint,
+# then the repo copy as a last resort.
+BRIDGE_ENTRY=${FLOW_BRIDGE_ENTRY:-}
+if [ -z "$BRIDGE_ENTRY" ]; then
+  BRIDGE_ENTRY=$(pgrep -fl "flow-agent-bridge/dist/index.js" 2>/dev/null \
+    | grep -o '[^ ]*flow-agent-bridge/dist/index\.js' | head -1)
+fi
+[ -n "$BRIDGE_ENTRY" ] || BRIDGE_ENTRY=$REPO_ROOT/packages/agent-bridge/dist/index.js
+INVITE_USER=${FLOW_DISPATCH_INVITE_USER:-}
+# Where a stray send_message lands if the run posts before making its channel.
+FALLBACK_CHANNEL=${FLOW_DISPATCH_FALLBACK_CHANNEL:-flow-task-work}
 
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
@@ -106,9 +124,82 @@ fi
 
 say "dispatching batch task-$KEY ($COUNT issue(s)); $ACTIVE active, cap $MAX_ACTIVE"
 
+# --- Give the run its own Flow tools ----------------------------------------
+# The bridge does not *contain* the flow tools, it *spawns* them: bridge.ts's
+# writeMcpConfig launches `node <bridge>/dist/index.js mcp` with the agent token
+# in env. Nothing about that is bridge-only, so the dispatcher writes the same
+# config and its run gets create_channel, invite_to_channel and send_message —
+# which is what puts a #task-N channel and a human back in the loop.
+#
+# FLOW_BRIDGE_SOCK is deliberately empty. That socket only exists for runs the
+# daemon itself spawned, so start_task cannot work here — and should not: the
+# hand-off exists to give a *waiting human* their agent back, and a cron tick
+# has nobody waiting. The run creates its channel and works in it, which is
+# SKILL.md §3's "If start_task is unavailable" path.
+MCP_ARGS=()
+MCP_CFG=""
+if [ -f "$AGENT_JSON" ] && [ -f "$BRIDGE_ENTRY" ]; then
+  MCP_CFG=$(FLOW_AGENT_JSON="$AGENT_JSON" BRIDGE_ENTRY="$BRIDGE_ENTRY" \
+            FALLBACK_CHANNEL="$FALLBACK_CHANNEL" INVITE_USER="$INVITE_USER" \
+            python3 - <<'PY'
+import json, os, subprocess, sys, tempfile
+cfg = json.load(open(os.environ['FLOW_AGENT_JSON']))
+url, token = cfg['serverUrl'], cfg['agentToken']
+
+def api(path):
+    out = subprocess.run(['curl', '-fsS', '-H', f'Authorization: Bearer {token}',
+                          f'{url}{path}'], capture_output=True, text=True)
+    return json.loads(out.stdout) if out.returncode == 0 else None
+
+ws = api('/v1/me/workspaces')
+if not ws or not ws.get('workspaces'):
+    sys.exit(1)                                   # no workspace → run without MCP
+wsid = ws['workspaces'][0]['id']
+
+chans = api(f'/v1/workspaces/{wsid}/channels') or {}
+want = os.environ['FALLBACK_CHANNEL']
+fallback = next((c['id'] for c in chans.get('channels', []) if c.get('name') == want), '')
+
+doc = {'mcpServers': {'flow': {
+    'command': 'node',
+    'args': [os.environ['BRIDGE_ENTRY'], 'mcp'],
+    'env': {
+        'FLOW_SERVER_URL': url,
+        'FLOW_AGENT_TOKEN': token,
+        'FLOW_WORKSPACE_ID': wsid,
+        'FLOW_CHANNEL_ID': fallback,
+        'FLOW_THREAD_ROOT_ID': '',
+        'FLOW_USER_ID': os.environ.get('INVITE_USER', ''),
+        'FLOW_BRIDGE_SOCK': '',      # no daemon → no start_task, by design
+    },
+}}}
+fd, path = tempfile.mkstemp(prefix='flow-dispatch-mcp-', suffix='.json')
+with os.fdopen(fd, 'w') as f:
+    json.dump(doc, f)
+print(path)
+PY
+  ) || MCP_CFG=""
+fi
+
+if [ -n "$MCP_CFG" ]; then
+  MCP_ARGS=(--mcp-config="$MCP_CFG")
+  say "flow tools wired ($MCP_CFG)"
+  PROMPT="$PROMPT
+
+You were started by the queue dispatcher on a timer. No human is waiting on a
+reply, so there is nothing to hand off to and start_task will not work here —
+follow SKILL.md §3 'If start_task is unavailable' and do the work in this run.
+Still create the task channel first and report into it as you go: that channel
+is the only place a human can watch this or stop you.${INVITE_USER:+ Invite <@$INVITE_USER> to it.}"
+else
+  say "flow tools unavailable — the run will have no channel to report in"
+fi
+
 # This blocks for as long as the batch takes — tens of minutes, not seconds,
-# because with no Flow MCP the run cannot hand off and does the work itself.
-# That is fine: the pid guard at the top makes the next tick a no-op, and the
-# board's In Progress count stops a second batch starting behind it.
-claude -p "$PROMPT" --permission-mode bypassPermissions 2>&1 | sed 's/^/    /'
-say "dispatch run finished (exit ${PIPESTATUS[0]})"
+# because the run does the work itself rather than handing it off. That is
+# fine: the pid guard at the top makes the next tick a no-op, and the board's
+# In Progress count stops a second batch starting behind it.
+claude -p "$PROMPT" --permission-mode bypassPermissions "${MCP_ARGS[@]}" 2>&1 | sed 's/^/    /'
+rc=${PIPESTATUS[0]}
+[ -n "$MCP_CFG" ] && rm -f "$MCP_CFG"
+say "dispatch run finished (exit $rc)"
