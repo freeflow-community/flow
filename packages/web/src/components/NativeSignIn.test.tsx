@@ -1,19 +1,28 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import type { UserDTO } from '@flow/shared';
 
 import NativeSignIn from './NativeSignIn';
 
-// #279: arriving with a live web session hands off silently, so the only way
-// to sign in as somebody else is an explicit escape on every later phase.
+const user = { id: 'u1', email: 'someone@example.com', displayName: 'Someone' } as UserDTO;
+
+// #279: arriving with a live web session used to hand off silently, signing the
+// app in as whoever the browser held. The session may now only be offered.
 describe('NativeSignIn', () => {
-  it('offers a way out when it is handing off an existing session', () => {
-    const html = renderToStaticMarkup(<NativeSignIn signedIn />);
-    expect(html).toContain('Not you? Use a different account');
+  it('offers the existing session instead of handing off automatically', () => {
+    const html = renderToStaticMarkup(<NativeSignIn user={user} />);
+    expect(html).toContain('Continue as someone@example.com');
+    expect(html).toContain('or pick another account');
+    expect(html).not.toContain('Signing you in');
   });
 
-  it('does not offer it on the sign-in screen itself', () => {
-    const html = renderToStaticMarkup(<NativeSignIn signedIn={false} />);
-    expect(html).not.toContain('Not you?');
+  it('asks Google when there is no session', () => {
+    const html = renderToStaticMarkup(<NativeSignIn user={null} />);
+    expect(html).not.toContain('Continue as');
     expect(html).toContain('Sign in with Google');
+  });
+
+  it('keeps the escape hatch off the sign-in screen', () => {
+    expect(renderToStaticMarkup(<NativeSignIn user={null} />)).not.toContain('Not you?');
   });
 });
