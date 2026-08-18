@@ -218,6 +218,14 @@ struct AppDatabase: Sendable {
                 t.add(column: "bio", .text)
             }
         }
+        // Which threads are waiting on you (#270). JSON array, same shape as
+        // memberIds; nil on a cached row until the next channel list arrives,
+        // which just means no dot yet — never a wrong one.
+        migrator.registerMigration("v15") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "unreadThreadRootIds", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

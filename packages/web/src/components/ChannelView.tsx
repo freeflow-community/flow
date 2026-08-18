@@ -239,6 +239,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         hasMore={messagesQ.hasNextPage ?? false}
         onLoadOlder={() => void messagesQ.fetchNextPage()}
         showThreadAffordances
+        unreadThreadRootIds={channel?.unreadThreadRootIds ?? []}
         focusMessageId={focusId}
         onFocused={() => sel.clearFocusMessage()}
       />

@@ -54,6 +54,7 @@ export default function MessageList({
   hasMore,
   onLoadOlder,
   showThreadAffordances,
+  unreadThreadRootIds = [],
   scrollKey,
   focusMessageId = null,
   onFocused,
@@ -64,6 +65,10 @@ export default function MessageList({
   hasMore: boolean;
   onLoadOlder: () => void;
   showThreadAffordances: boolean;
+  /** Thread roots with an unread notification for me (#270) — their reply
+   * chips get a dot, so a reply that needs you is visible here and not only
+   * in the sidebar badge. */
+  unreadThreadRootIds?: string[];
   /** Enables per-view scroll-position memory (channels pass their id; threads omit it). */
   scrollKey?: string;
   /** Jump-to-message target (phase 12): scroll it into view + flash it once
@@ -218,6 +223,7 @@ export default function MessageList({
                   membersById={membersById}
                   showHeader={showsHeader(messages, i)}
                   showThreadAffordances={showThreadAffordances}
+                  threadUnread={unreadThreadRootIds.includes(m.id)}
                 />
               )}
             </div>
@@ -345,12 +351,15 @@ function MessageRow({
   membersById,
   showHeader,
   showThreadAffordances,
+  threadUnread = false,
 }: {
   message: MessageDTO;
   names: Record<string, string>;
   membersById: Record<string, WorkspaceMemberDTO>;
   showHeader: boolean;
   showThreadAffordances: boolean;
+  /** This thread holds an unread notification for me (#270). */
+  threadUnread?: boolean;
 }) {
   const auth = useAuth();
   const sel = useSelection();
@@ -552,9 +561,21 @@ function MessageRow({
         {showThreadAffordances && message.replyCount > 0 && (
           <button
             data-testid={`thread-open-${message.id}`}
-            className="mt-1 flex cursor-pointer items-center gap-2 rounded-[10px] border border-hairline bg-white py-[5px] pr-2.5 pl-1.5 text-xs hover:border-hairline2"
+            data-thread-unread={threadUnread ? 'true' : undefined}
+            className={`mt-1 flex cursor-pointer items-center gap-2 rounded-[10px] border bg-white py-[5px] pr-2.5 pl-1.5 text-xs ${
+              threadUnread ? 'border-unread/45 hover:border-unread' : 'border-hairline hover:border-hairline2'
+            }`}
             onClick={() => sel.openThread(message.id)}
           >
+            {/* A reply in here needs you (#270) — the sidebar badge says the
+                channel has something, this says which thread. */}
+            {threadUnread && (
+              <span
+                data-testid={`thread-unread-${message.id}`}
+                title="Unread reply"
+                className="size-[7px] shrink-0 rounded-full bg-unread"
+              />
+            )}
             {(message.replyParticipantUserIds ?? []).length > 0 && (
               <span className="flex -space-x-1.5" data-testid={`thread-participants-${message.id}`}>
                 {message.replyParticipantUserIds.map((id) => (

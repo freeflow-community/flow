@@ -474,6 +474,13 @@ export async function markNotificationsRead(
  * Visiting a channel reads its notifications (issue #63). Scoped to top-level
  * messages at or before the read cursor — thread replies live behind a click,
  * so they clear via markThreadNotificationsRead instead.
+ *
+ * The one exception is a thread hanging off a system message (#270). No client
+ * draws a thread affordance on a join/leave line, so that thread cannot be
+ * opened and its rows could never clear — a permanent badge. Replies to system
+ * roots are refused now, but rows written before that fix still exist, so a
+ * visit reads them too, scoped by the *root's* position against the cursor:
+ * scrolling past the join line is as much as anyone can ever see of it.
  */
 export async function markChannelNotificationsRead(
   userId: string,
@@ -490,6 +497,12 @@ export async function markChannelNotificationsRead(
          WHERE ${messages.channelId} = ${channelId}
            AND ${messages.threadRootId} IS NULL
            AND ${messages.id} <= ${lastReadMsgId}
+        UNION ALL
+        SELECT m.id FROM ${messages} m
+          JOIN ${messages} root ON root.id = m.thread_root_id
+         WHERE m.channel_id = ${channelId}
+           AND root.system_kind IS NOT NULL
+           AND root.id <= ${lastReadMsgId}
       )`,
     ),
     chan.workspaceId,

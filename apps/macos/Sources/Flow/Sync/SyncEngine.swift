@@ -1450,11 +1450,23 @@ actor SyncEngine {
             await appState?.notificationReceived(n)
             // The sidebar badge is this channel's unread-notification count.
             let notifChannelId = n.channelId
+            // A reply needs you: also light the dot on that thread's chip
+            // (#270), so the transcript says *which* thread, not just that the
+            // channel has something. Read-modify-write — it's a JSON array.
+            let notifThreadRootId = n.message.threadRootId
             try? await db.writer.write { db in
                 try db.execute(
                     sql: "UPDATE channel SET unreadNotifications = unreadNotifications + 1 WHERE id = ? AND isMember = 1",
                     arguments: [notifChannelId]
                 )
+                guard let rootId = notifThreadRootId,
+                      var chan = try Channel.filter(key: notifChannelId).fetchOne(db),
+                      chan.isMember else { return }
+                var roots = chan.unreadThreadRootIds ?? []
+                guard !roots.contains(rootId) else { return }
+                roots.append(rootId)
+                chan.unreadThreadRootIds = roots
+                try chan.save(db)
             }
             // Banner unless the server's alert gate (per-user prefs + status
             // suppression, phase 10) says no — kind 3 activity rows are always

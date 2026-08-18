@@ -16,6 +16,7 @@ const chan = (id: string, indicator?: ChannelDTO['indicator']): ChannelDTO => ({
   lastReadMsgId: null,
   unreadCount: 0,
   unreadNotifications: 0,
+  unreadThreadRootIds: [],
   notifyLevel: 1,
   parentId: null,
   ...(indicator !== undefined ? { indicator } : {}),

@@ -105,6 +105,7 @@ struct ChannelScreen: View {
                     hasMore: app.hasMore[channelId] ?? false,
                     isLoadingHistory: app.loadingHistory.contains(channelId),
                     showThreadAffordances: true,
+                    unreadThreadRootIds: Set(channel.value?.unreadThreadRootIds ?? []),
                     onLoadOlder: {
                         Task { await app.engine.loadOlder(channelId: channelId) }
                     },
