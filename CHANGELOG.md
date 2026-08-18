@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Clearing a channel's Activity unreads on open without waiting for the server
+  (#227) landed on macOS and iOS only. Web still leaves the badge up until the
+  `notification.read` round trip returns; the fix is an optimistic cache write
+  in `useMarkRead`/`ChannelView`, and web's `markRead` is gated behind the
+  message query in the same way the native one was.
 - "Share to Flow" from the system share sheet is iOS-only (#214, extended to
   videos and documents in #219). macOS supports
   share extensions too and the extension's logic is platform-agnostic
@@ -221,11 +226,6 @@ This file keeps two things:
   sidebar row while an agent works there. Server API and the `channel.indicator`
   event are client-agnostic and `ChannelDTO.indicator` carries the initial
   state, so this is a pure client port.
-- Re-syncing after the app was away (#269 — iOS restarts the socket when it
-  comes back after ≥10s, so the existing reconnect backfill runs) is iOS-only.
-  macOS has the same hole on lid-close and needs a different trigger than app
-  activation, which there fires on every app switch; that is #271, which also
-  covers the general "client never notices a dead socket" case for both.
 
 ### Deliberate divergences (ruled)
 - The version label shows the build number on iOS (`Version 2.0 (21)`) but not

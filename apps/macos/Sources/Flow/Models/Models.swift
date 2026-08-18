@@ -271,6 +271,10 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// Unread *notifications* raised in this channel — the number the sidebar
     /// badge shows. Mentions, thread replies, reactions; every message in a DM.
     var unreadNotifications: Int
+    /// Thread roots here holding an unread notification for me (#270) — the
+    /// root's "N replies" chip draws a dot, so a reply that needs you is
+    /// visible in the transcript and not only in the sidebar badge.
+    var unreadThreadRootIds: [String]?
     var notifyLevel: Int // 0=mute 1=mentions 2=all
     /// Parent channel (#118) — set at creation, one level deep. The sidebar
     /// draws this channel indented under it. nil for a top-level channel.
@@ -290,13 +294,14 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
         case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
-        case notifyLevel, parentId, memberIds
+        case unreadThreadRootIds, notifyLevel, parentId, memberIds
     }
 
     init(
         id: String, workspaceId: String, name: String?, kind: String = "standard", topic: String?,
         isPrivate: Bool, createdBy: String, createdAt: String, archivedAt: String?,
         isMember: Bool, lastReadMsgId: String?, unreadCount: Int, unreadNotifications: Int = 0,
+        unreadThreadRootIds: [String]? = nil,
         notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil
     ) {
         self.id = id
@@ -312,6 +317,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.lastReadMsgId = lastReadMsgId
         self.unreadCount = unreadCount
         self.unreadNotifications = unreadNotifications
+        self.unreadThreadRootIds = unreadThreadRootIds
         self.notifyLevel = notifyLevel
         self.parentId = parentId
         self.memberIds = memberIds
@@ -332,6 +338,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         lastReadMsgId = try c.decodeIfPresent(String.self, forKey: .lastReadMsgId)
         unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         unreadNotifications = try c.decodeIfPresent(Int.self, forKey: .unreadNotifications) ?? 0
+        unreadThreadRootIds = try c.decodeIfPresent([String].self, forKey: .unreadThreadRootIds)
         notifyLevel = try c.decodeIfPresent(Int.self, forKey: .notifyLevel) ?? 1
         parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
         memberIds = try c.decodeIfPresent([String].self, forKey: .memberIds)
@@ -630,6 +637,21 @@ struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
     var actorUserId: String { actorId ?? message.userId }
     /// Whether this notification may raise an OS banner.
     var alerts: Bool { suppressAlert != true }
+
+    /// Activity-row title (#267). `channelName` names where it happened —
+    /// omitted on DM rows, which already say so, and when the channel isn't
+    /// known locally. Shared by the macOS and iOS feeds so they read alike.
+    func headline(sender: String, channelName: String?) -> String {
+        let suffix = channelName.map { " in #\($0)" } ?? ""
+        switch kind {
+        case 1: return "\(sender) sent you a direct message"
+        case 2: return "\(sender) replied in a thread\(suffix)"
+        case 3: return "\(sender) posted\(suffix)"
+        case 4: return "\(sender) reacted \(reactionEmoji ?? "") to your message\(suffix)"
+            .replacingOccurrences(of: "  ", with: " ")
+        default: return "\(sender) mentioned you\(suffix)"
+        }
+    }
 }
 
 /// `notification.read` payload (issue #63): rows this user just read, in this

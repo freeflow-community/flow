@@ -14,6 +14,9 @@ struct ActivityFeedView: View {
     @EnvironmentObject private var win: WindowState
     @State private var items: [NotificationItem] = []
     @State private var userNames: [String: String] = [:]
+    /// channelId → name, for the "in #bugs" suffix on a row (#267). DMs have no
+    /// name and never get one.
+    @State private var channelNames: [String: String] = [:]
     @State private var loading = true
     /// Newest row we've already marked read, so a re-fetch doesn't re-POST.
     @State private var markedNewestId: String?
@@ -59,6 +62,13 @@ struct ActivityFeedView: View {
             userNames = (try? await app.db.reader.read { db in
                 try Dictionary(
                     uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
+                )
+            }) ?? [:]
+            channelNames = (try? await app.db.reader.read { db in
+                try Dictionary(
+                    uniqueKeysWithValues: Channel.fetchAll(db).compactMap { c in
+                        c.name.map { (c.id, $0) }
+                    }
                 )
             }) ?? [:]
             // Opening the feed marks everything up to the newest row read
@@ -114,7 +124,7 @@ struct ActivityFeedView: View {
                 )
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(headline(n, sender: sender))
+                        Text(n.headline(sender: sender, channelName: channelNames[n.channelId]))
                             .flowFont(.callout, weight: n.readAt == nil ? .semibold : .regular)
                         Spacer(minLength: 8)
                         Text(ISO8601.displayTime(n.createdAt))
@@ -138,16 +148,5 @@ struct ActivityFeedView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("activity.item.\(n.id)")
-    }
-
-    private func headline(_ n: NotificationItem, sender: String) -> String {
-        switch n.kind {
-        case 1: "\(sender) sent you a direct message"
-        case 2: "\(sender) replied in a thread"
-        case 3: "\(sender) posted"
-        case 4: "\(sender) reacted \(n.reactionEmoji ?? "") to your message"
-            .replacingOccurrences(of: "  ", with: " ")
-        default: "\(sender) mentioned you"
-        }
     }
 }

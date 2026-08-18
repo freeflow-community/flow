@@ -78,13 +78,6 @@ final class AppState: ObservableObject {
     /// Is the app frontmost? See `isViewing(channelId:)` — a selection in a
     /// backgrounded window must not count as "the user has seen this".
     @Published private(set) var isAppActive: Bool = true
-    /// When the app last went to the background, for the resume re-sync in
-    /// `setAppActive` (#269). Nil once that re-sync has run.
-    private var wentInactiveAt: Date?
-    /// How long away counts as "the OS may have suspended us". Short enough
-    /// that a phone put down for half a minute comes back in step, long enough
-    /// that flipping to another app and straight back costs nothing.
-    private static let resumeResyncAfter: TimeInterval = 10
     /// userId -> avatar path (/v1/avatars/<key>), for message rows & popovers.
     @Published private(set) var avatarPaths: [String: String] = [:]
     /// Set of agent user ids — the typing indicator says an agent "thinks"
@@ -397,6 +390,19 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// Opening a channel reads its Activity rows — count them off the badges
+    /// now rather than after the server's `notification.read` comes back
+    /// (#227). Clamped at zero: this is a guess from the local cache, and the
+    /// event that follows replaces both numbers with the server's.
+    func notificationsCleared(count: Int, workspaceId: String?) {
+        guard count > 0 else { return }
+        setNotificationUnread(
+            max(0, notificationUnread(workspaceId: workspaceId) - count),
+            workspaceId: workspaceId,
+            total: max(0, notificationUnreadTotal - count)
+        )
+    }
+
     /// Is the user actually looking at this channel *right now*, in any
     /// window? A selected channel in a backgrounded app is NOT being looked
     /// at — the app keeps its selection while you work elsewhere, so treating
@@ -428,28 +434,17 @@ final class AppState: ObservableObject {
     func setAppActive(_ active: Bool) {
         guard isAppActive != active else { return }
         isAppActive = active
-        guard active else {
-            wentInactiveAt = Date()
-            return
-        }
+        guard active else { return }
         // Coming back to channels that collected mail while we were away is
         // the moment to read them — the arrival path deliberately didn't.
         for channelId in openChannelIds {
             Task { await engine.catchUpRead(channelId: channelId) }
         }
-#if os(iOS)
-        // A backgrounded iOS app is suspended, and the socket it comes back to
-        // is often dead without either side noticing — no error, no reconnect,
-        // just an app that quietly stops hearing about new channels and
-        // messages (#269). Treat a real absence as a reconnect. macOS has the
-        // same hole on lid-close, but app activation is the wrong trigger
-        // there — it fires on every app switch — so it needs a liveness check
-        // of its own: #271, which covers both clients properly.
-        if let since = wentInactiveAt, Date().timeIntervalSince(since) >= Self.resumeResyncAfter {
-            wentInactiveAt = nil
-            Task { await engine.appBecameActive() }
-        }
-#endif
+        // A suspended app's socket is regularly dead with no error on either
+        // side, so returning to the front also has to re-check the connection.
+        // That is `SyncEngine.observeWake` (#271), on the foreground/wake
+        // notification rather than here: it checks liveness first, so a flick
+        // to another app and straight back costs nothing.
     }
 
     /// A channel was archived or left — every window showing it drops the

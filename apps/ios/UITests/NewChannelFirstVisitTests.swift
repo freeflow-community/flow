@@ -175,8 +175,8 @@ final class NewChannelFirstVisitTests: XCTestCase {
         let name = "bg269\(Int(Date().timeIntervalSince1970) % 1_000_000)"
         let greeting = "backgrounded \(name)"
         try agentCreatesChannel(named: name, saying: [greeting, "second line"])
-        // Long enough to count as a real absence — the resume re-sync ignores a
-        // flick to another app and straight back (`AppState.resumeResyncAfter`).
+        // Long enough to count as a real absence rather than a flick to
+        // another app and straight back.
         Thread.sleep(forTimeInterval: 12)
         app.activate()
         openDrawer(app)

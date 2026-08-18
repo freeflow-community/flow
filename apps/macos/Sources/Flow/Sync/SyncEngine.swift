@@ -1,5 +1,10 @@
 import Foundation
 import GRDB
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// Owns all GRDB writes and coordinates APIClient + SocketClient.
 /// SwiftUI never writes to the database; it calls engine methods and
@@ -12,6 +17,7 @@ actor SyncEngine {
 
     private var currentUser: User?
     private var socketConsumer: Task<Void, Never>?
+    private var wakeObserver: Task<Void, Never>?
     private var typingLastSent: [String: Date] = [:]
     /// The token the live socket was started with, so a resume can restart it
     /// (#269) without going back to the Keychain — which an unsigned dev build
@@ -227,21 +233,29 @@ actor SyncEngine {
                 await self.handle(signal)
             }
         }
+        observeWake()
     }
 
-    /// The app came back to the front after long enough for the OS to have
-    /// suspended it (#269). A suspended app's WebSocket is usually dead
-    /// without either side noticing — `receive()` neither returns nor throws
-    /// until something forces the issue — so the client sits there looking
-    /// connected while every event passes it by: a channel an agent created
-    /// while the phone was in a pocket never reaches the sidebar at all.
-    ///
-    /// Restarting the socket is the cure *and* the catch-up: the fresh
-    /// connection's `.connected` runs `backfillAfterReconnect`, which is
-    /// already the "fill the gap you missed" path.
-    func appBecameActive() async {
-        guard currentUser != nil, let token = sessionToken else { return }
-        startSocket(token: token)
+    /// Waking from sleep (macOS) or returning to the foreground (iOS) is the
+    /// one moment we *know* unobserved time has passed, so it is the cheapest
+    /// place to catch a socket that died half-open while we weren't looking
+    /// (#271). The watchdog in `SocketClient` would find it within ~70s anyway;
+    /// this only makes it immediate, and must never be the sole mechanism —
+    /// Wi-Fi drops and VPN flaps come with no notification at all.
+    private func observeWake() {
+        guard wakeObserver == nil else { return }
+        #if canImport(AppKit)
+        let center = NSWorkspace.shared.notificationCenter
+        let name = NSWorkspace.didWakeNotification
+        #elseif canImport(UIKit)
+        let center = NotificationCenter.default
+        let name = UIApplication.willEnterForegroundNotification
+        #endif
+        wakeObserver = Task { [socket] in
+            for await _ in center.notifications(named: name).map({ _ in () }) {
+                await socket.wake()
+            }
+        }
     }
 
     private func handle(_ signal: SocketSignal) async {
@@ -521,9 +535,17 @@ actor SyncEngine {
         // both ask, in either order, so without this the loser of that race
         // fetches the same page a second time. Claimed before the first await,
         // because the actor lets the other caller in at every suspension point.
+        // The loser also skips the unread clear below — the winner is doing it
+        // for the same open.
         guard !historyInFlight.contains(channelId) else { return }
         historyInFlight.insert(channelId)
         defer { historyInFlight.remove(channelId) }
+        // Opening the channel is the moment its Activity rows stop being
+        // unread — say so now, before the history page is even requested
+        // (#227). Left to the server it takes four sequential round trips
+        // (history GET → channel read → notification.read → badge refetch),
+        // which on a slow link reads as a stuck badge.
+        await clearNotificationsLocally(channelId: channelId)
         // The clients render a loading transcript rather than bare background
         // while this page is in flight (#191) — on a slow link it is the whole
         // difference between "still arriving" and "the conversation is gone".
@@ -555,8 +577,18 @@ actor SyncEngine {
         await storeMessages(resp.messages)
         await appState?.setLoadingHistory(channelId: channelId, false)
         await appState?.setHasMore(channelId: channelId, resp.hasMore)
-        if let newest = resp.messages.first?.id {
-            await markRead(channelId: channelId, lastReadMsgId: newest)
+        // An empty page still has to tell the server (#227). Zeroing only the
+        // local count made the channel *look* read on this device while its
+        // notification rows stayed unread everywhere else — the cached newest
+        // id is the same fallback `catchUpRead` uses. With nothing cached
+        // either there is no cursor to send, so just clear the local pill.
+        let cursor = if let newest = resp.messages.first?.id {
+            newest
+        } else {
+            await newestCachedMessageId(channelId: channelId)
+        }
+        if let cursor {
+            await markRead(channelId: channelId, lastReadMsgId: cursor)
         } else {
             try? await db.writer.write { db in
                 try db.execute(
@@ -564,6 +596,36 @@ actor SyncEngine {
                     arguments: [channelId]
                 )
             }
+        }
+    }
+
+    /// Zero this channel's Activity rows in the local cache and on the badges.
+    /// The `notification.read` event that the read call triggers will overwrite
+    /// both with the server's numbers a moment later; this is only about not
+    /// making the user watch four round trips for something already true.
+    private func clearNotificationsLocally(channelId: String) async {
+        let cleared: (count: Int, workspaceId: String)? = try? await db.writer.write { db in
+            guard let ch = try Channel.fetchOne(db, key: channelId), ch.unreadNotifications > 0
+            else { return nil }
+            try db.execute(
+                sql: "UPDATE channel SET unreadNotifications = 0 WHERE id = ?",
+                arguments: [channelId]
+            )
+            return (ch.unreadNotifications, ch.workspaceId)
+        }
+        guard let cleared else { return }
+        await appState?.notificationsCleared(count: cleared.count, workspaceId: cleared.workspaceId)
+    }
+
+    /// Newest top-level message this device has cached for a channel — the read
+    /// cursor to fall back on when the server hasn't just handed us one.
+    private func newestCachedMessageId(channelId: String) async -> String? {
+        try? await db.reader.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
+                arguments: [channelId]
+            )
         }
     }
 
@@ -608,14 +670,7 @@ actor SyncEngine {
     /// `AppState.setAppActive` — the arrival path deliberately skips backgrounded
     /// windows, so this is what closes the loop.
     func catchUpRead(channelId: String) async {
-        let newest: String? = try? await db.reader.read { db in
-            try String.fetchOne(
-                db,
-                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
-                arguments: [channelId]
-            )
-        }
-        guard let newest else { return }
+        guard let newest = await newestCachedMessageId(channelId: channelId) else { return }
         await markRead(channelId: channelId, lastReadMsgId: newest)
     }
 
@@ -1450,11 +1505,23 @@ actor SyncEngine {
             await appState?.notificationReceived(n)
             // The sidebar badge is this channel's unread-notification count.
             let notifChannelId = n.channelId
+            // A reply needs you: also light the dot on that thread's chip
+            // (#270), so the transcript says *which* thread, not just that the
+            // channel has something. Read-modify-write — it's a JSON array.
+            let notifThreadRootId = n.message.threadRootId
             try? await db.writer.write { db in
                 try db.execute(
                     sql: "UPDATE channel SET unreadNotifications = unreadNotifications + 1 WHERE id = ? AND isMember = 1",
                     arguments: [notifChannelId]
                 )
+                guard let rootId = notifThreadRootId,
+                      var chan = try Channel.filter(key: notifChannelId).fetchOne(db),
+                      chan.isMember else { return }
+                var roots = chan.unreadThreadRootIds ?? []
+                guard !roots.contains(rootId) else { return }
+                roots.append(rootId)
+                chan.unreadThreadRootIds = roots
+                try chan.save(db)
             }
             // Banner unless the server's alert gate (per-user prefs + status
             // suppression, phase 10) says no — kind 3 activity rows are always
