@@ -38,9 +38,13 @@ enum WebAuthSession {
             }
             let presenter = Presenter()
             session.presentationContextProvider = presenter
-            // Share Safari's cookies: someone already signed in on the web
-            // gets a one-tap handoff instead of a second Google prompt.
-            session.prefersEphemeralWebBrowserSession = false
+            // Start from an empty session (#279). Sharing Safari's cookies
+            // bought a one-tap handoff, but it also meant whichever account
+            // the device was already signed into got used silently — the
+            // sheet skipped straight past Google, so signing in as anyone
+            // else was impossible. A sign-in the user cannot direct is worse
+            // than one extra prompt.
+            session.prefersEphemeralWebBrowserSession = true
             active = (session, presenter)
             if !session.start() {
                 active = nil

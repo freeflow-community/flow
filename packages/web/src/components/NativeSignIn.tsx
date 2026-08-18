@@ -8,7 +8,10 @@
 // crypto and no new deep link. A raw session token never rides in the URL.
 //
 // Arriving already signed in on the web skips straight to the handoff: the
-// point of the trip is the code, not the sign-in.
+// point of the trip is the code, not the sign-in. That shortcut is the
+// convenience of the flow and its sharpest edge (#279) — it signs you in as
+// whoever the browser already holds, without ever asking Google — so every
+// phase after `choose` carries a way back out to the account chooser.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GoogleAuthResponse } from '@flow/shared';
 import { setToken } from '../lib/api';
@@ -50,6 +53,17 @@ export default function NativeSignIn({ signedIn }: { signedIn: boolean }) {
   useEffect(() => {
     if (signedIn) handOff();
   }, [signedIn, handOff]);
+
+  // "Not you?" — the browser's own Flow session is what made the handoff
+  // silent, so drop it and go back to the Google button, which asks. Safe at
+  // any phase: the code already minted is single-use and tied to the old
+  // account, and signing in again mints a fresh one.
+  const useDifferentAccount = useCallback(() => {
+    inFlight.current = false;
+    setToken(null);
+    setError(null);
+    setPhase('choose');
+  }, []);
 
   const onGoogle = useCallback(
     (resp: GoogleAuthResponse) => {
@@ -123,6 +137,16 @@ export default function NativeSignIn({ signedIn }: { signedIn: boolean }) {
               Try again
             </button>
           </>
+        )}
+        {phase !== 'choose' && (
+          <button
+            type="button"
+            data-testid="native-switch-account"
+            className="mt-3 w-full text-xs font-semibold text-accent-soft hover:underline"
+            onClick={useDifferentAccount}
+          >
+            Not you? Use a different account
+          </button>
         )}
       </div>
       <a href="/" className="text-sm text-muted hover:text-ink hover:underline">
