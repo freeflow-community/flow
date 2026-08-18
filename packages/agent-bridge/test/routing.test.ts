@@ -123,6 +123,39 @@ describe('replyRoot — where the answer goes', () => {
     const replyInThatThread = message({ id: 'msg-10', threadRootId: 'msg-9' });
     expect(b.convKey(top)).toBe(b.convKey(replyInThatThread));
   });
+
+  // A run that creates its own #task-N channel owns it, but never calls
+  // start_task (the dispatcher path has no daemon to hand off to), so
+  // taskChannels stays empty. inScope already answers these top-level, and
+  // replyRoot has to agree or the answer lands in a new thread.
+  it('answers top-level in a channel it created, without start_task', () => {
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBeUndefined();
+  });
+
+  it('answers top-level in a registered task channel someone else created', () => {
+    const b = bridge();
+    b.taskChannels.add('chan-1');
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBeUndefined();
+  });
+
+  it('keeps every top-level message in an owned channel on one session', () => {
+    // The point of replying top-level: a human interjecting reaches the run
+    // with its context, instead of opening a fresh session per thread.
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(b.convKey(message({ id: 'msg-9' }))).toBe(b.convKey(message({ id: 'msg-10' })));
+  });
+
+  it('still threads in a channel someone else created', () => {
+    const b = bridge(); // createdBy: HUMAN
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBe('msg-9');
+  });
+
+  it('leaves a thread reply in its thread even in a channel it owns', () => {
+    // Owning the room is not owning every side conversation in it.
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(b.replyRoot(message({ id: 'msg-10', threadRootId: 'root-1' }))).toBe('root-1');
+  });
 });
 
 describe('inScope — channels the agent created', () => {
@@ -162,9 +195,13 @@ describe('inScope — channels the agent created', () => {
     expect(await b.inScope(message({ userId: OTHER_AGENT, body: 'hi' }))).toBe(false);
   });
 
-  it('opens a thread on the message it answers, as usual', () => {
+  // Was: 'opens a thread on the message it answers, as usual'. Reversed
+  // deliberately — a channel the agent created is its own conversation, so
+  // threading a reply there split the run's log and its session. See the
+  // replyRoot cases above.
+  it('answers top-level in its own channel, not in a new thread', () => {
     const b = bridge(config(), [mine()]);
-    expect(b.replyRoot(message({ id: 'msg-9' }))).toBe('msg-9');
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBeUndefined();
   });
 });
 

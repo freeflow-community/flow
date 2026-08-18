@@ -565,12 +565,23 @@ export class AgentBridge {
    */
   private replyRoot(msg: MessageDTO): string | undefined {
     if (msg.threadRootId) return msg.threadRootId;
-    // A task channel converses DM-style: the channel *is* the conversation.
+    const chan = this.channels.get(msg.channelId);
+    // A channel we own converses DM-style: the channel *is* the conversation.
     // Top-level replies keep the run's log linear, and — via convKey — route
     // every top-level message into the run's own session, which is what lets
     // a human interject with the run's full context.
-    if (this.taskChannels.has(msg.channelId)) return undefined;
-    const chan = this.channels.get(msg.channelId);
+    //
+    // "Ours" must mean the same here as it does in inScope, or the two
+    // disagree: a channel the agent created is in scope for top-level
+    // messages, so it answers them, but if only `taskChannels` counted as
+    // owned it would answer them in a *new thread* — and each thread is its
+    // own convKey, so the reply also lost the run's context. That is the
+    // common case, not a corner: a dispatched run has no start_task to call
+    // (it is the fallback path in work-project-tasks/SKILL.md §3), so it
+    // creates its own #task-N channel and `taskChannels` never learns of it.
+    // `taskChannels` is in-memory besides, so a bridge restart drops even the
+    // channels that did register.
+    if (this.taskChannels.has(msg.channelId) || chan?.createdBy === this.me.id) return undefined;
     if (!chan || chan.kind === 'dm' || chan.kind === 'group_dm') return undefined;
     return msg.id;
   }
