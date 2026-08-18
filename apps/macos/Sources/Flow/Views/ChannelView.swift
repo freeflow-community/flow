@@ -96,6 +96,9 @@ struct ChannelView: View {
                 try Dictionary(uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0) })
             }
             await loadChannelMembers()
+            // A transcript on screen must have been asked for at least once —
+            // the selection-driven fetch alone can leave this one blank (#269).
+            await app.engine.ensureHistory(channelId: channelId)
             await app.engine.loadPinnedMessages(channelId: channelId)
         }
         // Jump-to-message (phase 12): a target from the Activity feed may sit

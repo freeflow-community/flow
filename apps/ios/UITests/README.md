@@ -124,6 +124,14 @@ checks")`, the simulator is wedged from a previous run:
   off-screen row does not merely fail to be hittable — it does not exist to
   query. Hence `openDrawerAtDms` and picking people by searching first.
 
+- `NewChannelFirstVisitTests` — #269: a channel that appears while the app is
+  running must show its transcript on the *first* visit. Needs only
+  `qa-seed.mjs`: the test itself plays the agent over REST (Bob creates a
+  channel, invites Alice, posts), because the channel has to arrive into an
+  already-running app. Three variants — app in the foreground, backgrounded,
+  and not running. Note the first tap after a resume can be swallowed, hence
+  the drawer helper that confirms the backdrop and retries.
+
 These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —
 passing them as trailing `xcodebuild` arguments looks right and silently does

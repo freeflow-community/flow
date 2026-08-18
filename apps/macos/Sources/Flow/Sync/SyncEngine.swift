@@ -19,6 +19,23 @@ actor SyncEngine {
     private var socketConsumer: Task<Void, Never>?
     private var wakeObserver: Task<Void, Never>?
     private var typingLastSent: [String: Date] = [:]
+    /// The token the live socket was started with, so a resume can restart it
+    /// (#269) without going back to the Keychain — which an unsigned dev build
+    /// can't always read, and which would make the re-sync depend on storage
+    /// rather than on the session the engine is already holding.
+    private var sessionToken: String?
+    /// Channels whose history page has landed this session (#269). Membership
+    /// means "the server has been asked, and answered" — not "there are
+    /// messages" — so an empty channel is asked once, and a channel whose fetch
+    /// failed is asked again the next time its transcript appears.
+    private var historyLoaded: Set<String> = []
+    /// Channels with a history request in flight, so the selection-driven fetch
+    /// and a view's `ensureHistory` on the same open don't both ask (#269).
+    private var historyInFlight: Set<String> = []
+    /// Tries for a channel's history page before falling back to the cache —
+    /// 1s then 2s apart, so a transient failure costs a moment, not the
+    /// conversation (#269).
+    private static let historyAttempts = 3
 
     private static let currentUserIdKey = "currentUserId" + Profile.suffix
 
@@ -53,6 +70,8 @@ actor SyncEngine {
         socketConsumer?.cancel()
         socketConsumer = nil
         currentUser = nil
+        sessionToken = nil
+        historyLoaded.removeAll() // signing back in re-asks the server (#269)
         await appState?.sessionExpired()
     }
 
@@ -181,6 +200,8 @@ actor SyncEngine {
         socketConsumer?.cancel()
         socketConsumer = nil
         currentUser = nil
+        sessionToken = nil
+        historyLoaded.removeAll() // the cache goes with the session (#269)
         try? await db.writer.write { db in try AppDatabase.wipe(db) }
         await appState?.didSignOut()
     }
@@ -203,6 +224,7 @@ actor SyncEngine {
     // MARK: - Socket lifecycle
 
     private func startSocket(token: String) {
+        sessionToken = token
         socketConsumer?.cancel()
         socketConsumer = Task { [socket] in
             let stream = await socket.start(token: token)
@@ -496,8 +518,28 @@ actor SyncEngine {
         return ch
     }
 
+    /// A transcript for `channelId` is on screen — make sure it has one. The
+    /// selection-driven fetch below runs only when the *selection changes*
+    /// (`WindowState.selectChannel` returns early on the same id) and swallows
+    /// its own failures, so a channel could be shown with nothing behind it and
+    /// stay that way until the user switched away and back (#269). Views call
+    /// this whenever they appear; it costs nothing once a page has landed.
+    func ensureHistory(channelId: String) async {
+        guard !historyLoaded.contains(channelId) else { return }
+        await selectChannel(channelId)
+    }
+
     func selectChannel(_ channelId: String?) async {
         guard let channelId else { return }
+        // One page per open. Selecting a channel and showing its transcript
+        // both ask, in either order, so without this the loser of that race
+        // fetches the same page a second time. Claimed before the first await,
+        // because the actor lets the other caller in at every suspension point.
+        // The loser also skips the unread clear below — the winner is doing it
+        // for the same open.
+        guard !historyInFlight.contains(channelId) else { return }
+        historyInFlight.insert(channelId)
+        defer { historyInFlight.remove(channelId) }
         // Opening the channel is the moment its Activity rows stop being
         // unread — say so now, before the history page is even requested
         // (#227). Left to the server it takes four sequential round trips
@@ -508,16 +550,28 @@ actor SyncEngine {
         // while this page is in flight (#191) — on a slow link it is the whole
         // difference between "still arriving" and "the conversation is gone".
         await appState?.setLoadingHistory(channelId: channelId, true)
-        let resp: MessagesResponse? = try? await api.get(
-            "/v1/channels/\(channelId)/messages",
-            query: [URLQueryItem(name: "limit", value: "50")]
-        )
+        var resp: MessagesResponse? = nil
+        // One request used to decide the whole transcript: a connection that
+        // failed — the usual one being the first request after a phone wakes up
+        // — left an empty channel that only a switch away and back could cure
+        // (#269). Try again briefly before settling for the cache.
+        for attempt in 0..<Self.historyAttempts {
+            if attempt > 0 { try? await Task.sleep(for: .seconds(attempt)) }
+            resp = try? await api.get(
+                "/v1/channels/\(channelId)/messages",
+                query: [URLQueryItem(name: "limit", value: "50")]
+            )
+            if resp != nil { break }
+        }
         guard let resp else {
             // Offline: render from cache — which is all there is going to be,
-            // so stop claiming the transcript is still on its way.
+            // so stop claiming the transcript is still on its way. The channel
+            // stays out of `historyLoaded`, so the next appearance retries
+            // rather than leaving an empty transcript for good (#269).
             await appState?.setLoadingHistory(channelId: channelId, false)
             return
         }
+        historyLoaded.insert(channelId)
         // Rows first, then drop the loading state: clearing it while the
         // transcript is still empty would flash the very blank this avoids.
         await storeMessages(resp.messages)
@@ -1408,6 +1462,7 @@ actor SyncEngine {
                     try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [chId])
                     try db.execute(sql: "DELETE FROM message WHERE channelId = ?", arguments: [chId])
                 }
+                historyLoaded.remove(chId) // its cache just went — re-fetch on re-entry (#269)
                 await appState?.channelBecameUnavailable(chId)
                 await refreshChannels(workspaceId: event.workspaceId)
             }

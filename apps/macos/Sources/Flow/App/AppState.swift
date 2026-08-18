@@ -434,13 +434,17 @@ final class AppState: ObservableObject {
     func setAppActive(_ active: Bool) {
         guard isAppActive != active else { return }
         isAppActive = active
+        guard active else { return }
         // Coming back to channels that collected mail while we were away is
         // the moment to read them — the arrival path deliberately didn't.
-        if active {
-            for channelId in openChannelIds {
-                Task { await engine.catchUpRead(channelId: channelId) }
-            }
+        for channelId in openChannelIds {
+            Task { await engine.catchUpRead(channelId: channelId) }
         }
+        // A suspended app's socket is regularly dead with no error on either
+        // side, so returning to the front also has to re-check the connection.
+        // That is `SyncEngine.observeWake` (#271), on the foreground/wake
+        // notification rather than here: it checks liveness first, so a flick
+        // to another app and straight back costs nothing.
     }
 
     /// A channel was archived or left — every window showing it drops the
