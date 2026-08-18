@@ -26,6 +26,7 @@ export function toChannelDTO(
     lastReadMsgId?: string | null | undefined;
     unreadCount?: number | undefined;
     unreadNotifications?: number | undefined;
+    unreadThreadRootIds?: string[] | undefined;
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
     indicator?: ChannelIndicatorState | null | undefined;
@@ -45,6 +46,7 @@ export function toChannelDTO(
     lastReadMsgId: opts.lastReadMsgId ?? null,
     unreadCount: opts.unreadCount ?? 0,
     unreadNotifications: opts.unreadNotifications ?? 0,
+    unreadThreadRootIds: opts.unreadThreadRootIds ?? [],
     notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
     parentId: c.parentId,
   };
@@ -296,6 +298,27 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     .groupBy(notifications.channelId);
   const notifByChannel = new Map(notifRows.map((r) => [r.channelId, r.n]));
 
+  // Which threads are waiting on this user (#270) — the reply chip draws an
+  // unread dot from this, so a thread reply that needs you is visible in the
+  // transcript and not only in the sidebar number. One grouped query over the
+  // same unread rows; thread notifications are few, so the lists stay short.
+  const threadRootRows = await db
+    .selectDistinct({ channelId: notifications.channelId, rootId: messages.threadRootId })
+    .from(notifications)
+    .innerJoin(messages, eq(messages.id, notifications.messageId))
+    .where(
+      and(
+        eq(notifications.userId, userId),
+        isNull(notifications.readAt),
+        sql`${messages.threadRootId} IS NOT NULL`,
+      ),
+    );
+  const threadRootsByChannel = new Map<string, string[]>();
+  for (const r of threadRootRows) {
+    if (!r.rootId) continue;
+    threadRootsByChannel.set(r.channelId, [...(threadRootsByChannel.get(r.channelId) ?? []), r.rootId]);
+  }
+
   // Live activity spinners (#137) — in-memory, so this is a map lookup, not a
   // query. Riding the channel list means a client that just loaded (or came
   // back from a refresh) starts in the right state without a second call.
@@ -326,6 +349,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         lastReadMsgId: r.lastReadMsgId,
         unreadCount,
         unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
+        unreadThreadRootIds: r.isMember ? (threadRootsByChannel.get(r.c.id) ?? []) : [],
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
         indicator: indicators.get(r.c.id) ?? null,

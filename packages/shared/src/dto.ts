@@ -146,6 +146,13 @@ export interface ChannelDTO {
    * badge shows, and these sum to the Activity row's total.
    */
   unreadNotifications: number;
+  /**
+   * Thread roots in this channel with an unread notification for me (#270) —
+   * clients put a dot on the root's "N replies" chip, so a reply that needs
+   * you is visible in the transcript and not only in the sidebar badge.
+   * Empty for a non-member, and cleared for a thread once you open it.
+   */
+  unreadThreadRootIds: string[];
   notifyLevel: NotifyLevel;
   /**
    * Parent channel (#118) — set at creation, one level deep, so clients can

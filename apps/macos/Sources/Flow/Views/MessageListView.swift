@@ -12,6 +12,10 @@ struct MessageListView: View {
     /// explanation reads as a lost conversation on a slow link.
     var isLoadingHistory: Bool = false
     let showThreadAffordances: Bool
+    /// Thread roots holding an unread notification for me (#270) — their reply
+    /// chips get a dot, so a reply that needs you is visible here and not only
+    /// in the sidebar badge.
+    var unreadThreadRootIds: Set<String> = []
     let onLoadOlder: () -> Void
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
@@ -114,6 +118,7 @@ struct MessageListView: View {
                                     currentUserId: currentUserId,
                                     showHeader: showsHeader(at: index),
                                     showThreadAffordances: showThreadAffordances,
+                                    threadUnread: unreadThreadRootIds.contains(message.id),
                                     highlighted: message.id == flashId,
                                     onOpenThread: onOpenThread,
                                     onEdit: onEdit,
@@ -378,6 +383,8 @@ struct MessageRow: View {
     let currentUserId: String?
     let showHeader: Bool
     let showThreadAffordances: Bool
+    /// This thread holds an unread notification for me (#270).
+    var threadUnread: Bool = false
     /// Flashing after a jump-to-message (phase 12).
     var highlighted: Bool = false
     let onOpenThread: (String) -> Void
@@ -514,6 +521,16 @@ struct MessageRow: View {
                         onOpenThread(message.id)
                     } label: {
                         HStack(spacing: 6) {
+                            // A reply in here needs you (#270) — the sidebar
+                            // badge says the channel has something, this says
+                            // which thread.
+                            if threadUnread {
+                                Circle()
+                                    .fill(MC.unread)
+                                    .frame(width: 7, height: 7)
+                                    .accessibilityIdentifier("msg.threadUnread")
+                                    .accessibilityLabel("Unread reply")
+                            }
                             // First-4 reply-author avatars (phase 5 item 7).
                             if !message.replyParticipantUserIds.isEmpty {
                                 HStack(spacing: -6) {

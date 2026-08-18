@@ -20,6 +20,7 @@ const chan = (id: string, parentId: string | null = null): ChannelDTO => ({
   lastReadMsgId: null,
   unreadCount: 0,
   unreadNotifications: 0,
+  unreadThreadRootIds: [],
   notifyLevel: 1,
   parentId,
 });

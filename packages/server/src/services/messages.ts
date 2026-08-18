@@ -153,6 +153,10 @@ export async function sendMessage(
     if (!root || root.channelId !== channelId) throw badRequest('bad_thread_root', 'thread root not found in this channel');
     if (root.threadRootId !== null) throw badRequest('bad_thread_root', 'replies must target the thread root (one level deep)');
     if (root.deletedAt) throw badRequest('bad_thread_root', 'cannot reply to a deleted message');
+    // No client draws a thread affordance on a join/leave line, so a thread
+    // hung off one is unreachable — and any notification it raises can never
+    // be read by opening it (#270). Refuse the reply rather than build the trap.
+    if (root.systemKind) throw badRequest('bad_thread_root', 'cannot reply to a system message');
   }
 
   const attachRows = await validateAttachments(fileIds ?? [], chan.workspaceId, userId);
