@@ -1,5 +1,10 @@
 import Foundation
 import GRDB
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// Owns all GRDB writes and coordinates APIClient + SocketClient.
 /// SwiftUI never writes to the database; it calls engine methods and
@@ -12,6 +17,7 @@ actor SyncEngine {
 
     private var currentUser: User?
     private var socketConsumer: Task<Void, Never>?
+    private var wakeObserver: Task<Void, Never>?
     private var typingLastSent: [String: Date] = [:]
 
     private static let currentUserIdKey = "currentUserId" + Profile.suffix
@@ -203,6 +209,29 @@ actor SyncEngine {
             for await signal in stream {
                 if Task.isCancelled { break }
                 await self.handle(signal)
+            }
+        }
+        observeWake()
+    }
+
+    /// Waking from sleep (macOS) or returning to the foreground (iOS) is the
+    /// one moment we *know* unobserved time has passed, so it is the cheapest
+    /// place to catch a socket that died half-open while we weren't looking
+    /// (#271). The watchdog in `SocketClient` would find it within ~70s anyway;
+    /// this only makes it immediate, and must never be the sole mechanism —
+    /// Wi-Fi drops and VPN flaps come with no notification at all.
+    private func observeWake() {
+        guard wakeObserver == nil else { return }
+        #if canImport(AppKit)
+        let center = NSWorkspace.shared.notificationCenter
+        let name = NSWorkspace.didWakeNotification
+        #elseif canImport(UIKit)
+        let center = NotificationCenter.default
+        let name = UIApplication.willEnterForegroundNotification
+        #endif
+        wakeObserver = Task { [socket] in
+            for await _ in center.notifications(named: name).map({ _ in () }) {
+                await socket.wake()
             }
         }
     }
