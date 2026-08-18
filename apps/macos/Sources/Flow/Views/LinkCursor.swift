@@ -8,12 +8,17 @@ extension View {
     /// Two problems to solve. SwiftUI offers no hover hit-testing *inside*
     /// laid-out text, so the link's on-screen rectangles are recovered by
     /// re-laying the same string with TextKit at the width SwiftUI gave the
-    /// view. And a selectable `Text` re-asserts its own cursor as the mouse
-    /// moves — an `NSCursor.push()` or `set()` driven from `.onContinuousHover`
-    /// is overwritten by the next mouse-moved event (verified in the running
-    /// app) — so the cursor is claimed the way AppKit expects instead: cursor
-    /// rects on a transparent overlay view above the text, which never takes a
-    /// mouse event itself.
+    /// view. And owning the cursor takes more than asking for it: a selectable
+    /// `Text` re-asserts the I-beam as the mouse moves, and an overlay that
+    /// declines every mouse event (`hitTest` -> nil) is skipped by the same
+    /// hit-test walk AppKit uses to decide whose cursor rects apply, so it lost
+    /// every time. That is why the hand never appeared on a message paragraph
+    /// or a heading — the surfaces that are selectable (#276).
+    ///
+    /// The overlay now accepts hit testing over the link rectangles *only*.
+    /// Inside one it is the frontmost view, so its cursor rect wins and the
+    /// click is its own — it opens the URL the `Text` would have opened.
+    /// Everywhere else it is transparent, and selection behaves as before.
     ///
     /// TextKit's line breaking can differ from SwiftUI's by a hair at wrap
     /// points; for a cursor affordance that isn't observable.
@@ -41,10 +46,10 @@ private struct LinkCursorModifier: ViewModifier {
     /// Drawn point size before zoom; nil = `.callout`.
     let size: CGFloat?
 
-    /// Link rectangles at the current width, in the text's own coordinates.
-    /// Empty — and free — for the overwhelming majority of messages, which
-    /// carry no links at all.
-    @State private var rects: [CGRect] = []
+    /// Link rectangles at the current width, in the text's own coordinates,
+    /// each with the URL it points at. Empty — and free — for the overwhelming
+    /// majority of messages, which carry no links at all.
+    @State private var targets: [LinkHitTest.LinkTarget] = []
     /// The re-layout has to use the size the text is actually drawn at, or the
     /// cursor rects drift away from the links as soon as you zoom (#105).
     @Environment(\.textZoom) private var textZoom
@@ -60,58 +65,118 @@ private struct LinkCursorModifier: ViewModifier {
                         .onChange(of: textZoom) { _, _ in measure(geo.size.width) }
                 }
             )
-            .overlay(LinkCursorOverlay(rects: rects).allowsHitTesting(false))
+            .overlay(LinkCursorOverlay(targets: targets))
     }
 
     private func measure(_ width: CGFloat) {
-        let next = LinkHitTest.linkRects(
+        let next = LinkHitTest.linkTargets(
             in: attributed, width: width, scale: textZoom, size: size
         )
-        if next != rects { rects = next }
+        if next != targets { targets = next }
     }
 }
 
-/// Transparent AppKit layer whose only job is owning the cursor over the link
-/// rectangles. `hitTest` returns nil, so clicks, drags and text selection go
-/// to the text underneath exactly as they did before.
+/// Transparent AppKit layer that owns the cursor over the link rectangles —
+/// and, because owning the cursor means being hit-testable there, the click too.
 private struct LinkCursorOverlay: NSViewRepresentable {
-    let rects: [CGRect]
+    let targets: [LinkHitTest.LinkTarget]
 
     func makeNSView(context: Context) -> LinkCursorNSView { LinkCursorNSView() }
 
     func updateNSView(_ view: LinkCursorNSView, context: Context) {
-        view.linkRects = rects
+        view.targets = targets
     }
 }
 
 private final class LinkCursorNSView: NSView {
-    var linkRects: [CGRect] = [] {
+    var targets: [LinkHitTest.LinkTarget] = [] {
         didSet {
-            guard linkRects != oldValue else { return }
+            guard targets != oldValue else { return }
             window?.invalidateCursorRects(for: self)
+            rebuildTrackingAreas()
         }
     }
+
+    /// The link a mouse-down landed on, so a click that wanders off it before
+    /// the mouse-up doesn't open anything — the standard button contract.
+    private var pressed: URL?
 
     /// SwiftUI hands out top-left-origin rects; match them.
     override var isFlipped: Bool { true }
 
-    /// Never intercept a mouse event — this view exists only for its cursor.
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    /// Frontmost over a link, invisible everywhere else. Off the links the text
+    /// underneath keeps every click, drag and selection it had before.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview else { return nil }
+        return target(at: convert(point, from: superview)) == nil ? nil : self
+    }
 
     override func resetCursorRects() {
-        for rect in linkRects {
-            addCursorRect(rect, cursor: .pointingHand)
+        for target in targets {
+            addCursorRect(target.rect, cursor: .pointingHand)
         }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        rebuildTrackingAreas()
+    }
+
+    /// A cursor rect is applied when the pointer enters it. That is enough on
+    /// its own only if nothing else touches the cursor afterwards, and over
+    /// selectable text something does — so the hand is re-asserted on every
+    /// move inside the link as well.
+    private func rebuildTrackingAreas() {
+        for area in trackingAreas { removeTrackingArea(area) }
+        for target in targets {
+            addTrackingArea(NSTrackingArea(
+                rect: target.rect,
+                options: [.cursorUpdate, .mouseMoved, .activeInKeyWindow],
+                owner: self
+            ))
+        }
+    }
+
+    override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard target(at: convert(event.locationInWindow, from: nil)) != nil else { return }
+        NSCursor.pointingHand.set()
+    }
+
+    // The click over a link is ours because the hit test is, so open the URL
+    // the `Text` would have opened.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        pressed = target(at: convert(event.locationInWindow, from: nil))?.url
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let released = target(at: convert(event.locationInWindow, from: nil))?.url
+        if let url = pressed, url == released { NSWorkspace.shared.open(url) }
+        pressed = nil
+    }
+
+    private func target(at point: NSPoint) -> LinkHitTest.LinkTarget? {
+        targets.first { $0.rect.contains(point) }
     }
 }
 
 enum LinkHitTest {
-    /// The on-screen rectangles covered by link runs, one per wrapped line,
-    /// in the text view's own (top-left origin) coordinates.
-    static func linkRects(
+    /// One wrapped line of a link run: where it is on screen, and where it goes.
+    struct LinkTarget: Equatable {
+        let rect: CGRect
+        let url: URL
+    }
+
+    /// The on-screen rectangles covered by link runs, one per wrapped line, in
+    /// the text view's own (top-left origin) coordinates, each carrying the URL
+    /// it points at — the overlay owns the click as well as the cursor.
+    static func linkTargets(
         in attributed: AttributedString, width: CGFloat, scale: CGFloat = 1,
         size: CGFloat? = nil
-    ) -> [CGRect] {
+    ) -> [LinkTarget] {
         guard width > 0, attributed.runs.contains(where: { $0.link != nil }) else { return [] }
 
         let storage = NSTextStorage(
@@ -124,17 +189,33 @@ enum LinkHitTest {
         manager.addTextContainer(container)
         manager.ensureLayout(for: container)
 
-        var rects: [CGRect] = []
+        var targets: [LinkTarget] = []
         storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
-            guard value != nil else { return }
+            guard let url = url(from: value) else { return }
             let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             manager.enumerateEnclosingRects(
                 forGlyphRange: glyphs,
                 withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
                 in: container
-            ) { rect, _ in rects.append(rect) }
+            ) { rect, _ in targets.append(LinkTarget(rect: rect, url: url)) }
         }
-        return rects
+        return targets
+    }
+
+    /// Just the rectangles, for callers (and tests) that don't need the target.
+    static func linkRects(
+        in attributed: AttributedString, width: CGFloat, scale: CGFloat = 1,
+        size: CGFloat? = nil
+    ) -> [CGRect] {
+        linkTargets(in: attributed, width: width, scale: scale, size: size).map(\.rect)
+    }
+
+    /// `.link` holds an `NSURL` for everything AttributedString produces, but
+    /// the attribute is also allowed to hold a string.
+    private static func url(from value: Any?) -> URL? {
+        if let url = value as? URL { return url }
+        if let string = value as? String { return URL(string: string) }
+        return nil
     }
 
     /// SwiftUI-scope attributes (the mention-pill font, the view-level

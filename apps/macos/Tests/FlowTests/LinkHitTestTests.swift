@@ -85,4 +85,40 @@ final class LinkHitTestTests: XCTestCase {
         XCTAssertEqual(topic.count, 1)
         XCTAssertGreaterThan(topic.first?.minX ?? 0, 0) // after "standup notes: "
     }
+
+    // MARK: - Click target (#276)
+
+    /// The overlay is hit-testable over a link, so it owns the click too and
+    /// has to know where the link goes, not just where it is.
+    func testTargetsCarryTheURL() {
+        let targets = LinkHitTest.linkTargets(
+            in: attributed("see [the docs](https://flow.example/page) now"), width: 400
+        )
+        XCTAssertEqual(targets.count, 1)
+        XCTAssertEqual(targets.first?.url, URL(string: "https://flow.example/page"))
+    }
+
+    /// Two links in one paragraph each keep their own destination — a single
+    /// URL for the whole run would open the wrong page.
+    func testEachLinkKeepsItsOwnDestination() {
+        let targets = LinkHitTest.linkTargets(
+            in: attributed("[one](https://flow.example/1) and [two](https://flow.example/2)"),
+            width: 400
+        )
+        XCTAssertEqual(targets.map(\.url), [
+            URL(string: "https://flow.example/1"), URL(string: "https://flow.example/2"),
+        ])
+        // Distinct places on the line, so a click can tell them apart.
+        XCTAssertNotEqual(targets.first?.rect, targets.last?.rect)
+    }
+
+    /// A wrapped link is several rects, and every one of them must open it.
+    func testWrappedLinkKeepsItsURLOnEveryLine() {
+        let long = String(repeating: "wrapping ", count: 12).trimmingCharacters(in: .whitespaces)
+        let targets = LinkHitTest.linkTargets(
+            in: attributed("[\(long)](https://flow.example)"), width: 120
+        )
+        XCTAssertGreaterThan(targets.count, 1)
+        XCTAssertTrue(targets.allSatisfy { $0.url == URL(string: "https://flow.example") })
+    }
 }
