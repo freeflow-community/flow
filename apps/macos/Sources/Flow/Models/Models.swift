@@ -630,6 +630,21 @@ struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
     var actorUserId: String { actorId ?? message.userId }
     /// Whether this notification may raise an OS banner.
     var alerts: Bool { suppressAlert != true }
+
+    /// Activity-row title (#267). `channelName` names where it happened —
+    /// omitted on DM rows, which already say so, and when the channel isn't
+    /// known locally. Shared by the macOS and iOS feeds so they read alike.
+    func headline(sender: String, channelName: String?) -> String {
+        let suffix = channelName.map { " in #\($0)" } ?? ""
+        switch kind {
+        case 1: return "\(sender) sent you a direct message"
+        case 2: return "\(sender) replied in a thread\(suffix)"
+        case 3: return "\(sender) posted\(suffix)"
+        case 4: return "\(sender) reacted \(reactionEmoji ?? "") to your message\(suffix)"
+            .replacingOccurrences(of: "  ", with: " ")
+        default: return "\(sender) mentioned you\(suffix)"
+        }
+    }
 }
 
 /// `notification.read` payload (issue #63): rows this user just read, in this
