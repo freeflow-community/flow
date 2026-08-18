@@ -441,9 +441,10 @@ final class AppState: ObservableObject {
         // A backgrounded iOS app is suspended, and the socket it comes back to
         // is often dead without either side noticing — no error, no reconnect,
         // just an app that quietly stops hearing about new channels and
-        // messages (#269). Treat a real absence as a reconnect. macOS is left
-        // alone deliberately: it is never suspended, and this fires on every
-        // app switch there (see the CHANGELOG Parity note).
+        // messages (#269). Treat a real absence as a reconnect. macOS has the
+        // same hole on lid-close, but app activation is the wrong trigger
+        // there — it fires on every app switch — so it needs a liveness check
+        // of its own: #271, which covers both clients properly.
         if let since = wentInactiveAt, Date().timeIntervalSince(since) >= Self.resumeResyncAfter {
             wentInactiveAt = nil
             Task { await engine.appBecameActive() }
