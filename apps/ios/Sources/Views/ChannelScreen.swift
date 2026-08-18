@@ -255,6 +255,9 @@ struct ChannelScreen: View {
                     .order(Column("pinnedAt").desc)
                     .fetchAll(db)
             }
+            // A transcript on screen must have been asked for at least once —
+            // the selection-driven fetch alone can leave this one blank (#269).
+            await app.engine.ensureHistory(channelId: channelId)
             await app.engine.loadPinnedMessages(channelId: channelId)
         }
     }

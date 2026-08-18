@@ -78,6 +78,13 @@ final class AppState: ObservableObject {
     /// Is the app frontmost? See `isViewing(channelId:)` — a selection in a
     /// backgrounded window must not count as "the user has seen this".
     @Published private(set) var isAppActive: Bool = true
+    /// When the app last went to the background, for the resume re-sync in
+    /// `setAppActive` (#269). Nil once that re-sync has run.
+    private var wentInactiveAt: Date?
+    /// How long away counts as "the OS may have suspended us". Short enough
+    /// that a phone put down for half a minute comes back in step, long enough
+    /// that flipping to another app and straight back costs nothing.
+    private static let resumeResyncAfter: TimeInterval = 10
     /// userId -> avatar path (/v1/avatars/<key>), for message rows & popovers.
     @Published private(set) var avatarPaths: [String: String] = [:]
     /// Set of agent user ids — the typing indicator says an agent "thinks"
@@ -421,13 +428,27 @@ final class AppState: ObservableObject {
     func setAppActive(_ active: Bool) {
         guard isAppActive != active else { return }
         isAppActive = active
+        guard active else {
+            wentInactiveAt = Date()
+            return
+        }
         // Coming back to channels that collected mail while we were away is
         // the moment to read them — the arrival path deliberately didn't.
-        if active {
-            for channelId in openChannelIds {
-                Task { await engine.catchUpRead(channelId: channelId) }
-            }
+        for channelId in openChannelIds {
+            Task { await engine.catchUpRead(channelId: channelId) }
         }
+#if os(iOS)
+        // A backgrounded iOS app is suspended, and the socket it comes back to
+        // is often dead without either side noticing — no error, no reconnect,
+        // just an app that quietly stops hearing about new channels and
+        // messages (#269). Treat a real absence as a reconnect. macOS is left
+        // alone deliberately: it is never suspended, and this fires on every
+        // app switch there (see the CHANGELOG Parity note).
+        if let since = wentInactiveAt, Date().timeIntervalSince(since) >= Self.resumeResyncAfter {
+            wentInactiveAt = nil
+            Task { await engine.appBecameActive() }
+        }
+#endif
     }
 
     /// A channel was archived or left — every window showing it drops the

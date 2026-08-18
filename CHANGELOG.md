@@ -223,6 +223,11 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Re-syncing on app activation (#269 — restart the socket after ≥10s away, so
+  the reconnect backfill runs) is iOS-only. Only a suspended app comes back to
+  a dead connection; on macOS this would fire on every app switch and buy
+  nothing. Web is untouched — a backgrounded tab keeps its socket, and the
+  browser tells it when that changes.
 - The version label shows the build number on iOS (`Version 2.0 (21)`) but not
   on macOS: every TestFlight build of a release shares one marketing version, so
   the number is what identifies which build a tester is running. macOS versions
