@@ -498,6 +498,12 @@ actor SyncEngine {
 
     func selectChannel(_ channelId: String?) async {
         guard let channelId else { return }
+        // Opening the channel is the moment its Activity rows stop being
+        // unread — say so now, before the history page is even requested
+        // (#227). Left to the server it takes four sequential round trips
+        // (history GET → channel read → notification.read → badge refetch),
+        // which on a slow link reads as a stuck badge.
+        await clearNotificationsLocally(channelId: channelId)
         // The clients render a loading transcript rather than bare background
         // while this page is in flight (#191) — on a slow link it is the whole
         // difference between "still arriving" and "the conversation is gone".
@@ -517,8 +523,18 @@ actor SyncEngine {
         await storeMessages(resp.messages)
         await appState?.setLoadingHistory(channelId: channelId, false)
         await appState?.setHasMore(channelId: channelId, resp.hasMore)
-        if let newest = resp.messages.first?.id {
-            await markRead(channelId: channelId, lastReadMsgId: newest)
+        // An empty page still has to tell the server (#227). Zeroing only the
+        // local count made the channel *look* read on this device while its
+        // notification rows stayed unread everywhere else — the cached newest
+        // id is the same fallback `catchUpRead` uses. With nothing cached
+        // either there is no cursor to send, so just clear the local pill.
+        let cursor = if let newest = resp.messages.first?.id {
+            newest
+        } else {
+            await newestCachedMessageId(channelId: channelId)
+        }
+        if let cursor {
+            await markRead(channelId: channelId, lastReadMsgId: cursor)
         } else {
             try? await db.writer.write { db in
                 try db.execute(
@@ -526,6 +542,36 @@ actor SyncEngine {
                     arguments: [channelId]
                 )
             }
+        }
+    }
+
+    /// Zero this channel's Activity rows in the local cache and on the badges.
+    /// The `notification.read` event that the read call triggers will overwrite
+    /// both with the server's numbers a moment later; this is only about not
+    /// making the user watch four round trips for something already true.
+    private func clearNotificationsLocally(channelId: String) async {
+        let cleared: (count: Int, workspaceId: String)? = try? await db.writer.write { db in
+            guard let ch = try Channel.fetchOne(db, key: channelId), ch.unreadNotifications > 0
+            else { return nil }
+            try db.execute(
+                sql: "UPDATE channel SET unreadNotifications = 0 WHERE id = ?",
+                arguments: [channelId]
+            )
+            return (ch.unreadNotifications, ch.workspaceId)
+        }
+        guard let cleared else { return }
+        await appState?.notificationsCleared(count: cleared.count, workspaceId: cleared.workspaceId)
+    }
+
+    /// Newest top-level message this device has cached for a channel — the read
+    /// cursor to fall back on when the server hasn't just handed us one.
+    private func newestCachedMessageId(channelId: String) async -> String? {
+        try? await db.reader.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
+                arguments: [channelId]
+            )
         }
     }
 
@@ -570,14 +616,7 @@ actor SyncEngine {
     /// `AppState.setAppActive` — the arrival path deliberately skips backgrounded
     /// windows, so this is what closes the loop.
     func catchUpRead(channelId: String) async {
-        let newest: String? = try? await db.reader.read { db in
-            try String.fetchOne(
-                db,
-                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
-                arguments: [channelId]
-            )
-        }
-        guard let newest else { return }
+        guard let newest = await newestCachedMessageId(channelId: channelId) else { return }
         await markRead(channelId: channelId, lastReadMsgId: newest)
     }
 

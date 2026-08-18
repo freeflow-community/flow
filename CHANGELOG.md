@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Clearing a channel's Activity unreads on open without waiting for the server
+  (#227) landed on macOS and iOS only. Web still leaves the badge up until the
+  `notification.read` round trip returns; the fix is an optimistic cache write
+  in `useMarkRead`/`ChannelView`, and web's `markRead` is gated behind the
+  message query in the same way the native one was.
 - "Share to Flow" from the system share sheet is iOS-only (#214, extended to
   videos and documents in #219). macOS supports
   share extensions too and the extension's logic is platform-agnostic
