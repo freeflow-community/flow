@@ -390,6 +390,19 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// Opening a channel reads its Activity rows — count them off the badges
+    /// now rather than after the server's `notification.read` comes back
+    /// (#227). Clamped at zero: this is a guess from the local cache, and the
+    /// event that follows replaces both numbers with the server's.
+    func notificationsCleared(count: Int, workspaceId: String?) {
+        guard count > 0 else { return }
+        setNotificationUnread(
+            max(0, notificationUnread(workspaceId: workspaceId) - count),
+            workspaceId: workspaceId,
+            total: max(0, notificationUnreadTotal - count)
+        )
+    }
+
     /// Is the user actually looking at this channel *right now*, in any
     /// window? A selected channel in a backgrounded app is NOT being looked
     /// at — the app keeps its selection while you work elsewhere, so treating
