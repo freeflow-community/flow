@@ -161,7 +161,10 @@ describe('startTask — a successful handoff', () => {
 
 describe('task channels converse DM-style', () => {
   it('replies top-level, not in a thread, once the channel homes a task', async () => {
-    const b = bridge();
+    // Created by a human, so start_task registration is the *only* thing that
+    // can flip it — a channel the agent created is already top-level on
+    // ownership alone (see routing.test.ts).
+    const b = bridge([channel({ createdBy: HUMAN })]);
     expect(b.replyRoot(message({ id: 'msg-9' }))).toBe('msg-9'); // before: ordinary channel
     await start(b);
     expect(b.replyRoot(message({ id: 'msg-9' }))).toBeUndefined(); // after: the channel is the conversation
