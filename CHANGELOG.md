@@ -228,6 +228,13 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The transcript's re-stick-on-shrink rule (#280) is iOS-only. macOS keeps
+  `.defaultScrollAnchor(.bottom)` in its all-roles form, so the framework
+  re-anchors on content size changes for free; iOS dropped the `.sizeChanges`
+  role in #159 because that free behaviour yanked short back-pulls to the
+  bottom, and `TranscriptFollow` is what replaces it. Web sets `scrollTop =
+  scrollHeight` against real DOM heights and never estimates, so it cannot
+  overshoot either. Not a gap.
 - The hand cursor over hyperlinks (#81, widened to table cells and the channel
   topic in #276) is macOS-only: web gets it from the browser's own `cursor:
   pointer`, and iOS has no pointer. Not a gap.

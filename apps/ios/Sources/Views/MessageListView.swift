@@ -57,6 +57,11 @@ struct MessageListView: View {
     /// Back-scroll shorter than this is a nudge, not a decision to stop
     /// following the conversation.
     private static let minBackScroll: CGFloat = 200
+    /// When to re-assert the bottom after a transcript first has content, in
+    /// nanoseconds from the previous pass. Three passes across ~600ms covers a
+    /// LazyVStack resolving its row estimates without a poll that outlives the
+    /// settling.
+    private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
     /// How far the newest message sits below the viewport.
     private var distanceFromBottom: CGFloat { max(0, contentBottom - viewportHeight) }
@@ -126,33 +131,21 @@ struct MessageListView: View {
                                 // are laid out, so a `LazyVStack`'s estimates for
                                 // everything above can't put us in empty space.
                                 //
-                                // Two extra gates so an ordinary scroll can't
-                                // trigger this (the "short pull bounces back"
-                                // bug — any pull under `minBackScroll` got
-                                // yanked to the bottom on release):
-                                // growth — the frame also changes from plain
-                                // scrolling, and mid-scroll a LazyVStack even
-                                // *grows* as real row heights replace its
-                                // estimates; near the bottom — inside the same
-                                // slack that counts as "at the bottom"
-                                // everywhere else. A reader who has pulled past
-                                // the slack has left the end on purpose, pinned
-                                // or not; a new message must not drag them
-                                // back. macOS gets this for free by unpinning
-                                // on any upward scroll, which iOS deliberately
-                                // doesn't (see the Parity note on #159). The
-                                // keyboard stays covered by the viewport
-                                // observer below.
-                                // The near-bottom check reads the OLD frame:
-                                // "was the reader at the bottom when the
-                                // content grew" — a tall new row pushes the
-                                // new frame's bottom far past the slack even
-                                // for a reader who was sitting right at the
-                                // end, and the glue exists for exactly them.
-                                guard focusMessageId == nil, pinToBottom, !isDragging else { return }
-                                guard old.maxY - viewportHeight <= Self.bottomSlack,
-                                      new.height > old.height + 1,
-                                      let lastId = messages.last?.id else { return }
+                                // The gates are in TranscriptFollow, with the
+                                // reasoning for each — chiefly that an ordinary
+                                // scroll must not trigger this (#159), and that
+                                // before the reader's first drag the list owns
+                                // its position and corrects itself in either
+                                // direction (#280).
+                                guard TranscriptFollow.shouldRestick(
+                                    pinned: pinToBottom,
+                                    hasDragged: hasDragged,
+                                    isDragging: isDragging,
+                                    hasFocusTarget: focusMessageId != nil,
+                                    old: old, new: new,
+                                    viewportHeight: viewportHeight,
+                                    bottomSlack: Self.bottomSlack
+                                ), let lastId = messages.last?.id else { return }
                                 proxy.scrollTo(lastId, anchor: .bottom)
                             }
                     }
@@ -227,6 +220,23 @@ struct MessageListView: View {
             .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
             .onAppear { tryFocus(proxy) }
+            // Belt to the glue's braces (#280). The glue can only correct a bad
+            // initial offset if the content frame moves; when the LazyVStack's
+            // estimate is wrong and *stays* wrong, nothing fires and the list
+            // sits in empty space until a drag clamps it — which is what the
+            // report showed. Re-assert the end a few times while the layout is
+            // still settling. Same target as every other driver here, so it
+            // cannot disagree with them, and `hasDragged` means it stops the
+            // moment the reader takes over.
+            .task(id: messages.first?.id) {
+                guard focusMessageId == nil, !messages.isEmpty else { return }
+                for delay in Self.settleDelays {
+                    try? await Task.sleep(nanoseconds: delay)
+                    guard !hasDragged, pinToBottom, focusMessageId == nil,
+                          let lastId = messages.last?.id else { return }
+                    proxy.scrollTo(lastId, anchor: .bottom)
+                }
+            }
         }
     }
 
