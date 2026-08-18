@@ -254,6 +254,9 @@ struct ChannelView: View {
                     Text(topic)
                         .flowFont(size: 12)
                         .lineLimit(1)
+                        // A topic URL is a real link (#194), so it gets the
+                        // hand cursor like any other (#276).
+                        .linkCursor(topic, size: 12)
                         .accessibilityIdentifier("channel.topic")
                 }
             }

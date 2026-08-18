@@ -17,8 +17,14 @@ extension View {
     ///
     /// TextKit's line breaking can differ from SwiftUI's by a hair at wrap
     /// points; for a cursor affordance that isn't observable.
-    func linkCursor(_ attributed: AttributedString) -> some View {
-        modifier(LinkCursorModifier(attributed: attributed))
+    ///
+    /// `size` is the point size the text is drawn at before zoom, for callers
+    /// that don't use body size — a heading, a table cell, the channel topic.
+    /// Get it wrong and the rects are the right shape at the wrong width, so
+    /// the hand appears beside the link instead of on it. Default: `.callout`,
+    /// which is what a message paragraph uses.
+    func linkCursor(_ attributed: AttributedString, size: CGFloat? = nil) -> some View {
+        modifier(LinkCursorModifier(attributed: attributed, size: size))
     }
 
     /// Pointing hand over a control that *reads* as a link (`.buttonStyle(.link)`),
@@ -32,6 +38,8 @@ extension View {
 
 private struct LinkCursorModifier: ViewModifier {
     let attributed: AttributedString
+    /// Drawn point size before zoom; nil = `.callout`.
+    let size: CGFloat?
 
     /// Link rectangles at the current width, in the text's own coordinates.
     /// Empty — and free — for the overwhelming majority of messages, which
@@ -56,7 +64,9 @@ private struct LinkCursorModifier: ViewModifier {
     }
 
     private func measure(_ width: CGFloat) {
-        let next = LinkHitTest.linkRects(in: attributed, width: width, scale: textZoom)
+        let next = LinkHitTest.linkRects(
+            in: attributed, width: width, scale: textZoom, size: size
+        )
         if next != rects { rects = next }
     }
 }
@@ -99,11 +109,14 @@ enum LinkHitTest {
     /// The on-screen rectangles covered by link runs, one per wrapped line,
     /// in the text view's own (top-left origin) coordinates.
     static func linkRects(
-        in attributed: AttributedString, width: CGFloat, scale: CGFloat = 1
+        in attributed: AttributedString, width: CGFloat, scale: CGFloat = 1,
+        size: CGFloat? = nil
     ) -> [CGRect] {
         guard width > 0, attributed.runs.contains(where: { $0.link != nil }) else { return [] }
 
-        let storage = NSTextStorage(attributedString: measurable(attributed, scale: scale))
+        let storage = NSTextStorage(
+            attributedString: measurable(attributed, scale: scale, size: size)
+        )
         let manager = NSLayoutManager()
         let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
@@ -127,9 +140,14 @@ enum LinkHitTest {
     /// SwiftUI-scope attributes (the mention-pill font, the view-level
     /// `.callout`) don't survive the bridge to `NSAttributedString`, so rebuild
     /// the string run by run with the AppKit fonts SwiftUI is drawing.
-    private static func measurable(_ attributed: AttributedString, scale: CGFloat) -> NSAttributedString {
+    private static func measurable(
+        _ attributed: AttributedString, scale: CGFloat, size: CGFloat?
+    ) -> NSAttributedString {
         let callout = NSFont.preferredFont(forTextStyle: .callout)
-        let base = scale == 1 ? callout : NSFont.systemFont(ofSize: callout.pointSize * scale)
+        let points = (size ?? callout.pointSize) * scale
+        let base = size == nil && scale == 1
+            ? callout
+            : NSFont.systemFont(ofSize: points)
         let manager = NSFontManager.shared
         let bold = manager.convert(base, toHaveTrait: .boldFontMask)
         let italic = manager.convert(base, toHaveTrait: .italicFontMask)

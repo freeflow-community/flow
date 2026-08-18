@@ -228,6 +228,9 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The hand cursor over hyperlinks (#81, widened to table cells and the channel
+  topic in #276) is macOS-only: web gets it from the browser's own `cursor:
+  pointer`, and iOS has no pointer. Not a gap.
 - The version label shows the build number on iOS (`Version 2.0 (21)`) but not
   on macOS: every TestFlight build of a release shares one marketing version, so
   the number is what identifies which build a tester is running. macOS versions

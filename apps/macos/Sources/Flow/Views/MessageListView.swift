@@ -1009,7 +1009,9 @@ struct MessageRow: View {
             .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
             .foregroundStyle(MC.ink)
             .textSelection(.enabled)
-            .linkCursor(attributed)
+            // Measured at the heading's own size, not body size (#276): an h1
+            // link is a third wider than the callout re-layout thinks.
+            .linkCursor(attributed, size: size)
             .padding(.top, level <= 2 ? 2 : 0) // web's mt-2 on h1/h2
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("msg.heading")

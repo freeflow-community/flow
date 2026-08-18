@@ -44,4 +44,45 @@ final class LinkHitTestTests: XCTestCase {
     func testZeroWidthIsNotHitTested() {
         XCTAssertTrue(LinkHitTest.linkRects(in: attributed("[x](https://flow.example)"), width: 0).isEmpty)
     }
+
+    // MARK: - Drawn size (#276)
+
+    /// The rects have to be measured at the size the text is drawn at. A
+    /// heading measured as body text produces a rect narrower than the link,
+    /// which is a hand cursor that stops partway across it.
+    func testLargerTextProducesAWiderRect() {
+        let link = attributed("[the docs](https://flow.example)")
+        let body = LinkHitTest.linkRects(in: link, width: 400).first
+        let heading = LinkHitTest.linkRects(in: link, width: 400, size: 17).first
+        let cell = LinkHitTest.linkRects(in: link, width: 400, size: 13)
+        XCTAssertNotNil(body)
+        XCTAssertNotNil(heading)
+        XCTAssertGreaterThan(heading?.width ?? 0, body?.width ?? 0)
+        XCTAssertGreaterThan(heading?.height ?? 0, body?.height ?? 0)
+        XCTAssertEqual(cell.count, 1)
+    }
+
+    /// Zoom multiplies the drawn size rather than replacing it (#105 + #276).
+    func testZoomScalesAnExplicitSize() {
+        let link = attributed("[the docs](https://flow.example)")
+        let plain = LinkHitTest.linkRects(in: link, width: 600, scale: 1, size: 13).first
+        let zoomed = LinkHitTest.linkRects(in: link, width: 600, scale: 1.5, size: 13).first
+        XCTAssertGreaterThan(zoomed?.width ?? 0, plain?.width ?? 0)
+    }
+
+    /// The two surfaces this issue turned out to miss: a link in a table cell
+    /// and a link in the channel topic are both hit-testable, at their own
+    /// sizes (`MarkdownTableView` 13pt, the header topic 12pt).
+    func testTableCellAndTopicLinksAreHitTestable() {
+        let cell = LinkHitTest.linkRects(
+            in: attributed("[cell link](https://flow.example)"), width: 200, size: 13
+        )
+        XCTAssertEqual(cell.count, 1)
+
+        let topic = LinkHitTest.linkRects(
+            in: attributed("standup notes: https://flow.example/notes"), width: 300, size: 12
+        )
+        XCTAssertEqual(topic.count, 1)
+        XCTAssertGreaterThan(topic.first?.minX ?? 0, 0) // after "standup notes: "
+    }
 }
