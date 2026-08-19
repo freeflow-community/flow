@@ -102,6 +102,11 @@ struct ChannelScreen: View {
                     userNames: usersById.mapValues { $0.displayNameWithBadge },
                     userStatuses: statusesById,
                     currentUserId: app.currentUser?.id,
+                    context: TranscriptContext(
+                        engine: app.engine,
+                        avatarPaths: app.avatarPaths,
+                        agentIds: app.agentIds
+                    ),
                     hasMore: app.hasMore[channelId] ?? false,
                     isLoadingHistory: app.loadingHistory.contains(channelId),
                     showThreadAffordances: true,
