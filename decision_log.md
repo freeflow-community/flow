@@ -1038,3 +1038,14 @@ one-recipient MCP correction).
   member — not just its creator — can rename, update, or delete it.
 - **macOS parity ships in-phase** (not a gap); iOS artifacts UI remains a
   Parity gap, now tracking the per-channel model.
+- **A shared browser session may be offered for sign-in, never assumed**
+  (operator ruling, #279). The native "Continue with Google" handoff page used
+  to sign the app in from whatever Flow session the browser already held, which
+  on iOS is whoever used the phone last. The first fix made the
+  `ASWebAuthenticationSession` sheet ephemeral to force Google's chooser; the
+  ruling reversed it. We want the chooser *and* the cookies: shared cookies are
+  what make the chooser cheap, because it opens already listing the device's
+  accounts. So `prefersEphemeralWebBrowserSession` stays `false`, and
+  `/?native=google` always renders a choice — `Continue as <email>` beside the
+  Google button. Do not trade the common case (one tap) for the rare one (wrong
+  account) by discarding sessions the user legitimately has.

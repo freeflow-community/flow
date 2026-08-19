@@ -257,6 +257,10 @@ This file keeps two things:
   Sign-In SDK posting the ID token directly) would need an iOS/macOS OAuth
   client id added to the accepted `aud` set; worth doing only if the browser
   round-trip proves unpopular.
+  Both clients share the browser's session on purpose (the iOS sheet sets
+  `prefersEphemeralWebBrowserSession = false`): #279 fixed the silent sign-in
+  in the handoff page itself, so the shared cookies now only mean Google's
+  account chooser opens already listing the device's accounts. Not a gap.
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
   (their custom Text rows aren't natively selectable); web omits it because
   browser text selection + Cmd/Ctrl-C already copies message text.

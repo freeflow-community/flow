@@ -38,8 +38,14 @@ enum WebAuthSession {
             }
             let presenter = Presenter()
             session.presentationContextProvider = presenter
-            // Share Safari's cookies: someone already signed in on the web
-            // gets a one-tap handoff instead of a second Google prompt.
+            // Share Safari's cookies on purpose (#279). The bug was never the
+            // shared session — it was the handoff page signing you in from it
+            // without asking. That page now always asks, and because the
+            // cookies survive, Google's account chooser arrives already
+            // listing the accounts this device holds: the right one is a
+            // single tap, and the wrong one is escapable. Going ephemeral
+            // would force a full password sign-in for the common case to fix
+            // the rare one.
             session.prefersEphemeralWebBrowserSession = false
             active = (session, presenter)
             if !session.start() {

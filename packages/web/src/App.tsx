@@ -172,10 +172,10 @@ export default function App() {
 
   // The native apps' Google button lands here (phase16 §9): sign in, mint a
   // one-time code, bounce back to flow://signin. Deliberately checked before
-  // the signed-in branch — arriving with a live web session just skips ahead
-  // to the handoff rather than dropping into the workspace.
+  // the signed-in branch — arriving with a live web session offers that
+  // account for the handoff rather than dropping into the workspace.
   if (nativeHandoff) {
-    return <NativeSignIn signedIn={!!user} />;
+    return <NativeSignIn user={user} />;
   }
 
   // A join link owns the screen until it's joined, declined, or found dead —
