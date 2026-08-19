@@ -42,37 +42,35 @@ struct MessageListView: View {
     @State private var rowCache = TranscriptRowCache()
     /// The row currently flashing after a jump (fades out on a timer).
     @State private var flashId: String?
-    /// Bottom edge of the content and height of the viewport, both in the
-    /// scroll view's own space — their difference is how far we are above the
-    /// newest message (#111).
-    @State private var contentBottom: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
-    /// The list follows new messages down while this is true. Only a
-    /// deliberate back-scroll clears it (see `reactToScroll`) — geometry
-    /// churn from the keyboard or late-loading content must not, which is the
-    /// bug that used to strand the list mid-history behind a jump button.
-    @State private var pinToBottom = true
-    /// True once the reader has actually dragged this list. Before that the
-    /// list owns its own position and stays at the bottom no matter what the
-    /// measurements say.
-    @State private var hasDragged = false
-    @State private var isDragging = false
+    /// The single owner of every follow/scroll decision (see
+    /// `TranscriptFollowModel`). All the drivers below feed it events and
+    /// execute the one command it returns — nothing else calls `scrollTo`
+    /// toward the bottom.
+    @State private var follow = TranscriptFollowModel(style: .dragDistance)
+    /// The jump pill, debounced: `follow.showJump` must hold for a beat
+    /// before the pill mounts, so transient geometry (a keyboard frame, a
+    /// scrollTo that lands a few points short) can never flicker it up.
+    @State private var showPill = false
 
     private static let scrollSpace = "messageScroll"
-    /// Within this much of the end still counts as "at the bottom", so a
-    /// part-scrolled last message doesn't raise the button.
-    private static let bottomSlack: CGFloat = 120
-    /// Back-scroll shorter than this is a nudge, not a decision to stop
-    /// following the conversation.
-    private static let minBackScroll: CGFloat = 200
     /// When to re-assert the bottom after a transcript first has content, in
     /// nanoseconds from the previous pass. Three passes across ~600ms covers a
     /// LazyVStack resolving its row estimates without a poll that outlives the
     /// settling.
     private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
-    /// How far the newest message sits below the viewport.
-    private var distanceFromBottom: CGFloat { max(0, contentBottom - viewportHeight) }
+    /// Executes a follow-model command. The one place this list scrolls to
+    /// its end.
+    private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
+        guard case .stick(let animated) = command, let lastId = messages.last?.id else { return }
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
+        } else {
+            proxy.scrollTo(lastId, anchor: .bottom)
+        }
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -133,34 +131,14 @@ struct MessageListView: View {
                     GeometryReader { geo in
                         let frame = geo.frame(in: .named(Self.scrollSpace))
                         Color.clear
-                            .onAppear { contentBottom = frame.maxY }
-                            .onChange(of: frame) { old, new in
-                                contentBottom = new.maxY
-                                // Post-layout correction (#191), the same glue
-                                // macOS uses. The id-driven follow above fires
-                                // before the new geometry exists, and not at all
-                                // when the *viewport* is what changed — which is
-                                // the keyboard. Re-stick to the end here, once
-                                // the numbers are real and the rows near the end
-                                // are laid out, so a `LazyVStack`'s estimates for
-                                // everything above can't put us in empty space.
-                                //
-                                // The gates are in TranscriptFollow, with the
-                                // reasoning for each — chiefly that an ordinary
-                                // scroll must not trigger this (#159), and that
-                                // before the reader's first drag the list owns
-                                // its position and corrects itself in either
-                                // direction (#280).
-                                guard TranscriptFollow.shouldRestick(
-                                    pinned: pinToBottom,
-                                    hasDragged: hasDragged,
-                                    isDragging: isDragging,
-                                    hasFocusTarget: focusMessageId != nil,
-                                    old: old, new: new,
-                                    viewportHeight: viewportHeight,
-                                    bottomSlack: Self.bottomSlack
-                                ), let lastId = messages.last?.id else { return }
-                                proxy.scrollTo(lastId, anchor: .bottom)
+                            .onAppear { _ = follow.contentChanged(to: frame) }
+                            .onChange(of: frame) { _, new in
+                                // Content moved or resized. The model decides
+                                // what it means — re-stick after a resize for a
+                                // reader at the end (#191/#280), pin changes
+                                // only for real scrolls (#159) — and this view
+                                // just executes the command.
+                                run(follow.contentChanged(to: new), proxy)
                             }
                     }
                 )
@@ -169,49 +147,55 @@ struct MessageListView: View {
             .background(
                 GeometryReader { geo in
                     Color.clear
-                        .onAppear { viewportHeight = geo.size.height }
+                        .onAppear { _ = follow.viewportChanged(to: geo.size.height) }
                         .onChange(of: geo.size.height) { _, new in
-                            viewportHeight = new
-                            // The keyboard raising or dropping is a viewport
-                            // change with no content change, so the glue above
-                            // may not fire — re-stick explicitly (#191).
-                            guard focusMessageId == nil, pinToBottom, !isDragging else { return }
-                            if let lastId = messages.last?.id {
-                                proxy.scrollTo(lastId, anchor: .bottom)
-                            }
+                            // The keyboard (or a rotation) resized the viewport.
+                            // Never a pin decision — mid-transition the model
+                            // freezes entirely and re-sticks once at the end.
+                            run(follow.viewportChanged(to: new), proxy)
                         }
                 }
             )
             .overlay { emptyTranscriptState }
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
-            .animation(.easeOut(duration: 0.15), value: pinToBottom)
+            .animation(.easeOut(duration: 0.15), value: showPill)
             // Only a finger on the glass may stop the list following the end.
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12)
                     .onChanged { _ in
-                        isDragging = true
-                        hasDragged = true
+                        if !follow.isDragging { follow.dragBegan() }
                     }
-                    .onEnded { _ in isDragging = false }
+                    .onEnded { _ in follow.dragEnded() }
             )
-            .onChange(of: distanceFromBottom) { _, _ in reactToScroll() }
+            // The keyboard's show/hide brackets (#139's keyboard, #111's pill
+            // flicker): between Will and Did the geometry passes through
+            // states that never hold still, and deciding from them is what
+            // used to raise the "Latest msgs" pill the moment the keyboard
+            // came up. The model freezes for the duration and re-sticks once.
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillShowNotification)) { _ in follow.transitionBegan() }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidShowNotification)) { _ in run(follow.transitionEnded(), proxy) }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillHideNotification)) { _ in follow.transitionBegan() }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidHideNotification)) { _ in run(follow.transitionEnded(), proxy) }
+            // The pill mounts only after the model has wanted it for a beat.
+            .task(id: follow.showJump) {
+                if follow.showJump {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    if !Task.isCancelled { showPill = true }
+                } else {
+                    showPill = false
+                }
+            }
             .onChange(of: messages.last?.id) { _, newId in
-                guard focusMessageId == nil, newId != nil else { return }
-                // My own message always wins. I just pressed send, so I mean to
-                // see it land — being back-scrolled, or having the keyboard
-                // resize the list out from under the measurements, doesn't
-                // change that.
-                if let me = currentUserId, messages.last?.userId == me {
-                    pinToBottom = true
-                }
-                // Otherwise follow the end only when we were already there:
-                // someone reading back-scroll keeps their place (#111).
-                guard pinToBottom else { return }
-                if let lastId = messages.last?.id {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(lastId, anchor: .bottom)
-                    }
-                }
+                guard newId != nil else { return }
+                // My own message always re-pins — I just pressed send, so I
+                // mean to see it land; everyone else's messages leave a
+                // back-scrolled reader in place (#111).
+                let own = currentUserId != nil && messages.last?.userId == currentUserId
+                run(follow.lastMessageChanged(isOwn: own), proxy)
             }
             // The single scroll driver. Everything else that moves this list
             // targets the same bottom edge, so nothing can disagree with it —
@@ -231,38 +215,33 @@ struct MessageListView: View {
             // than just this list — see ChannelScreen (#139).
             // Jump-to-message (phase 12): center + flash the target once it's in
             // the list (older history pages in via ChannelScreen), then release.
-            .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
+            // A jump target owns the scroll position for its whole lifetime —
+            // from set (possibly while older pages load in) to cleared.
+            .onChange(of: focusMessageId) { _, new in
+                follow.focusActive = new != nil
+                tryFocus(proxy)
+            }
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
-            .onAppear { tryFocus(proxy) }
+            .onAppear {
+                follow.focusActive = focusMessageId != nil
+                tryFocus(proxy)
+            }
             // Belt to the glue's braces (#280). The glue can only correct a bad
             // initial offset if the content frame moves; when the LazyVStack's
             // estimate is wrong and *stays* wrong, nothing fires and the list
             // sits in empty space until a drag clamps it — which is what the
             // report showed. Re-assert the end a few times while the layout is
             // still settling. Same target as every other driver here, so it
-            // cannot disagree with them, and `hasDragged` means it stops the
-            // moment the reader takes over.
+            // cannot disagree with them, and the model stops it the moment the
+            // reader takes over.
             .task(id: messages.first?.id) {
-                guard focusMessageId == nil, !messages.isEmpty else { return }
+                guard !messages.isEmpty else { return }
                 for delay in Self.settleDelays {
                     try? await Task.sleep(nanoseconds: delay)
-                    guard !hasDragged, pinToBottom, focusMessageId == nil,
-                          let lastId = messages.last?.id else { return }
-                    proxy.scrollTo(lastId, anchor: .bottom)
+                    guard case .stick = follow.settleCommand() else { return }
+                    run(follow.settleCommand(), proxy)
                 }
             }
-        }
-    }
-
-    /// Turns measured scroll position into the follow/don't-follow decision.
-    /// Gated on an actual drag: before the reader touches the list, the
-    /// measurements are just layout settling and mean nothing.
-    private func reactToScroll() {
-        guard hasDragged else { return }
-        if distanceFromBottom > Self.minBackScroll {
-            pinToBottom = false
-        } else if distanceFromBottom <= Self.bottomSlack {
-            pinToBottom = true
         }
     }
 
@@ -301,17 +280,14 @@ struct MessageListView: View {
     }
 
     /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
-    /// of the transcript (#111). Tapping it returns to the newest message.
+    /// of the transcript (#111) — debounced through `showPill`, so it only
+    /// appears once the model has wanted it for a beat. Tapping it returns to
+    /// the newest message.
     @ViewBuilder
     private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
-        if !pinToBottom, !messages.isEmpty {
+        if showPill, !messages.isEmpty {
             Button {
-                pinToBottom = true
-                if let lastId = messages.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastId, anchor: .bottom)
-                    }
-                }
+                run(follow.jumpTapped(), proxy)
             } label: {
                 Text("Latest msgs ↓")
                     .font(.system(size: 13, weight: .semibold))
@@ -330,6 +306,11 @@ struct MessageListView: View {
 
     private func tryFocus(_ proxy: ScrollViewProxy) {
         guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
+        // The jump landed mid-history: unpin, so the next message follows the
+        // reader's choice (the pill offers the way back) rather than yanking
+        // them off the message they came to see. macOS has always done this;
+        // iOS used to stay pinned (a quiet divergence, now gone).
+        follow.focusEngaged()
         withAnimation(.easeInOut(duration: 0.25)) {
             proxy.scrollTo(fid, anchor: .center)
         }

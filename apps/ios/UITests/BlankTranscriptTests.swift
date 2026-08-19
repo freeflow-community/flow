@@ -14,7 +14,7 @@ import XCTest
 /// it"). What this pins is the acceptance criterion the fix has to keep true —
 /// a fully-cached transcript of tall rows is *at its newest message* when the
 /// screen appears, with no gesture. The unit cover for the decision itself is
-/// `TranscriptFollowTests` in the macOS package, which both apps compile.
+/// `TranscriptFollowModelTests` in the macOS package, which both apps compile.
 ///
 /// The distinction from `ScrollBehaviorTests.testOpensAtNewestMessage` is the
 /// transcript and the cache: that one runs on uniform one-line messages, where
