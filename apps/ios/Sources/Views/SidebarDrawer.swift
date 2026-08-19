@@ -22,6 +22,7 @@ struct SidebarDrawer: View {
     @State private var showCreateChannel = false
     @State private var showNewDm = false
     @State private var showAddWorkspace = false
+    @State private var showInvite = false
     @State private var showFeatures = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
@@ -136,6 +137,11 @@ struct SidebarDrawer: View {
             }
         }
         .sheet(isPresented: $showAddWorkspace) { AddWorkspaceSheet() }
+        .sheet(isPresented: $showInvite) {
+            if let wsId = app.selectedWorkspaceId {
+                InviteSheet(workspaceId: wsId)
+            }
+        }
         .modifier(DebugOpenNewDm { showNewDm = true })
         .sheet(isPresented: $showFeatures) { FeaturesSheet() }
     }
@@ -213,6 +219,11 @@ struct SidebarDrawer: View {
                 }
             }
             Divider()
+            // Invite People (web + macOS parity, #283). Disabled with no
+            // workspace selected — there'd be nothing to invite anyone to.
+            Button("Invite People…") { showInvite = true }
+                .disabled(app.selectedWorkspaceId == nil)
+                .accessibilityIdentifier("sidebar.invitePeople")
             Button("Add Workspace…") { showAddWorkspace = true }
             Divider()
             // Version tag + release notes (web + macOS parity: macOS hangs the

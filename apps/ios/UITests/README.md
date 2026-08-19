@@ -34,6 +34,22 @@ operator's screen, so they're safe to run any time.
    The scroll test wants a transcript long enough to actually scroll — seed a
    fresh channel with a few dozen messages rather than reusing `#general`.
 
+   **If `TEST_RUNNER_…` is ignored** (seen on Xcode 17.4 / iOS 26.5 — the
+   runner keeps the in-code 8787 default and every test fails with "never
+   signed in"), inject the variable into the `.xctestrun` instead. This always
+   works, because it is the file the runner is actually launched from:
+
+   ```sh
+   xcodebuild build-for-testing -project FlowiOS.xcodeproj -scheme Flow \
+     -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+     -derivedDataPath .build CODE_SIGNING_ALLOWED=NO
+   R=.build/Build/Products/Flow_iphonesimulator*.xctestrun
+   /usr/libexec/PlistBuddy -c \
+     "Add :FlowUITests:EnvironmentVariables:FLOW_TEST_SERVER_URL string http://127.0.0.1:8791" $R
+   xcodebuild test-without-building -xctestrun $R \
+     -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+   ```
+
 2. **Software keyboard on.** Keyboard tests need the on-screen keyboard, which
    the simulator hides while a hardware keyboard is connected:
 

@@ -59,11 +59,6 @@ This file keeps two things:
   Google/password. `/v1/auth/apple` is client-agnostic; macOS can use the same
   native ASAuthorization flow, web needs Apple's JS flow (Services ID +
   redirect setup — more than a pure port).
-- iOS: no join-link management (#85). Web + macOS can create/copy/regenerate/
-  revoke the workspace's persistent join link from the invite surface; iOS has
-  no invite surface at all to hang it on. Server API is done and client-agnostic
-  (`/v1/workspaces/:id/join-link`), so this is a pure client port. Following a
-  join link still works on iOS — it opens the web app, which redeems it.
 - iOS: optimistic-send failures aren't recoverable — web + macOS keep a failed
   message in the stream with a Retry/Discard affordance (retry re-POSTs with the
   original `clientMsgId`); iOS still needs the `failed` flag on its message row,
@@ -174,11 +169,12 @@ This file keeps two things:
 - iOS: the new channel drawer (2026-07-23) omits several sidebar affordances the
   web + macOS sidebars carry — the virtual agent rows under Direct Messages
   (start a DM with a workspace agent that has no existing 1:1), the workspace
-  color picker, and the Invite People / Manage Users / Manage Apps
-  workspace-menu items. Channel context actions (mute/leave/archive, invite to
-  channel) are also not yet wired on iOS. The drawer's structure makes these
-  straightforward ports; none are backed on-device yet. (The "new DM" composer
-  was closed 2026-08-16, #257 — sidebar "+" and a profile-card Message button.)
+  color picker, and the Manage Users / Manage Apps workspace-menu items. Channel
+  context actions (mute/leave/archive, invite to channel) are also not yet wired
+  on iOS. The drawer's structure makes these straightforward ports; none are
+  backed on-device yet. (The "new DM" composer was closed 2026-08-16, #257 —
+  sidebar "+" and a profile-card Message button. "Invite People" was closed
+  2026-08-18, #283 — which also brought #85's join-link management to iOS.)
 - macOS + iOS: message editing still uses an inline/dedicated edit field — web
   moved editing into the prompt editor (↑ and ✏️ load the body into the composer,
   Enter saves, Esc restores the draft; 2026-07-23 ui_nits). Both clients already
