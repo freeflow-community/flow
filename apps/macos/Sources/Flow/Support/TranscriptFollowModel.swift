@@ -203,8 +203,10 @@ struct TranscriptFollowModel: Equatable {
         pinned = false
     }
 
-    /// Scroll memory (macOS) decided the position on channel entry: mid-history
-    /// restores land unpinned, fresh channels land pinned at the bottom.
+    /// An external owner parked the reader somewhere on purpose: a channel
+    /// entry landing at the bottom (pinned), or "Load earlier messages"
+    /// stepping into history (unpinned — reading history is a decision to
+    /// leave the end).
     mutating func positionRestored(atBottom: Bool) {
         pinned = atBottom
     }

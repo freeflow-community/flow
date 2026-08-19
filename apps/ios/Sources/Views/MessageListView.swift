@@ -51,6 +51,11 @@ struct MessageListView: View {
     /// before the pill mounts, so transient geometry (a keyboard frame, a
     /// scrollTo that lands a few points short) can never flicker it up.
     @State private var showPill = false
+    /// The first message on screen when "Load earlier messages" was tapped.
+    /// When the older page prepends, this row is put back at the top of the
+    /// viewport — without it the scroll offset stays top-relative and every
+    /// visible row shifts down by the height of the new content.
+    @State private var loadOlderAnchorId: String?
 
     private static let scrollSpace = "messageScroll"
     /// When to re-assert the bottom after a transcript first has content, in
@@ -87,8 +92,15 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
-                            Button("Load earlier messages", action: onLoadOlder)
-                                .font(.callout)
+                            Button("Load earlier messages") {
+                                // Reading history is a decision to leave the
+                                // end: unpin, remember the current top row,
+                                // and restore it once the page lands.
+                                loadOlderAnchorId = messages.first?.id
+                                follow.positionRestored(atBottom: false)
+                                onLoadOlder()
+                            }
+                            .font(.callout)
                             Spacer()
                         }
                         .padding(.vertical, 8)
@@ -196,6 +208,16 @@ struct MessageListView: View {
                 // back-scrolled reader in place (#111).
                 let own = currentUserId != nil && messages.last?.userId == currentUserId
                 run(follow.lastMessageChanged(isOwn: own), proxy)
+            }
+            // "Load earlier" landed: put the row the reader was looking at
+            // back at the top of the viewport. Consumed once — a later
+            // prepend from a reconnect backfill must not scroll anywhere.
+            .onChange(of: messages.first?.id) { _, _ in
+                guard let anchor = loadOlderAnchorId else { return }
+                loadOlderAnchorId = nil
+                if messages.contains(where: { $0.id == anchor }) {
+                    proxy.scrollTo(anchor, anchor: .top)
+                }
             }
             // The single scroll driver. Everything else that moves this list
             // targets the same bottom edge, so nothing can disagree with it —
