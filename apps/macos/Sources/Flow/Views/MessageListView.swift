@@ -61,6 +61,9 @@ struct MessageListView: View {
     @State private var loadOlderAnchorId: String?
 
     private static let scrollSpace = "messageScroll"
+    /// When to re-assert the bottom after a (re)landing, in nanoseconds from
+    /// the previous pass — the same cadence as iOS.
+    private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
     /// Executes a follow-model command. The one place this list scrolls to
     /// its end.
@@ -292,10 +295,18 @@ struct MessageListView: View {
                 }
             }
             // First open must land on the newest message: scrollTo from
-            // onAppear runs before the lazy rows are laid out and
-            // under-scrolls, so anchor the scroll view at the bottom instead
-            // (also keeps the list pinned while attachments finish sizing).
-            .defaultScrollAnchor(.bottom)
+            // onAppear runs before the rows are laid out and under-scrolls,
+            // so anchor the scroll view at the bottom instead. On macOS 15+
+            // the anchor is scoped to initial offset + alignment, exactly as
+            // iOS did in #159: the all-roles form also re-anchors on *content
+            // size changes*, and an async image or video thumb finishing its
+            // load right after a scroll-memory restore yanked the reader back
+            // to the bottom — the restore visibly "not working" on any
+            // channel with attachments. Growth while pinned is the follow
+            // model's job (glue + lastMessageChanged), which respects the pin
+            // state; the anchor must not compete. macOS 14 has no role API
+            // and keeps the all-roles form.
+            .modifier(MacBottomAnchor())
             // A jump target owns the scroll position for its whole lifetime —
             // from set (possibly while older pages load in) to cleared.
             .onChange(of: focusMessageId) { _, new in
@@ -307,6 +318,22 @@ struct MessageListView: View {
             .onAppear {
                 follow.focusActive = focusMessageId != nil
                 tryFocus(proxy)
+            }
+            // The settle passes, ported from iOS: with the anchor's
+            // size-change role gone (MacBottomAnchor), landings are entirely
+            // the model's job, and a landing scroll issued before rows have
+            // real heights can come up short with nothing left to correct it.
+            // Re-assert the end a few times while layout settles. The model
+            // stands down the moment the reader owns the position (unpinned,
+            // restore, jump), so this can never fight a back-scroll.
+            .task(id: messages.first?.id) {
+                guard !messages.isEmpty else { return }
+                for delay in Self.settleDelays {
+                    try? await Task.sleep(nanoseconds: delay)
+                    let command = follow.settleCommand()
+                    guard case .stick = command else { return }
+                    run(command, proxy)
+                }
             }
         }
     }
@@ -394,6 +421,21 @@ struct MessageListView: View {
 }
 
 /// Centered "Today" / date pill between days (design 3a).
+/// Bottom scroll anchor with the size-change role removed on macOS 15+ (see
+/// the comment at the use site). The macOS twin of iOS's `BottomAnchor`.
+struct MacBottomAnchor: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .alignment)
+        } else {
+            content.defaultScrollAnchor(.bottom)
+        }
+    }
+}
+
 /// The message whose row crosses the viewport's top edge — scroll memory's
 /// recorder input. Exactly one row reports a non-nil id (its frame spans the
 /// probe line), so the reduction is a plain first-non-nil.
