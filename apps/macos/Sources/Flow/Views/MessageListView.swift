@@ -1,5 +1,12 @@
 import AppKit
+import os
 import SwiftUI
+
+/// Scroll-memory decision log — release-visible on purpose (ids only, no
+/// content), so a "position wasn't remembered" report on a production build
+/// can be diagnosed with:
+///   log show --last 10m --info --predicate 'subsystem == "im.freeflow.follow"'
+private let memoryLog = Logger(subsystem: "im.freeflow.follow", category: "memory")
 
 struct MessageListView: View {
     let messages: [Message] // ascending by id
@@ -252,9 +259,20 @@ struct MessageListView: View {
                 // push them a viewport up from where they were.
                 guard let key = scrollKey, key == appliedKey, focusMessageId == nil else { return }
                 if follow.pinned {
+                    memoryLog.info("clear \(key, privacy: .public)")
                     MessageScrollMemory.clear(key)
                 } else if let topId {
+                    memoryLog.info("record \(key, privacy: .public) top=\(topId, privacy: .public)")
                     MessageScrollMemory.record(key, topMessageId: topId)
+                } else if follow.contentFrame.minY > -24, let firstId = messages.first?.id {
+                    // Parked at the very top: no row crosses the probe line —
+                    // the Load-earlier control sits there — so the reader's
+                    // final position was never captured, and returning to
+                    // this channel forgot "I was at the top" (the
+                    // #message-search report). The content's own top edge
+                    // being at the viewport top is that position.
+                    memoryLog.info("record \(key, privacy: .public) top=first:\(firstId, privacy: .public)")
+                    MessageScrollMemory.record(key, topMessageId: firstId)
                 }
             }
             .onChange(of: messages.last?.id) { _, newId in
@@ -268,16 +286,27 @@ struct MessageListView: View {
                     // left off if the memory is fresh (10 min) and the row is
                     // still loaded, else land at the bottom.
                     appliedKey = scrollKey
-                    if let key = scrollKey, let remembered = MessageScrollMemory.fresh(key),
-                       messages.contains(where: { $0.id == remembered }) {
+                    let remembered = scrollKey.flatMap { MessageScrollMemory.fresh($0) }
+                    if let remembered, messages.contains(where: { $0.id == remembered }) {
                         // Mid-history: unpin so no glue fights the restore.
+                        memoryLog.info("restore hit \(remembered, privacy: .public)")
                         follow.positionRestored(atBottom: false)
                         proxy.scrollTo(remembered, anchor: .top)
                         // Re-anchored again below as attachments size — a row
                         // above the target growing late pushes the whole
                         // restore down a viewport (the storms-video effect).
                         pendingRestoreId = remembered
+                    } else if remembered != nil, let firstId = messages.first?.id {
+                        // Remembered, but the row slid outside the message
+                        // window (a reader parked at the top is one new
+                        // message away from this). The top of the window is
+                        // the close approximation; the bottom is the worst.
+                        memoryLog.info("restore miss -> window top \(firstId, privacy: .public)")
+                        follow.positionRestored(atBottom: false)
+                        proxy.scrollTo(firstId, anchor: .top)
+                        pendingRestoreId = firstId
                     } else {
+                        memoryLog.info("restore none -> bottom")
                         follow.positionRestored(atBottom: true)
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
