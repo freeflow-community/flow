@@ -25,8 +25,9 @@ struct MessageListView: View {
     let onDelete: (Message) -> Void
     /// Tapping a sender's avatar opens their profile (ui_nits).
     var onOpenProfile: (String) -> Void = { _ in }
-    /// Enables per-channel scroll-position memory (channels pass their id;
-    /// threads omit it and always open at the newest reply).
+    /// Identifies whose transcript this is (channels pass their id), so the
+    /// first load after a channel switch lands at the bottom exactly once —
+    /// a new message later must not re-trigger that landing.
     var scrollKey: String? = nil
     /// Jump-to-message target (phase 12): scroll it into view + flash it once
     /// it's in the list, then call onFocused. Nil in the normal case.
@@ -53,6 +54,11 @@ struct MessageListView: View {
     /// before the pill mounts, so a transient measurement (a composer resize,
     /// a glue scroll landing a few points short) can never flicker it up.
     @State private var showPill = false
+    /// The first message on screen when "Load earlier messages" was clicked.
+    /// When the older page prepends, this row is put back at the top of the
+    /// viewport — without it the scroll offset stays top-relative and every
+    /// visible row shifts down by the height of the new content.
+    @State private var loadOlderAnchorId: String?
 
     private static let scrollSpace = "messageScroll"
 
@@ -69,10 +75,31 @@ struct MessageListView: View {
         }
     }
 
+    /// Below this many messages the transcript renders eagerly (plain
+    /// VStack). LazyVStack's row-height *estimates* are the root of the
+    /// parked/blank-open family (#280 and descendants): in short channels of
+    /// tall messages they ran ~2x off, so the viewport could sit over phantom
+    /// estimate space — a blank screen — while the content frame measured as
+    /// perfectly bottom-aligned, and every corrective scroll just re-rolled
+    /// the estimates (the layout never settled). A fresh channel open loads
+    /// one ~50-message page, so eager covers every first paint; only deep
+    /// Load-earlier histories stay lazy.
+    private static let eagerRowLimit = 100
+
+    /// Eager below `eagerRowLimit`, lazy above (see the limit's comment).
+    @ViewBuilder
+    private func transcriptStack<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if messages.count <= Self.eagerRowLimit {
+            VStack(alignment: .leading, spacing: 0, content: content)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0, content: content)
+        }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                transcriptStack {
                     // With something cached, the top of the list says the rest
                     // is still coming, instead of the transcript simply
                     // starting wherever the cache happens to end (#191). With
@@ -84,10 +111,17 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
-                            Button("Load earlier messages", action: onLoadOlder)
-                                .buttonStyle(.link)
-                                .flowFont(.callout)
-                                .pointingHandCursor()
+                            Button("Load earlier messages") {
+                                // Reading history is a decision to leave the
+                                // end: unpin, remember the current top row,
+                                // and restore it once the page lands.
+                                loadOlderAnchorId = messages.first?.id
+                                follow.positionRestored(atBottom: false)
+                                onLoadOlder()
+                            }
+                            .buttonStyle(.link)
+                            .flowFont(.callout)
+                            .pointingHandCursor()
                             Spacer()
                         }
                         .padding(.vertical, 8)
@@ -186,27 +220,21 @@ struct MessageListView: View {
             // composer changed height (attachment tray, a draft wrapping to a
             // second line) the two disagreed, the content height ballooned and
             // the list scrolled into empty space, blanking the transcript.
-            // Re-adding scroll memory means adding .scrollTargetLayout() and
-            // reconciling it with the bottom anchor — not just this modifier.
+            // The dead remains (the recorder-less MessageScrollMemory store
+            // and its restore branch here) are gone now: re-adding scroll
+            // memory means tracking the top-visible row for real and routing
+            // the restore through TranscriptFollowModel — not just a modifier.
             .onChange(of: messages.last?.id) { _, newId in
                 // A pending jump owns the scroll position — skip both the
-                // scroll-memory restore and the follow-to-bottom (tryFocus
+                // first-load landing and the follow-to-bottom (tryFocus
                 // handles the scroll, and marks appliedKey so this doesn't
-                // re-fire a restore once the target is cleared).
+                // re-land at the bottom once the target is cleared).
                 guard focusMessageId == nil, let newId else { return }
                 if scrollKey != appliedKey {
-                    // The channel just (re)loaded: restore a remembered position
-                    // if it's fresh and still present, else land at the bottom.
+                    // The channel just (re)loaded: land at the bottom.
                     appliedKey = scrollKey
-                    if let key = scrollKey, let remembered = MessageScrollMemory.fresh(key),
-                       messages.contains(where: { $0.id == remembered }) {
-                        // Mid-history: don't let the glue yank us down.
-                        follow.positionRestored(atBottom: false)
-                        proxy.scrollTo(remembered, anchor: .top)
-                    } else {
-                        follow.positionRestored(atBottom: true)
-                        proxy.scrollTo(newId, anchor: .bottom)
-                    }
+                    follow.positionRestored(atBottom: true)
+                    proxy.scrollTo(newId, anchor: .bottom)
                 } else {
                     // A genuinely new message in the current channel. The model
                     // follows it down only while pinned — someone reading
@@ -215,6 +243,16 @@ struct MessageListView: View {
                     // re-pins: I just pressed send (web/iOS parity).
                     let own = currentUserId != nil && messages.last?.userId == currentUserId
                     run(follow.lastMessageChanged(isOwn: own), proxy)
+                }
+            }
+            // "Load earlier" landed: put the row the reader was looking at
+            // back at the top of the viewport. Consumed once — a later
+            // prepend from a reconnect backfill must not scroll anywhere.
+            .onChange(of: messages.first?.id) { _, _ in
+                guard let anchor = loadOlderAnchorId else { return }
+                loadOlderAnchorId = nil
+                if messages.contains(where: { $0.id == anchor }) {
+                    proxy.scrollTo(anchor, anchor: .top)
                 }
             }
             // First open must land on the newest message: scrollTo from

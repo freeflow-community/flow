@@ -1,4 +1,11 @@
 import CoreGraphics
+#if DEBUG
+import os
+/// Debug-only event tracing (compiled out of Release). This is how the
+/// blank-transcript layout war was diagnosed; read it back with:
+///   log show --last 2m --info --predicate 'subsystem == "im.freeflow.follow"' 
+private let followLog = Logger(subsystem: "im.freeflow.follow", category: "model")
+#endif
 
 /// The single owner of a transcript's follow/scroll decisions, shared by the
 /// macOS and iOS message lists (`Support/` is the one source tree both apps
@@ -53,6 +60,24 @@ struct TranscriptFollowModel: Equatable {
     /// Back-scroll shorter than this is a nudge, not a decision to leave
     /// (`.dragDistance` only).
     var minBackScroll: CGFloat = 200
+    /// Content bottom within this of the viewport's bottom edge counts as
+    /// already stuck, and correction sticks are skipped. A `scrollTo` that
+    /// would not move anything is not free: it forces the LazyVStack to
+    /// re-lay against row *estimates*, which resizes the content frame, which
+    /// triggers the next stick — a self-sustaining layout war that left the
+    /// transcript blank on about half of channel opens (the estimate-inflated
+    /// phase puts the viewport over phantom space). Genuine rescues are far
+    /// outside this band: a keyboard shrink leaves the content hundreds of
+    /// points past the bottom, and the #280 park leaves it entirely above.
+    var alignedSlack: CGFloat = 20
+
+    /// Already essentially stuck to the end (see `alignedSlack`). The 8pt
+    /// list padding hangs below the last row when correctly stuck, so the
+    /// normal aligned reading is a small positive distance.
+    private var isAligned: Bool {
+        let d = contentFrame.maxY - viewportHeight
+        return d >= -alignedSlack && d <= alignedSlack
+    }
 
     /// The follow is glued to the newest message.
     private(set) var pinned = true
@@ -86,6 +111,10 @@ struct TranscriptFollowModel: Equatable {
     mutating func contentChanged(to new: CGRect) -> Command {
         let old = contentFrame
         contentFrame = new
+        #if DEBUG
+        let vp = viewportHeight, p = pinned, hd = hasDragged, dr = isDragging, t = transitions, f = focusActive
+        followLog.info("content old=(\(Int(old.minY)),\(Int(old.maxY)),h\(Int(old.height))) new=(\(Int(new.minY)),\(Int(new.maxY)),h\(Int(new.height))) vp=\(Int(vp)) pin=\(p) drag=\(hd)/\(dr) trans=\(t) focus=\(f)")
+        #endif
         guard !focusActive, !inTransition else { return .none }
         switch style {
         case .topEdge:
@@ -100,7 +129,7 @@ struct TranscriptFollowModel: Equatable {
                 pinned = false
                 return .none
             }
-            if pinned, new.height > old.height + 1 {
+            if pinned, new.height > old.height + 1, !isAligned {
                 return .stick(animated: true)
             }
             return .none
@@ -112,7 +141,7 @@ struct TranscriptFollowModel: Equatable {
             // past the slack for exactly the reader the glue exists for).
             // Before the first drag any resize corrects, including a shrink
             // (#280); after it, only growth may move the list (#159).
-            if pinned, !isDragging, old.maxY - viewportHeight <= bottomSlack,
+            if pinned, !isDragging, !isAligned, old.maxY - viewportHeight <= bottomSlack,
                hasDragged ? new.height > old.height + 1 : abs(new.height - old.height) > 1 {
                 command = .stick(animated: false)
             }
@@ -136,7 +165,11 @@ struct TranscriptFollowModel: Equatable {
     /// pinned reader is carried along to the newest message.
     mutating func viewportChanged(to newHeight: CGFloat) -> Command {
         viewportHeight = newHeight
-        guard !focusActive, !inTransition, pinned, !isDragging else { return .none }
+        #if DEBUG
+        let p = pinned, t = transitions, f = focusActive, dr = isDragging
+        followLog.info("viewport=\(Int(newHeight)) pin=\(p) trans=\(t) focus=\(f) dragging=\(dr)")
+        #endif
+        guard !focusActive, !inTransition, pinned, !isDragging, !isAligned else { return .none }
         return .stick(animated: false)
     }
 
@@ -164,6 +197,10 @@ struct TranscriptFollowModel: Equatable {
     /// messages from dragging a back-scrolled reader down; the pill offers
     /// the trip instead).
     mutating func lastMessageChanged(isOwn: Bool) -> Command {
+        #if DEBUG
+        let p = pinned, f = focusActive
+        followLog.info("lastMessage own=\(isOwn) pin=\(p) focus=\(f)")
+        #endif
         guard !focusActive else { return .none }
         if isOwn { pinned = true }
         guard pinned else { return .none }
@@ -174,7 +211,10 @@ struct TranscriptFollowModel: Equatable {
     /// re-asserting the end for a beat after content appears, because a
     /// LazyVStack's estimates can be wrong without ever changing the frame.
     func settleCommand() -> Command {
-        guard !hasDragged, pinned, !focusActive, !inTransition else { return .none }
+        #if DEBUG
+        followLog.info("settle? drag=\(self.hasDragged) pin=\(self.pinned) focus=\(self.focusActive) trans=\(self.transitions)")
+        #endif
+        guard !hasDragged, pinned, !focusActive, !inTransition, !isAligned else { return .none }
         return .stick(animated: false)
     }
 
@@ -185,12 +225,20 @@ struct TranscriptFollowModel: Equatable {
     /// deciding from it is what flickered the pill up when the keyboard rose.
     mutating func transitionBegan() {
         transitions += 1
+        #if DEBUG
+        let t = transitions
+        followLog.info("transitionBegan -> \(t)")
+        #endif
     }
 
     /// The transition finished: one unanimated re-stick for a pinned reader.
     mutating func transitionEnded() -> Command {
         transitions = max(0, transitions - 1)
-        guard transitions == 0, pinned, !focusActive, !isDragging else { return .none }
+        #if DEBUG
+        let t = transitions, p = pinned
+        followLog.info("transitionEnded -> \(t) pin=\(p)")
+        #endif
+        guard transitions == 0, pinned, !focusActive, !isDragging, !isAligned else { return .none }
         return .stick(animated: false)
     }
 
@@ -203,8 +251,10 @@ struct TranscriptFollowModel: Equatable {
         pinned = false
     }
 
-    /// Scroll memory (macOS) decided the position on channel entry: mid-history
-    /// restores land unpinned, fresh channels land pinned at the bottom.
+    /// An external owner parked the reader somewhere on purpose: a channel
+    /// entry landing at the bottom (pinned), or "Load earlier messages"
+    /// stepping into history (unpinned — reading history is a decision to
+    /// leave the end).
     mutating func positionRestored(atBottom: Bool) {
         pinned = atBottom
     }

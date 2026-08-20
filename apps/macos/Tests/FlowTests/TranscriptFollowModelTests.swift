@@ -228,19 +228,22 @@ final class TranscriptFollowModelTests: XCTestCase {
     }
 
     /// Nested brackets (keyboard hide starting while show settles) only
-    /// re-stick once the last one ends.
+    /// re-stick once the last one ends — and only if the geometry actually
+    /// needs it (the viewport moved under a pinned reader).
     func testNestedTransitions() {
         var m = dragModel(content: frame(top: -2600, height: 3400))
         m.transitionBegan()
         m.transitionBegan()
+        _ = m.viewportChanged(to: 500) // mid-animation keyboard frame
         XCTAssertEqual(m.transitionEnded(), .none)
         XCTAssertEqual(m.transitionEnded(), .stick(animated: false))
     }
 
-    /// An unbalanced end (a Did without its Will) must not wedge the count.
+    /// An unbalanced end (a Did without its Will) must not wedge the count —
+    /// and with the geometry already aligned it must not scroll either.
     func testUnbalancedTransitionEndIsHarmless() {
         var m = dragModel(content: frame(top: -2600, height: 3400))
-        XCTAssertEqual(m.transitionEnded(), .stick(animated: false))
+        XCTAssertEqual(m.transitionEnded(), .none) // maxY 800 == viewport: aligned
         XCTAssertFalse(m.inTransition)
     }
 
@@ -303,6 +306,41 @@ final class TranscriptFollowModelTests: XCTestCase {
         XCTAssertFalse(m.pinned)
         m.positionRestored(atBottom: true)
         XCTAssertTrue(m.pinned)
+    }
+
+    // MARK: - The stick war (50%-blank channel opens)
+
+    /// A resize while already essentially stuck must NOT re-stick: the no-op
+    /// scrollTo forces a LazyVStack re-estimate, which resizes the content,
+    /// which triggers the next stick — forever. The blank screen was the
+    /// estimate-inflated phase of exactly that loop.
+    func testAlignedResizeIsQuiet() {
+        // Correctly stuck: content bottom 8pt below the viewport bottom (the
+        // list's bottom padding hangs off-screen).
+        var m = dragModel(content: frame(top: -2608, height: 3408)) // maxY 800+8
+        // Estimates resolve: the content grows far past the bottom while the
+        // reader hasn't moved — the OLD frame was aligned, so nothing fires…
+        XCTAssertEqual(m.contentChanged(to: frame(top: -2608, height: 3400)), .none)
+        // …including the settle belt.
+        XCTAssertEqual(m.settleCommand(), .none)
+    }
+
+    /// A tiny viewport flap (the sync bar toggling is 2pt) while stuck must
+    /// not scroll — same war, fed from the viewport side.
+    func testAlignedViewportFlapIsQuiet() {
+        var m = dragModel(content: frame(top: -2608, height: 3408))
+        XCTAssertEqual(m.viewportChanged(to: 798), .none)
+        XCTAssertEqual(m.viewportChanged(to: 800), .none)
+        XCTAssertTrue(m.pinned)
+    }
+
+    /// The gate must never eat the real rescues: the estimate-inflated phase
+    /// leaves the content bottom far below the viewport (blank over phantom
+    /// space) — growth from an aligned start still sticks.
+    func testInflatedPhaseStillResticks() {
+        var m = dragModel(content: frame(top: -2608, height: 3408))
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -2608, height: 7800)), .stick(animated: false))
     }
 
     /// The pill signal needs both "unpinned" and "visibly short of the end",
