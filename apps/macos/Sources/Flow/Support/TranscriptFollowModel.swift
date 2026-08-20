@@ -114,10 +114,19 @@ struct TranscriptFollowModel: Equatable {
     /// so a transient measurement can never flicker the pill up.
     var showJump: Bool { !pinned && !atBottom }
 
-    /// Issue a stick, opening the unpin-quiet window for animated ones.
+    /// Issue a stick, opening the quiet window for animated ones.
     private mutating func stick(animated: Bool, at now: Date) -> Command {
         if animated { quietUntil = now.addingTimeInterval(0.4) }
         return .stick(animated: animated)
+    }
+
+    /// The view issued a landing or restore scroll directly (channel entry,
+    /// scroll-memory restore, restore re-anchor): freeze pin decisions while
+    /// the resulting geometry settles. Without this, bottom landings threw
+    /// phantom unpins (the recorder logged records while parked at the
+    /// bottom) and restore drift threw phantom re-pins.
+    mutating func landingIssued(at now: Date = Date()) {
+        quietUntil = now.addingTimeInterval(0.4)
     }
 
     // MARK: - Geometry events
@@ -130,7 +139,13 @@ struct TranscriptFollowModel: Equatable {
         let vp = viewportHeight, p = pinned, hd = hasDragged, dr = isDragging, t = transitions, f = focusActive
         followLog.info("content old=(\(Int(old.minY)),\(Int(old.maxY)),h\(Int(old.height))) new=(\(Int(new.minY)),\(Int(new.maxY)),h\(Int(new.height))) vp=\(Int(vp)) pin=\(p) drag=\(hd)/\(dr) trans=\(t) focus=\(f)")
         #endif
-        guard !focusActive, !inTransition else { return .none }
+        // The quiet window freezes ALL pin decisions, not only unpins: the
+        // field trail showed a restore's post-landing drift tripping the
+        // re-pin rule (content shrank above the target, sliding the reader
+        // toward the bottom), which made the drift-corrector abort as
+        // "reader took over". Near our own scrolls, geometry is noise in
+        // both directions.
+        guard !focusActive, !inTransition, now >= quietUntil else { return .none }
         switch style {
         case .topEdge:
             // Order is load-bearing (see the tests): the pin check runs first
@@ -141,7 +156,7 @@ struct TranscriptFollowModel: Equatable {
                 return .none
             }
             if new.minY > old.minY + 1 {
-                if now >= quietUntil { pinned = false }
+                pinned = false
                 return .none
             }
             if pinned, new.height > old.height + 1, !isAligned {
@@ -164,7 +179,7 @@ struct TranscriptFollowModel: Equatable {
             // the height changed is content settling, not a scroll, and the
             // viewport never enters into it — which is what kept the keyboard
             // from unpinning the follow.
-            if hasDragged, abs(new.height - old.height) <= 1, now >= quietUntil {
+            if hasDragged, abs(new.height - old.height) <= 1 {
                 if distanceFromBottom > minBackScroll {
                     pinned = false
                 } else if distanceFromBottom <= bottomSlack {
