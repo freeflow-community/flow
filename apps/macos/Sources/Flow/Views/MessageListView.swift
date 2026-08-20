@@ -43,49 +43,30 @@ struct MessageListView: View {
     @State private var appliedKey: String?
     /// The row currently flashing after a jump (fades out on a timer).
     @State private var flashId: String?
-    /// Bottom edge of the content and height of the viewport, both in the
-    /// scroll view's own space — their difference is how far we are above the
-    /// newest message (#111).
-    @State private var contentBottom: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
-    /// True while the follow is glued to the newest message. Ported from the
-    /// web client's fix: distance-from-bottom alone can't tell "the user
-    /// scrolled away" from "the content grew under us" — a tall message
-    /// landing (or a row sizing late) flipped `atBottom` false before the
-    /// follow scroll settled, latching the follow off with the jump pill up
-    /// while new output piled in below. Growth never moves the content's top
-    /// edge up, so only an upward scroll unpins; nearing the bottom re-pins.
-    @State private var pinned = true
+    /// The single owner of every follow/scroll decision (see
+    /// `TranscriptFollowModel` — the old `followDecision` rules live there
+    /// now, unchanged). All the drivers below feed it events and execute the
+    /// one command it returns — nothing else calls `scrollTo` toward the
+    /// bottom.
+    @State private var follow = TranscriptFollowModel(style: .topEdge)
+    /// The jump pill, debounced: `follow.showJump` must hold for a beat
+    /// before the pill mounts, so a transient measurement (a composer resize,
+    /// a glue scroll landing a few points short) can never flicker it up.
+    @State private var showPill = false
 
     private static let scrollSpace = "messageScroll"
-    /// Slack-style slack: within this much of the end still counts as "at the
-    /// bottom", so a part-scrolled last message doesn't raise the button.
-    private static let bottomSlack: CGFloat = 120
-    /// Within this much of the end, any scroll re-pins the follow (web parity).
-    static let repinSlack: CGFloat = 40
 
-    /// Purely geometric "near the end" — drives the jump pill, not the follow.
-    private var atBottom: Bool { contentBottom - viewportHeight <= Self.bottomSlack }
-    /// Raise the pill only when unpinned *and* visibly short of the end, so a
-    /// tall message landing while pinned doesn't flicker it up mid-glue.
-    private var showJump: Bool { !pinned && !atBottom }
-
-    /// What a content-frame change (in the scroll view's space) means for the
-    /// follow, in checking order. Pure so the tests can pin the semantics.
-    enum FollowDecision: Equatable {
-        case pin    // near the bottom → (re)pin the follow
-        case unpin  // the content's top edge moved down: an upward scroll
-        case glue   // content grew under a pinned reader → re-scroll to newest
-        case none
-    }
-
-    static func followDecision(
-        pinned: Bool, old: CGRect, new: CGRect, viewportHeight: CGFloat
-    ) -> FollowDecision {
-        if new.maxY - viewportHeight <= repinSlack { return .pin }
-        if new.minY > old.minY + 1 { return .unpin }
-        if pinned && new.height > old.height + 1 { return .glue }
-        return .none
+    /// Executes a follow-model command. The one place this list scrolls to
+    /// its end.
+    private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
+        guard case .stick(let animated) = command, let lastId = messages.last?.id else { return }
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
+        } else {
+            proxy.scrollTo(lastId, anchor: .bottom)
+        }
     }
 
     var body: some View {
@@ -145,38 +126,24 @@ struct MessageListView: View {
                     }
                 }
                 .padding(.vertical, 8)
-                // Scroll tracking (#111) + the pinned follow. The glue scroll
-                // below is the one sanctioned second driver: it only ever
-                // targets the same bottom edge as .defaultScrollAnchor, so the
-                // two can't disagree the way the removed scrollPosition(id:)
-                // did (see the note below).
+                // Scroll tracking (#111) + the pinned follow. Every geometry
+                // change goes through the follow model, and its commands only
+                // ever target the same bottom edge as .defaultScrollAnchor, so
+                // the two can't disagree the way the removed
+                // scrollPosition(id:) did (see the note below).
                 .background(
                     GeometryReader { geo in
                         let frame = geo.frame(in: .named(Self.scrollSpace))
                         Color.clear
-                            .onAppear { contentBottom = frame.maxY }
-                            .onChange(of: frame) { old, new in
-                                switch Self.followDecision(
-                                    pinned: pinned, old: old, new: new,
-                                    viewportHeight: viewportHeight
-                                ) {
-                                case .pin: pinned = true
-                                case .unpin: pinned = false
-                                case .glue:
-                                    // Post-layout correction: the id-driven
-                                    // follow fires before the new row has a
-                                    // height (and not at all when an existing
-                                    // row grows — a late image, async markdown
-                                    // sizing), so re-glue here once geometry
-                                    // is real.
-                                    if focusMessageId == nil, let lastId = messages.last?.id {
-                                        withAnimation(.easeOut(duration: 0.15)) {
-                                            proxy.scrollTo(lastId, anchor: .bottom)
-                                        }
-                                    }
-                                case .none: break
-                                }
-                                contentBottom = new.maxY
+                            .onAppear { _ = follow.contentChanged(to: frame) }
+                            .onChange(of: frame) { _, new in
+                                // Content moved or resized. The model decides:
+                                // re-pin near the bottom, unpin on an upward
+                                // scroll, glue after growth under a pinned
+                                // reader (the id-driven follow below fires
+                                // before a new row has a height, and not at
+                                // all when an existing row grows late).
+                                run(follow.contentChanged(to: new), proxy)
                             }
                     }
                 )
@@ -185,13 +152,30 @@ struct MessageListView: View {
             .background(
                 GeometryReader { geo in
                     Color.clear
-                        .onAppear { viewportHeight = geo.size.height }
-                        .onChange(of: geo.size.height) { _, new in viewportHeight = new }
+                        .onAppear { _ = follow.viewportChanged(to: geo.size.height) }
+                        .onChange(of: geo.size.height) { _, new in
+                            // The composer growing (a wrapping draft, the
+                            // attachment tray, the suggestion bar) shrinks
+                            // this viewport. A pinned reader is carried to
+                            // the newest message once the numbers are real —
+                            // the correction whose absence let the transcript
+                            // scroll into empty space and blank mid-typing.
+                            run(follow.viewportChanged(to: new), proxy)
+                        }
                 }
             )
             .overlay { emptyTranscriptState }
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
-            .animation(.easeOut(duration: 0.15), value: showJump)
+            .animation(.easeOut(duration: 0.15), value: showPill)
+            // The pill mounts only after the model has wanted it for a beat.
+            .task(id: follow.showJump) {
+                if follow.showJump {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    if !Task.isCancelled { showPill = true }
+                } else {
+                    showPill = false
+                }
+            }
             // NOTE (scroll-blanking fix): there used to be a
             // `.scrollPosition(id: $topVisibleId, anchor: .top)` here feeding
             // MessageScrollMemory. It never actually tracked anything —
@@ -216,19 +200,21 @@ struct MessageListView: View {
                     appliedKey = scrollKey
                     if let key = scrollKey, let remembered = MessageScrollMemory.fresh(key),
                        messages.contains(where: { $0.id == remembered }) {
-                        pinned = false // mid-history: don't let the glue yank us down
+                        // Mid-history: don't let the glue yank us down.
+                        follow.positionRestored(atBottom: false)
                         proxy.scrollTo(remembered, anchor: .top)
                     } else {
-                        pinned = true
+                        follow.positionRestored(atBottom: true)
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
-                } else if pinned {
-                    // A genuinely new message in the current channel → follow it
-                    // down, but only while pinned: someone reading back-scroll
-                    // keeps their place and gets the jump button instead (#111).
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(newId, anchor: .bottom)
-                    }
+                } else {
+                    // A genuinely new message in the current channel. The model
+                    // follows it down only while pinned — someone reading
+                    // back-scroll keeps their place and gets the jump button
+                    // instead (#111) — except my own message, which always
+                    // re-pins: I just pressed send (web/iOS parity).
+                    let own = currentUserId != nil && messages.last?.userId == currentUserId
+                    run(follow.lastMessageChanged(isOwn: own), proxy)
                 }
             }
             // First open must land on the newest message: scrollTo from
@@ -236,10 +222,18 @@ struct MessageListView: View {
             // under-scrolls, so anchor the scroll view at the bottom instead
             // (also keeps the list pinned while attachments finish sizing).
             .defaultScrollAnchor(.bottom)
-            .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
+            // A jump target owns the scroll position for its whole lifetime —
+            // from set (possibly while older pages load in) to cleared.
+            .onChange(of: focusMessageId) { _, new in
+                follow.focusActive = new != nil
+                tryFocus(proxy)
+            }
             // A jump target may arrive only after older history pages in.
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
-            .onAppear { tryFocus(proxy) }
+            .onAppear {
+                follow.focusActive = focusMessageId != nil
+                tryFocus(proxy)
+            }
         }
     }
 
@@ -278,15 +272,14 @@ struct MessageListView: View {
     }
 
     /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
-    /// of the transcript (#111). Tapping it returns to the newest message.
+    /// of the transcript (#111) — debounced through `showPill`, so it only
+    /// appears once the model has wanted it for a beat. Tapping it returns to
+    /// the newest message.
     @ViewBuilder
     private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
-        if showJump, let lastId = messages.last?.id {
+        if showPill, !messages.isEmpty {
             Button {
-                pinned = true
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(lastId, anchor: .bottom)
-                }
+                run(follow.jumpTapped(), proxy)
             } label: {
                 Text("Latest msgs ↓")
                     .flowFont(size: 12, weight: .semibold)
@@ -308,7 +301,7 @@ struct MessageListView: View {
     /// release the target (paging in ChannelView brings it in if it's old).
     private func tryFocus(_ proxy: ScrollViewProxy) {
         guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
-        pinned = false // stop the bottom-glue from fighting the centering scroll
+        follow.focusEngaged() // stop the bottom-glue from fighting the centering scroll
         withAnimation(.easeInOut(duration: 0.25)) {
             proxy.scrollTo(fid, anchor: .center)
         }
