@@ -59,8 +59,11 @@ struct MessageListView: View {
     /// now, unchanged). All the drivers below feed it events and execute the
     /// one command it returns — nothing else calls `scrollTo` toward the
     /// bottom.
-    @State private var follow = TranscriptFollowModel(style: .topEdge)
-    /// The jump pill, debounced: `follow.showJump` must hold for a beat
+    @State private var followBox = TranscriptFollowBox(style: .topEdge)
+    /// Mirror of `followBox.model.showJump`, written only when it changes — the one
+    /// follow-model output SwiftUI renders from (see TranscriptFollowBox).
+    @State private var jumpSignal = false
+    /// The jump pill, debounced: `followBox.model.showJump` must hold for a beat
     /// before the pill mounts, so a transient measurement (a composer resize,
     /// a glue scroll landing a few points short) can never flicker it up.
     @State private var showPill = false
@@ -80,7 +83,13 @@ struct MessageListView: View {
 
     /// Executes a follow-model command. The one place this list scrolls to
     /// its end.
+    /// Mirror the pill signal into SwiftUI state, only on change.
+    private func syncSignals() {
+        if followBox.model.showJump != jumpSignal { jumpSignal = followBox.model.showJump }
+    }
+
     private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
+        defer { syncSignals() }
         guard case .stick(let animated) = command, let lastId = messages.last?.id else { return }
         if animated {
             withAnimation(.easeOut(duration: 0.15)) {
@@ -132,7 +141,7 @@ struct MessageListView: View {
                                 // end: unpin, remember the current top row,
                                 // and restore it once the page lands.
                                 loadOlderAnchorId = messages.first?.id
-                                follow.positionRestored(atBottom: false)
+                                followBox.model.positionRestored(atBottom: false)
                                 onLoadOlder()
                             }
                             .buttonStyle(.link)
@@ -194,7 +203,7 @@ struct MessageListView: View {
                     }
                 }
                 .padding(.vertical, 8)
-                // Scroll tracking (#111) + the pinned follow. Every geometry
+                // Scroll tracking (#111) + the pinned followBox.model. Every geometry
                 // change goes through the follow model, and its commands only
                 // ever target the same bottom edge as .defaultScrollAnchor, so
                 // the two can't disagree the way the removed
@@ -203,7 +212,7 @@ struct MessageListView: View {
                     GeometryReader { geo in
                         let frame = geo.frame(in: .named(Self.scrollSpace))
                         Color.clear
-                            .onAppear { _ = follow.contentChanged(to: frame) }
+                            .onAppear { _ = followBox.model.contentChanged(to: frame) }
                             .onChange(of: frame) { _, new in
                                 // Content moved or resized. The model decides:
                                 // re-pin near the bottom, unpin on an upward
@@ -211,7 +220,7 @@ struct MessageListView: View {
                                 // reader (the id-driven follow below fires
                                 // before a new row has a height, and not at
                                 // all when an existing row grows late).
-                                run(follow.contentChanged(to: new), proxy)
+                                run(followBox.model.contentChanged(to: new), proxy)
                             }
                     }
                 )
@@ -220,7 +229,7 @@ struct MessageListView: View {
             .background(
                 GeometryReader { geo in
                     Color.clear
-                        .onAppear { _ = follow.viewportChanged(to: geo.size.height) }
+                        .onAppear { _ = followBox.model.viewportChanged(to: geo.size.height) }
                         .onChange(of: geo.size.height) { _, new in
                             // The composer growing (a wrapping draft, the
                             // attachment tray, the suggestion bar) shrinks
@@ -228,7 +237,7 @@ struct MessageListView: View {
                             // the newest message once the numbers are real —
                             // the correction whose absence let the transcript
                             // scroll into empty space and blank mid-typing.
-                            run(follow.viewportChanged(to: new), proxy)
+                            run(followBox.model.viewportChanged(to: new), proxy)
                         }
                 }
             )
@@ -236,8 +245,8 @@ struct MessageListView: View {
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
             .animation(.easeOut(duration: 0.15), value: showPill)
             // The pill mounts only after the model has wanted it for a beat.
-            .task(id: follow.showJump) {
-                if follow.showJump {
+            .task(id: jumpSignal) {
+                if jumpSignal {
                     try? await Task.sleep(nanoseconds: 150_000_000)
                     if !Task.isCancelled { showPill = true }
                 } else {
@@ -261,13 +270,13 @@ struct MessageListView: View {
                 // lands by default, and restoring "newest at the top" would
                 // push them a viewport up from where they were.
                 guard let key = scrollKey, key == appliedKey, focusMessageId == nil else { return }
-                if follow.pinned {
+                if followBox.model.pinned {
                     memoryLog.notice("clear \(key, privacy: .public)")
                     MessageScrollMemory.clear(key)
                 } else if let topId {
                     memoryLog.notice("record \(key, privacy: .public) top=\(topId, privacy: .public)")
                     MessageScrollMemory.record(key, topMessageId: topId)
-                } else if follow.contentFrame.minY > -24, let firstId = messages.first?.id {
+                } else if followBox.model.contentFrame.minY > -24, let firstId = messages.first?.id {
                     // Parked at the very top: no row crosses the probe line —
                     // the Load-earlier control sits there — so the reader's
                     // final position was never captured, and returning to
@@ -293,8 +302,8 @@ struct MessageListView: View {
                     if let remembered, messages.contains(where: { $0.id == remembered }) {
                         // Mid-history: unpin so no glue fights the restore.
                         memoryLog.notice("restore hit \(remembered, privacy: .public)")
-                        follow.positionRestored(atBottom: false)
-                        follow.landingIssued()
+                        followBox.model.positionRestored(atBottom: false)
+                        followBox.model.landingIssued()
                         proxy.scrollTo(remembered, anchor: .top)
                         // Re-anchored again below as attachments size — a row
                         // above the target growing late pushes the whole
@@ -306,14 +315,14 @@ struct MessageListView: View {
                         // message away from this). The top of the window is
                         // the close approximation; the bottom is the worst.
                         memoryLog.notice("restore miss -> window top \(firstId, privacy: .public)")
-                        follow.positionRestored(atBottom: false)
-                        follow.landingIssued()
+                        followBox.model.positionRestored(atBottom: false)
+                        followBox.model.landingIssued()
                         proxy.scrollTo(firstId, anchor: .top)
                         pendingRestoreId = firstId
                     } else {
                         memoryLog.notice("restore none -> bottom")
-                        follow.positionRestored(atBottom: true)
-                        follow.landingIssued()
+                        followBox.model.positionRestored(atBottom: true)
+                        followBox.model.landingIssued()
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
                 } else {
@@ -323,7 +332,7 @@ struct MessageListView: View {
                     // instead (#111) — except my own message, which always
                     // re-pins: I just pressed send (web/iOS parity).
                     let own = currentUserId != nil && messages.last?.userId == currentUserId
-                    run(follow.lastMessageChanged(isOwn: own), proxy)
+                    run(followBox.model.lastMessageChanged(isOwn: own), proxy)
                 }
             }
             // "Load earlier" landed: put the row the reader was looking at
@@ -352,13 +361,13 @@ struct MessageListView: View {
             // A jump target owns the scroll position for its whole lifetime —
             // from set (possibly while older pages load in) to cleared.
             .onChange(of: focusMessageId) { _, new in
-                follow.focusActive = new != nil
+                followBox.model.focusActive = new != nil
                 tryFocus(proxy)
             }
             // A jump target may arrive only after older history pages in.
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
             .onAppear {
-                follow.focusActive = focusMessageId != nil
+                followBox.model.focusActive = focusMessageId != nil
                 tryFocus(proxy)
             }
             // The settle passes, ported from iOS: with the anchor's
@@ -372,7 +381,7 @@ struct MessageListView: View {
                 guard !messages.isEmpty else { return }
                 for delay in Self.settleDelays {
                     try? await Task.sleep(nanoseconds: delay)
-                    let command = follow.settleCommand()
+                    let command = followBox.model.settleCommand()
                     guard case .stick = command else { return }
                     run(command, proxy)
                 }
@@ -393,10 +402,10 @@ struct MessageListView: View {
                     // the re-pin slack, and the old gate read that as
                     // "reader took over" and quit). Only a jump target or
                     // the row leaving the window stops the window.
-                    guard !follow.focusActive,
+                    guard !followBox.model.focusActive,
                           messages.contains(where: { $0.id == target }) else { break }
-                    follow.positionRestored(atBottom: false)
-                    follow.landingIssued()
+                    followBox.model.positionRestored(atBottom: false)
+                    followBox.model.landingIssued()
                     proxy.scrollTo(target, anchor: .top)
                 }
                 pendingRestoreId = nil
@@ -446,7 +455,7 @@ struct MessageListView: View {
     private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
         if showPill, !messages.isEmpty {
             Button {
-                run(follow.jumpTapped(), proxy)
+                run(followBox.model.jumpTapped(), proxy)
             } label: {
                 Text("Latest msgs ↓")
                     .flowFont(size: 12, weight: .semibold)
@@ -468,7 +477,7 @@ struct MessageListView: View {
     /// release the target (paging in ChannelView brings it in if it's old).
     private func tryFocus(_ proxy: ScrollViewProxy) {
         guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
-        follow.focusEngaged() // stop the bottom-glue from fighting the centering scroll
+        followBox.model.focusEngaged() // stop the bottom-glue from fighting the centering scroll
         withAnimation(.easeInOut(duration: 0.25)) {
             proxy.scrollTo(fid, anchor: .center)
         }

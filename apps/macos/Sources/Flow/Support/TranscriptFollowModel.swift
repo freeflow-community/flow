@@ -289,3 +289,18 @@ struct TranscriptFollowModel: Equatable {
         pinned = atBottom
     }
 }
+
+/// Reference box for the follow model, held as plain `@State`. Geometry
+/// events mutate the model on every scroll frame; routing those mutations
+/// through a SwiftUI-visible value invalidated the list body per frame,
+/// which re-laid the entire eager transcript stack — the profiled cause of
+/// laggy scrolling (72% of main-thread time in StackLayout.sizeThatFits).
+/// Mutations inside the box are invisible to SwiftUI; the views mirror the
+/// few signals that matter (the jump pill) into real state only when they
+/// change.
+final class TranscriptFollowBox {
+    var model: TranscriptFollowModel
+    init(style: TranscriptFollowModel.Style) {
+        model = TranscriptFollowModel(style: style)
+    }
+}
