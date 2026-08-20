@@ -1,5 +1,49 @@
 # Decision log
 
+## 2026-08-20 — Phase 1 voice huddle rulings
+
+Grilling session ahead of implementing `docs/research/voice-huddle-livekit.md`
+Phase 1. See `CONTEXT.md` for the Huddle glossary entry (first use of a root
+`CONTEXT.md` in this repo).
+
+- **LiveKit is the source of truth for huddle state**, not Flow's server.
+  `huddles.ts`'s in-memory map is a cache of it — server boot reconciles by
+  querying LiveKit's REST API (`RoomServiceClient.listParticipants`) for any
+  live rooms and republishing corrected `huddle.updated` events, since a
+  server restart wipes Flow's map while LiveKit's rooms (hosted separately,
+  on LiveKit Cloud) keep running regardless.
+- **No TTL-sweep on huddle participants**, unlike `channelIndicators`.
+  LiveKit's own RTC layer already detects a dead peer and fires the
+  `participant_left` webhook — that's the disconnect-clear safety net. REST
+  join/leave is the primary path; there's no "forgot to refresh" failure mode
+  to guard against the way a long-running indicator-setter has.
+- **LiveKit identity is the bare `userId`**, not per-device/per-tab. A second
+  connection from the same user disconnects their first — one live presence
+  per person, mirroring Slack Huddles. Flagged as revisitable later if
+  multi-device presence turns out to be wanted.
+- **Mid-huddle permission loss is a known Phase 1 gap.** Being removed from a
+  channel, or the channel being archived, while actively in that channel's
+  huddle does not force a disconnect — consistent with the rest of the
+  codebase, which never forcibly closes live WS connections on membership
+  removal either.
+- **Background audio is in scope for iOS Phase 1** (`UIBackgroundModes:
+  audio`). An ambient huddle has to survive backgrounding/lock-screen, not
+  just in-app navigation, or the "feels like Slack" pitch fails at the first
+  app-switch.
+- **Access tokens are minted with a 24h TTL.** No refresh mechanism exists yet
+  in Phase 1, so erring long avoids a mid-call disconnect.
+- **`POST /join` is idempotent.** Calling it while already an active
+  participant re-mints a fresh token rather than erroring — this is also the
+  reconnect path (tab refresh, network blip).
+- **`HuddleMiniBar`'s ✕ actually leaves the huddle** (disconnect + `POST
+  /leave`), unlike `OpenInAppBanner`'s dismiss-only semantics — a
+  hidden-but-still-broadcasting state would contradict the ambient
+  drop-in/drop-out model. Clicking the bar body (not the ✕) navigates to the
+  huddle's channel.
+- **Work lands as a sequence of ordered commits** (server → web → macOS → iOS
+  → docs) on `feature/voice-huddle-audio`, merged as one PR with one
+  changelog file — not split into separate PRs per platform.
+
 ## 2026-08-06 — Account deletion: owners hand off, never blocked (5.1.1(v))
 
 App Review rejected iOS 2.0 (3) for offering account creation without account
