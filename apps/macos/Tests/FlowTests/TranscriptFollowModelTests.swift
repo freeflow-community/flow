@@ -384,6 +384,35 @@ final class TranscriptFollowModelTests: XCTestCase {
         XCTAssertFalse(m.pinned)
     }
 
+    // MARK: - Landing quiet (field trail 2026-08-20)
+
+    /// After a landing scroll, geometry noise must not flip the pin in
+    /// EITHER direction. The field trail showed both: phantom unpins after
+    /// bottom landings (records while parked at the bottom), and a phantom
+    /// re-pin during restore drift that aborted the drift-corrector.
+    func testLandingQuietFreezesRepin() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        var m = model(.topEdge, viewport: 600, content: frame(top: -1100, height: 2000))
+        m.positionRestored(atBottom: false) // a restore parked us mid-history
+        m.landingIssued(at: t0)
+        // Drift slides the content to within the re-pin slack mid-settle.
+        _ = m.contentChanged(to: frame(top: -1380, height: 2000), at: t0.addingTimeInterval(0.1))
+        XCTAssertFalse(m.pinned) // frozen: this is drift, not the reader
+        // The same reading after the window is a real return to the bottom.
+        _ = m.contentChanged(to: frame(top: -1380, height: 2000), at: t0.addingTimeInterval(1.0))
+        XCTAssertTrue(m.pinned)
+    }
+
+    func testLandingQuietFreezesUnpin() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        var m = model(.topEdge, viewport: 600, content: frame(top: -1400, height: 2000))
+        m.positionRestored(atBottom: true) // a bottom landing
+        m.landingIssued(at: t0)
+        // Settle jiggle: top edge moves down a hair, still off the bottom.
+        _ = m.contentChanged(to: frame(top: -1300, height: 2000), at: t0.addingTimeInterval(0.1))
+        XCTAssertTrue(m.pinned) // frozen: no phantom unpin, no phantom record
+    }
+
     /// The pill signal needs both "unpinned" and "visibly short of the end",
     /// so a stick that lands within the slack drops it.
     func testShowJumpRequiresDistance() {

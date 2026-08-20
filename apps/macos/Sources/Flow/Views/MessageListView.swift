@@ -294,6 +294,7 @@ struct MessageListView: View {
                         // Mid-history: unpin so no glue fights the restore.
                         memoryLog.notice("restore hit \(remembered, privacy: .public)")
                         follow.positionRestored(atBottom: false)
+                        follow.landingIssued()
                         proxy.scrollTo(remembered, anchor: .top)
                         // Re-anchored again below as attachments size — a row
                         // above the target growing late pushes the whole
@@ -306,11 +307,13 @@ struct MessageListView: View {
                         // the close approximation; the bottom is the worst.
                         memoryLog.notice("restore miss -> window top \(firstId, privacy: .public)")
                         follow.positionRestored(atBottom: false)
+                        follow.landingIssued()
                         proxy.scrollTo(firstId, anchor: .top)
                         pendingRestoreId = firstId
                     } else {
                         memoryLog.notice("restore none -> bottom")
                         follow.positionRestored(atBottom: true)
+                        follow.landingIssued()
                         proxy.scrollTo(newId, anchor: .bottom)
                     }
                 } else {
@@ -382,10 +385,18 @@ struct MessageListView: View {
             // jump target owns the position outright.
             .task(id: pendingRestoreId) {
                 guard let target = pendingRestoreId else { return }
-                for delay in Self.settleDelays {
+                for delay in Self.settleDelays + [800_000_000] {
                     try? await Task.sleep(nanoseconds: delay)
-                    guard !follow.pinned, !follow.focusActive,
+                    // Deliberately NOT gated on the pin state: the drift this
+                    // corrects can itself flip the pin (field trail: content
+                    // shrinking above the target slid the reader to within
+                    // the re-pin slack, and the old gate read that as
+                    // "reader took over" and quit). Only a jump target or
+                    // the row leaving the window stops the window.
+                    guard !follow.focusActive,
                           messages.contains(where: { $0.id == target }) else { break }
+                    follow.positionRestored(atBottom: false)
+                    follow.landingIssued()
                     proxy.scrollTo(target, anchor: .top)
                 }
                 pendingRestoreId = nil
