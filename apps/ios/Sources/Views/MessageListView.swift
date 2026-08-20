@@ -1,5 +1,10 @@
 import SwiftUI
 import UIKit
+#if DEBUG
+import os
+/// Debug-only tracing — see TranscriptFollowModel.swift.
+private let listLog = Logger(subsystem: "im.freeflow.follow", category: "list")
+#endif
 
 /// iOS port of the macOS message list (Views/MessageListView.swift): day
 /// dividers, Slack-style author grouping (5-minute rule), markdown block
@@ -64,9 +69,24 @@ struct MessageListView: View {
     /// settling.
     private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
+    /// Eager below `eagerRowLimit`, lazy above (see the limit's comment).
+    @ViewBuilder
+    private func transcriptStack<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if messages.count <= Self.eagerRowLimit {
+            VStack(alignment: .leading, spacing: 0, content: content)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0, content: content)
+        }
+    }
+
     /// Executes a follow-model command. The one place this list scrolls to
     /// its end.
     private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
+        #if DEBUG
+        if case .stick = command {
+            listLog.info("run stick lastId=\(messages.last?.id ?? "nil") count=\(messages.count)")
+        }
+        #endif
         guard case .stick(let animated) = command, let lastId = messages.last?.id else { return }
         if animated {
             withAnimation(.easeOut(duration: 0.15)) {
@@ -77,10 +97,21 @@ struct MessageListView: View {
         }
     }
 
+    /// Below this many messages the transcript renders eagerly (plain
+    /// VStack). LazyVStack's row-height *estimates* are the root of the
+    /// parked/blank-open family (#280 and descendants): in short channels of
+    /// tall messages they ran ~2x off, so the viewport could sit over phantom
+    /// estimate space — a blank screen — while the content frame measured as
+    /// perfectly bottom-aligned, and every corrective scroll just re-rolled
+    /// the estimates (the layout never settled). A fresh channel open loads
+    /// one ~50-message page, so eager covers every first paint; only deep
+    /// Load-earlier histories stay lazy.
+    private static let eagerRowLimit = 100
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                transcriptStack {
                     // With something cached, the top of the list says the rest
                     // is still coming, instead of the transcript simply
                     // starting wherever the cache happens to end (#191). With

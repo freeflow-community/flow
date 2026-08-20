@@ -75,10 +75,31 @@ struct MessageListView: View {
         }
     }
 
+    /// Below this many messages the transcript renders eagerly (plain
+    /// VStack). LazyVStack's row-height *estimates* are the root of the
+    /// parked/blank-open family (#280 and descendants): in short channels of
+    /// tall messages they ran ~2x off, so the viewport could sit over phantom
+    /// estimate space — a blank screen — while the content frame measured as
+    /// perfectly bottom-aligned, and every corrective scroll just re-rolled
+    /// the estimates (the layout never settled). A fresh channel open loads
+    /// one ~50-message page, so eager covers every first paint; only deep
+    /// Load-earlier histories stay lazy.
+    private static let eagerRowLimit = 100
+
+    /// Eager below `eagerRowLimit`, lazy above (see the limit's comment).
+    @ViewBuilder
+    private func transcriptStack<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if messages.count <= Self.eagerRowLimit {
+            VStack(alignment: .leading, spacing: 0, content: content)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0, content: content)
+        }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                transcriptStack {
                     // With something cached, the top of the list says the rest
                     // is still coming, instead of the transcript simply
                     // starting wherever the cache happens to end (#191). With
