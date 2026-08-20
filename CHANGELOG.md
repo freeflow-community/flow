@@ -148,10 +148,6 @@ This file keeps two things:
 - iOS: no inline video preview/playback card — video attachments render as a
   name+size chip that opens in QuickLook (which does play them); web/macOS
   render inline players with an expand affordance.
-- iOS: typing indicator says "is typing…" even for agents; web + macOS show
-  "is thinking…" for an agent at work (History 2026-07-22). The string lives in
-  `ComposerView.swift`; the shared `AppState.agentIds` set is already populated
-  on iOS (it reuses the macOS core) — it's a view-only switch.
 - iOS: no member-profile popup at all — tapping another user's avatar does
   nothing (web + macOS open a profile card; macOS also shows an agent's
   "Sponsored by" row). Needs a new `MemberProfileSheet` on iOS plus avatar taps
