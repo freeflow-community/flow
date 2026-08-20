@@ -21,6 +21,22 @@ struct ChannelView: View {
     @State private var channelMemberIds: [String] = []
     @State private var showMembers = false
     @State private var showPins = false
+    /// How many of the newest cached messages the transcript shows. A hot
+    /// channel accumulates thousands of rows in SQLite, and rendering them
+    /// all is both slow and — worse — pushes the list onto the LazyVStack
+    /// path, whose row-height estimates are the root of every parked/blank
+    /// open and misplaced restore. One window's worth keeps every ordinary
+    /// open on the exact, eager path; "Load earlier" widens it.
+    @State private var transcriptWindow = ChannelView.windowStep
+
+    static let windowStep = 100
+
+    /// The fetch grabs one row beyond the window, so "is there more in the
+    /// cache" needs no second query.
+    private var hasMoreCached: Bool { messages.value.count > transcriptWindow }
+    private var transcript: [Message] {
+        hasMoreCached ? Array(messages.value.dropFirst()) : messages.value
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,7 +45,7 @@ struct ChannelView: View {
             SyncBar(syncing: app.isSyncing)
 
             MessageListView(
-                messages: messages.value,
+                messages: transcript,
                 userNames: userNames,
                 userStatuses: userStatuses,
                 currentUserId: app.currentUser?.id,
@@ -40,12 +56,18 @@ struct ChannelView: View {
                     onError: { app.showError($0) },
                     onSelectArtifact: { win.selectArtifact($0) }
                 ),
-                hasMore: app.hasMore[channelId] ?? false,
+                hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                 isLoadingHistory: app.loadingHistory.contains(channelId),
                 showThreadAffordances: true,
                 unreadThreadRootIds: Set(channel.value?.unreadThreadRootIds ?? []),
                 onLoadOlder: {
-                    Task { await app.engine.loadOlder(channelId: channelId) }
+                    // Widen the window first (instant, from cache); go to the
+                    // server only once the cache is exhausted.
+                    let cacheHadMore = hasMoreCached
+                    transcriptWindow += Self.windowStep
+                    if !cacheHadMore {
+                        Task { await app.engine.loadOlder(channelId: channelId) }
+                    }
                 },
                 onOpenThread: { rootId in
                     win.openThread(rootId)
@@ -84,15 +106,11 @@ struct ChannelView: View {
             }
         }
         .task(id: channelId) {
+            transcriptWindow = Self.windowStep
             channel.start(db: app.db, reset: nil) { db in
                 try Channel.fetchOne(db, key: channelId)
             }
-            messages.start(db: app.db, reset: []) { db in
-                try Message
-                    .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
-                    .order(Column("id"))
-                    .fetchAll(db)
-            }
+            startMessages()
             pinnedMessages.start(db: app.db, reset: []) { db in
                 try Message
                     .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
@@ -111,6 +129,7 @@ struct ChannelView: View {
         // Jump-to-message (phase 12): a target from the Activity feed may sit
         // beyond the loaded page — page older history until it's in the list,
         // then MessageListView scrolls to it. Give up once history is exhausted.
+        .onChange(of: transcriptWindow) { _, _ in startMessages() }
         .onChange(of: win.focusMessageId) { _, _ in pageToFocusIfNeeded() }
         .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
         .sheet(item: $editingMessage) { message in
@@ -162,12 +181,32 @@ struct ChannelView: View {
         channelMemberIds = ids.isEmpty ? (channel.value?.memberIds ?? []) : ids
     }
 
+    /// (Re)start the windowed transcript observation: the newest
+    /// `transcriptWindow` + 1 rows, ascending (the +1 is the has-more probe).
+    private func startMessages() {
+        let channelId = channelId
+        let limit = transcriptWindow + 1
+        messages.start(db: app.db, reset: []) { db in
+            try Array(
+                Message
+                    .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
+                    .order(Column("id").desc)
+                    .limit(limit)
+                    .fetchAll(db)
+                    .reversed()
+            )
+        }
+    }
+
     /// Page older history toward a jump-to-message target until it's loaded
     /// (thread-reply targets are handled by ThreadPanelView, not here).
     private func pageToFocusIfNeeded() {
         guard win.openThreadRootId == nil, let fid = win.focusMessageId else { return }
-        if messages.value.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
-        if app.hasMore[channelId] ?? false {
+        if transcript.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
+        if hasMoreCached {
+            transcriptWindow += Self.windowStep // cached but outside the window
+        } else if app.hasMore[channelId] ?? false {
+            transcriptWindow += Self.windowStep
             Task { await app.engine.loadOlder(channelId: channelId) }
         } else {
             win.focusMessageId = nil // not in this channel's history

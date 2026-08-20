@@ -343,6 +343,47 @@ final class TranscriptFollowModelTests: XCTestCase {
             m.contentChanged(to: frame(top: -2608, height: 7800)), .stick(animated: false))
     }
 
+    // MARK: - The unpin-quiet window (burst arrivals)
+
+    /// A burst of arrivals: our own animated follow's rebound frames move the
+    /// top edge down mid-flight, exactly like an upward scroll. Within the
+    /// quiet window that evidence is ignored — reading it unpinned the follow
+    /// mid-burst and new messages silently stopped following (seen live with
+    /// 50 rapid bot messages).
+    func testReboundWithinQuietStaysPinned() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        var m = model(.topEdge, viewport: 600, content: frame(top: -1400, height: 2000))
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -1400, height: 2400), at: t0),
+            .stick(animated: true))
+        // Mid-flight rebound 100ms later: top edge moved down, far from bottom.
+        _ = m.contentChanged(to: frame(top: -1300, height: 2400), at: t0.addingTimeInterval(0.1))
+        XCTAssertTrue(m.pinned)
+    }
+
+    /// The same top-edge movement outside the quiet window is a real scroll.
+    func testUpwardScrollAfterQuietUnpins() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        var m = model(.topEdge, viewport: 600, content: frame(top: -1400, height: 2000))
+        _ = m.contentChanged(to: frame(top: -1400, height: 2400), at: t0)
+        _ = m.contentChanged(to: frame(top: -1300, height: 2400), at: t0.addingTimeInterval(1.0))
+        XCTAssertFalse(m.pinned)
+    }
+
+    /// Same protection on iOS: an own-message stick's animation frames must
+    /// not trip the drag-distance unpin.
+    func testDragDistanceQuietAfterOwnMessage() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        var m = dragModel(content: frame(top: -2600, height: 3400), dragged: true)
+        XCTAssertEqual(m.lastMessageChanged(isOwn: true, at: t0), .stick(animated: true))
+        // Mid-flight frame: 300pt out, height stable — within quiet, no unpin.
+        _ = m.contentChanged(to: frame(top: -2300, height: 3400), at: t0.addingTimeInterval(0.1))
+        XCTAssertTrue(m.pinned)
+        // The same reading a second later is a real back-scroll.
+        _ = m.contentChanged(to: frame(top: -2300, height: 3400), at: t0.addingTimeInterval(1.0))
+        XCTAssertFalse(m.pinned)
+    }
+
     /// The pill signal needs both "unpinned" and "visibly short of the end",
     /// so a stick that lands within the slack drops it.
     func testShowJumpRequiresDistance() {

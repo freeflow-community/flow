@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 #if DEBUG
 import os
 /// Debug-only event tracing (compiled out of Release). This is how the
@@ -95,6 +96,14 @@ struct TranscriptFollowModel: Equatable {
     private(set) var contentFrame = CGRect.zero
     /// Last known viewport height.
     private(set) var viewportHeight: CGFloat = 0
+    /// Unpin evidence is ignored until this instant. Set whenever an
+    /// *animated* stick is issued: the follow animation's own rebound frames
+    /// (retargets during a burst of arrivals, easing overshoot) move the
+    /// content's top edge down exactly like an upward scroll, and reading
+    /// them as reader intent unpinned the follow mid-burst — new messages
+    /// then silently stopped following. Unanimated sticks are instant and
+    /// need no quiet window.
+    private(set) var quietUntil = Date.distantPast
 
     var inTransition: Bool { transitions > 0 }
     /// How far the newest message sits below the viewport.
@@ -105,10 +114,16 @@ struct TranscriptFollowModel: Equatable {
     /// so a transient measurement can never flicker the pill up.
     var showJump: Bool { !pinned && !atBottom }
 
+    /// Issue a stick, opening the unpin-quiet window for animated ones.
+    private mutating func stick(animated: Bool, at now: Date) -> Command {
+        if animated { quietUntil = now.addingTimeInterval(0.4) }
+        return .stick(animated: animated)
+    }
+
     // MARK: - Geometry events
 
     /// The content frame moved or resized (in the scroll view's space).
-    mutating func contentChanged(to new: CGRect) -> Command {
+    mutating func contentChanged(to new: CGRect, at now: Date = Date()) -> Command {
         let old = contentFrame
         contentFrame = new
         #if DEBUG
@@ -126,11 +141,11 @@ struct TranscriptFollowModel: Equatable {
                 return .none
             }
             if new.minY > old.minY + 1 {
-                pinned = false
+                if now >= quietUntil { pinned = false }
                 return .none
             }
             if pinned, new.height > old.height + 1, !isAligned {
-                return .stick(animated: true)
+                return stick(animated: true, at: now)
             }
             return .none
 
@@ -149,7 +164,7 @@ struct TranscriptFollowModel: Equatable {
             // the height changed is content settling, not a scroll, and the
             // viewport never enters into it — which is what kept the keyboard
             // from unpinning the follow.
-            if hasDragged, abs(new.height - old.height) <= 1 {
+            if hasDragged, abs(new.height - old.height) <= 1, now >= quietUntil {
                 if distanceFromBottom > minBackScroll {
                     pinned = false
                 } else if distanceFromBottom <= bottomSlack {
@@ -185,9 +200,9 @@ struct TranscriptFollowModel: Equatable {
     }
 
     /// The jump pill was tapped.
-    mutating func jumpTapped() -> Command {
+    mutating func jumpTapped(at now: Date = Date()) -> Command {
         pinned = true
-        return .stick(animated: true)
+        return stick(animated: true, at: now)
     }
 
     // MARK: - Content events
@@ -196,7 +211,7 @@ struct TranscriptFollowModel: Equatable {
     /// pressed send, so I mean to see it land (#111 kept everyone else's
     /// messages from dragging a back-scrolled reader down; the pill offers
     /// the trip instead).
-    mutating func lastMessageChanged(isOwn: Bool) -> Command {
+    mutating func lastMessageChanged(isOwn: Bool, at now: Date = Date()) -> Command {
         #if DEBUG
         let p = pinned, f = focusActive
         followLog.info("lastMessage own=\(isOwn) pin=\(p) focus=\(f)")
@@ -204,7 +219,7 @@ struct TranscriptFollowModel: Equatable {
         guard !focusActive else { return .none }
         if isOwn { pinned = true }
         guard pinned else { return .none }
-        return .stick(animated: true)
+        return stick(animated: true, at: now)
     }
 
     /// The settle pass (#280): while the reader has never dragged, keep

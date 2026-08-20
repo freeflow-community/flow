@@ -20,6 +20,13 @@ struct ChannelScreen: View {
     /// whole content pane unable to push, pop, or even hit-test (nav "stuck").
     @State private var restoredParkedThread = false
     @State private var showPins = false
+    /// How many of the newest cached messages the transcript shows (see the
+    /// macOS twin in ChannelView: one window keeps every ordinary open on the
+    /// exact, eager path; "Load earlier" widens it). The fetch grabs one row
+    /// beyond the window as the has-more probe.
+    @State private var transcriptWindow = ChannelScreen.windowStep
+
+    static let windowStep = 100
     @State private var showChannelOptions = false
     /// The member whose profile card is open (#223). One sheet for the whole
     /// transcript, driven by whichever row was tapped.
@@ -89,6 +96,11 @@ struct ChannelScreen: View {
         }
     }
 
+    private var hasMoreCached: Bool { messages.value.count > transcriptWindow }
+    private var transcript: [Message] {
+        hasMoreCached ? Array(messages.value.dropFirst()) : messages.value
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             topicLine
@@ -98,7 +110,7 @@ struct ChannelScreen: View {
             // is deliberately outside, since tapping it means "type".
             VStack(spacing: 0) {
                 MessageListView(
-                    messages: messages.value,
+                    messages: transcript,
                     userNames: usersById.mapValues { $0.displayNameWithBadge },
                     userStatuses: statusesById,
                     currentUserId: app.currentUser?.id,
@@ -107,12 +119,18 @@ struct ChannelScreen: View {
                         avatarPaths: app.avatarPaths,
                         agentIds: app.agentIds
                     ),
-                    hasMore: app.hasMore[channelId] ?? false,
+                    hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                     isLoadingHistory: app.loadingHistory.contains(channelId),
                     showThreadAffordances: true,
                     unreadThreadRootIds: Set(channel.value?.unreadThreadRootIds ?? []),
                     onLoadOlder: {
-                        Task { await app.engine.loadOlder(channelId: channelId) }
+                        // Widen the window first (instant, from cache); go to
+                        // the server only once the cache is exhausted.
+                        let cacheHadMore = hasMoreCached
+                        transcriptWindow += Self.windowStep
+                        if !cacheHadMore {
+                            Task { await app.engine.loadOlder(channelId: channelId) }
+                        }
                     },
                     onOpenThread: { rootId in
                         threadRoute = ThreadRoute(rootId: rootId)
@@ -186,6 +204,7 @@ struct ChannelScreen: View {
         }
         // Jump-to-message (phase 12): page older history until the target is
         // loaded, then MessageListView scrolls to it; give up when exhausted.
+        .onChange(of: transcriptWindow) { _, _ in startMessages() }
         .onChange(of: app.focusMessageId) { _, _ in pageToFocusIfNeeded() }
         .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
         .modifier(DebugTestSend(channelId: channelId, app: app))
@@ -249,12 +268,7 @@ struct ChannelScreen: View {
             // keys it), so anything already rendered belongs to *this* channel
             // and must survive the observation restarting. Clearing it first
             // was a self-inflicted blank (#191).
-            messages.start(db: app.db) { db in
-                try Message
-                    .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
-                    .order(Column("id"))
-                    .fetchAll(db)
-            }
+            startMessages()
             pinnedMessages.start(db: app.db, reset: []) { db in
                 try Message
                     .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
@@ -268,11 +282,32 @@ struct ChannelScreen: View {
         }
     }
 
+    /// (Re)start the windowed transcript observation: the newest
+    /// `transcriptWindow` + 1 rows, ascending. No `reset:` — see the note at
+    /// the old call site (#191): anything rendered belongs to this channel.
+    private func startMessages() {
+        let channelId = channelId
+        let limit = transcriptWindow + 1
+        messages.start(db: app.db) { db in
+            try Array(
+                Message
+                    .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
+                    .order(Column("id").desc)
+                    .limit(limit)
+                    .fetchAll(db)
+                    .reversed()
+            )
+        }
+    }
+
     /// Page older history toward a jump-to-message target until it's loaded.
     private func pageToFocusIfNeeded() {
         guard let fid = app.focusMessageId else { return }
-        if messages.value.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
-        if app.hasMore[channelId] ?? false {
+        if transcript.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
+        if hasMoreCached {
+            transcriptWindow += Self.windowStep // cached but outside the window
+        } else if app.hasMore[channelId] ?? false {
+            transcriptWindow += Self.windowStep
             Task { await app.engine.loadOlder(channelId: channelId) }
         } else {
             app.focusMessageId = nil // not in this channel's loaded history
