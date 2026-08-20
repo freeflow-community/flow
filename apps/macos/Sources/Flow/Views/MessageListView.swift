@@ -157,6 +157,24 @@ struct MessageListView: View {
                             }
                         }
                         .id(row.message.id)
+                        // Scroll memory's recorder: each row reports itself
+                        // when it crosses the viewport top; only one does, so
+                        // the preference resolves to the top-visible message.
+                        // Passive — it observes geometry and never scrolls, so
+                        // it cannot become the second driver the NOTE below
+                        // warns about.
+                        .background(
+                            GeometryReader { geo in
+                                let f = geo.frame(in: .named(Self.scrollSpace))
+                                Color.clear.preference(
+                                    key: TopVisibleMessageKey.self,
+                                    // Probed just inside the list's top
+                                    // padding, so the first row still counts
+                                    // when scrolled all the way up.
+                                    value: f.minY <= 16 && f.maxY > 16 ? row.message.id : nil
+                                )
+                            }
+                        )
                     }
                 }
                 .padding(.vertical, 8)
@@ -210,31 +228,49 @@ struct MessageListView: View {
                     showPill = false
                 }
             }
-            // NOTE (scroll-blanking fix): there used to be a
-            // `.scrollPosition(id: $topVisibleId, anchor: .top)` here feeding
-            // MessageScrollMemory. It never actually tracked anything —
-            // scrollPosition(id:) only reports a position when the lazy stack
-            // is marked `.scrollTargetLayout()`, which it isn't — so scroll
-            // memory was already inert. What it *did* do was install a second
-            // scroll driver alongside .defaultScrollAnchor(.bottom); when the
-            // composer changed height (attachment tray, a draft wrapping to a
-            // second line) the two disagreed, the content height ballooned and
-            // the list scrolled into empty space, blanking the transcript.
-            // The dead remains (the recorder-less MessageScrollMemory store
-            // and its restore branch here) are gone now: re-adding scroll
-            // memory means tracking the top-visible row for real and routing
-            // the restore through TranscriptFollowModel — not just a modifier.
+            // NOTE (scroll-blanking fix): a `.scrollPosition(id:)` modifier
+            // used to sit here feeding MessageScrollMemory. It never tracked
+            // anything (no `scrollTargetLayout()`), and it installed a second
+            // scroll driver alongside .defaultScrollAnchor(.bottom) — when
+            // the composer changed height the two disagreed and the list
+            // scrolled into empty space, blanking the transcript. Scroll
+            // memory is back, built the way that note demanded: the recorder
+            // is a passive per-row preference (see the rows above), and the
+            // restore below goes through TranscriptFollowModel — there is
+            // still exactly one scroll driver.
+            .onPreferenceChange(TopVisibleMessageKey.self) { topId in
+                // Record only a *back-scrolled* position, in steady state —
+                // never mid-restore (appliedKey), never mid-jump. A reader at
+                // the bottom clears their entry: bottom is where a return
+                // lands by default, and restoring "newest at the top" would
+                // push them a viewport up from where they were.
+                guard let key = scrollKey, key == appliedKey, focusMessageId == nil else { return }
+                if follow.pinned {
+                    MessageScrollMemory.clear(key)
+                } else if let topId {
+                    MessageScrollMemory.record(key, topMessageId: topId)
+                }
+            }
             .onChange(of: messages.last?.id) { _, newId in
                 // A pending jump owns the scroll position — skip both the
-                // first-load landing and the follow-to-bottom (tryFocus
-                // handles the scroll, and marks appliedKey so this doesn't
-                // re-land at the bottom once the target is cleared).
+                // restore/landing and the follow-to-bottom (tryFocus handles
+                // the scroll, and marks appliedKey so this doesn't re-land
+                // once the target is cleared).
                 guard focusMessageId == nil, let newId else { return }
                 if scrollKey != appliedKey {
-                    // The channel just (re)loaded: land at the bottom.
+                    // The channel just (re)loaded: back to where the reader
+                    // left off if the memory is fresh (10 min) and the row is
+                    // still loaded, else land at the bottom.
                     appliedKey = scrollKey
-                    follow.positionRestored(atBottom: true)
-                    proxy.scrollTo(newId, anchor: .bottom)
+                    if let key = scrollKey, let remembered = MessageScrollMemory.fresh(key),
+                       messages.contains(where: { $0.id == remembered }) {
+                        // Mid-history: unpin so no glue fights the restore.
+                        follow.positionRestored(atBottom: false)
+                        proxy.scrollTo(remembered, anchor: .top)
+                    } else {
+                        follow.positionRestored(atBottom: true)
+                        proxy.scrollTo(newId, anchor: .bottom)
+                    }
                 } else {
                     // A genuinely new message in the current channel. The model
                     // follows it down only while pinned — someone reading
@@ -358,6 +394,16 @@ struct MessageListView: View {
 }
 
 /// Centered "Today" / date pill between days (design 3a).
+/// The message whose row crosses the viewport's top edge — scroll memory's
+/// recorder input. Exactly one row reports a non-nil id (its frame spans the
+/// probe line), so the reduction is a plain first-non-nil.
+private struct TopVisibleMessageKey: PreferenceKey {
+    static let defaultValue: String? = nil
+    static func reduce(value: inout String?, nextValue: () -> String?) {
+        value = value ?? nextValue()
+    }
+}
+
 struct DayDividerView: View {
     let iso: String
 

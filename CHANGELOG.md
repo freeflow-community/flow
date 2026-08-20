@@ -224,6 +224,12 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Per-channel scroll-position memory (10-min TTL) is macOS-only, by operator
+  ruling: a desktop sidebar switch should return you to your back-scroll spot,
+  while a phone's full-screen channel change makes bottom-on-return the
+  expected behavior, so iOS deliberately skips it. Web has no equivalent
+  either; if it ever wants one, the model is `MessageScrollMemory` + the
+  top-visible-row preference in the macOS `MessageListView`.
 - The transcript's re-stick-on-shrink rule (#280) is iOS-only. macOS keeps
   `.defaultScrollAnchor(.bottom)` in its all-roles form, so the framework
   re-anchors on content size changes for free; iOS dropped the `.sizeChanges`
