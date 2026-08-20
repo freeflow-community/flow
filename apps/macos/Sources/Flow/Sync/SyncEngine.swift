@@ -306,6 +306,12 @@ actor SyncEngine {
         }
         var before: String? = nil
         var pages = 0
+        // The first page (the newest messages) is stored as soon as it lands,
+        // so the transcript updates fast; the older pages accumulate into one
+        // write. Each write refetches and re-diffs the whole channel for every
+        // observing view, so a deep backfill used to mean up to five full
+        // list rebuilds — and five glue scrolls — where one is enough.
+        var olderPages: [Message] = []
         while pages < 5 {
             let query: [URLQueryItem] = [
                 URLQueryItem(name: "limit", value: "50"),
@@ -315,14 +321,17 @@ actor SyncEngine {
                 "/v1/channels/\(channelId)/messages", query: query
             ) else { break }
             pages += 1
-            await storeMessages(resp.messages)
             if before == nil {
+                await storeMessages(resp.messages)
                 await appState?.setHasMore(channelId: channelId, resp.hasMore)
+            } else {
+                olderPages.append(contentsOf: resp.messages)
             }
             guard resp.hasMore, let oldest = resp.messages.last?.id else { break }
             if let newest = newestLocalId, oldest <= newest { break }
             before = oldest
         }
+        await storeMessages(olderPages)
     }
 
     // MARK: - Workspaces

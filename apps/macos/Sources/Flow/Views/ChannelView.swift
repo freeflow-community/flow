@@ -33,6 +33,13 @@ struct ChannelView: View {
                 userNames: userNames,
                 userStatuses: userStatuses,
                 currentUserId: app.currentUser?.id,
+                context: TranscriptContext(
+                    engine: app.engine,
+                    avatarPaths: app.avatarPaths,
+                    agentIds: app.agentIds,
+                    onError: { app.showError($0) },
+                    onSelectArtifact: { win.selectArtifact($0) }
+                ),
                 hasMore: app.hasMore[channelId] ?? false,
                 isLoadingHistory: app.loadingHistory.contains(channelId),
                 showThreadAffordances: true,

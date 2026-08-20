@@ -55,6 +55,13 @@ struct ThreadPanelView: View {
                                 message: message,
                                 userNames: userNames.value,
                                 currentUserId: app.currentUser?.id,
+                                context: TranscriptContext(
+                                    engine: app.engine,
+                                    avatarPaths: app.avatarPaths,
+                                    agentIds: app.agentIds,
+                                    onError: { app.showError($0) },
+                                    onSelectArtifact: { win.selectArtifact($0) }
+                                ),
                                 showHeader: true,
                                 showThreadAffordances: false,
                                 highlighted: message.id == flashId,
@@ -65,6 +72,7 @@ struct ThreadPanelView: View {
                                 },
                                 onOpenProfile: { profileUserId = $0 }
                             )
+                            .equatable()
                             .id(message.id)
                             if message.id == rootId {
                                 HStack {

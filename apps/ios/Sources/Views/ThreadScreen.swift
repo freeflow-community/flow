@@ -52,6 +52,11 @@ struct ThreadScreen: View {
                                 userNames: userNames,
                                 userStatuses: statusesById,
                                 currentUserId: app.currentUser?.id,
+                                context: TranscriptContext(
+                                    engine: app.engine,
+                                    avatarPaths: app.avatarPaths,
+                                    agentIds: app.agentIds
+                                ),
                                 showHeader: true,
                                 showThreadAffordances: false,
                                 highlighted: message.id == flashId,
@@ -62,6 +67,7 @@ struct ThreadScreen: View {
                                 },
                                 onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
                             )
+                            .equatable()
                             .id(message.id)
                             if message.id == rootId {
                                 HStack {

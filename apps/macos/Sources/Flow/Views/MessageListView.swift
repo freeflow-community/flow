@@ -6,6 +6,9 @@ struct MessageListView: View {
     let userNames: [String: String]
     var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
+    /// Engine + per-user lookups for the rows, passed by value so rows don't
+    /// observe `AppState` (see `TranscriptContext`).
+    let context: TranscriptContext
     let hasMore: Bool
     /// The channel's history page is still in flight (#191, ported from iOS).
     /// Drives the loading states below — an empty transcript with no
@@ -30,6 +33,11 @@ struct MessageListView: View {
     var focusMessageId: String? = nil
     var onFocused: () -> Void = {}
 
+    /// Precomputed rows (grouping, day dividers, parsed markdown) rebuilt only
+    /// when the message array actually changes — never per render pass. A
+    /// plain class in `@State`: mutating it doesn't touch SwiftUI state, and
+    /// its identity is stable across body evaluations.
+    @State private var rowCache = TranscriptRowCache()
     /// The scrollKey we've already applied a restore/bottom decision for, so a
     /// new message in the *current* channel doesn't re-trigger a restore.
     @State private var appliedKey: String?
@@ -103,31 +111,37 @@ struct MessageListView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                    ForEach(rowCache.rows(for: messages)) { row in
                         VStack(alignment: .leading, spacing: 0) {
-                            if startsNewDay(at: index) {
-                                DayDividerView(iso: message.createdAt)
+                            if row.startsNewDay {
+                                DayDividerView(iso: row.message.createdAt)
                             }
-                            if message.systemKind != nil {
-                                SystemLineView(text: message.body)
+                            if row.message.systemKind != nil {
+                                SystemLineView(text: row.message.body)
                             } else {
                                 MessageRow(
-                                    message: message,
+                                    message: row.message,
+                                    segments: row.segments,
                                     userNames: userNames,
                                     userStatuses: userStatuses,
                                     currentUserId: currentUserId,
-                                    showHeader: showsHeader(at: index),
+                                    context: context,
+                                    showHeader: row.showsHeader,
                                     showThreadAffordances: showThreadAffordances,
-                                    threadUnread: unreadThreadRootIds.contains(message.id),
-                                    highlighted: message.id == flashId,
+                                    threadUnread: unreadThreadRootIds.contains(row.message.id),
+                                    highlighted: row.message.id == flashId,
                                     onOpenThread: onOpenThread,
                                     onEdit: onEdit,
                                     onDelete: onDelete,
                                     onOpenProfile: onOpenProfile
                                 )
+                                // Skip the row's body when nothing it renders
+                                // changed — its == ignores the closures, which
+                                // are recreated on every list evaluation.
+                                .equatable()
                             }
                         }
-                        .id(message.id)
+                        .id(row.message.id)
                     }
                 }
                 .padding(.vertical, 8)
@@ -310,27 +324,6 @@ struct MessageListView: View {
         }
     }
 
-    /// Slack-style grouping: show the author header when the sender changes
-    /// or more than 5 minutes passed since the previous message.
-    private func showsHeader(at index: Int) -> Bool {
-        guard index > 0 else { return true }
-        if startsNewDay(at: index) { return true }
-        let prev = messages[index - 1]
-        let cur = messages[index]
-        // A system line (join/leave) breaks a run — the next message re-shows its header.
-        if prev.systemKind != nil { return true }
-        if prev.userId != cur.userId { return true }
-        guard let prevDate = ISO8601.parse(prev.createdAt),
-              let curDate = ISO8601.parse(cur.createdAt) else { return true }
-        return curDate.timeIntervalSince(prevDate) > 300
-    }
-
-    private func startsNewDay(at index: Int) -> Bool {
-        guard index > 0 else { return true }
-        guard let prev = ISO8601.parse(messages[index - 1].createdAt),
-              let cur = ISO8601.parse(messages[index].createdAt) else { return false }
-        return !Calendar.current.isDate(prev, inSameDayAs: cur)
-    }
 }
 
 /// Centered "Today" / date pill between days (design 3a).
@@ -376,11 +369,17 @@ struct SystemLineView: View {
     }
 }
 
-struct MessageRow: View {
+struct MessageRow: View, Equatable {
     let message: Message
+    /// Pre-parsed body blocks from the row model; nil (thread panel) falls
+    /// back to parsing in place.
+    var segments: [MarkdownBlocks.Segment]? = nil
     let userNames: [String: String]
     var userStatuses: [String: String] = [:]
     let currentUserId: String?
+    /// Engine + per-user lookups, passed by value: the row must not observe
+    /// `AppState`, or every publish re-renders every visible row.
+    let context: TranscriptContext
     let showHeader: Bool
     let showThreadAffordances: Bool
     /// This thread holds an unread notification for me (#270).
@@ -392,8 +391,24 @@ struct MessageRow: View {
     let onDelete: (Message) -> Void
     var onOpenProfile: (String) -> Void = { _ in }
 
-    @EnvironmentObject private var app: AppState
-    @EnvironmentObject private var win: WindowState
+    /// Everything the row *renders* — and only that. Closures are recreated
+    /// on every parent evaluation and deliberately ignored (their behavior is
+    /// stable); `segments` is derived from `message.body`, so comparing the
+    /// message covers it. Combined with `.equatable()` at the use sites, this
+    /// is what stops a 200-row transcript re-running every row body whenever
+    /// the list's scroll-tracking state changes.
+    nonisolated static func == (a: MessageRow, b: MessageRow) -> Bool {
+        a.message == b.message
+            && a.showHeader == b.showHeader
+            && a.showThreadAffordances == b.showThreadAffordances
+            && a.threadUnread == b.threadUnread
+            && a.highlighted == b.highlighted
+            && a.currentUserId == b.currentUserId
+            && a.userNames == b.userNames
+            && a.userStatuses == b.userStatuses
+            && a.context == b.context
+    }
+
     @Environment(\.textZoom) private var textZoom
     @State private var hovering = false
     @State private var showReactionPicker = false
@@ -476,7 +491,9 @@ struct MessageRow: View {
                         .italic()
                         .foregroundStyle(.tertiary)
                 } else {
-                    let segments = MarkdownBlocks.segments(message.body)
+                    // Parsed once in the row model; the fallback is for the
+                    // thread panel, which builds rows directly.
+                    let segments = self.segments ?? MarkdownBlocks.segments(message.body)
                     if !segments.isEmpty {
                         bodyContent(segments)
                     } else if pendingSlow {
@@ -495,7 +512,7 @@ struct MessageRow: View {
                             canRemove: message.userId == currentUserId,
                             onRemove: {
                                 Task {
-                                    await app.engine.deleteUnfurl(
+                                    await context.engine.deleteUnfurl(
                                         messageId: message.id, urlHash: unfurl.urlHash)
                                 }
                             },
@@ -538,7 +555,7 @@ struct MessageRow: View {
                                         AvatarChip(
                                             userId: uid,
                                             name: userNames[uid] ?? "Unknown",
-                                            avatarPath: app.avatarPaths[uid],
+                                            avatarPath: context.avatarPaths[uid],
                                             size: 20,
                                             radius: 6
                                         )
@@ -615,14 +632,14 @@ struct MessageRow: View {
             if !message.isDeleted, !message.pending, !message.failed {
                 ForEach(Array(EmojiCatalog.quickReactions.prefix(6)), id: \.self) { emoji in
                     Button(emoji) {
-                        Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                        Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
                     }
                 }
                 Divider()
             }
             if message.failed {
-                Button("Retry Send") { Task { await app.engine.retrySend(message) } }
-                Button("Discard", role: .destructive) { Task { await app.engine.discardFailed(message) } }
+                Button("Retry Send") { Task { await context.engine.retrySend(message) } }
+                Button("Discard", role: .destructive) { Task { await context.engine.discardFailed(message) } }
                 Divider()
             }
             if showThreadAffordances, !message.failed {
@@ -638,7 +655,7 @@ struct MessageRow: View {
             }
             if !message.isDeleted, !message.pending, !message.failed {
                 Button(message.pinnedAt == nil ? "Pin Message" : "Unpin Message") {
-                    Task { await app.engine.togglePin(message) }
+                    Task { await context.engine.togglePin(message) }
                 }
             }
             if !message.files.isEmpty, !message.isDeleted, !message.pending {
@@ -664,7 +681,7 @@ struct MessageRow: View {
         HStack(spacing: 2) {
             ForEach(Self.quickReactions, id: \.self) { emoji in
                 MenuIconButton(help: "React \(emoji)") {
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                    Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
                 } label: {
                     Text(emoji)
                 }
@@ -685,7 +702,7 @@ struct MessageRow: View {
             .popover(isPresented: $showReactionPicker) {
                 EmojiPickerView { emoji in
                     showReactionPicker = false
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                    Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
                 }
             }
 
@@ -709,7 +726,7 @@ struct MessageRow: View {
             }
 
             MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
-                Task { await app.engine.togglePin(message) }
+                Task { await context.engine.togglePin(message) }
             } label: {
                 Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
                     .font(.system(size: 14))
@@ -846,11 +863,11 @@ struct MessageRow: View {
             do {
                 var last: Artifact?
                 for file in files {
-                    last = try await app.engine.createArtifact(channelId: channelId, fileId: file.id)
+                    last = try await context.engine.createArtifact(channelId: channelId, fileId: file.id)
                 }
-                if let last { win.selectArtifact(last.id) }
+                if let last { context.onSelectArtifact(last.id) }
             } catch {
-                app.showError("Couldn't pin artifact: \(error.localizedDescription)")
+                context.onError("Couldn't pin artifact: \(error.localizedDescription)")
             }
         }
     }
@@ -861,10 +878,10 @@ struct MessageRow: View {
         let channelId = message.channelId
         Task {
             do {
-                let artifact = try await app.engine.createLinkArtifact(channelId: channelId, url: url)
-                win.selectArtifact(artifact.id)
+                let artifact = try await context.engine.createLinkArtifact(channelId: channelId, url: url)
+                context.onSelectArtifact(artifact.id)
             } catch {
-                app.showError("Couldn't pin link: \(error.localizedDescription)")
+                context.onError("Couldn't pin link: \(error.localizedDescription)")
             }
         }
     }
@@ -1049,11 +1066,11 @@ struct MessageRow: View {
             Label("Failed to send", systemImage: "exclamationmark.circle.fill")
                 .flowFont(.caption)
                 .foregroundStyle(MC.danger)
-            Button("Retry") { Task { await app.engine.retrySend(message) } }
+            Button("Retry") { Task { await context.engine.retrySend(message) } }
                 .buttonStyle(.link)
                 .flowFont(.caption, weight: .semibold)
                 .pointingHandCursor()
-            Button("Discard") { Task { await app.engine.discardFailed(message) } }
+            Button("Discard") { Task { await context.engine.discardFailed(message) } }
                 .buttonStyle(.link)
                 .flowFont(.caption)
                 .foregroundStyle(MC.muted)
@@ -1064,7 +1081,7 @@ struct MessageRow: View {
 
     /// An agent's live "thinking…" row carries its own stop control (#67).
     private var isThinkingRow: Bool {
-        app.agentIds.contains(message.userId) && AgentStatus.isThinkingRow(message.body)
+        context.agentIds.contains(message.userId) && AgentStatus.isThinkingRow(message.body)
     }
 
     /// True once we've asked: the reaction is already ours, so the bridge has
@@ -1078,7 +1095,7 @@ struct MessageRow: View {
     private var interruptButton: some View {
         Button {
             guard !stopping else { return }
-            Task { await app.engine.toggleReaction(messageId: message.id, emoji: AgentStatus.interruptEmoji) }
+            Task { await context.engine.toggleReaction(messageId: message.id, emoji: AgentStatus.interruptEmoji) }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "stop.circle")
@@ -1104,7 +1121,7 @@ struct MessageRow: View {
             ForEach(message.reactions, id: \.emoji) { agg in
                 let mine = currentUserId.map { agg.userIds.contains($0) } ?? false
                 Button {
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: agg.emoji) }
+                    Task { await context.engine.toggleReaction(messageId: message.id, emoji: agg.emoji) }
                 } label: {
                     HStack(spacing: 3) {
                         Text(agg.emoji).flowFont(size: 12)
@@ -1132,7 +1149,7 @@ struct MessageRow: View {
 
     private var avatarPath: String? {
         // Avatar URLs are API-relative (/v1/avatars/<key>); cached user rows carry them.
-        app.avatarPaths[message.userId]
+        context.avatarPaths[message.userId]
     }
 }
 
