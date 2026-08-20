@@ -224,6 +224,9 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Hiding the navigation bar buttons' glass capsule (#298) is iOS-only because
+  the chrome is: it is an iOS 26 Liquid Glass default. macOS draws its own
+  header view and web its own DOM, so neither has anything to hide.
 - Per-channel scroll-position memory (10-min TTL) is macOS-only, by operator
   ruling: a desktop sidebar switch should return you to your back-scroll spot,
   while a phone's full-screen channel change makes bottom-on-return the

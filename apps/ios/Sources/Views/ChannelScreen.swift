@@ -219,7 +219,7 @@ struct ChannelScreen: View {
         // MainView supplies as the content pane's leading toolbar item, plus
         // the trailing "⋯" menu below (#188): pins, artifacts and channel
         // options in one place, matching web and macOS.
-        .toolbar {
+        .flowBarToolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {

@@ -86,7 +86,7 @@ struct MainView: View {
                     emptyState
                 }
             }
-            .toolbar {
+            .flowBarToolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         openDrawer()
