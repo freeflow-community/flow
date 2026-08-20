@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import LiveKit
 import SwiftUI
 
 /// Main-actor app-wide state: auth phase, connection, and ephemeral
@@ -62,6 +63,19 @@ final class AppState: ObservableObject {
     @Published private(set) var typing: [String: [String: Date]] = [:]
     /// Channels an agent is working in right now (#137) — the sidebar spinner.
     @Published private(set) var busyChannelIds: Set<String> = []
+    /// channelId -> live voice-huddle roster (Phase 1). Purely in-memory, like
+    /// busyChannelIds: LiveKit is the source of truth (decision log
+    /// 2026-08-20), not this cache, so nothing here is worth persisting.
+    @Published private(set) var huddleRosters: [String: [HuddleParticipant]] = [:]
+    /// Channel id of the huddle this app is connected to, or nil. App-level
+    /// (not per-window) so the connection survives navigating between
+    /// channels — see CONTEXT.md (Huddle).
+    @Published private(set) var activeHuddleChannelId: String?
+    @Published private(set) var activeHuddleWorkspaceId: String?
+    @Published private(set) var huddleConnecting: Bool = false
+    /// Muted on join, by decision — the mic is never auto-published.
+    @Published private(set) var huddleMuted: Bool = true
+    private var huddleRoom: Room?
     /// channelId -> more history available on the server
     @Published private(set) var hasMore: [String: Bool] = [:]
     /// Channels whose history page is in flight (#191). A transcript with
@@ -239,6 +253,8 @@ final class AppState: ObservableObject {
         presence = [:]
         typing = [:]
         busyChannelIds = []
+        huddleRosters = [:]
+        leaveHuddle() // don't leave a signed-out session's token connected
         hasMore = [:]
         loadingHistory = []
         notificationUnreadByWorkspace = [:]
@@ -336,6 +352,22 @@ final class AppState: ObservableObject {
     /// (asleep, reconnecting) gets back in step.
     func setBusyChannelIds(_ ids: Set<String>) {
         busyChannelIds = ids
+    }
+
+    /// A channel's live huddle roster after a change (Phase 1) — the server's
+    /// aggregate, not one joiner/leaver. Empty means the huddle ended.
+    func huddleUpdated(channelId: String, participants: [HuddleParticipant]) {
+        if participants.isEmpty {
+            huddleRosters.removeValue(forKey: channelId)
+        } else {
+            huddleRosters[channelId] = participants
+        }
+    }
+
+    /// Replace the whole map from a channel-list fetch, same reasoning as
+    /// setBusyChannelIds.
+    func setHuddleRosters(_ rosters: [String: [HuddleParticipant]]) {
+        huddleRosters = rosters
     }
 
     func setAvatarPaths(_ paths: [String: String]) {
@@ -518,6 +550,80 @@ final class AppState: ObservableObject {
             } catch {
                 errorMessage = "Couldn't sign in from the app link: \(error.localizedDescription)"
             }
+        }
+    }
+
+    // MARK: - Voice huddle (Phase 1)
+
+    /// Join a channel's huddle: mints a token via the server, then connects
+    /// LiveKit's `Room`. "Join" doubles as start — there's no separate
+    /// ring/start action (CONTEXT.md: Huddle). Idempotent — calling this
+    /// while already in this channel's huddle is a no-op.
+    func joinHuddle(channelId: String, workspaceId: String) {
+        guard activeHuddleChannelId != channelId else { return }
+        Task {
+            if activeHuddleChannelId != nil { await leaveHuddleAsync() }
+            huddleConnecting = true
+            defer { huddleConnecting = false }
+            do {
+                let resp = try await engine.joinHuddle(channelId: channelId)
+                let room = Room(delegate: self)
+                do {
+                    try await room.connect(url: resp.url, token: resp.token)
+                } catch {
+                    // The REST join already landed server-side (it publishes
+                    // on roster change), but the RTC connection never came
+                    // up — without this, the roster would show a participant
+                    // who was never actually live. Roll it back.
+                    await engine.leaveHuddle(channelId: channelId)
+                    throw error
+                }
+                huddleRoom = room
+                activeHuddleChannelId = channelId
+                activeHuddleWorkspaceId = workspaceId
+                huddleMuted = true
+            } catch {
+                errorMessage = "Couldn't join the huddle: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func leaveHuddle() {
+        Task { await leaveHuddleAsync() }
+    }
+
+    private func leaveHuddleAsync() async {
+        guard let channelId = activeHuddleChannelId else { return }
+        let room = huddleRoom
+        huddleRoom = nil
+        activeHuddleChannelId = nil
+        activeHuddleWorkspaceId = nil
+        huddleMuted = true
+        await room?.disconnect()
+        await engine.leaveHuddle(channelId: channelId)
+    }
+
+    func toggleHuddleMute() {
+        guard let room = huddleRoom else { return }
+        let next = !huddleMuted
+        huddleMuted = next
+        Task { try? await room.localParticipant.setMicrophone(enabled: !next) }
+    }
+}
+
+extension AppState: RoomDelegate {
+    /// LiveKit's own disconnect signal — not guaranteed to arrive on the main
+    /// thread, hence the hop. Covers both a real network drop and a second
+    /// device/tab taking over our identity (decision log 2026-08-20:
+    /// bare-userId identity, one live presence per person) — both look the
+    /// same from here, and both should clear local huddle state.
+    nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
+        Task { @MainActor [weak self] in
+            guard let self, self.huddleRoom === room else { return }
+            self.huddleRoom = nil
+            self.activeHuddleChannelId = nil
+            self.activeHuddleWorkspaceId = nil
+            self.huddleMuted = true
         }
     }
 }

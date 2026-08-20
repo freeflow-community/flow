@@ -487,6 +487,7 @@ actor SyncEngine {
         // this snapshot is also how a client that missed events while asleep
         // gets back in step.
         await appState?.setBusyChannelIds(resp.busyChannelIds)
+        await appState?.setHuddleRosters(resp.huddleRosters)
         try? await db.writer.write { db in
             let ids = channels.map(\.id)
             try Channel
@@ -1157,6 +1158,22 @@ actor SyncEngine {
         await appState?.channelBecameUnavailable(channelId)
     }
 
+    // MARK: - Voice huddle (Phase 1)
+
+    /// Mints a LiveKit access token scoped to this channel's room. Idempotent
+    /// server-side — calling it while already an active participant re-mints
+    /// a fresh token rather than erroring (decision log 2026-08-20); this is
+    /// also the reconnect path.
+    func joinHuddle(channelId: String) async throws -> HuddleJoinResponse {
+        try await api.post("/v1/channels/\(channelId)/huddle/join")
+    }
+
+    /// Best-effort: the webhook safety net (participant_left) covers a
+    /// request that never lands.
+    func leaveHuddle(channelId: String) async {
+        let _: OkResponse? = try? await api.post("/v1/channels/\(channelId)/huddle/leave")
+    }
+
     func archiveChannel(_ channelId: String) async throws {
         let ch: Channel = try await api.post("/v1/channels/\(channelId)/archive")
         try? await db.writer.write { db in try ch.save(db) }
@@ -1426,6 +1443,9 @@ actor SyncEngine {
             // leave this client rendering nothing.
             await appState?.channelIndicatorReceived(
                 channelId: ind.channelId, busy: ind.state != nil)
+
+        case .huddleUpdated(let d):
+            await appState?.huddleUpdated(channelId: d.channelId, participants: d.participants)
 
         case .channel(let dto):
             // The broadcast DTO claims isMember from the creator's perspective;
