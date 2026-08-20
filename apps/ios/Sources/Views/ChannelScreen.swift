@@ -70,6 +70,39 @@ struct ChannelScreen: View {
         return text.isEmpty ? nil : text
     }
 
+    /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
+    /// not while archived. "Join Huddle" doubles as start — see CONTEXT.md
+    /// (Huddle). The participant count is the ambient indicator for a huddle
+    /// that's live but not yet joined.
+    @ToolbarContentBuilder
+    private var huddleToolbarItem: some ToolbarContent {
+        if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
+            ToolbarItem(placement: .topBarTrailing) {
+                let inThisHuddle = app.activeHuddleChannelId == channelId
+                let roster = app.huddleRosters[channelId] ?? []
+                Button {
+                    if inThisHuddle {
+                        app.leaveHuddle()
+                    } else if let workspaceId = channel.value?.workspaceId {
+                        app.joinHuddle(channelId: channelId, workspaceId: workspaceId)
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "mic.fill")
+                        if !inThisHuddle, !roster.isEmpty {
+                            Text("\(roster.count)")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                    }
+                    .foregroundStyle(inThisHuddle ? MC.accent : MC.muted)
+                }
+                .disabled(app.huddleConnecting)
+                .accessibilityLabel(inThisHuddle ? "Leave huddle" : "Join huddle")
+                .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
+            }
+        }
+    }
+
     /// The topic line, under the channel name — the macOS header shape
     /// (`ChannelView.swift:227`) as a phone header allows.
     ///
@@ -220,6 +253,7 @@ struct ChannelScreen: View {
         // the trailing "⋯" menu below (#188): pins, artifacts and channel
         // options in one place, matching web and macOS.
         .toolbar {
+            huddleToolbarItem
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
