@@ -59,6 +59,9 @@ struct MessageListView: View {
     /// viewport — without it the scroll offset stays top-relative and every
     /// visible row shifts down by the height of the new content.
     @State private var loadOlderAnchorId: String?
+    /// A scroll-memory restore in its settling window: the remembered row is
+    /// re-anchored to the top a few times while attachments above it size.
+    @State private var pendingRestoreId: String?
 
     private static let scrollSpace = "messageScroll"
     /// When to re-assert the bottom after a (re)landing, in nanoseconds from
@@ -270,6 +273,10 @@ struct MessageListView: View {
                         // Mid-history: unpin so no glue fights the restore.
                         follow.positionRestored(atBottom: false)
                         proxy.scrollTo(remembered, anchor: .top)
+                        // Re-anchored again below as attachments size — a row
+                        // above the target growing late pushes the whole
+                        // restore down a viewport (the storms-video effect).
+                        pendingRestoreId = remembered
                     } else {
                         follow.positionRestored(atBottom: true)
                         proxy.scrollTo(newId, anchor: .bottom)
@@ -334,6 +341,22 @@ struct MessageListView: View {
                     guard case .stick = command else { return }
                     run(command, proxy)
                 }
+            }
+            // The restore's own settle: a scroll-memory restore is issued
+            // before attachments above the target have sized, and a late
+            // growth pushes the whole restore down a viewport. Re-anchor the
+            // remembered row through the settling window. Stops early if the
+            // reader takes over: scrolling back to the end re-pins, and a
+            // jump target owns the position outright.
+            .task(id: pendingRestoreId) {
+                guard let target = pendingRestoreId else { return }
+                for delay in Self.settleDelays {
+                    try? await Task.sleep(nanoseconds: delay)
+                    guard !follow.pinned, !follow.focusActive,
+                          messages.contains(where: { $0.id == target }) else { break }
+                    proxy.scrollTo(target, anchor: .top)
+                }
+                pendingRestoreId = nil
             }
         }
     }
