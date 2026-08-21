@@ -129,8 +129,13 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
     const room = roomRef.current;
     if (!room) return;
     const next = !muted;
-    void room.localParticipant.setMicrophoneEnabled(!next);
-    setMuted(next);
+    // Only flip the UI once the mic is actually (un)published — a denied
+    // permission or a capture failure must not claim live audio that was
+    // never actually sent.
+    room.localParticipant.setMicrophoneEnabled(!next).then(
+      () => setMuted(next),
+      () => {},
+    );
   }, [muted]);
 
   const value = useMemo<HuddleState>(

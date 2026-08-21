@@ -606,8 +606,17 @@ final class AppState: ObservableObject {
     func toggleHuddleMute() {
         guard let room = huddleRoom else { return }
         let next = !huddleMuted
-        huddleMuted = next
-        Task { try? await room.localParticipant.setMicrophone(enabled: !next) }
+        Task {
+            do {
+                try await room.localParticipant.setMicrophone(enabled: !next)
+                huddleMuted = next
+            } catch {
+                // Mic permission denied or capture failed — leave the UI
+                // reflecting reality (still muted) rather than claiming live
+                // audio that was never actually published.
+                errorMessage = "Couldn't turn on the microphone: \(error.localizedDescription)"
+            }
+        }
     }
 }
 
