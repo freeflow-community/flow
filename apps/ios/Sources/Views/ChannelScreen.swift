@@ -5,6 +5,9 @@ import GRDB
 /// the SyncEngine to load history; GRDB observation feeds the list live.
 struct ChannelScreen: View {
     let channelId: String
+    /// Opens the channel drawer. The header pill owns the hamburger now that
+    /// the system bar is hidden, and the drawer state lives in `MainView`.
+    var onOpenDrawer: () -> Void = {}
     @EnvironmentObject var app: AppState
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
@@ -73,11 +76,11 @@ struct ChannelScreen: View {
     /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
     /// not while archived. "Join Huddle" doubles as start — see CONTEXT.md
     /// (Huddle). The participant count is the ambient indicator for a huddle
-    /// that's live but not yet joined.
-    @ToolbarContentBuilder
-    private var huddleToolbarItem: some ToolbarContent {
-        if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
-            ToolbarItem(placement: .topBarTrailing) {
+    /// that's live but not yet joined. Sits in the pill's trailing slot
+    /// alongside the "⋯" menu (#298 moved the whole header into the pill).
+    private var huddleButton: some View {
+        Group {
+            if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
                 let inThisHuddle = app.activeHuddleChannelId == channelId
                 let roster = app.huddleRosters[channelId] ?? []
                 Button {
@@ -89,13 +92,18 @@ struct ChannelScreen: View {
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "mic.fill")
+                            .font(.system(size: 15, weight: .semibold))
                         if !inThisHuddle, !roster.isEmpty {
                             Text("\(roster.count)")
                                 .font(.system(size: 12, weight: .bold))
                         }
                     }
-                    .foregroundStyle(inThisHuddle ? MC.accent : MC.muted)
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 32, minHeight: 32)
+                    .padding(.horizontal, 6)
+                    .background(Capsule().fill(.white.opacity(inThisHuddle ? 0.35 : 0.2)))
                 }
+                .buttonStyle(.plain)
                 .disabled(app.huddleConnecting)
                 .accessibilityLabel(inThisHuddle ? "Leave huddle" : "Join huddle")
                 .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
@@ -103,30 +111,60 @@ struct ChannelScreen: View {
         }
     }
 
-    /// The topic line, under the channel name — the macOS header shape
-    /// (`ChannelView.swift:227`) as a phone header allows.
-    ///
-    /// It sits just under the navigation bar rather than inside it. A
-    /// `ToolbarItem(placement: .principal)` is the obvious way to stack two
-    /// lines in the bar and it does not survive this screen: the nav bar is
-    /// shared with `MainView` (hamburger) and the channel row arrives after
-    /// the first frame, and in that order UIKit keeps the title view it first
-    /// sized — leaving a header with no topic *and no name*. A plain view in
-    /// the content has no such install-once problem, keeps the bar exactly as
-    /// it is today when there is no topic, and updates live with the row.
-    @ViewBuilder private var topicLine: some View {
-        if let topic {
-            Text(topic)
-                .font(.system(size: 12))
-                .foregroundStyle(MC.muted)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 5)
-                .background(MC.base)
-                .accessibilityIdentifier("channel.header.topic")
+    /// The floating header (#298). The topic rides in the pill as a subtitle —
+    /// the macOS header shape (`ChannelView.swift:227`) as a phone allows, and
+    /// no longer a strip under the bar. The system navigation bar is hidden on this
+    /// screen, so the hamburger comes from `MainView` as a closure and the "⋯"
+    /// menu moves out of `.toolbar` and into the pill — the huddle button
+    /// joins it there (Phase 1: voice huddle).
+    private var headerPill: some View {
+        FloatingHeaderPill(
+            title: title,
+            subtitle: topic,
+            leadingSystemImage: "line.3.horizontal",
+            leadingAction: onOpenDrawer,
+            leadingAccessibilityIdentifier: "nav.menu",
+            leadingAccessibilityLabel: "Channels",
+            subtitleAccessibilityIdentifier: "channel.header.topic",
+            trailing: {
+                HStack(spacing: 6) {
+                    huddleButton
+                    channelMenu
+                }
+            }
+        )
+    }
+
+    private var channelMenu: some View {
+        Menu {
+            Button {
+                showPins = true
+            } label: {
+                Label(
+                    pinnedMessages.value.isEmpty
+                        ? "Pinned Messages"
+                        : "Pinned Messages (\(pinnedMessages.value.count))",
+                    systemImage: pinnedMessages.value.isEmpty ? "pin" : "pin.fill"
+                )
+            }
+            .accessibilityIdentifier("channel.pins")
+
+            ArtifactsMenu(channelId: channelId)
+
+            if channel.value?.kind == "standard" {
+                Divider()
+                Button {
+                    showChannelOptions = true
+                } label: {
+                    Label("Channel Options…", systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("channel.options")
+            }
+        } label: {
+            PillGlyph(systemImage: "ellipsis")
         }
+        .accessibilityIdentifier("channel.menu")
+        .accessibilityLabel("Channel menu")
     }
 
     private var hasMoreCached: Bool { messages.value.count > transcriptWindow }
@@ -135,8 +173,24 @@ struct ChannelScreen: View {
     }
 
     var body: some View {
+        ZStack(alignment: .top) {
+            chatStack
+                // The transcript runs behind the pill and up to the very top of
+                // the viewport. The pill is the only thing left in the safe
+                // area, so it lands just under the status bar for free.
+                .ignoresSafeArea(.container, edges: .top)
+                .fadesAboveFloatingHeader(floatingHeaderTopInset)
+            headerPill
+        }
+        // No system bar on this screen any more — the pill replaces it.
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    /// Everything the channel screen scrolls or types into, plus the sheets and
+    /// observations that hang off it. Split out of `body` so the pill can float
+    /// over it (#298).
+    private var chatStack: some View {
         VStack(spacing: 0) {
-            topicLine
             SyncBar(syncing: app.isSyncing)
             // The chat area — everything above the composer. Tapping or
             // scrolling any of it puts the keyboard away (#139); the composer
@@ -244,48 +298,10 @@ struct ChannelScreen: View {
         .modifier(DebugMessageActions(channelId: channelId, app: app) { threadRoute = ThreadRoute(rootId: $0) })
         .modifier(DebugOpenProfile(app: app) { profileRoute = ProfileRoute(userId: $0) })
         .background(MC.base)
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        // Account/status live in the drawer's profile footer now (web/macOS
-        // parity — the sidebar owns that affordance), reached from the header
-        // hamburger. The channel bar keeps the title + that hamburger, which
-        // MainView supplies as the content pane's leading toolbar item, plus
-        // the trailing "⋯" menu below (#188): pins, artifacts and channel
-        // options in one place, matching web and macOS.
-        .toolbar {
-            huddleToolbarItem
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        showPins = true
-                    } label: {
-                        Label(
-                            pinnedMessages.value.isEmpty
-                                ? "Pinned Messages"
-                                : "Pinned Messages (\(pinnedMessages.value.count))",
-                            systemImage: pinnedMessages.value.isEmpty ? "pin" : "pin.fill"
-                        )
-                    }
-                    .accessibilityIdentifier("channel.pins")
-
-                    ArtifactsMenu(channelId: channelId)
-
-                    if channel.value?.kind == "standard" {
-                        Divider()
-                        Button {
-                            showChannelOptions = true
-                        } label: {
-                            Label("Channel Options…", systemImage: "gearshape")
-                        }
-                        .accessibilityIdentifier("channel.options")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .accessibilityIdentifier("channel.menu")
-                .accessibilityLabel("Channel menu")
-            }
-        }
+        // No `.navigationTitle` / `.toolbar` here any more: the pill in `body`
+        // carries the name, the topic, the hamburger and the "⋯" menu (#188's
+        // three items are unchanged, they just moved) — the huddle button
+        // (Phase 1: voice huddle) joins them in the pill's trailing slot.
         .task {
             app.selectChannel(channelId)
             // Re-push the thread this channel had open before we left it (#89)
