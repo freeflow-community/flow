@@ -23,6 +23,8 @@ struct SidebarDrawer: View {
     @State private var showNewDm = false
     @State private var showAddWorkspace = false
     @State private var showInvite = false
+    /// The channel whose "Invite to Channel…" sheet is open (long-press a row).
+    @State private var inviteChannel: Channel?
     @State private var showFeatures = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
@@ -142,6 +144,7 @@ struct SidebarDrawer: View {
                 InviteSheet(workspaceId: wsId)
             }
         }
+        .sheet(item: $inviteChannel) { InviteToChannelSheet(channel: $0) }
         .modifier(DebugOpenNewDm { showNewDm = true })
         .sheet(isPresented: $showFeatures) { FeaturesSheet() }
     }
@@ -351,6 +354,16 @@ struct SidebarDrawer: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Long-press: the channel context actions web + macOS hang off a
+        // right-click. Only "invite" so far — see the CHANGELOG Parity note.
+        .contextMenu {
+            Button {
+                inviteChannel = channel
+            } label: {
+                Label("Invite to Channel…", systemImage: "person.badge.plus")
+            }
+            .accessibilityIdentifier("sidebar.channel.invite")
+        }
         // Indent outside the background, so the pill insets with the row.
         .padding(.leading, isNested ? 12 : 0)
         .accessibilityElement(children: .combine)

@@ -18,6 +18,7 @@ import { config } from '../config.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
 import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents, tombstoneUser } from './memberRemoval.js';
+import { postSystemMessage } from './messages.js';
 
 const {
   workspaces,
@@ -398,12 +399,12 @@ export async function acceptInvite(userId: string, token: string): Promise<Works
   if (inv.acceptedAt) throw conflict('invite_used', 'invite already accepted');
   if (inv.expiresAt < new Date()) throw badRequest('invite_expired', 'invite has expired');
 
-  await db.transaction(async (tx) => {
+  const joined = await db.transaction(async (tx) => {
     await tx.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, inv.id));
-    await enrollInWorkspace(tx, inv.workspaceId, userId);
+    return enrollInWorkspace(tx, inv.workspaceId, userId);
   });
 
-  await announceJoin(inv.workspaceId, userId);
+  if (joined) await announceJoin(inv.workspaceId, userId);
   const ws = await db.select().from(workspaces).where(eq(workspaces.id, inv.workspaceId)).limit(1);
   return toWorkspaceDTO(ws[0]!, 'member');
 }
@@ -550,6 +551,7 @@ export async function enrollInWorkspace(
 
 /** Broadcast a completed join: the roster event for everyone, plus the
  * per-user nudge that lets the joiner's live sockets subscribe. */
+/** New workspace member: broadcast `member.joined`, subscribe their sockets, and post the #general join line. Call only when the membership row is new. */
 export async function announceJoin(workspaceId: string, userId: string, role: MemberRole = 'member'): Promise<void> {
   const u = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   publishEvent(subjectMeta(workspaceId), {
@@ -567,6 +569,15 @@ export async function announceJoin(workspaceId: string, userId: string, role: Me
     },
   });
   publishWorkspaceJoined(workspaceId, userId);
+  // The enrollment put them in #general silently; say so in the timeline, the
+  // same "X joined the channel" line a Browse→Join or an agent's auto-join
+  // posts. Best-effort inside postSystemMessage — never aborts the join.
+  const general = await db
+    .select({ id: channels.id, workspaceId: channels.workspaceId, kind: channels.kind })
+    .from(channels)
+    .where(and(eq(channels.workspaceId, workspaceId), eq(channels.name, 'general')))
+    .limit(1);
+  if (general[0]) await postSystemMessage(general[0], userId, 'member_joined');
 }
 
 /** Tell the joining user's live sockets so the gateway can subscribe them (they authed before joining). */

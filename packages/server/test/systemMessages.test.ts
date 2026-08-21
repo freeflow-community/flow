@@ -90,6 +90,31 @@ describe('join/leave system messages', () => {
     expect(left!.body).toBe('Member left the channel');
   });
 
+  it('accepting a workspace invite posts a "joined" notice in #general', async () => {
+    const newcomerId = await registerHuman('newcomer@example.test', 'Newcomer');
+    const inv = await ws.createInvite(workspaceId, ownerId, 'newcomer@example.test');
+    const token = inv.inviteUrl.slice(inv.inviteUrl.lastIndexOf('/') + 1);
+    await ws.acceptInvite(newcomerId, token);
+    const general = (await ch.listChannels(workspaceId, ownerId)).find((c) => c.name === 'general')!;
+    const rows = await messagesOf(general.id, ownerId);
+    const notice = rows.find((m) => m.systemKind === 'member_joined' && m.userId === newcomerId);
+    expect(notice).toBeDefined();
+    expect(notice!.body).toBe('Newcomer joined the channel');
+  });
+
+  it('redeeming a join link posts the notice once, not again on a second redeem', async () => {
+    const linkerId = await registerHuman('linker@example.test', 'Linker');
+    const link = await ws.createJoinLink(workspaceId, ownerId);
+    const token = link.joinUrl!.slice(link.joinUrl!.lastIndexOf('/') + 1);
+    await ws.redeemJoinLink(linkerId, token);
+    await ws.redeemJoinLink(linkerId, token);
+    const general = (await ch.listChannels(workspaceId, ownerId)).find((c) => c.name === 'general')!;
+    const rows = await messagesOf(general.id, ownerId);
+    const notices = rows.filter((m) => m.systemKind === 'member_joined' && m.userId === linkerId);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.body).toBe('Linker joined the channel');
+  });
+
   it('system notices do not contribute to unread counts', async () => {
     const chan = await ch.createChannel(workspaceId, ownerId, 'unreadroom');
     await ch.joinChannel(chan.id, observerId);

@@ -28,6 +28,8 @@ struct ChannelScreen: View {
 
     static let windowStep = 100
     @State private var showChannelOptions = false
+    /// Invite to Channel… (web + macOS parity): add workspace members here.
+    @State private var showInviteToChannel = false
     /// The member whose profile card is open (#223). One sheet for the whole
     /// transcript, driven by whichever row was tapped.
     @State private var profileRoute: ProfileRoute?
@@ -166,6 +168,11 @@ struct ChannelScreen: View {
                 ChannelOptionsSheet(channel: c)
             }
         }
+        .sheet(isPresented: $showInviteToChannel) {
+            if let c = channel.value {
+                InviteToChannelSheet(channel: c)
+            }
+        }
         .sheet(isPresented: $showPins) {
             PinnedMessagesSheet(
                 messages: pinnedMessages.value,
@@ -238,6 +245,12 @@ struct ChannelScreen: View {
 
                     if channel.value?.kind == "standard" {
                         Divider()
+                        Button {
+                            showInviteToChannel = true
+                        } label: {
+                            Label("Invite to Channel…", systemImage: "person.badge.plus")
+                        }
+                        .accessibilityIdentifier("channel.invite")
                         Button {
                             showChannelOptions = true
                         } label: {
