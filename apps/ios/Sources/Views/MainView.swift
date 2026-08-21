@@ -80,13 +80,13 @@ struct MainView: View {
                 if app.showActivity {
                     ActivityFeedView(onOpenChannel: { app.selectChannel($0) })
                 } else if let channelId = app.selectedChannelId {
-                    ChannelScreen(channelId: channelId)
+                    ChannelScreen(channelId: channelId, onOpenDrawer: { openDrawer() })
                         .id(channelId)
                 } else {
                     emptyState
                 }
             }
-            .toolbar {
+            .flowBarToolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         openDrawer()
