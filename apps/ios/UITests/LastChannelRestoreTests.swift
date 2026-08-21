@@ -63,7 +63,10 @@ final class LastChannelRestoreTests: XCTestCase {
     }
 
     private func waitForChannel(_ app: XCUIApplication, _ name: String, _ message: String) {
-        XCTAssertTrue(app.navigationBars["# \(name)"].waitForExistence(timeout: 60), message)
+        // The channel name is in the header pill (#298), not a system bar.
+        let title = app.staticTexts["header.title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 60), message)
+        XCTAssertEqual(title.label, "# \(name)", message)
     }
 
     /// The headline behaviour: pick a channel by hand, quit, come back to it.
