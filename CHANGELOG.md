@@ -170,11 +170,12 @@ This file keeps two things:
   web + macOS sidebars carry — the virtual agent rows under Direct Messages
   (start a DM with a workspace agent that has no existing 1:1), the workspace
   color picker, and the Manage Users / Manage Apps workspace-menu items. Channel
-  context actions (mute/leave/archive, invite to channel) are also not yet wired
-  on iOS. The drawer's structure makes these straightforward ports; none are
-  backed on-device yet. (The "new DM" composer was closed 2026-08-16, #257 —
-  sidebar "+" and a profile-card Message button. "Invite People" was closed
-  2026-08-18, #283 — which also brought #85's join-link management to iOS.)
+  context actions (mute/leave/archive) are also not yet wired on iOS. The
+  drawer's structure makes these straightforward ports; none are backed
+  on-device yet. (The "new DM" composer was closed 2026-08-16, #257 — sidebar
+  "+" and a profile-card Message button. "Invite People" was closed 2026-08-18,
+  #283 — which also brought #85's join-link management to iOS. "Invite to
+  channel" was closed 2026-08-21 — ⋯ menu item + drawer long-press.)
 - macOS + iOS: message editing still uses an inline/dedicated edit field — web
   moved editing into the prompt editor (↑ and ✏️ load the body into the composer,
   Enter saves, Esc restores the draft; 2026-07-23 ui_nits). Both clients already
