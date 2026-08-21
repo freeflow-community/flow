@@ -224,9 +224,13 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
-- Hiding the navigation bar buttons' glass capsule (#298) is iOS-only because
-  the chrome is: it is an iOS 26 Liquid Glass default. macOS draws its own
-  header view and web its own DOM, so neither has anything to hide.
+- The floating pill header (#298) is iOS-only, by operator ruling. It answers a
+  phone problem — a full-screen conversation with no sidebar beside it to carry
+  the workspace colour. macOS and web both show the channel list next to the
+  transcript and already read as one surface.
+- Within iOS, the pill is on the channel screen only. The thread screen keeps
+  the system bar: hiding it costs the interactive edge-swipe pop, which
+  `ThreadNavTests` catches. Gap to close if the gesture can be kept.
 - Per-channel scroll-position memory (10-min TTL) is macOS-only, by operator
   ruling: a desktop sidebar switch should return you to your back-scroll spot,
   while a phone's full-screen channel change makes bottom-on-return the

@@ -135,7 +135,9 @@ final class NewDmTests: XCTestCase {
         XCTAssertTrue(create.isEnabled, "Start stayed disabled after picking someone")
         create.tap()
         XCTAssertTrue(
-            app.navigationBars[firstPerson].waitForExistence(timeout: 30),
+            app.staticTexts.matching(
+                NSPredicate(format: "identifier == 'header.title' AND label == %@", firstPerson)
+            ).firstMatch.waitForExistence(timeout: 30),
             "starting a DM did not open the conversation with \(firstPerson)"
         )
         attach("03-dm-opened")
@@ -151,7 +153,9 @@ final class NewDmTests: XCTestCase {
             select(firstPerson, in: app)
             app.buttons["newDm.create"].tap()
             XCTAssertTrue(
-                app.navigationBars[firstPerson].waitForExistence(timeout: 30),
+                app.staticTexts.matching(
+                NSPredicate(format: "identifier == 'header.title' AND label == %@", firstPerson)
+            ).firstMatch.waitForExistence(timeout: 30),
                 "pass \(pass): the DM with \(firstPerson) did not open"
             )
             // Back in the sidebar there must be exactly one row for them. A 1:1
@@ -179,10 +183,11 @@ final class NewDmTests: XCTestCase {
         attach("05a-two-people-selected")
         app.buttons["newDm.create"].tap()
         // A group DM's title is the other members' names, comma-joined and
-        // sorted — so both are in the navigation bar's identifier.
-        let bar = app.navigationBars.matching(
+        // sorted — so both are in the header pill's title (#298).
+        let bar = app.staticTexts.matching(
             NSPredicate(
-                format: "identifier CONTAINS %@ AND identifier CONTAINS %@", firstPerson, secondPerson
+                format: "identifier == 'header.title' AND label CONTAINS %@ AND label CONTAINS %@",
+                firstPerson, secondPerson
             )
         ).firstMatch
         XCTAssertTrue(
@@ -204,7 +209,9 @@ final class NewDmTests: XCTestCase {
         attach("06-profile-message-button")
         message.tap()
         XCTAssertTrue(
-            app.navigationBars[firstPerson].waitForExistence(timeout: 30),
+            app.staticTexts.matching(
+                NSPredicate(format: "identifier == 'header.title' AND label == %@", firstPerson)
+            ).firstMatch.waitForExistence(timeout: 30),
             "Message did not open the DM with \(firstPerson)"
         )
     }

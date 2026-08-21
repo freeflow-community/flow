@@ -1,12 +1,19 @@
-# iOS: the channel header reads as one surface again
+# iOS: the channel header is a floating pill
 
-- `[ios]` Hide the Liquid Glass capsule iOS 26 draws behind each navigation-bar
-  button. The near-white discs and their shadows were the "banner" across the
-  top — the bar's own background already matched the panel.
-- `[ios]` The thread screen's system Back button keeps its capsule: hiding it
-  means replacing the button, and that costs the interactive edge-swipe pop.
+- `[ios]` The channel header is now a rounded pill in the sidebar's purple
+  gradient, floating over a transcript that runs to the top of the viewport. It
+  carries the channel name, the topic, the drawer button and the ⋯ menu; the
+  system navigation bar is hidden on that screen.
+- `[ios]` The transcript fades out under the status bar, so nothing competes
+  with the clock.
+- `[ios]` The empty state and the Activity feed keep the system bar, with the
+  iOS 26 Liquid Glass capsule behind its button hidden — near-white discs that
+  read as a band against `MC.base`.
+- `[ios]` The thread screen keeps the system bar. Replacing it costs the
+  interactive edge-swipe pop, which `ThreadNavTests` catches.
 
 ## Feature
 
-- **The top of a channel on iPhone is one continuous colour.** The pale band
-  behind the header buttons is gone.
+- **The top of a channel on iPhone is a floating purple header.** The channel
+  name and topic sit in a pill that matches the channel list, and the
+  conversation runs behind it to the top of the screen.
