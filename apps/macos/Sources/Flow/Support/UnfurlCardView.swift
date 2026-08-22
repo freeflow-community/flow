@@ -23,10 +23,18 @@ struct UnfurlCardView: View {
     var onPin: (() -> Void)? = nil
     /// The widest a `large_image` preview may be drawn. The card sizes its
     /// picture exactly (see `imageBox`), so this number, not the layout, is
-    /// what decides the card's width — and a card wider than its row drags the
-    /// whole transcript sideways. macOS keeps the desktop size; iOS passes what
-    /// its row actually leaves (#306).
+    /// what decides the card's width — and a card wider than its row is
+    /// clipped by the transcript's clamp. macOS keeps the desktop size; iOS
+    /// passes what its row actually leaves (#306).
     var maxImageWidth: CGFloat = 360
+
+    /// Everything the card puts either side of its picture: the accent rail
+    /// and its gap, the trailing padding, and the gap plus glyph of the one
+    /// trailing control a viewer may see (remove, or pin where it exists).
+    /// A caller deriving `maxImageWidth` from the room it has must subtract
+    /// this — the controls are HStack siblings of the picture, so they widen
+    /// the card rather than sitting over it (#308).
+    static let chromeWidth: CGFloat = 3 + 8 + 8 + 8 + 14
 
     @State private var hovering = false
     /// Click-to-play (#302): the player only exists once the viewer asks for

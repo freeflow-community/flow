@@ -179,6 +179,16 @@ struct MessageListView: View {
                     }
                 }
                 .padding(.vertical, 8)
+                // A row that cannot fit reports its ideal width anyway — a long
+                // unbroken URL is the common one — and a ScrollView's ideal
+                // width is its content's. The screen's ZStack sizes to that and
+                // then lays every sibling out inside it, so one row makes the
+                // transcript, the composer and the floating header pill wider
+                // than the phone and hangs them off both edges (#308). Bounding
+                // the proposal here is what makes such a row wrap instead: the
+                // window is the one width in this stack that no content can
+                // inflate.
+                .frame(maxWidth: transcriptWindowWidth, alignment: .leading)
                 .background(
                     GeometryReader { geo in
                         let frame = geo.frame(in: .named(Self.scrollSpace))
@@ -449,29 +459,35 @@ struct SystemLineView: View {
     }
 }
 
-/// The widest picture a link preview may draw inside a transcript row.
-///
-/// `UnfurlCardView` sizes its picture exactly, so the picture — not the
-/// layout — decides the card's width, and a card wider than the row makes the
-/// whole transcript wider than the window: the rows, the composer and the
-/// floating header pill all slide sideways (#306). The row spends 14 pt of
-/// gutter on each side, a 38 pt avatar column and its 10 pt gap; the card
-/// spends 3 pt of rail, an 8 pt gap and 8 pt of trailing padding. Read from
-/// the window, like `floatingHeaderTopInset`, and fixed for the life of the
-/// screen because the app is iPhone-portrait-only.
-@MainActor var unfurlImageWidth: CGFloat {
+/// The phone's width, read from the window the way `floatingHeaderTopInset`
+/// reads its inset, and fixed for the life of the screen because the app is
+/// iPhone-portrait-only. 393pt is the common iPhone width; the fallback only
+/// matters for the frame or two before a window exists.
+@MainActor var transcriptWindowWidth: CGFloat {
     let window = UIApplication.shared.connectedScenes
         .compactMap { $0 as? UIWindowScene }
         .first { $0.activationState == .foregroundActive }?
         .keyWindow
-    // 393pt is the common iPhone width; the fallback only matters for the
-    // frame or two before a window exists.
-    // Named pieces rather than one literal-heavy line: the single expression
-    // sent the Swift type checker past its "reasonable time" limit.
-    let windowWidth: CGFloat = window?.bounds.width ?? 393
+    let width: CGFloat = window?.bounds.width ?? 393
+    return width
+}
+
+/// The widest picture a link preview may draw inside a transcript row.
+///
+/// `UnfurlCardView` sizes its picture exactly rather than letting a flexible
+/// frame expand, so the picture decides the card's width. At the desktop's
+/// 360 pt the card is wider than a phone row, and the transcript clamp above
+/// then clips its trailing control (#306, #308). The row spends 14 pt of
+/// gutter on each side and a 38 pt avatar column with a 10 pt gap; what the
+/// card itself spends is the card's own business (`chromeWidth`).
+///
+/// Named pieces with explicit types rather than one literal-heavy line: the
+/// single expression sent the Swift type checker past its "reasonable time"
+/// limit and broke the iOS build (#310).
+@MainActor var unfurlImageWidth: CGFloat {
     let rowChrome: CGFloat = 14 + 14 + 38 + 10
-    let cardChrome: CGFloat = 3 + 8 + 8
-    let available = windowWidth - rowChrome - cardChrome
+    let cardChrome: CGFloat = UnfurlCardView.chromeWidth
+    let available: CGFloat = transcriptWindowWidth - rowChrome - cardChrome
     // Never below a legible thumbnail, never above the desktop card's size.
     return min(360, max(160, available))
 }
