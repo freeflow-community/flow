@@ -64,6 +64,7 @@ import { listIdentities } from '../services/oauthAccounts.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
 import * as ci from '../services/channelIndicators.js';
+import * as hd from '../services/huddles.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
 import * as wse from '../services/workspaceEmoji.js';
@@ -134,7 +135,26 @@ export function registerRoutes(app: FastifyInstance): void {
     googleClientId: config.googleClientId ?? null,
     apple: config.appleEnabled,
     maxFileBytes: config.maxFileBytes,
+    huddles: config.livekitEnabled,
   }));
+
+  // LiveKit webhook (Phase 1 voice huddle): the reconciliation safety net for
+  // a participant/room that vanished without a REST leave call. Not a Flow
+  // user — no requireAuth — `WebhookReceiver` verifies the request's own
+  // signed Authorization header instead. The body arrives as a raw Buffer via
+  // app.ts's catch-all content-type parser, which is exactly what
+  // WebhookReceiver.receive() wants (it parses the JSON itself post-verify).
+  app.post('/v1/livekit/webhook', async (req, reply) => {
+    const authHeader = req.headers.authorization ?? '';
+    const body = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
+    try {
+      await hd.handleLiveKitWebhook(body, authHeader);
+    } catch (err) {
+      req.log.warn({ err }, 'livekit webhook rejected');
+      return reply.status(400).send({ error: { code: 'invalid_webhook', message: 'invalid webhook' } });
+    }
+    return reply.status(200).send({ ok: true });
+  });
 
   // Public macOS app download (operator feature): 302 to a short-lived signed
   // URL for the notarized DMG in blob storage. No auth — it's linked from the
@@ -586,6 +606,20 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = parse(SetChannelIndicatorBody, req.body);
     return ci.setChannelIndicator(id, req.user.id, body.state, body.ttlSeconds);
+  });
+
+  // Voice huddle (Phase 1, LiveKit Cloud): ambient, audio-only, channel-scoped.
+  // See CONTEXT.md (Huddle) and services/huddles.ts for the join/leave/webhook
+  // design. Join is idempotent — re-mints a fresh token, also the reconnect path.
+  app.post('/v1/channels/:id/huddle/join', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return hd.joinHuddle(id, req.user.id);
+  });
+
+  app.post('/v1/channels/:id/huddle/leave', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await hd.leaveHuddle(id, req.user.id);
+    return { ok: true };
   });
 
   app.put('/v1/channels/:id/notify', { preHandler: requireAuth }, async (req) => {

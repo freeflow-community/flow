@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
+import { useHuddle } from '../huddle';
 import { useArtifacts, useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
@@ -17,6 +18,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
   const sel = useSelection();
   const live = useLive();
+  const huddle = useHuddle();
   const channels = useChannels(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
@@ -116,6 +118,13 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   // Switching channels shouldn't leave the previous channel's roster hanging open.
   useEffect(() => setMembersOpen(false), [channelId]);
 
+  // Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
+  // not while archived. "Join Huddle" doubles as start — there's no separate
+  // ring/start action (CONTEXT.md: Huddle).
+  const huddleParticipants = channel?.huddleParticipants ?? [];
+  const inThisHuddle = huddle.channelId === channelId;
+  const huddleEligible = channel?.kind === 'standard' && !channel?.archivedAt;
+
   // Main-composer typing only — thread typing shows in its own panel. An agent
   // at work "thinks" rather than "types" (ui_nits), so carry the isAgent flag.
   const typers = Object.entries(live.typing[typingKey(channelId)] ?? {})
@@ -152,6 +161,29 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">
+          {huddleEligible && (
+            <button
+              type="button"
+              data-testid={inThisHuddle ? 'huddle-leave' : 'huddle-join'}
+              title={inThisHuddle ? 'Leave huddle' : 'Join huddle'}
+              disabled={huddle.connecting}
+              className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold max-md:hidden ${
+                inThisHuddle
+                  ? 'bg-accent/15 text-accent-soft hover:bg-accent/25'
+                  : 'text-muted hover:bg-daypill/60 hover:text-ink'
+              }`}
+              onClick={() => {
+                if (inThisHuddle) void huddle.leave();
+                else if (channel) void huddle.join(channelId, channel.workspaceId).catch(() => {});
+              }}
+            >
+              🎙 {inThisHuddle ? 'Leave Huddle' : 'Join Huddle'}
+              {/* ambient indicator: a huddle live but not yet joined shows who's in it */}
+              {!inThisHuddle && huddleParticipants.length > 0 && (
+                <span className="rounded-full bg-accent/15 px-1.5 text-accent-soft">{huddleParticipants.length}</span>
+              )}
+            </button>
+          )}
           {/* member stack — opens the roster; dropped on mobile so the title gets the room */}
           <button
             data-testid="channel-members-trigger"

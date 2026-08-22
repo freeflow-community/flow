@@ -126,6 +126,12 @@ export type NotifyLevel = 0 | 1 | 2;
  */
 export type ChannelIndicatorState = 'busy';
 
+/** One participant in a channel's live voice huddle (Phase 1: audio-only). */
+export interface HuddleParticipantDTO {
+  userId: string;
+  joinedAt: string; // ISO
+}
+
 export interface ChannelDTO {
   id: string;
   workspaceId: string;
@@ -175,6 +181,14 @@ export interface ChannelDTO {
    * `channel.indicator` events carry every change after that.
    */
   indicator?: ChannelIndicatorState | null;
+  /**
+   * Live voice huddle participants (Phase 1) — ambient, per-channel audio call.
+   * Transient server state, never a DB column (see `huddles.ts`): LiveKit is
+   * the source of truth, this is a cache of it. Present on the channel list so
+   * a fresh client shows an already-active huddle; `huddle.updated` events
+   * carry every change after that. Absent/empty means no active huddle.
+   */
+  huddleParticipants?: HuddleParticipantDTO[];
 }
 
 export interface ReactionAggDTO {

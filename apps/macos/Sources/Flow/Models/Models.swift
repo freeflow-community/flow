@@ -578,8 +578,16 @@ struct ChannelsResponse: Decodable, Sendable {
     /// on disk, and a spinner must never survive a relaunch — it's a claim
     /// about what an agent is doing this second.
     let busyChannelIds: Set<String>
+    /// channelId -> live voice-huddle roster (Phase 1). Same reasoning as
+    /// busyChannelIds — LiveKit is the source of truth, not this cache
+    /// (decision log 2026-08-20), so it must never survive a relaunch either.
+    let huddleRosters: [String: [HuddleParticipant]]
 
-    private struct IndicatorRow: Decodable { let id: String; let indicator: String? }
+    private struct IndicatorRow: Decodable {
+        let id: String
+        let indicator: String?
+        let huddleParticipants: [HuddleParticipant]?
+    }
     private enum CodingKeys: String, CodingKey { case channels }
 
     init(from decoder: Decoder) throws {
@@ -587,6 +595,11 @@ struct ChannelsResponse: Decodable, Sendable {
         channels = try c.decode([Channel].self, forKey: .channels)
         let rows = try c.decode([IndicatorRow].self, forKey: .channels)
         busyChannelIds = Set(rows.filter { $0.indicator != nil }.map(\.id))
+        var rosters: [String: [HuddleParticipant]] = [:]
+        for row in rows where !(row.huddleParticipants ?? []).isEmpty {
+            rosters[row.id] = row.huddleParticipants
+        }
+        huddleRosters = rosters
     }
 }
 
@@ -595,6 +608,27 @@ struct ChannelsResponse: Decodable, Sendable {
 struct ChannelIndicatorData: Decodable, Sendable {
     let channelId: String
     let state: String?
+}
+
+/// One participant in a channel's live voice huddle (Phase 1: audio-only).
+struct HuddleParticipant: Codable, Sendable, Equatable {
+    let userId: String
+    let joinedAt: String
+}
+
+/// `huddle.updated` payload: the channel's aggregate roster after a change —
+/// like ChannelIndicatorData, not one joiner/leaver. Empty means the huddle
+/// ended.
+struct HuddleUpdatedData: Decodable, Sendable {
+    let channelId: String
+    let participants: [HuddleParticipant]
+}
+
+/// POST /v1/channels/:id/huddle/join response: a LiveKit access token scoped
+/// to that channel's room, and the server URL to connect to.
+struct HuddleJoinResponse: Decodable, Sendable {
+    let token: String
+    let url: String
 }
 struct MembersResponse: Decodable, Sendable { let members: [MemberDTO] }
 struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
@@ -881,6 +915,7 @@ enum EventPayload: Sendable {
     case typing(TypingData)
     case presence(PresenceData)
     case channelIndicator(ChannelIndicatorData)
+    case huddleUpdated(HuddleUpdatedData)
     case channel(Channel)
     case channelUpdated(Channel)
     case channelArchived(Channel)
@@ -925,6 +960,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .presence(try c.decode(PresenceData.self, forKey: .data))
         case "channel.indicator":
             payload = .channelIndicator(try c.decode(ChannelIndicatorData.self, forKey: .data))
+        case "huddle.updated":
+            payload = .huddleUpdated(try c.decode(HuddleUpdatedData.self, forKey: .data))
         case "channel.created":
             payload = .channel(try c.decode(Channel.self, forKey: .data))
         case "channel.updated":

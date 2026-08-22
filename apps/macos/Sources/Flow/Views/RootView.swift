@@ -30,6 +30,7 @@ struct RootView: View {
             }
         }
         .environmentObject(win)
+        .debugAutoLogin(app)
         // Banner taps and accepted invites navigate the key window — tell the
         // shared state which one that is.
         .background(WindowKeyObserver { app.noteKeyWindow(win) })

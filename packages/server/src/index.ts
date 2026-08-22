@@ -10,6 +10,7 @@ import { purgeExpiredSessions } from './services/auth.js';
 import { startOrphanSweep } from './services/files.js';
 import { startAppEventsWorker } from './services/appEvents.js';
 import { startIndicatorSweeper } from './services/channelIndicators.js';
+import { reconcileHuddlesFromLiveKit } from './services/huddles.js';
 
 async function main(): Promise<void> {
   initCrypto();
@@ -33,6 +34,9 @@ async function main(): Promise<void> {
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
   startAppEventsWorker(app.log); // Events API outbox drain (phase 4)
   const indicatorSweeper = startIndicatorSweeper(); // retract lapsed channel spinners (#137)
+  // Rebuild the huddle cache from LiveKit's real rooms (decision log 2026-08-20):
+  // a restart wipes our in-memory map, but LiveKit's rooms keep running.
+  void reconcileHuddlesFromLiveKit().catch((err) => app.log.error({ err }, 'livekit huddle reconciliation failed'));
 
   const shutdown = async () => {
     indicatorSweeper.stop();

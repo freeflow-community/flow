@@ -464,11 +464,12 @@ struct SystemLineView: View {
 /// iPhone-portrait-only. 393pt is the common iPhone width; the fallback only
 /// matters for the frame or two before a window exists.
 @MainActor var transcriptWindowWidth: CGFloat {
-    UIApplication.shared.connectedScenes
+    let window = UIApplication.shared.connectedScenes
         .compactMap { $0 as? UIWindowScene }
         .first { $0.activationState == .foregroundActive }?
-        .keyWindow?
-        .bounds.width ?? 393
+        .keyWindow
+    let width: CGFloat = window?.bounds.width ?? 393
+    return width
 }
 
 /// The widest picture a link preview may draw inside a transcript row.
@@ -479,8 +480,14 @@ struct SystemLineView: View {
 /// then clips its trailing control (#306, #308). The row spends 14 pt of
 /// gutter on each side and a 38 pt avatar column with a 10 pt gap; what the
 /// card itself spends is the card's own business (`chromeWidth`).
+///
+/// Named pieces with explicit types rather than one literal-heavy line: the
+/// single expression sent the Swift type checker past its "reasonable time"
+/// limit and broke the iOS build (#310).
 @MainActor var unfurlImageWidth: CGFloat {
-    let available = transcriptWindowWidth - (14 + 14 + 38 + 10) - UnfurlCardView.chromeWidth
+    let rowChrome: CGFloat = 14 + 14 + 38 + 10
+    let cardChrome: CGFloat = UnfurlCardView.chromeWidth
+    let available: CGFloat = transcriptWindowWidth - rowChrome - cardChrome
     // Never below a legible thumbnail, never above the desktop card's size.
     return min(360, max(160, available))
 }
