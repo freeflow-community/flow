@@ -108,6 +108,22 @@ struct Unfurl: Codable, Sendable, Equatable, Identifiable {
         var alt: String?
     }
 
+    struct Media: Codable, Sendable, Equatable {
+        var provider: String?
+        var durationSec: Int?
+    }
+
+    /// Present when the link is a video Flow can play. `playerUrl` is built by
+    /// the server from `videoId` — the provider's own oEmbed markup never
+    /// reaches a client — and is only loaded once the viewer taps play.
+    struct Embed: Codable, Sendable, Equatable {
+        var provider: String
+        var videoId: String
+        var playerUrl: String
+        var width: Int?
+        var height: Int?
+    }
+
     var url: String
     var urlHash: String
     var canonicalUrl: String?
@@ -121,8 +137,19 @@ struct Unfurl: Codable, Sendable, Equatable, Identifiable {
     var author: String?
     var publishedAt: String?
     var image: Image?
+    var media: Media?
+    var embed: Embed?
 
     var id: String { urlHash }
+
+    /// Runtime as `m:ss` (or `h:mm:ss`), when the server knew it.
+    var durationLabel: String? {
+        guard let seconds = media?.durationSec, seconds > 0 else { return nil }
+        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%d:%02d", m, s)
+    }
 
     /// The page this card points at — canonical when the server resolved one.
     var target: String { canonicalUrl ?? url }

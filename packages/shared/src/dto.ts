@@ -278,6 +278,19 @@ export interface UnfurlDTO {
     provider?: string;
     durationSec?: number;
   };
+  /** Present when the link is a video we can play inside Flow. The player URL
+   * is built by the server from the parsed `videoId` — the provider's own
+   * oEmbed `html` is never forwarded — so a client renders a frame it was
+   * handed, not third-party markup it has to trust. Clients show a play badge
+   * and only load `playerUrl` once the viewer asks for it. `playerUrl` carries
+   * no query string, so appending `?autoplay=1` is safe. */
+  embed?: {
+    provider: 'youtube';
+    videoId: string;
+    playerUrl: string;
+    width?: number;
+    height?: number;
+  };
   fetchedAt: string;
   expiresAt: string;
 }

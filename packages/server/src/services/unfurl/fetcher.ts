@@ -15,6 +15,15 @@ export const LIMITS = {
   totalTimeoutMs: 8_000,
   maxRedirects: 5,
   maxBodyBytes: 512 * 1024,
+  /**
+   * Known video providers get a bigger head budget. YouTube buries og:image,
+   * the oEmbed link and `itemprop="duration"` about 690 KB into a ~700 KB
+   * <head> of inline script, so under the normal cap we read a third of a
+   * megabyte and come away with nothing at all. Only pages we already
+   * recognized as playable (unfurl/video.ts) pay this, and the `</head>` stop
+   * means we still quit before the body.
+   */
+  maxVideoPageBytes: 1024 * 1024,
   /** §5: oEmbed responses are capped much tighter. */
   maxJsonBytes: 32 * 1024,
 } as const;
