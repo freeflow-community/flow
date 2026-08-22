@@ -19,8 +19,10 @@ import {
   cardTypeForContentType,
   extractHtmlMetadata,
   hasRenderableContent,
+  knownOembedEndpoint,
   truncate,
 } from '../src/services/unfurl/extract.js';
+import { parseDurationSec, parseVideoEmbed } from '../src/services/unfurl/video.js';
 import { negativeTtlMs, positiveTtlMs, TTL_DEFAULT_MS, TTL_MAX_MS, TTL_MIN_MS } from '../src/services/unfurl/cache.js';
 import { isAllowedByAllowlist, isDenied, UnfurlQueue } from '../src/services/unfurl/queue.js';
 import { layoutFor, sniffImageFormat } from '../src/services/unfurl/images.js';
@@ -243,6 +245,91 @@ describe('§5 extraction chain', () => {
     expect(cardTypeForContentType('video/mp4')).toBe('video');
     expect(cardTypeForContentType('application/pdf')).toBe('file');
     expect(cardTypeForContentType('application/zip')).toBeNull();
+  });
+});
+
+describe('video embeds', () => {
+  const id = 'dQw4w9WgXcQ';
+
+  it('recognizes every YouTube URL form', () => {
+    for (const url of [
+      `https://www.youtube.com/watch?v=${id}`,
+      `https://youtube.com/watch?v=${id}&t=30s`,
+      `https://m.youtube.com/watch?v=${id}`,
+      `https://music.youtube.com/watch?v=${id}`,
+      `https://youtu.be/${id}`,
+      `https://youtu.be/${id}?si=abc123`,
+      `https://www.youtube.com/shorts/${id}`,
+      `https://www.youtube.com/embed/${id}`,
+      `https://www.youtube.com/live/${id}`,
+      `https://www.youtube-nocookie.com/embed/${id}`,
+    ]) {
+      expect(parseVideoEmbed(url), url).toMatchObject({ provider: 'youtube', videoId: id });
+    }
+  });
+
+  // The client is handed a URL we built, never the provider's oEmbed html.
+  it('builds the player URL itself, cookieless and query-free', () => {
+    expect(parseVideoEmbed(`https://www.youtube.com/watch?v=${id}`)?.playerUrl).toBe(
+      `https://www.youtube-nocookie.com/embed/${id}`,
+    );
+  });
+
+  it('refuses anything that is not a plain video id', () => {
+    for (const url of [
+      'https://www.youtube.com/watch?list=PL123', // a playlist, no video
+      'https://www.youtube.com/', // the site itself
+      'https://www.youtube.com/@someChannel',
+      'https://www.youtube.com/watch?v=../../etc/passwd', // path traversal in the id
+      'https://www.youtube.com/watch?v=a', // too short to be an id
+      'https://notyoutube.com/watch?v=dQw4w9WgXcQ', // lookalike host
+      'https://evil.com/youtube.com/watch?v=dQw4w9WgXcQ',
+      'javascript:alert(1)',
+      'not a url',
+    ]) {
+      expect(parseVideoEmbed(url), url).toBeUndefined();
+    }
+  });
+
+  it('knows YouTube’s oEmbed endpoint, since the page buries it past any cap', () => {
+    expect(knownOembedEndpoint(`https://www.youtube.com/watch?v=${id}`)).toBe(
+      `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}`,
+    );
+    expect(knownOembedEndpoint('https://example.com/x')).toBeUndefined();
+  });
+
+  it('reads duration as ISO-8601 or as bare seconds', () => {
+    expect(parseDurationSec('PT3M34S')).toBe(214);
+    expect(parseDurationSec('PT1H2M3S')).toBe(3723);
+    expect(parseDurationSec('PT45S')).toBe(45);
+    expect(parseDurationSec('214')).toBe(214);
+    expect(parseDurationSec('PT0S')).toBeUndefined();
+    expect(parseDurationSec('soon')).toBeUndefined();
+    expect(parseDurationSec(undefined)).toBeUndefined();
+  });
+
+  it('picks the duration out of a page, from either declaration', () => {
+    // YouTube's form, as microdata in <head>
+    expect(
+      extractHtmlMetadata('<head><title>t</title><meta itemprop="duration" content="PT3M34S"></head>', 'https://e.com/')
+        .durationSec,
+    ).toBe(214);
+    // the Open Graph form, in seconds
+    expect(
+      extractHtmlMetadata(
+        '<head><title>t</title><meta property="og:video:duration" content="95"></head>',
+        'https://e.com/',
+      ).durationSec,
+    ).toBe(95);
+  });
+
+  it('keeps a page duration when the oEmbed payload has none', () => {
+    const base = extractHtmlMetadata(
+      '<head><title>t</title><meta itemprop="duration" content="PT2M"></head>',
+      'https://e.com/',
+    );
+    expect(applyOembed(base, { title: 'x' }, 'https://e.com/').durationSec).toBe(120);
+    expect(applyOembed(base, { title: 'x', duration: 30 }, 'https://e.com/').durationSec).toBe(30);
   });
 });
 

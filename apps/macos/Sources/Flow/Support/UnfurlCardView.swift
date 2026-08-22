@@ -23,6 +23,9 @@ struct UnfurlCardView: View {
     var onPin: (() -> Void)? = nil
 
     @State private var hovering = false
+    /// Click-to-play (#302): the player only exists once the viewer asks for
+    /// it, so a channel full of video links loads nothing from the provider.
+    @State private var playing = false
 
     /// macOS reveals the remove affordance on hover; touch has no hover, so
     /// iOS shows it whenever the viewer is allowed to use it.
@@ -102,7 +105,39 @@ struct UnfurlCardView: View {
                     .frame(width: box.width, height: box.height)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MC.hairline))
+                    // Playable links wear a badge and their runtime; tapping
+                    // the picture plays rather than opening the browser, which
+                    // is what the badge promises.
+                    .overlay(alignment: .center) { if unfurl.embed != nil { playBadge } }
+                    .overlay(alignment: .bottomTrailing) {
+                        if unfurl.embed != nil, let duration = unfurl.durationLabel {
+                            Text(duration)
+                                .flowFont(.caption, weight: .medium)
+                                .monospacedDigit()
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(.black.opacity(0.75)))
+                                .padding(6)
+                                .accessibilityIdentifier("unfurl.duration")
+                        }
+                    }
                     .padding(.top, 3)
+                    .contentShape(Rectangle())
+                    // Inner gesture wins over the card's open-in-browser tap.
+                    .onTapGesture { if unfurl.embed != nil { playing = true } else { open() } }
+                    .accessibilityIdentifier(unfurl.embed != nil ? "unfurl.play" : "unfurl.image")
+                } else if unfurl.embed != nil {
+                    // The image proxy dropped the thumbnail; the card is still
+                    // playable, so it still needs somewhere to press.
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.black.opacity(0.8))
+                        .frame(width: 320, height: 180)
+                        .overlay { playBadge }
+                        .padding(.top, 3)
+                        .contentShape(Rectangle())
+                        .onTapGesture { playing = true }
+                        .accessibilityIdentifier("unfurl.play")
                 }
             }
 
@@ -144,6 +179,26 @@ struct UnfurlCardView: View {
         .onTapGesture { open() }
         .accessibilityIdentifier("msg.unfurl")
         .accessibilityAddTraits(.isLink)
+        .sheet(isPresented: $playing) {
+            if let embed = unfurl.embed {
+                VideoPlayerSheet(embed: embed, title: unfurl.title, target: unfurl.target)
+            }
+        }
+    }
+
+    /// The play affordance itself — a YouTube-shaped lozenge, deliberately big
+    /// enough to be an obvious touch target on iOS.
+    private var playBadge: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(.black.opacity(0.65))
+            .frame(width: 62, height: 42)
+            .overlay {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     /// Author · date, when either is present.
