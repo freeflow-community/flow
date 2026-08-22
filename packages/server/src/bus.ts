@@ -43,6 +43,12 @@ export function subjectArtifact(workspaceId: string, channelId: string): string 
 export function subjectIndicator(workspaceId: string, channelId: string): string {
   return `ws.${workspaceId}.chan.${channelId}.indicator`;
 }
+/** Per-channel voice-huddle stream (Phase 1). Same shape and reasoning as
+ * subjectIndicator: under the workspace wildcard so the gateway forwards it,
+ * not a `.meta` subject, and channel-scoped so visible() handles privacy. */
+export function subjectHuddle(workspaceId: string, channelId: string): string {
+  return `ws.${workspaceId}.chan.${channelId}.huddle`;
+}
 export function subjectWorkspaceAll(workspaceId: string): string {
   return `ws.${workspaceId}.>`;
 }

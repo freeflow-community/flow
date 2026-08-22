@@ -10,6 +10,10 @@ let package = Package(
         // as an XCFramework; tools/make-app.sh embeds + signs it, since a
         // hand-rolled bundle gets none of Xcode's copy-frameworks machinery.
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+        // Voice huddle (Phase 1, decision log 2026-08-20). Ships WebRTC as an
+        // XCFramework, same embedding problem as Sparkle — tools/make-app.sh
+        // extends the same treatment to it.
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", from: "2.0.0"),
     ],
     targets: [
         .executableTarget(
@@ -17,6 +21,7 @@ let package = Package(
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "LiveKit", package: "client-sdk-swift"),
             ],
             linkerSettings: [
                 // swift build autolinks the _AVKit_SwiftUI overlay but not

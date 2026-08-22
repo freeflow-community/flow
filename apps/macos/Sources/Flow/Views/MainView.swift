@@ -37,9 +37,12 @@ struct MainView: View {
             SidebarView()
                 .frame(width: clampedSidebarWidth)
             sidebarResizer
-            detail
-                .frame(maxWidth: .infinity)
-                .background(MC.base)
+            VStack(spacing: 0) {
+                HuddleBar()
+                detail
+            }
+            .frame(maxWidth: .infinity)
+            .background(MC.base)
         }
     }
 

@@ -8,6 +8,9 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift.git
     from: 7.0.0
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift.git
+    from: 2.0.0
 targets:
   Flow:
     type: application
@@ -33,6 +36,10 @@ targets:
         excludes: [Banners.swift, Updater.swift]
     dependencies:
       - package: GRDB
+      # Voice huddle (Phase 1). XcodeGen/SPM auto-embeds its XCFrameworks —
+      # unlike the macOS SwiftPM executable, no make-app.sh-style manual
+      # embedding/signing needed here.
+      - package: LiveKit
       # Embeds FlowShare.appex in the app's PlugIns folder. A share extension
       # is only installed as part of its host app.
       - target: FlowShare
@@ -93,6 +100,12 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSCameraUsageDescription: Take a photo to share in the conversation.
+        # Voice huddle (Phase 1).
+        NSMicrophoneUsageDescription: Flow needs microphone access to let you talk in a voice huddle.
+        # An ambient huddle has to survive backgrounding/lock-screen, not just
+        # in-app navigation (decision log 2026-08-20), or it fails the "feels
+        # like a real call" bar the moment you switch apps.
+        UIBackgroundModes: [audio]
         ITSAppUsesNonExemptEncryption: false
         # Allow cleartext HTTP only to loopback/.local (dev server); prod
         # (app.freeflow.im) stays HTTPS-enforced under ATS.

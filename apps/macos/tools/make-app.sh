@@ -75,6 +75,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>SUScheduledCheckInterval</key><integer>86400</integer>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <!-- Voice huddle (Phase 1) -->
+    <key>NSMicrophoneUsageDescription</key><string>Flow needs microphone access to let you talk in a voice huddle.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
@@ -87,22 +89,36 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# --- Embed Sparkle (auto-update) ---------------------------------------------
-# SwiftPM resolves Sparkle as an XCFramework but, unlike Xcode, does nothing to
-# put it inside the bundle: without this the app launches and immediately dies
-# on a missing @rpath/Sparkle.framework. Copy the macOS slice, then teach the
+# --- Embed Sparkle (auto-update) + LiveKit's XCFrameworks (voice huddle) -----
+# SwiftPM resolves these as XCFrameworks but, unlike Xcode, does nothing to put
+# them inside the bundle: without this the app launches and immediately dies on
+# a missing @rpath/<Name>.framework. Copy each macOS slice, then teach the
 # executable to look in Contents/Frameworks (SwiftPM emits @loader_path and the
-# toolchain paths, neither of which finds it).
-SPARKLE_FW=$(find .build/artifacts -type d -name "Sparkle.framework" -path "*macos*" 2>/dev/null | head -1)
-if [ -n "$SPARKLE_FW" ]; then
-  mkdir -p "$APP/Contents/Frameworks"
-  # ditto (not cp) preserves the framework's symlink layout and xattrs — a
-  # flattened framework fails to load and cannot be signed correctly.
-  ditto "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
+# toolchain paths, neither of which finds it). LiveKit ships two — its Rust
+# core (RustLiveKitUniFFI) and WebRTC (LiveKitWebRTC) — same treatment as
+# Sparkle, one rpath covers all three.
+mkdir -p "$APP/Contents/Frameworks"
+NEEDS_RPATH=0
+for FW_NAME in Sparkle RustLiveKitUniFFI LiveKitWebRTC; do
+  # Excludes __MACOSX: some of these XCFrameworks arrive as a re-zipped
+  # download, which leaves an `__MACOSX/` sibling of AppleDouble resource-fork
+  # stubs alongside the real tree — same framework name, no real symlinks
+  # inside. `find`'s traversal order isn't guaranteed, so without this filter
+  # `head -1` can silently pick the stub and produce a Frameworks/ entry that
+  # copies but fails to codesign ("bundle format unrecognized").
+  FW=$(find .build/artifacts -type d -name "$FW_NAME.framework" -path "*macos*" ! -path "*__MACOSX*" 2>/dev/null | head -1)
+  if [ -n "$FW" ]; then
+    # ditto (not cp) preserves the framework's symlink layout and xattrs — a
+    # flattened framework fails to load and cannot be signed correctly.
+    ditto "$FW" "$APP/Contents/Frameworks/$FW_NAME.framework"
+    NEEDS_RPATH=1
+  else
+    echo "warning: $FW_NAME.framework not found under .build/artifacts — this build may not launch"
+  fi
+done
+if [ "$NEEDS_RPATH" = "1" ]; then
   install_name_tool -add_rpath "@executable_path/../Frameworks" \
     "$APP/Contents/MacOS/Flow" 2>/dev/null || true
-else
-  echo "warning: Sparkle.framework not found under .build/artifacts — auto-update disabled in this build"
 fi
 
 # Sign nested code INSIDE-OUT (deepest first); a container's signature covers
@@ -116,14 +132,15 @@ fi
 # special-cased and safe when empty.
 sign_nested() {
   local identity="$1"; shift
-  local fw="$APP/Contents/Frameworks/Sparkle.framework"
-  [ -d "$fw" ] || return 0
+  local sparkle="$APP/Contents/Frameworks/Sparkle.framework"
   local targets=(
-    "$fw/Versions/B/XPCServices/Downloader.xpc"
-    "$fw/Versions/B/XPCServices/Installer.xpc"
-    "$fw/Versions/B/Updater.app"
-    "$fw/Versions/B/Autoupdate"
-    "$fw"
+    "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+    "$sparkle/Versions/B/XPCServices/Installer.xpc"
+    "$sparkle/Versions/B/Updater.app"
+    "$sparkle/Versions/B/Autoupdate"
+    "$sparkle"
+    "$APP/Contents/Frameworks/RustLiveKitUniFFI.framework"
+    "$APP/Contents/Frameworks/LiveKitWebRTC.framework"
   )
   for t in "${targets[@]}"; do
     [ -e "$t" ] || continue

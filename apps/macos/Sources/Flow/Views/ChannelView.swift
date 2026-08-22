@@ -307,12 +307,50 @@ struct ChannelView: View {
                 }
             }
             Spacer()
+            huddleButton
             headerAvatars
             channelMenu
         }
         .padding(.horizontal, 22)
         .frame(height: 60)
         .background(MC.base)
+    }
+
+    /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
+    /// not while archived. "Join Huddle" doubles as start — there's no
+    /// separate ring/start action (CONTEXT.md: Huddle). The participant count
+    /// is the ambient indicator for a huddle that's live but not yet joined.
+    @ViewBuilder
+    private var huddleButton: some View {
+        if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
+            let inThisHuddle = app.activeHuddleChannelId == channelId
+            let roster = app.huddleRosters[channelId] ?? []
+            Button {
+                if inThisHuddle {
+                    app.leaveHuddle()
+                } else if let workspaceId = channel.value?.workspaceId {
+                    app.joinHuddle(channelId: channelId, workspaceId: workspaceId)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "mic.fill")
+                    Text(inThisHuddle ? "Leave Huddle" : "Join Huddle")
+                    if !inThisHuddle, !roster.isEmpty {
+                        Text("\(roster.count)")
+                            .flowFont(size: 11, weight: .bold)
+                            .padding(.horizontal, 5)
+                            .background(Capsule().fill(MC.accent.opacity(0.15)))
+                    }
+                }
+                .flowFont(size: 12, weight: .semibold)
+                .foregroundStyle(inThisHuddle ? MC.accent : MC.muted)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(app.huddleConnecting)
+            .help(inThisHuddle ? "Leave huddle" : "Join huddle")
+            .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
+        }
     }
 
     /// The header's "⋯" menu (#188): pinned messages, this channel's artifacts
