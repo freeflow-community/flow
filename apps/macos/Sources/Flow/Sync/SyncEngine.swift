@@ -1550,6 +1550,7 @@ actor SyncEngine {
                 case 2: "\(senderName ?? "Someone") replied in a thread"
                 case 4: "\(senderName ?? "Someone") reacted \(n.reactionEmoji ?? "")"
                     .trimmingCharacters(in: .whitespaces)
+                case 5: "\(senderName ?? "Someone") added you to a channel"
                 default: "\(senderName ?? "Someone") mentioned you"
                 }
                 Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body, names: names))

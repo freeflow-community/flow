@@ -271,7 +271,9 @@ describe('per-channel unread notification count (the sidebar badge)', () => {
 
   it('counts this channel unread notifications, not its unread messages', async () => {
     const fresh = await ch.createChannel(workspaceId, aliceId, `badge-${randomUUID().slice(0, 8)}`);
-    await ch.addMember(fresh.id, aliceId, bobId);
+    // bob joins rather than being added: an invite would raise its own row
+    // (#303), and this test is about mentions vs messages.
+    await ch.joinChannel(fresh.id, bobId);
     // three messages, one of which mentions bob → bold-worthy, but badge 1
     await msg.sendMessage(fresh.id, aliceId, randomUUID(), 'chatter one');
     await msg.sendMessage(fresh.id, aliceId, randomUUID(), 'chatter two');
@@ -287,7 +289,9 @@ describe('per-channel unread notification count (the sidebar badge)', () => {
     await ch.addMember(fresh.id, aliceId, bobId);
     const m = await msg.sendMessage(fresh.id, aliceId, randomUUID(), `<@${bobId}> hi`, undefined, undefined, [bobId]);
     const dmMsg = await msg.sendMessage(dmChannelId, aliceId, randomUUID(), 'unrelated dm');
-    expect(await countFor(bobId, workspaceId, fresh.id)).toBe(1);
+    // the invite (#303) and the mention — the invite counts toward the badge
+    // like any other notification, and reading the channel clears both.
+    expect(await countFor(bobId, workspaceId, fresh.id)).toBe(2);
 
     await ch.markRead(fresh.id, bobId, m.id);
     expect(await countFor(bobId, workspaceId, fresh.id)).toBe(0);
@@ -370,6 +374,102 @@ describe('implicit read: visiting the channel or thread', () => {
 // Activity is a row inside a workspace's sidebar, so the feed behind it must
 // only ever show that workspace's rows — and its cursor sweep must not reach
 // across into a workspace the user wasn't looking at.
+// #303: being added to a channel used to produce no notification at all — the
+// sidebar quietly gained a row and that was the whole signal.
+describe('channel invites (kind 5)', () => {
+  /** A fresh workspace member, so each test starts with no channel history. */
+  async function newMember(name: string, isAgent = false): Promise<string> {
+    const id = await registerHuman(`${name}-${randomUUID().slice(0, 8)}@example.test`, name);
+    if (isAgent) await db.update(users).set({ isAgent: true }).where(eq(users.id, id));
+    await db.insert(schema.workspaceMembers).values({ workspaceId, userId: id, role: 'member' });
+    return id;
+  }
+
+  it('adding someone notifies them, anchored to the join line', async () => {
+    const dave = await newMember('Dave');
+    const chan = await ch.createChannel(workspaceId, aliceId, `invites-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(chan.id, aliceId, dave);
+
+    const n = await latestNotification(dave);
+    expect(n?.kind).toBe(5);
+    expect(n?.channelId).toBe(chan.id);
+    expect(n?.actorId).toBe(aliceId); // the inviter, not the invited
+    expect(n?.readAt).toBeNull();
+
+    // The anchor is the member_joined line, which is also where tapping lands.
+    const anchor = await msg.getMessageById(n!.messageId);
+    expect(anchor?.systemKind).toBe('member_joined');
+    expect(anchor?.channelId).toBe(chan.id);
+
+    // and it reaches the feed, raising the unread count
+    const page = await nt.listNotifications(dave, undefined, 50, workspaceId);
+    expect(page.notifications[0]?.kind).toBe(5);
+    expect(page.unreadCount).toBeGreaterThan(0);
+  });
+
+  it('joining a public channel yourself does not notify you', async () => {
+    const erin = await newMember('Erin');
+    const chan = await ch.createChannel(workspaceId, aliceId, `selfjoin-${randomUUID().slice(0, 8)}`);
+    await ch.joinChannel(chan.id, erin);
+
+    expect(await latestNotification(erin)).toBeUndefined();
+  });
+
+  it('adding N people notifies all N', async () => {
+    const people = [await newMember('Frank'), await newMember('Grace'), await newMember('Heidi')];
+    const chan = await ch.createChannel(workspaceId, aliceId, `bulk-${randomUUID().slice(0, 8)}`);
+    for (const uid of people) await ch.addMember(chan.id, aliceId, uid);
+
+    for (const uid of people) {
+      const n = await latestNotification(uid);
+      expect(n?.kind).toBe(5);
+      expect(n?.channelId).toBe(chan.id);
+    }
+  });
+
+  it('an agent added to a channel gets one', async () => {
+    const bot = await newMember('Botty', true);
+    const chan = await ch.createChannel(workspaceId, aliceId, `agent-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(chan.id, aliceId, bot);
+
+    expect((await latestNotification(bot))?.kind).toBe(5);
+  });
+
+  it('re-adding an existing member notifies nobody twice', async () => {
+    const ivan = await newMember('Ivan');
+    const chan = await ch.createChannel(workspaceId, aliceId, `dupe-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(chan.id, aliceId, ivan);
+    await ch.addMember(chan.id, aliceId, ivan);
+
+    const rows = await db
+      .select()
+      .from(notifications)
+      .where(and(eq(notifications.userId, ivan), eq(notifications.channelId, chan.id)));
+    expect(rows).toHaveLength(1);
+  });
+
+  // The sharp edge: kind 5 must not fall through suppressAlertFor's ternary
+  // chain to 'mention', or muting mentions silently mutes invites too.
+  it('follows its own pref, not the mention pref', async () => {
+    const off = { statusSuppressAlerts: false };
+    expect(nt.suppressAlertFor(5, null, { prefs: {}, ...off })).toBe(false); // absent = on
+    expect(nt.suppressAlertFor(5, null, { prefs: { mention: false }, ...off })).toBe(false);
+    expect(nt.suppressAlertFor(5, null, { prefs: { channelInvite: false }, ...off })).toBe(true);
+    // and the invite toggle leaves mentions alone
+    expect(nt.suppressAlertFor(0, 'mention', { prefs: { channelInvite: false }, ...off })).toBe(false);
+  });
+
+  it('turning off mention alerts leaves invite alerts on, end to end', async () => {
+    const judy = await newMember('Judy');
+    await us.patchMe(judy, { notificationPrefs: { mention: false } });
+    const chan = await ch.createChannel(workspaceId, aliceId, `pref-${randomUUID().slice(0, 8)}`);
+    await ch.addMember(chan.id, aliceId, judy);
+
+    const n = await latestNotification(judy);
+    expect(await listedSuppress(judy, n!.messageId)).toBe(false);
+  });
+});
+
 describe('workspace scoping', () => {
   let otherWorkspaceId = '';
   let otherChannelId = '';

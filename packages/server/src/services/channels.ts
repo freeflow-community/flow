@@ -11,6 +11,7 @@ import {
   clearChannelNotificationsForAll,
   markChannelNotificationsRead,
   markThreadNotificationsRead,
+  notifyChannelInvite,
 } from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 import { channelIndicators } from '../indicators.js';
@@ -444,7 +445,10 @@ export async function addMember(channelId: string, actorId: string, targetUserId
       ts: new Date().toISOString(),
       data: { userId: targetUserId, channelId, workspaceId: chan.workspaceId },
     });
-    await postSystemMessage(chan, targetUserId, 'member_joined');
+    // #303: the join line is the notification's anchor and its tap
+    // destination, so the notification follows it rather than racing it.
+    const line = await postSystemMessage(chan, targetUserId, 'member_joined');
+    if (line) await notifyChannelInvite(chan, line, targetUserId, actorId);
   }
 }
 

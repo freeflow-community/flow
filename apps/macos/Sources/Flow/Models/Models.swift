@@ -676,6 +676,11 @@ struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
         case 3: return "\(sender) posted\(suffix)"
         case 4: return "\(sender) reacted \(reactionEmoji ?? "") to your message\(suffix)"
             .replacingOccurrences(of: "  ", with: " ")
+        case 5:
+            // #303. The channel is the point here, so name it or say nothing —
+            // "added you in #x" would read as the wrong preposition.
+            return channelName.map { "\(sender) added you to #\($0)" }
+                ?? "\(sender) added you to a channel"
         default: return "\(sender) mentioned you\(suffix)"
         }
     }

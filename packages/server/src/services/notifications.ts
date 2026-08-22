@@ -7,7 +7,8 @@
 // (approved deviation from the workspace-scoped subject in the spec).
 //
 // Kinds: 0=mention (user or group mention), 1=dm, 2=thread_reply,
-// 3=channel activity (notify_level=all), 4=reaction on one of my messages.
+// 3=channel activity (notify_level=all), 4=reaction on one of my messages,
+// 5=someone added me to a channel (#303).
 // Precedence when a message qualifies a user several ways: dm > mention >
 // thread_reply > activity — one row per (user, message). notify_level 0 (mute)
 // suppresses everything, including DMs.
@@ -89,9 +90,11 @@ export function suppressAlertFor(
         ? 'threadReply'
         : kind === 4
           ? 'reaction'
-          : subkind === 'here' || subkind === 'channel'
-            ? 'groupMention'
-            : 'mention';
+          : kind === 5
+            ? 'channelInvite'
+            : subkind === 'here' || subkind === 'channel'
+              ? 'groupMention'
+              : 'mention';
   return ctx.prefs[key] === false;
 }
 
@@ -118,8 +121,10 @@ export async function computeRecipients(
   const memberLevel = new Map(memberRows.map((r) => [r.userId, r.notifyLevel]));
 
   const muted = (uid: string): boolean => memberLevel.get(uid) === 0;
-  // priority: lower number wins (dm strongest)
-  const PRIORITY: Record<NotificationKind, number> = { 1: 0, 0: 1, 2: 2, 3: 3, 4: 4 };
+  // priority: lower number wins (dm strongest). Kind 5 (channel invite) is
+  // never proposed here — it isn't caused by a message — but the Record has to
+  // be total, so it sits last.
+  const PRIORITY: Record<NotificationKind, number> = { 1: 0, 0: 1, 2: 2, 3: 3, 4: 4, 5: 5 };
   const out = new Map<string, RecipientPlan>();
   const propose = (uid: string, kind: NotificationKind, subkind: NotificationSubkind | null = null): void => {
     if (uid === senderId || muted(uid)) return;
@@ -388,6 +393,59 @@ export async function notifyReaction(
     message,
   };
   publishEvent(subjectUserNotify(authorId), {
+    type: 'notification.created',
+    workspaceId: chan.workspaceId,
+    channelId: chan.id,
+    ts: dto.createdAt,
+    data: dto,
+  });
+}
+
+/**
+ * Someone added me to a channel → kind 5 (issue #303). Before this, being added
+ * produced no signal at all beyond a new sidebar row, so an invite you weren't
+ * watching for was found by accident.
+ *
+ * Only `addMember` calls this — joining a public channel yourself goes through
+ * `joinChannel`, which deliberately does not, since you already know.
+ *
+ * The row anchors to the `member_joined` system message the caller just posted,
+ * which is also where tapping the Activity row lands you. Nothing to write if
+ * that line couldn't be posted (a non-standard channel): no anchor, no row.
+ */
+export async function notifyChannelInvite(
+  chan: ChannelRow,
+  message: import('@flow/shared').MessageDTO,
+  invitedUserId: string,
+  actorId: string,
+): Promise<void> {
+  if (invitedUserId === actorId) return; // added yourself — that's a join
+
+  const id = newId();
+  const inserted = await db
+    .insert(notifications)
+    .values({ id, userId: invitedUserId, messageId: message.id, channelId: chan.id, kind: 5, actorId })
+    .returning({ id: notifications.id, createdAt: notifications.createdAt });
+  const row = inserted[0];
+  if (!row) return;
+
+  const ctx = await alertContextFor(invitedUserId);
+  const dto: NotificationDTO = {
+    id: row.id,
+    userId: invitedUserId,
+    messageId: message.id,
+    channelId: chan.id,
+    workspaceId: chan.workspaceId,
+    kind: 5,
+    actorId,
+    reactionEmoji: null,
+    subkind: null,
+    suppressAlert: suppressAlertFor(5, null, ctx),
+    createdAt: row.createdAt.toISOString(),
+    readAt: null,
+    message,
+  };
+  publishEvent(subjectUserNotify(invitedUserId), {
     type: 'notification.created',
     workspaceId: chan.workspaceId,
     channelId: chan.id,

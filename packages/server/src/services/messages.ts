@@ -257,13 +257,18 @@ const SYSTEM_PREDICATE: Record<SystemMessageKind, string> = {
  * The body is the pre-rendered sentence so every client (and scroll-back
  * history) reads correctly without a live member lookup; the name reflects the
  * user at the moment of the event, which is what we want.
+ *
+ * Returns the posted message, or null when there wasn't one (a non-standard
+ * channel, or a failure it swallowed). #303 hangs the channel-invite
+ * notification off this row — every notification anchors to a message, and the
+ * join line is both already there and the right tap destination.
  */
 export async function postSystemMessage(
   chan: { id: string; workspaceId: string; kind: string },
   subjectUserId: string,
   kind: SystemMessageKind,
-): Promise<void> {
-  if (chan.kind !== 'standard') return;
+): Promise<MessageDTO | null> {
+  if (chan.kind !== 'standard') return null;
   try {
     const who = await db
       .select({ displayName: schema.users.displayName })
@@ -292,17 +297,20 @@ export async function postSystemMessage(
       })
       .returning();
     const row = inserted[0];
-    if (!row) return;
+    if (!row) return null;
+    const dto = toMessageDTO(row);
     publishEvent(subjectMsg(chan.workspaceId, chan.id), {
       type: 'message.created',
       workspaceId: chan.workspaceId,
       channelId: chan.id,
       ts: now.toISOString(),
-      data: toMessageDTO(row),
+      data: dto,
     });
+    return dto;
   } catch (err) {
     // Best-effort: a failed courtesy line must not abort the join/leave.
     console.error('postSystemMessage failed', { channelId: chan.id, kind, err });
+    return null;
   }
 }
 

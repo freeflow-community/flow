@@ -13,6 +13,12 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Per-user notification alert prefs have a UI on web only — macOS and iOS
+  render every kind and honour the server's `suppressAlert`, but offer no way
+  to change the toggles behind it. Noted with the `channelInvite` pref (#303),
+  which inherits the same gap as `dm`/`mention`/`reaction` rather than adding a
+  new one. `PATCH /v1/me` is the whole API; each native client needs a settings
+  pane.
 - Clearing a channel's Activity unreads on open without waiting for the server
   (#227) landed on macOS and iOS only. Web still leaves the badge up until the
   `notification.read` round trip returns; the fix is an optimistic cache write

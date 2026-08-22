@@ -58,4 +58,23 @@ final class ActivityHeadlineTests: XCTestCase {
             "Scott reacted to your message in #bugs"
         )
     }
+
+    // #303: kind 5 is "someone added me to a channel". An unknown kind falls
+    // through to "mentioned you", so without a case here the invite row would
+    // read as a mention that never happened.
+    func testChannelInviteNamesTheChannel() throws {
+        XCTAssertEqual(
+            try item(kind: 5).headline(sender: "Amara", channelName: "design-review"),
+            "Amara added you to #design-review"
+        )
+    }
+
+    func testChannelInviteWithoutAKnownChannel() throws {
+        // "added you in #x" would be the wrong preposition, so the suffix
+        // machinery is bypassed for this kind — check the fallback reads right.
+        XCTAssertEqual(
+            try item(kind: 5).headline(sender: "Amara", channelName: nil),
+            "Amara added you to a channel"
+        )
+    }
 }

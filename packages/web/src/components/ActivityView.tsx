@@ -24,6 +24,7 @@ export const kindLabel = (kind: number, sender: string, emoji: string | null, ch
     : kind === 2 ? `${sender} replied in a thread${where}`
     : kind === 3 ? `${sender} posted${where}`
     : kind === 4 ? `${sender} reacted ${emoji ?? ''} to your message${where}`.replace('  ', ' ')
+    : kind === 5 ? (channel ? `${sender} added you to #${channel}` : `${sender} added you to a channel`)
     : `${sender} mentioned you${where}`;
 };
 
