@@ -466,7 +466,12 @@ struct SystemLineView: View {
         .keyWindow
     // 393pt is the common iPhone width; the fallback only matters for the
     // frame or two before a window exists.
-    let available = (window?.bounds.width ?? 393) - (14 + 14 + 38 + 10) - (3 + 8 + 8)
+    // Named pieces rather than one literal-heavy line: the single expression
+    // sent the Swift type checker past its "reasonable time" limit.
+    let windowWidth: CGFloat = window?.bounds.width ?? 393
+    let rowChrome: CGFloat = 14 + 14 + 38 + 10
+    let cardChrome: CGFloat = 3 + 8 + 8
+    let available = windowWidth - rowChrome - cardChrome
     // Never below a legible thumbnail, never above the desktop card's size.
     return min(360, max(160, available))
 }
