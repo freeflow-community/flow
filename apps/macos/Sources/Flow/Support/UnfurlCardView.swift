@@ -21,6 +21,12 @@ struct UnfurlCardView: View {
     /// Pin this link as a co-browsing artifact (link artifacts). Nil where artifacts
     /// aren't available (iOS has no artifact panel yet), which hides the button.
     var onPin: (() -> Void)? = nil
+    /// The widest a `large_image` preview may be drawn. The card sizes its
+    /// picture exactly (see `imageBox`), so this number, not the layout, is
+    /// what decides the card's width — and a card wider than its row drags the
+    /// whole transcript sideways. macOS keeps the desktop size; iOS passes what
+    /// its row actually leaves (#306).
+    var maxImageWidth: CGFloat = 360
 
     @State private var hovering = false
     /// Click-to-play (#302): the player only exists once the viewer asks for
@@ -130,9 +136,10 @@ struct UnfurlCardView: View {
                 } else if unfurl.embed != nil {
                     // The image proxy dropped the thumbnail; the card is still
                     // playable, so it still needs somewhere to press.
+                    let width = min(320, maxImageWidth)
                     RoundedRectangle(cornerRadius: 6)
                         .fill(.black.opacity(0.8))
-                        .frame(width: 320, height: 180)
+                        .frame(width: width, height: width * 9 / 16)
                         .overlay { playBadge }
                         .padding(.top, 3)
                         .contentShape(Rectangle())
@@ -217,7 +224,7 @@ struct UnfurlCardView: View {
     /// The exact display box: the largest size preserving the image's aspect
     /// ratio that fits the layout's bounds. Square when dimensions are absent.
     private func imageBox(_ image: Unfurl.Image) -> CGSize {
-        let maxW: CGFloat = unfurl.isLargeImage ? 360 : 80
+        let maxW: CGFloat = unfurl.isLargeImage ? maxImageWidth : 80
         let maxH: CGFloat = unfurl.isLargeImage ? 320 : 80
         let ratio = aspect(image)
         let width = min(maxW, maxH * ratio)

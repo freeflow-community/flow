@@ -449,6 +449,28 @@ struct SystemLineView: View {
     }
 }
 
+/// The widest picture a link preview may draw inside a transcript row.
+///
+/// `UnfurlCardView` sizes its picture exactly, so the picture — not the
+/// layout — decides the card's width, and a card wider than the row makes the
+/// whole transcript wider than the window: the rows, the composer and the
+/// floating header pill all slide sideways (#306). The row spends 14 pt of
+/// gutter on each side, a 38 pt avatar column and its 10 pt gap; the card
+/// spends 3 pt of rail, an 8 pt gap and 8 pt of trailing padding. Read from
+/// the window, like `floatingHeaderTopInset`, and fixed for the life of the
+/// screen because the app is iPhone-portrait-only.
+@MainActor var unfurlImageWidth: CGFloat {
+    let window = UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }
+        .first { $0.activationState == .foregroundActive }?
+        .keyWindow
+    // 393pt is the common iPhone width; the fallback only matters for the
+    // frame or two before a window exists.
+    let available = (window?.bounds.width ?? 393) - (14 + 14 + 38 + 10) - (3 + 8 + 8)
+    // Never below a legible thumbnail, never above the desktop card's size.
+    return min(360, max(160, available))
+}
+
 struct MessageRow: View, Equatable {
     let message: Message
     /// Pre-parsed body blocks from the row model; nil (thread screen) falls
@@ -582,7 +604,8 @@ struct MessageRow: View, Equatable {
                                     await context.engine.deleteUnfurl(
                                         messageId: message.id, urlHash: unfurl.urlHash)
                                 }
-                            }
+                            },
+                            maxImageWidth: unfurlImageWidth
                         )
                     }
 
