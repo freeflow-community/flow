@@ -739,6 +739,8 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.threadReply !== false} onChange={(v) => void setPref('threadReply', v)} />
       <PrefToggle testid="pref-reaction" label="Reactions" hint="someone reacts to your message"
         checked={prefs.reaction !== false} onChange={(v) => void setPref('reaction', v)} />
+      <PrefToggle testid="pref-channel-invite" label="Channel invites" hint="someone adds you to a channel"
+        checked={prefs.channelInvite !== false} onChange={(v) => void setPref('channelInvite', v)} />
       <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
         checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
 

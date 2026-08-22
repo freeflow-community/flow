@@ -328,6 +328,7 @@ export default function Main() {
       n.kind === 1 ? `${sender} (DM)`
       : n.kind === 2 ? `${sender} replied in a thread`
       : n.kind === 4 ? `${sender} reacted ${n.reactionEmoji ?? ''}`.trim()
+      : n.kind === 5 ? `${sender} added you to a channel`
       : `${sender} mentioned you`;
     try {
       const banner = new Notification(title, {

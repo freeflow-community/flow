@@ -43,7 +43,8 @@ export const users = pgTable('users', {
   website: text('website').notNull().default(''),
   bio: text('bio').notNull().default(''),
   // Phase 10: per-user notification prefs ({dm, mention, groupMention,
-  // threadReply, persistentBanners} — absent key = default) and the
+  // threadReply, reaction, channelInvite, persistentBanners} — absent key =
+  // default) and the
   // status-driven "suppress all alerts" flag (DND-family statuses).
   notificationPrefs: jsonb('notification_prefs').$type<Record<string, boolean>>().notNull().default({}),
   statusSuppressAlerts: boolean('status_suppress_alerts').notNull().default(false),
@@ -343,10 +344,12 @@ export const notifications = pgTable(
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
-    kind: smallint('kind').notNull(), // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction
+    // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction 5=channel invite
+    kind: smallint('kind').notNull(),
     // phase 10: for kind 0 — 'mention' | 'here' | 'channel'; NULL otherwise
     subkind: text('subkind'),
-    // issue #63: who caused it — message author (kinds 0-3) or reactor (kind 4).
+    // issue #63: who caused it — message author (kinds 0-3), reactor (kind 4)
+    // or the inviter (kind 5, #303).
     // Nullable only for rows written before the column existed.
     actorId: uuid('actor_id').references(() => users.id, { onDelete: 'cascade' }),
     reactionEmoji: text('reaction_emoji'), // kind 4 only

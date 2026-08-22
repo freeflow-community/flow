@@ -41,6 +41,10 @@ export interface NotificationPrefs {
   threadReply?: boolean | undefined;
   /** Reactions on my own messages (kind 4). Default on. */
   reaction?: boolean | undefined;
+  /** Someone added me to a channel (kind 5). Default on. Deliberately its own
+   * key rather than sharing `mention`: muting mentions must not silently mute
+   * invites, which are the only signal that new work has arrived. */
+  channelInvite?: boolean | undefined;
   /** Web-only presentation pref: OS notifications persist until dismissed (requireInteraction). Default off. */
   persistentBanners?: boolean | undefined;
 }
@@ -331,9 +335,10 @@ export interface MessageDTO {
 
 /**
  * notifications.kind: 0=mention (incl. group mentions), 1=dm, 2=thread_reply,
- * 3=channel activity (notify_level=all), 4=reaction on one of my messages
+ * 3=channel activity (notify_level=all), 4=reaction on one of my messages,
+ * 5=someone added me to a channel (#303)
  */
-export type NotificationKind = 0 | 1 | 2 | 3 | 4;
+export type NotificationKind = 0 | 1 | 2 | 3 | 4 | 5;
 
 export interface NotificationDTO {
   id: string;

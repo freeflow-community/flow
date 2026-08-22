@@ -355,6 +355,7 @@ export const NotificationPrefsBody = z.object({
   groupMention: z.boolean().optional(),
   threadReply: z.boolean().optional(),
   reaction: z.boolean().optional(),
+  channelInvite: z.boolean().optional(),
   persistentBanners: z.boolean().optional(),
 });
 
