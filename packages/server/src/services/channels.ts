@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
-import type { ChannelDTO, ChannelIndicatorState, ChannelKind, NotifyLevel } from '@flow/shared';
+import type { ChannelDTO, ChannelIndicatorState, ChannelKind, HuddleParticipantDTO, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -15,6 +15,7 @@ import {
 } from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 import { channelIndicators } from '../indicators.js';
+import { huddleParticipantsMany, toParticipantDTOs } from '../huddles.js';
 
 const { channels, channelMembers, messages, notifications, workspaceMembers } = schema;
 
@@ -31,6 +32,7 @@ export function toChannelDTO(
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
     indicator?: ChannelIndicatorState | null | undefined;
+    huddleParticipants?: HuddleParticipantDTO[] | undefined;
   },
 ): ChannelDTO {
   const dto: ChannelDTO = {
@@ -55,6 +57,9 @@ export function toChannelDTO(
   // Only sent when something is actually showing: absent means "no spinner",
   // and every other DTO path (create, patch, join…) leaves it out entirely.
   if (opts.indicator) dto.indicator = opts.indicator;
+  // Same absent-means-quiet convention as indicator, for the same reason:
+  // every other DTO path (create, patch, join…) leaves this out entirely.
+  if (opts.huddleParticipants?.length) dto.huddleParticipants = opts.huddleParticipants;
   return dto;
 }
 
@@ -324,6 +329,9 @@ export async function listChannels(workspaceId: string, userId: string): Promise
   // query. Riding the channel list means a client that just loaded (or came
   // back from a refresh) starts in the right state without a second call.
   const indicators = channelIndicators(visible.map((r) => r.c.id));
+  // Live huddle rosters (Phase 1) — same reasoning: a map lookup, not a query,
+  // so a client that just loaded shows an already-active huddle immediately.
+  const huddles = huddleParticipantsMany(visible.map((r) => r.c.id));
 
   const result: ChannelDTO[] = [];
   for (const r of visible) {
@@ -354,6 +362,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
         indicator: indicators.get(r.c.id) ?? null,
+        huddleParticipants: toParticipantDTOs(huddles.get(r.c.id) ?? []),
       }),
     );
   }

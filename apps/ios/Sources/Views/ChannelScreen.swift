@@ -75,11 +75,50 @@ struct ChannelScreen: View {
         return text.isEmpty ? nil : text
     }
 
+    /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
+    /// not while archived. "Join Huddle" doubles as start — see CONTEXT.md
+    /// (Huddle). The participant count is the ambient indicator for a huddle
+    /// that's live but not yet joined. Sits in the pill's trailing slot
+    /// alongside the "⋯" menu (#298 moved the whole header into the pill).
+    private var huddleButton: some View {
+        Group {
+            if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
+                let inThisHuddle = app.activeHuddleChannelId == channelId
+                let roster = app.huddleRosters[channelId] ?? []
+                Button {
+                    if inThisHuddle {
+                        app.leaveHuddle()
+                    } else if let workspaceId = channel.value?.workspaceId {
+                        app.joinHuddle(channelId: channelId, workspaceId: workspaceId)
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                        if !inThisHuddle, !roster.isEmpty {
+                            Text("\(roster.count)")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 32, minHeight: 32)
+                    .padding(.horizontal, 6)
+                    .background(Capsule().fill(.white.opacity(inThisHuddle ? 0.35 : 0.2)))
+                }
+                .buttonStyle(.plain)
+                .disabled(app.huddleConnecting)
+                .accessibilityLabel(inThisHuddle ? "Leave huddle" : "Join huddle")
+                .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
+            }
+        }
+    }
+
     /// The floating header (#298). The topic rides in the pill as a subtitle —
     /// the macOS header shape (`ChannelView.swift:227`) as a phone allows, and
     /// no longer a strip under the bar. The system navigation bar is hidden on this
     /// screen, so the hamburger comes from `MainView` as a closure and the "⋯"
-    /// menu moves out of `.toolbar` and into the pill.
+    /// menu moves out of `.toolbar` and into the pill — the huddle button
+    /// joins it there (Phase 1: voice huddle).
     private var headerPill: some View {
         FloatingHeaderPill(
             title: title,
@@ -89,7 +128,12 @@ struct ChannelScreen: View {
             leadingAccessibilityIdentifier: "nav.menu",
             leadingAccessibilityLabel: "Channels",
             subtitleAccessibilityIdentifier: "channel.header.topic",
-            trailing: { channelMenu }
+            trailing: {
+                HStack(spacing: 6) {
+                    huddleButton
+                    channelMenu
+                }
+            }
         )
     }
 
@@ -269,7 +313,8 @@ struct ChannelScreen: View {
         .background(MC.base)
         // No `.navigationTitle` / `.toolbar` here any more: the pill in `body`
         // carries the name, the topic, the hamburger and the "⋯" menu (#188's
-        // three items are unchanged, they just moved).
+        // three items are unchanged, they just moved) — the huddle button
+        // (Phase 1: voice huddle) joins them in the pill's trailing slot.
         .task {
             app.selectChannel(channelId)
             // Re-push the thread this channel had open before we left it (#89)

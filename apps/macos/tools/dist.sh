@@ -73,20 +73,20 @@ tools/make-app.sh release
 # runtime with a secure timestamp. Inside-out — signing the app seals everything
 # beneath it, so anything re-signed afterwards invalidates the outer signature.
 SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
-if [ -d "$SPARKLE_FW" ]; then
-  echo "==> Signing embedded Sparkle (nested code, inside-out)"
-  for nested in \
-    "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
-    "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
-    "$SPARKLE_FW/Versions/B/Updater.app" \
-    "$SPARKLE_FW/Versions/B/Autoupdate" \
-    "$SPARKLE_FW"; do
-    [ -e "$nested" ] || continue
-    codesign --force --options runtime --timestamp \
-      -s "$FLOW_SIGN_IDENTITY" "$nested" \
-      || fail "failed to sign $(basename "$nested")"
-  done
-fi
+echo "==> Signing embedded frameworks (nested code, inside-out)"
+for nested in \
+  "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
+  "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
+  "$SPARKLE_FW/Versions/B/Updater.app" \
+  "$SPARKLE_FW/Versions/B/Autoupdate" \
+  "$SPARKLE_FW" \
+  "$APP/Contents/Frameworks/RustLiveKitUniFFI.framework" \
+  "$APP/Contents/Frameworks/LiveKitWebRTC.framework"; do
+  [ -e "$nested" ] || continue
+  codesign --force --options runtime --timestamp \
+    -s "$FLOW_SIGN_IDENTITY" "$nested" \
+    || fail "failed to sign $(basename "$nested")"
+done
 
 echo "==> Signing with Developer ID under the hardened runtime"
 codesign --force --options runtime --timestamp \

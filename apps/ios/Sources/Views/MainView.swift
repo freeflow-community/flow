@@ -19,7 +19,10 @@ struct MainView: View {
         GeometryReader { geo in
             let drawerWidth = min(geo.size.width * 0.86, 320)
             ZStack(alignment: .leading) {
-                content
+                VStack(spacing: 0) {
+                    content
+                    HuddleBar()
+                }
 
                 if drawerOpen {
                     Color.black.opacity(0.4)

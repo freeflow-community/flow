@@ -6,17 +6,19 @@ import type {
   ChannelDTO,
   ChannelIndicatorData,
   Event,
+  HuddleUpdatedData,
   MessageDTO,
   NotificationDTO,
   TypingData,
   PresenceData,
 } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
-import { applyIndicator } from '../lib/channelCache';
+import { applyHuddle, applyIndicator } from '../lib/channelCache';
 import { api, getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
+import { HuddleProvider } from '../huddle';
 import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
@@ -24,6 +26,7 @@ import AdminView from './AdminView';
 import ActivityView from './ActivityView';
 import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
+import HuddleMiniBar from './HuddleMiniBar';
 import { MobileMenuButton } from './MobileMenuButton';
 
 export default function Main() {
@@ -205,6 +208,15 @@ export default function Main() {
         );
         break;
       }
+      case 'huddle.updated': {
+        // Same reasoning as channel.indicator: patch, don't invalidate — the
+        // roster is transient and should update the instant the event lands.
+        const d = event.data as HuddleUpdatedData;
+        qc.setQueryData<{ channels: ChannelDTO[] }>(['channels', event.workspaceId], (old) =>
+          old ? { channels: applyHuddle(old.channels, d) } : old,
+        );
+        break;
+      }
       case 'presence': {
         const p = event.data as PresenceData;
         setPresence((prev) => ({ ...prev, [p.userId]: p.status === 'online' }));
@@ -381,8 +393,10 @@ export default function Main() {
   return (
     <LiveContext.Provider value={live}>
      <MobileNavContext.Provider value={mobileNav}>
+      <HuddleProvider>
       <div className="flex h-full flex-col bg-base text-ink">
         <OpenInAppBanner />
+        <HuddleMiniBar />
         <div className="relative flex min-h-0 flex-1">
           {/* Rail + sidebar. Desktop: inline flex columns. Mobile (<md): a
               fixed slide-in drawer over the content, toggled by the header
@@ -428,6 +442,7 @@ export default function Main() {
           </div>
         </div>
       </div>
+      </HuddleProvider>
      </MobileNavContext.Provider>
     </LiveContext.Provider>
   );

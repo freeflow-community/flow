@@ -271,7 +271,7 @@ export const faqs = [
   },
   {
     q: "What does Freeflow deliberately not do?",
-    a: "Canvas, BlockKit, huddles and audio/video, message search, drafts, and guest orgs. These are ruled non-goals written down in the spec, not oversights. Search is the one most teams ask for.",
+    a: "Canvas, BlockKit, video calls, message search, drafts, and guest orgs. These are ruled non-goals written down in the spec, not oversights. Search is the one most teams ask for. (Audio-only voice huddles shipped — video/screenshare didn't.)",
   },
   {
     q: "Windows, Linux, iOS?",
