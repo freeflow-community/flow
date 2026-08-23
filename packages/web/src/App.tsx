@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
-import { api, getToken, setToken } from './lib/api';
+import { api, blobUrl, getToken, setToken } from './lib/api';
 import { clearJoinToken, parseJoinPath, readJoinToken, stashJoinToken } from './lib/joinLink';
 import { createThreadMemory } from './lib/threadMemory';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
@@ -94,6 +94,12 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Warm the blob cache with our own avatar so the first message we send
+  // this session doesn't flash the placeholder while it loads.
+  useEffect(() => {
+    if (user?.avatarUrl) void blobUrl(user.avatarUrl).catch(() => {});
+  }, [user?.avatarUrl]);
 
   // Accept a stashed emailed invite as soon as we have a signed-in user
   // (fresh registration or existing account alike), then land in that

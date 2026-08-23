@@ -475,6 +475,11 @@ actor SyncEngine {
             try String.fetchAll(db, sql: "SELECT id FROM user WHERE isAgent = 1")
         }) ?? []
         await appState?.setAgentIds(Set(agents))
+        // Warm the image cache with our own avatar so the very first message
+        // we send this session doesn't flash the placeholder.
+        if let uid = currentUser?.id, let path = rows.first(where: { $0.0 == uid })?.1 {
+            Task.detached(priority: .utility) { _ = await ImageLoader.shared.image(path: path) }
+        }
     }
 
     // MARK: - Channels

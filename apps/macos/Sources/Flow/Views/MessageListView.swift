@@ -181,7 +181,11 @@ struct MessageListView: View {
                                 .equatable()
                             }
                         }
-                        .id(row.message.id)
+                        // Keyed on clientMsgId, not id: the optimistic row and
+                        // its server echo share a clientMsgId but not an id,
+                        // so keying on id remounts the row (and its avatar
+                        // image) the moment the echo lands.
+                        .id(row.message.clientMsgId)
                         // Scroll memory's recorder: each row reports itself
                         // when it crosses the viewport top; only one does, so
                         // the preference resolves to the top-visible message.
