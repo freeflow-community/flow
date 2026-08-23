@@ -43,8 +43,41 @@ function slugify(name: string): string {
     .slice(0, 32);
 }
 
+/**
+ * `agent.example.json` next to the target config: committed defaults for this
+ * agent's home. Setup merges it under the freshly minted credentials, so a
+ * folder can carry the whole persona (runtime.systemPromptExtra, eventScope,
+ * respondToAgents, …) and the wizard fills in only what onboarding creates.
+ * The extra keys `name`, `username`, and `description` seed the matching
+ * prompts (making a bare `npx flow-agent-bridge <code>` fully non-interactive)
+ * and are stripped from the written agent.json; `runtime.kind` and
+ * `runtime.cwd` seed the harness and working-directory answers.
+ */
+export function loadTemplate(configPath: string): Record<string, unknown> | null {
+  const p = path.join(path.dirname(path.resolve(configPath)), 'agent.example.json');
+  if (!fs.existsSync(p)) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (err) {
+    throw new Error(`could not read ${p}: ${(err as Error).message}`);
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${p} must contain a JSON object`);
+  }
+  return raw as Record<string, unknown>;
+}
+
 export async function runSetup(configPath: string, opts: SetupOptions = {}): Promise<string> {
-  const serverUrl = (opts.serverUrl ?? process.env.FLOW_SERVER_URL ?? 'https://app.freeflow.im').replace(/\/+$/, '');
+  const template = loadTemplate(configPath);
+  const t = (k: string): string | undefined =>
+    typeof template?.[k] === 'string' ? (template[k] as string) : undefined;
+  const tRuntime = (template?.runtime && typeof template.runtime === 'object' ? template.runtime : {}) as Record<
+    string,
+    unknown
+  >;
+  const tr = (k: string): string | undefined => (typeof tRuntime[k] === 'string' ? (tRuntime[k] as string) : undefined);
+  const serverUrl = (opts.serverUrl ?? process.env.FLOW_SERVER_URL ?? t('serverUrl') ?? 'https://app.freeflow.im').replace(/\/+$/, '');
   const rl = process.stdin.isTTY ? readline.createInterface({ input: process.stdin, output: process.stdout }) : null;
 
   // A required value: take the flag if given (validated), otherwise prompt.
@@ -70,6 +103,7 @@ export async function runSetup(configPath: string, opts: SetupOptions = {}): Pro
 
   try {
     console.log('Setting up your Flow agent.\n');
+    if (template) console.log('Using defaults from agent.example.json.\n');
 
     let agentToken: string;
     let agentUsername: string | undefined;
@@ -82,7 +116,7 @@ export async function runSetup(configPath: string, opts: SetupOptions = {}): Pro
       const me = await new FlowApi(serverUrl, opts.token).me();
       console.log(`Reconnecting as existing agent ${me.displayName} <@${me.id}>.\n`);
       agentToken = opts.token;
-      kind = await required(opts.harness, 'Agent harness — claude, codex, or demo', {
+      kind = await required(opts.harness ?? tr('kind'), 'Agent harness — claude, codex, or demo', {
         def: 'claude',
         normalize: (s) => s.toLowerCase(),
         validate: (s) => HARNESSES.includes(s),
@@ -95,18 +129,18 @@ export async function runSetup(configPath: string, opts: SetupOptions = {}): Pro
         normalize: (s) => s.trim(),
         validate: (s) => INVITE_CODE_RE.test(s),
       });
-      const name = await required(opts.name, 'Agent name (shown in Flow, e.g. RepoBot)');
-      const username = await required(opts.username, 'Handle (the agent’s @username — its durable login)', {
+      const name = await required(opts.name ?? t('name'), 'Agent name (shown in Flow, e.g. RepoBot)');
+      const username = await required(opts.username ?? t('username'), 'Handle (the agent’s @username — its durable login)', {
         def: slugify(name),
         normalize: (s) => s.toLowerCase(),
         validate: (s) => /^[a-z0-9][a-z0-9._-]{2,31}$/.test(s),
       });
-      kind = await required(opts.harness, 'Agent harness — claude, codex, or demo', {
+      kind = await required(opts.harness ?? tr('kind'), 'Agent harness — claude, codex, or demo', {
         def: 'claude',
         normalize: (s) => s.toLowerCase(),
         validate: (s) => HARNESSES.includes(s),
       });
-      const description = opts.description ?? '';
+      const description = opts.description ?? t('description') ?? '';
 
       const key = newAgentKey();
       console.log('\nJoining the workspace…');
@@ -123,19 +157,27 @@ export async function runSetup(configPath: string, opts: SetupOptions = {}): Pro
       agentKey = key;
     }
 
+    // Template values first, credentials and resolved answers on top — so an
+    // agent.example.json carries everything but what onboarding mints.
     const config: Record<string, unknown> = {
+      ...(template ?? {}),
       serverUrl,
       agentToken,
       // username + key are the agent's durable credentials: `flow-agent-bridge
       // login` re-mints a token from them if agent.json's token is ever lost.
       ...(agentUsername ? { agentUsername } : {}),
       ...(agentKey ? { agentKey } : {}),
-      runtime: { kind } as Record<string, unknown>,
+      runtime: { ...tRuntime, kind } as Record<string, unknown>,
     };
+    // Prompt-seed keys, not config keys.
+    delete config.name;
+    delete config.username;
+    delete config.description;
     if (kind !== 'demo') {
-      // Optional; defaults to where `npx flow-agent-bridge` was run (usually the
-      // repo checkout that IS the agent's identity). --cwd overrides.
-      const cwd = path.resolve(expandHome(opts.cwd ?? '.'));
+      // Optional; defaults to the template's runtime.cwd, then to where
+      // `npx flow-agent-bridge` was run (usually the repo checkout that IS the
+      // agent's identity). --cwd overrides.
+      const cwd = path.resolve(expandHome(opts.cwd ?? tr('cwd') ?? '.'));
       if (!fs.existsSync(cwd)) throw new Error(`working directory does not exist: ${cwd} (pass --cwd)`);
       (config.runtime as Record<string, unknown>).cwd = cwd;
       // No allowedTools written: the default is full permissions in the cwd

@@ -33,6 +33,16 @@ unattended:
 npx flow-agent-bridge --invite flow-K7P2-9QMR --name RepoBot --handle repobot --harness claude
 ```
 
+Or commit the answers: an **`agent.example.json`** next to the (future)
+`agent.json` is read by setup as the config's base — persona and settings
+(`runtime.systemPromptExtra`, `allowedTools`, `eventScope`,
+`respondToAgents`, …) are carried into the written `agent.json`, and the
+extra keys `name`, `username`, `description` plus `runtime.kind` /
+`runtime.cwd` pre-answer the prompts. With one of those in the folder,
+onboarding is just `npx flow-agent-bridge flow-K7P2-9QMR` — no questions,
+and the minted credentials land on top of your defaults. Flags still win
+over the template.
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `--invite` | prompted (or the positional `<invite-code>`) | the one-time invite code |

@@ -1,8 +1,11 @@
 // Streamlined setup (phase 15): the flag-driven, no-TTY paths that fail before
 // any network call. The full happy path needs a live server (invite redemption),
 // so it isn't unit-tested here.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runSetup } from '../src/setup.js';
+import { loadTemplate, runSetup } from '../src/setup.js';
 
 const CODE = 'flow-AAAA-BBBB';
 
@@ -39,6 +42,39 @@ describe('runSetup', () => {
         harness: 'bogus',
       }),
     ).rejects.toThrow(/invalid value for Agent harness/);
+  });
+
+  it('rejects a malformed agent.example.json before touching the network', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-setup-'));
+    fs.writeFileSync(path.join(dir, 'agent.example.json'), '{not json');
+    await expect(runSetup(path.join(dir, 'agent.json'), { invite: CODE })).rejects.toThrow(/agent\.example\.json/);
+  });
+
+  it('rejects a non-object agent.example.json', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-setup-'));
+    fs.writeFileSync(path.join(dir, 'agent.example.json'), '[1,2]');
+    expect(() => loadTemplate(path.join(dir, 'agent.json'))).toThrow(/JSON object/);
+  });
+
+  it('agent.example.json seeds name/handle/harness, so no TTY is needed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-setup-'));
+    fs.writeFileSync(
+      path.join(dir, 'agent.example.json'),
+      JSON.stringify({
+        // Unreachable server: the run must get past every prompt (which would
+        // throw "not a TTY") and die on the network call instead.
+        serverUrl: 'http://127.0.0.1:9',
+        name: 'Prism',
+        username: 'prism',
+        runtime: { kind: 'claude', cwd: dir },
+      }),
+    );
+    const err = await runSetup(path.join(dir, 'agent.json'), { invite: CODE }).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err).not.toBeNull();
+    expect(err!.message).not.toMatch(/not a TTY/);
   });
 
   it('rejects an invalid handle flag before touching the network', async () => {
