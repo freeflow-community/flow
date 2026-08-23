@@ -1,7 +1,7 @@
 // Initials-on-color avatar chips (design 3a) with real-image fallback, and the
 // bearer-auth <img> helper shared by attachments and profile views.
 import { useEffect, useState } from 'react';
-import { blobUrl } from '../lib/api';
+import { blobUrl, cachedBlobUrl } from '../lib/api';
 
 /* Design 3a avatar palette (bg / text), extended with two matching pairs. */
 const PALETTE: [string, string][] = [
@@ -73,9 +73,11 @@ export function AuthImg({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [url, setUrl] = useState<string | null>(() => cachedBlobUrl(path) ?? null);
   useEffect(() => {
     let alive = true;
+    const cached = cachedBlobUrl(path);
+    if (cached) { setUrl(cached); return; }
     void blobUrl(path).then((u) => { if (alive) setUrl(u); }).catch(() => {});
     return () => { alive = false; };
   }, [path]);

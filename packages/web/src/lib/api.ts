@@ -95,6 +95,17 @@ export async function uploadAvatar(file: File): Promise<unknown> {
 // File/thumb/avatar URLs are immutable per key, so cache forever.
 const blobCache = new Map<string, Promise<string>>();
 
+/** Resolved object URLs, mirrored out of `blobCache` as each promise settles.
+ * Even an already-resolved promise only delivers on the next microtask, so a
+ * component seeding its first render from `blobUrl(path)` always paints a
+ * placeholder for one frame. `cachedBlobUrl` lets it seed synchronously from
+ * a prior resolution instead. */
+const resolvedBlobUrls = new Map<string, string>();
+
+export function cachedBlobUrl(path: string): string | undefined {
+  return resolvedBlobUrls.get(path);
+}
+
 /** Authenticated text fetch for inline file previews (same immutable-URL cache). */
 const textCache = new Map<string, Promise<string>>();
 
@@ -118,6 +129,7 @@ export function blobUrl(path: string): Promise<string> {
       if (!res.ok) throw new ApiError(res.status, 'blob_failed', `HTTP ${res.status}`);
       return URL.createObjectURL(await res.blob());
     })();
+    cached.then((u) => resolvedBlobUrls.set(path, u));
     cached.catch(() => blobCache.delete(path));
     blobCache.set(path, cached);
   }

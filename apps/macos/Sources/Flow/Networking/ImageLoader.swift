@@ -9,12 +9,21 @@ actor ImageLoader {
     static let shared = ImageLoader()
 
     private var api: APIClient?
-    private let cache = NSCache<NSString, NSImage>()
+    // NSCache is internally thread-safe; `nonisolated(unsafe)` lets
+    // `cachedImage(path:)` peek it synchronously from outside the actor.
+    nonisolated(unsafe) private let cache = NSCache<NSString, NSImage>()
     private var inflight: [String: Task<NSImage?, Never>] = [:]
 
     func configure(api: APIClient) {
         self.api = api
         cache.countLimit = 500
+    }
+
+    /// Synchronous cache peek — lets a view seed its initial state with an
+    /// already-cached image instead of always painting a placeholder for the
+    /// first frame while the (actor-hopping) async load catches up.
+    nonisolated func cachedImage(path: String) -> NSImage? {
+        cache.object(forKey: path as NSString)
     }
 
     func image(path: String) async -> NSImage? {
@@ -68,6 +77,12 @@ struct AuthImage<Placeholder: View>: View {
     @ViewBuilder let placeholder: () -> Placeholder
     @State private var image: NSImage?
 
+    init(path: String, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+        self.path = path
+        self.placeholder = placeholder
+        _image = State(initialValue: ImageLoader.shared.cachedImage(path: path))
+    }
+
     var body: some View {
         Group {
             if let image {
@@ -77,6 +92,10 @@ struct AuthImage<Placeholder: View>: View {
             }
         }
         .task(id: path) {
+            if let cached = ImageLoader.shared.cachedImage(path: path) {
+                image = cached
+                return
+            }
             image = await ImageLoader.shared.image(path: path)
         }
     }

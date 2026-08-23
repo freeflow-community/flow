@@ -73,7 +73,11 @@ struct ThreadPanelView: View {
                                 onOpenProfile: { profileUserId = $0 }
                             )
                             .equatable()
-                            .id(message.id)
+                            // See MessageListView: key on clientMsgId so the
+                            // optimistic reply row survives its server echo
+                            // instead of remounting (and re-flashing its
+                            // avatar placeholder).
+                            .id(message.clientMsgId)
                             if message.id == rootId {
                                 HStack {
                                     Text(replies.isEmpty

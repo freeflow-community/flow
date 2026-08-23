@@ -212,7 +212,10 @@ export default function MessageList({
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={m.id}>
+            // Keyed on clientMsgId, not id: the optimistic row and its server
+            // echo share a clientMsgId but not an id, so keying on id
+            // remounts the row (and re-flashes its avatar) on reconcile.
+            <div key={m.clientMsgId || m.id}>
               {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
               {m.systemKind ? (
                 <SystemLine message={m} />
