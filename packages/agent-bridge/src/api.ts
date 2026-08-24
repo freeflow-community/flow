@@ -222,6 +222,13 @@ export class FlowApi {
 
   /** Phase 13: rename and/or re-point an artifact at a new file (the "update"
    * path). At least one of name/fileId must be provided. */
+  /** The caller's visible artifacts in the workspace (channels they are a member
+   * of), newest first. Callers filter by channelId. */
+  async listArtifacts(workspaceId: string): Promise<ArtifactDTO[]> {
+    const r = await this.req<{ artifacts: ArtifactDTO[] }>('GET', `/v1/workspaces/${workspaceId}/artifacts`);
+    return r.artifacts;
+  }
+
   updateArtifact(
     artifactId: string,
     patch: { name?: string; fileId?: string; ownsFile?: boolean; url?: string },

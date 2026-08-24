@@ -230,6 +230,17 @@ const TOOLS = [
     },
   },
   {
+    name: 'list_artifacts',
+    description:
+      'List the artifacts pinned in a channel (default: the current conversation) — id, kind (file or link), name, url or file info, and when each was last updated. Use the ids with update_artifact, or download_file with a file artifact’s fileId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channelId: { type: 'string', description: 'Channel whose artifacts to list (default: current conversation).' },
+      },
+    },
+  },
+  {
     name: 'read_messages',
     description:
       'Read messages from a channel, newest first. Page backwards by passing `before` = the oldest message id from the previous page. Messages with attachments list them as `[attachments: <fileId> "name" (type, size)]` — pass a file id to download_file to fetch the bytes.',
@@ -589,6 +600,20 @@ export async function runMcpServer(): Promise<void> {
         }
         const updated = await api.updateArtifact(artifactId, patch);
         return toolText(`artifact "${updated.name}" updated`);
+      }
+      case 'list_artifacts': {
+        if (!channelId) {
+          return toolText('list_artifacts needs a channelId (no conversation context to infer the channel)', true);
+        }
+        const all = await api.listArtifacts(workspaceId);
+        const rows = all.filter((a) => a.channelId === channelId);
+        if (rows.length === 0) return toolText('no artifacts in this channel');
+        const lines = rows.map((a) =>
+          a.kind === 'link'
+            ? `[link] "${a.name}" (id ${a.id}) → ${a.url} — updated ${a.updatedAt}`
+            : `[file] "${a.name}" (id ${a.id}) — fileId ${a.fileId}${a.file ? `, ${a.file.mimeType}, ${a.file.sizeBytes} bytes` : ''} — updated ${a.updatedAt}`,
+        );
+        return toolText(lines.join('\n'));
       }
       case 'read_messages': {
         const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);

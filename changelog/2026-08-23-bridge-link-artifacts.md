@@ -1,5 +1,8 @@
-# Bridge: agents can pin link artifacts
+# Bridge: agents can pin link artifacts, and list a channel's artifacts
 
+- `[bridge]` New `list_artifacts` MCP tool: the artifacts pinned in a
+  channel (default: the current conversation) — id, kind, name, url/file
+  info, last updated.
 - `[bridge]` `create_artifact` / `update_artifact` MCP tools accept `url`,
   creating or re-pointing a kind=link artifact via the existing server
   endpoint (mutually exclusive with content/path/fileId; http(s) only).
