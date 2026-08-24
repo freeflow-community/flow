@@ -365,14 +365,28 @@ struct ChannelScreen: View {
 
     /// Page older history toward a jump-to-message target until it's loaded.
     private func pageToFocusIfNeeded() {
-        guard let fid = app.focusMessageId else { return }
+        // An empty transcript can't tell you anything about whether the target
+        // is reachable (#332). This runs on the first `messages.value.count`
+        // change, which on a fully-cached channel is still 0 — and with
+        // `app.hasMore` false by then, the exhausted branch below threw the
+        // target away before a single row had arrived. Re-opening a channel
+        // you had already read was exactly that shape, and the jump did
+        // nothing.
+        guard let fid = app.focusMessageId, !messages.value.isEmpty else { return }
         if transcript.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
         if hasMoreCached {
             transcriptWindow += Self.windowStep // cached but outside the window
         } else if app.hasMore[channelId] ?? false {
             transcriptWindow += Self.windowStep
             Task { await app.engine.loadOlder(channelId: channelId) }
-        } else {
+        } else if threadRoute == nil {
+            // Never clear it while a thread is pushed (#332): this transcript
+            // is filtered to `threadRootId == nil`, so a jump to a *reply* can
+            // never become "loaded" here, and exhausting the channel's history
+            // would throw away a target that belongs to ThreadScreen — usually
+            // before that screen's replies had arrived to claim it. Paging
+            // above still runs, so a jump to a root message is unaffected by a
+            // thread that happens to be parked open (#89).
             app.focusMessageId = nil // not in this channel's loaded history
         }
     }

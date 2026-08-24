@@ -140,6 +140,19 @@ checks")`, the simulator is wedged from a previous run:
   off-screen row does not merely fail to be hittable — it does not exist to
   query. Hence `openDrawerAtDms` and picking people by searching first.
 
+- `ScrollToMessageTests` — #332, the three jumps that used to go nowhere on
+  iOS: a reply you send in a thread scrolls into view, an Activity jump lands
+  on the message in the channel transcript, and a pinned reply opened from the
+  pins sheet lands in the thread screen. Fixtures come from
+  `node packages/server/scripts/qa-seed-scroll332.mjs` after `qa-seed.mjs`
+  (channel `scroll332`; override with `FLOW_TEST_SCROLL332_CHANNEL`). Attaches
+  the PR screenshots. Two notes for anyone extending it: the thread's composer
+  carries its *own* identifiers (`thread.composer.input` / `.send`), not the
+  channel's; and the assertions are on `isHittable` plus the frame, not
+  `exists`, because a transcript of 100 rows or fewer renders eagerly — an
+  off-screen row is in the accessibility tree either way, which is exactly how
+  this bug hid.
+
 - `NewChannelFirstVisitTests` — #269: a channel that appears while the app is
   running must show its transcript on the *first* visit. Needs only
   `qa-seed.mjs`: the test itself plays the agent over REST (Bob creates a
