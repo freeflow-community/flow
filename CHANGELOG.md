@@ -13,17 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- The arrival settle that keeps an incoming message in view (#334) is macOS
-  only. The shared `TranscriptFollowModel` half — the quiet window no longer
-  swallowing the growth glue, so a streaming reply stays pinned — reaches iOS
-  for free, but the belt that re-asserts the end while a late-sizing row
-  settles lives in each platform's list view, and iOS's `scrollTo` calls still
-  target `message.id` under rows keyed on `clientMsgId`. The port belongs with
-  that fix (#332), not before it. Web is unaffected.
-- The thread panel's stuck-spinner re-render (#328) and scoped bottom anchor
-  (#329) landed on macOS only. iOS keys its `ForEach`s on `message.id` under
-  rows carrying `.id(message.clientMsgId)` — the same shape — and re-keying
-  there also means translating every `scrollTo` call site; tracked as #332.
+- Jump-to-message does not land in a transcript deep enough to need paging
+  (#332): with the target more than one 100-row window back, `ChannelScreen`
+  widens the window and the centring scroll still leaves the row off screen.
+  Shallower jumps, and jumps inside a thread, land on every client. macOS pages
+  differently (no window) and is unaffected; web is unaffected.
 - Per-user notification alert prefs have a UI on web only — macOS and iOS
   render every kind and honour the server's `suppressAlert`, but offer no way
   to change the toggles behind it. Noted with the `channelInvite` pref (#303),

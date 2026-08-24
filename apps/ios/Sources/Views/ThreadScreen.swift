@@ -26,6 +26,18 @@ struct ThreadScreen: View {
     /// Viewport height, watched so the keyboard's resize can re-stick the list
     /// to the newest reply (#191).
     @State private var viewportHeight: CGFloat = 0
+    /// A jump-to-reply has landed, and owns the scroll position for the rest of
+    /// this screen's life (#332) — the macOS thread panel's `focusEngaged()`,
+    /// which this screen has no follow model to ask. Without it the reader is
+    /// dragged off the reply they came to see by the next arrival.
+    @State private var jumpOwnsScroll = false
+
+    /// When to re-assert a jump's landing, in nanoseconds from the previous
+    /// pass — the channel list's cadence. A `scrollTo` into a `LazyVStack` is
+    /// resolved against estimated row heights, so the first one lands short and
+    /// the initial-offset anchor is still settling underneath it; one scroll is
+    /// not a landing (macOS learned the same in #333/#334).
+    private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
     private var userNames: [String: String] {
         Dictionary(users.value.map { ($0.id, $0.displayNameWithBadge) }, uniquingKeysWith: { a, _ in a })
@@ -46,7 +58,13 @@ struct ThreadScreen: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(thread.value) { message in
+                        // Keyed on `clientMsgId` here as well as in the
+                        // `.id()` below (#333/#332): keyed on the message id,
+                        // an optimistic reply reconciling with its server twin
+                        // reads as a delete + insert whose two views claim one
+                        // `.id()`, and the leaving pending view wins — the row
+                        // keeps its spinner for as long as the screen is up.
+                        ForEach(thread.value, id: \.clientMsgId) { message in
                             MessageRow(
                                 message: message,
                                 userNames: userNames,
@@ -100,16 +118,29 @@ struct ThreadScreen: View {
                                 // changing the content, and a position worked
                                 // out from a LazyVStack's estimates lands past
                                 // the end of everything laid out.
-                                if let lastId = thread.value.last?.id {
-                                    proxy.scrollTo(lastId, anchor: .bottom)
+                                // Row identity, never a message id (#332):
+                                // rows are keyed on `clientMsgId`, so a
+                                // message id matches no row and the scroll
+                                // silently does nothing. A landed jump owns
+                                // the position, keyboard or not.
+                                if !jumpOwnsScroll, let lastKey = thread.value.lastRowKey {
+                                    proxy.scrollTo(lastKey, anchor: .bottom)
                                 }
                             }
                     }
                 )
                 .onChange(of: thread.value.last?.id) { _, newId in
-                    guard let newId else { return }
+                    // A jump owns the scroll position (#332): this follow and
+                    // `focusPinnedMessage` both fire on the update that first
+                    // delivers the replies, and an ungated follow simply wins —
+                    // the thread opens at the newest reply and the jump is
+                    // never seen. macOS reads the same rule off the shared
+                    // follow model's `focusActive`; this screen has none, so it
+                    // tracks it directly.
+                    guard newId != nil, app.focusMessageId == nil, !jumpOwnsScroll,
+                          let lastKey = thread.value.lastRowKey else { return }
                     withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(newId, anchor: .bottom)
+                        proxy.scrollTo(lastKey, anchor: .bottom) // row identity (#332)
                     }
                 }
                 // Size-change role removed on iOS 18+ — same short-back-pull
@@ -169,9 +200,22 @@ struct ThreadScreen: View {
 
     private func focusPinnedMessage(_ proxy: ScrollViewProxy) {
         guard let messageId = app.focusMessageId,
-              thread.value.contains(where: { $0.id == messageId }) else { return }
+              let key = thread.value.rowKey(forMessageId: messageId) else { return }
+        jumpOwnsScroll = true
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(messageId, anchor: .center)
+            proxy.scrollTo(key, anchor: .center) // row identity, not message id (#332)
+        }
+        // One scroll is not a landing: it is aimed at a LazyVStack's estimated
+        // row heights while the bottom anchor's initial offset is still
+        // resolving underneath it, so it comes up short. Re-assert it across
+        // the settling window — bounded by the flash, and it can only ever
+        // re-aim at the same row.
+        Task { @MainActor in
+            for delay in Self.settleDelays {
+                try? await Task.sleep(nanoseconds: delay)
+                guard flashId == messageId else { return }
+                proxy.scrollTo(key, anchor: .center)
+            }
         }
         flashId = messageId
         app.focusMessageId = nil
