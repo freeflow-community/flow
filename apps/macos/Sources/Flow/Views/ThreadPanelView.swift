@@ -16,6 +16,14 @@ struct ThreadPanelView: View {
     @State private var profileUserId: String?
     /// The reply currently flashing after a jump-to-message (phase 12).
     @State private var flashId: String?
+    /// A jump has taken this panel's scroll position; the landing settle below
+    /// stands down for the rest of this thread's life, so a page arriving late
+    /// can't yank the reader off the reply they jumped to.
+    @State private var focusOwnsScroll = false
+
+    /// When to re-assert the end after opening, in nanoseconds from the
+    /// previous pass — the channel list's cadence (`MessageListView`).
+    private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
     private var root: Message? {
         thread.value.first { $0.id == rootId }
@@ -50,7 +58,14 @@ struct ThreadPanelView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(thread.value) { message in
+                        // Keyed on clientMsgId, like the `.id()` below and the
+                        // channel list: when the optimistic row is swapped for
+                        // its server twin the *element* has to stay the same
+                        // element, or ForEach reads a delete + insert whose two
+                        // views claim one `.id()` — and the leaving pending row
+                        // wins, leaving the spinner up over a delivered message
+                        // (#328) until something forces a remount.
+                        ForEach(thread.value, id: \.clientMsgId) { message in
                             MessageRow(
                                 message: message,
                                 userNames: userNames.value,
@@ -94,7 +109,14 @@ struct ThreadPanelView: View {
                     }
                     .padding(.vertical, 8)
                 }
-                .defaultScrollAnchor(.bottom) // open at the newest reply
+                // Open at the newest reply — but on macOS 15+ scope the anchor
+                // to initial offset + alignment (MacBottomAnchor, #159/#312's
+                // lesson in the channel list). The all-roles form also
+                // re-anchors on every *content size change*, and a LazyVStack
+                // materialising rows after a jump-to-reply scroll is exactly
+                // that: the centring scroll was issued and then dragged back to
+                // the end before it could be seen (#329).
+                .modifier(MacBottomAnchor())
                 .onChange(of: thread.value.last?.id) { _, newId in
                     // A pending jump owns the scroll position.
                     guard win.focusMessageId == nil, newId != nil,
@@ -110,6 +132,21 @@ struct ThreadPanelView: View {
                 .onChange(of: win.focusMessageId) { _, _ in tryFocus(proxy) }
                 .onChange(of: thread.value.count) { _, _ in tryFocus(proxy) }
                 .onAppear { tryFocus(proxy) }
+                // Landing at the newest reply is this view's job now: with the
+                // anchor scoped to the initial offset, a first paint whose rows
+                // are still estimating their heights comes up short and nothing
+                // corrects it. Re-assert the end across the settling window,
+                // and never against a jump — that reader is somewhere else on
+                // purpose.
+                .task(id: thread.value.last?.id) {
+                    guard !thread.value.isEmpty else { return }
+                    for delay in Self.settleDelays {
+                        try? await Task.sleep(nanoseconds: delay)
+                        guard !focusOwnsScroll, win.focusMessageId == nil,
+                              let lastKey = thread.value.lastRowKey else { return }
+                        proxy.scrollTo(lastKey, anchor: .bottom)
+                    }
+                }
             }
 
             if let root {
@@ -133,6 +170,7 @@ struct ThreadPanelView: View {
             }
         }
         .task(id: rootId) {
+            focusOwnsScroll = false
             thread.start(db: app.db, reset: []) { db in
                 try Message
                     .filter(Column("id") == rootId || Column("threadRootId") == rootId)
@@ -180,6 +218,7 @@ struct ThreadPanelView: View {
         withAnimation(.easeInOut(duration: 0.25)) {
             proxy.scrollTo(key, anchor: .center) // row identity, not message id (#329)
         }
+        focusOwnsScroll = true
         flashId = fid
         win.focusMessageId = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
