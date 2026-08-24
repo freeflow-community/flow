@@ -12,8 +12,9 @@
 - `[macos]` `[ios]` Reconnect gap-fill for a channel no longer stops early on a
   recent thread reply: the overlap probe is top-level only, like its siblings.
 - `[macos]` Every `scrollTo` names row identity (`clientMsgId`) rather than a
-  message id, so scroll-to-reply and jump-to-message work in threads again —
-  since #312 they silently no-opped (#329).
+  message id (#329). Correction, from driving it on a Mac afterwards: this was
+  not what broke the thread panel — see
+  `2026-08-24-thread-panel-anchor-and-row-identity.md`.
 
 ## Feature
 

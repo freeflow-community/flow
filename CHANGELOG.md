@@ -13,13 +13,13 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- Scroll-to-message in threads is fixed on macOS only (#329). iOS has the
-  identical defect: rows are keyed `.id(…clientMsgId)`
-  (`Views/MessageListView.swift`, `Views/ThreadScreen.swift`) while every
-  `proxy.scrollTo` still passes `message.id`, so the scrolls no-op. The shared
-  `Support/MessageRowKey.swift` helper the macOS fix uses already compiles into
-  the iOS target, so this is a call-site port rather than new work. Web is
-  unaffected (DOM ids, not SwiftUI identity).
+- The thread panel's jump-to-message fix (#329) is macOS-only. iOS's
+  `ThreadScreen` already scopes its bottom anchor, so it should not carry the
+  same defect — but its rows are keyed `.id(message.clientMsgId)` while its
+  `ForEach` and every `proxy.scrollTo` still use `message.id`, which is the
+  shape that produced the stuck-spinner render on macOS (#328). Worth an
+  hour on a device before it is called clean; the fix, if needed, is the same
+  two-line re-key.
 - Per-user notification alert prefs have a UI on web only — macOS and iOS
   render every kind and honour the server's `suppressAlert`, but offer no way
   to change the toggles behind it. Noted with the `channelInvite` pref (#303),

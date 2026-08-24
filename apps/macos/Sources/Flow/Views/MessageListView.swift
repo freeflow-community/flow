@@ -151,7 +151,11 @@ struct MessageListView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                    ForEach(rowCache.rows(for: messages)) { row in
+                    // Keyed on clientMsgId, not TranscriptRow's message id:
+                    // the optimistic row and its server echo must be one
+                    // element with a changed value, not a delete + insert
+                    // sharing an `.id()` — see ThreadPanelView (#328).
+                    ForEach(rowCache.rows(for: messages), id: \.message.clientMsgId) { row in
                         VStack(alignment: .leading, spacing: 0) {
                             if row.startsNewDay {
                                 DayDividerView(iso: row.message.createdAt)
