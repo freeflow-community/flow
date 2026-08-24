@@ -139,28 +139,46 @@ struct TranscriptFollowModel: Equatable {
         let vp = viewportHeight, p = pinned, hd = hasDragged, dr = isDragging, t = transitions, f = focusActive
         followLog.info("content old=(\(Int(old.minY)),\(Int(old.maxY)),h\(Int(old.height))) new=(\(Int(new.minY)),\(Int(new.maxY)),h\(Int(new.height))) vp=\(Int(vp)) pin=\(p) drag=\(hd)/\(dr) trans=\(t) focus=\(f)")
         #endif
-        // The quiet window freezes ALL pin decisions, not only unpins: the
+        guard !focusActive, !inTransition else { return .none }
+        // The quiet window freezes ALL *pin decisions*, not only unpins: the
         // field trail showed a restore's post-landing drift tripping the
         // re-pin rule (content shrank above the target, sliding the reader
         // toward the bottom), which made the drift-corrector abort as
         // "reader took over". Near our own scrolls, geometry is noise in
         // both directions.
-        guard !focusActive, !inTransition, now >= quietUntil else { return .none }
+        //
+        // It does NOT freeze the glue (#334). Content growing is never reader
+        // intent, and the growth that matters most arrives inside the window:
+        // a new message is scrolled to before its row has a height, so the
+        // landing comes up short, and the correction was being swallowed by
+        // the quiet window that same stick had opened — the incoming reply
+        // sat below the fold. Own sends escaped only by luck (the composer
+        // collapsing fires `viewportChanged`, which never consulted the
+        // window), which is why the bug read as "my messages scroll, replies
+        // don't".
+        let quiet = now < quietUntil
         switch style {
         case .topEdge:
             // Order is load-bearing (see the tests): the pin check runs first
             // so an elastic bounce-back at the bottom can't read as an upward
             // scroll, and our own glue animating down stays quiet.
-            if new.maxY - viewportHeight <= repinSlack {
-                pinned = true
-                return .none
-            }
-            if new.minY > old.minY + 1 {
-                pinned = false
-                return .none
+            if !quiet {
+                if new.maxY - viewportHeight <= repinSlack {
+                    pinned = true
+                    return .none
+                }
+                if new.minY > old.minY + 1 {
+                    pinned = false
+                    return .none
+                }
             }
             if pinned, new.height > old.height + 1, !isAligned {
-                return stick(animated: true, at: now)
+                // Unanimated inside the window, and deliberately not through
+                // `stick(animated:)`: a correction that pushed `quietUntil`
+                // forward would re-arm itself on every frame of a streaming
+                // reply, and a reader scrolling away from a long answer would
+                // never be believed.
+                return quiet ? .stick(animated: false) : stick(animated: true, at: now)
             }
             return .none
 
@@ -178,8 +196,10 @@ struct TranscriptFollowModel: Equatable {
             // Pin state follows the reader, and only the reader: a frame where
             // the height changed is content settling, not a scroll, and the
             // viewport never enters into it — which is what kept the keyboard
-            // from unpinning the follow.
-            if hasDragged, abs(new.height - old.height) <= 1 {
+            // from unpinning the follow. Frozen inside the quiet window (the
+            // re-stick above is not: same #334 reasoning as `.topEdge`, and it
+            // was already unanimated).
+            if !quiet, hasDragged, abs(new.height - old.height) <= 1 {
                 if distanceFromBottom > minBackScroll {
                     pinned = false
                 } else if distanceFromBottom <= bottomSlack {
@@ -235,6 +255,21 @@ struct TranscriptFollowModel: Equatable {
         if isOwn { pinned = true }
         guard pinned else { return .none }
         return stick(animated: true, at: now)
+    }
+
+    /// The arrival settle (#334): after a new message has stuck the list to
+    /// its end, re-assert that end for a beat while the new row finds its real
+    /// height — a `scrollTo` issued before the row is laid out lands short,
+    /// and on macOS nothing else was left to correct it.
+    ///
+    /// Unlike `settleCommand` this one survives a reader who has dragged
+    /// before: they are back at the bottom now, and their reply is the one
+    /// landing below the fold. It still cannot move anyone who owns the
+    /// position — unpinned, focused, mid-drag and already-aligned all return
+    /// `.none` — and it never changes pin state.
+    func arrivalSettleCommand() -> Command {
+        guard pinned, !focusActive, !inTransition, !isDragging, !isAligned else { return .none }
+        return .stick(animated: false)
     }
 
     /// The settle pass (#280): while the reader has never dragged, keep
