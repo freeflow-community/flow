@@ -397,6 +397,24 @@ struct MessageListView: View {
                     run(command, proxy)
                 }
             }
+            // The arrival settle (#334): the follow above fires the instant a
+            // new message lands — before its row has a height — so the scroll
+            // comes up short and an incoming reply sits below the fold. The
+            // glue corrects that when the row sizes, but only if a geometry
+            // event actually arrives; this belt re-asserts the end across the
+            // settling window either way. Keyed on the row identity, not the
+            // message id, so an optimistic row reconciling with its echo
+            // doesn't re-run it (#312/#329). Gated entirely on the model —
+            // a back-scrolled, focused or mid-drag reader gets `.none`.
+            .task(id: messages.lastRowKey) {
+                guard !messages.isEmpty else { return }
+                for delay in Self.settleDelays {
+                    try? await Task.sleep(nanoseconds: delay)
+                    let command = followBox.model.arrivalSettleCommand()
+                    guard case .stick = command else { return }
+                    run(command, proxy)
+                }
+            }
             // The restore's own settle: a scroll-memory restore is issued
             // before attachments above the target have sized, and a late
             // growth pushes the whole restore down a viewport. Re-anchor the
