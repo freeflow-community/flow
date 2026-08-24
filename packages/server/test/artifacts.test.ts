@@ -161,6 +161,24 @@ describe('link artifacts (link artifacts — co-browsing)', () => {
     expect(bobs.some((x) => x.id === a.id && x.kind === 'link')).toBe(true);
   });
 
+  it('re-pointing onto a url another link artifact pins is a 409, not a 500 (#315)', async () => {
+    const taken = await ar.createArtifact(aliceId, channelId, { url: 'https://clash.example/taken' });
+    const mover = await ar.createArtifact(aliceId, channelId, { url: 'https://clash.example/mover' });
+    await expect(
+      ar.updateArtifact(mover.id, aliceId, { url: 'https://clash.example/taken' }),
+    ).rejects.toThrow(/already pinned/);
+    // and the loser is untouched
+    const rows = await ar.listArtifacts(workspaceId, aliceId);
+    expect(rows.find((x) => x.id === mover.id)?.url).toBe('https://clash.example/mover');
+    expect(rows.find((x) => x.id === taken.id)?.url).toBe('https://clash.example/taken');
+  });
+
+  it('re-pointing a link artifact to its own current url is a no-op, not a conflict', async () => {
+    const a = await ar.createArtifact(aliceId, channelId, { url: 'https://self.example/same' });
+    const updated = await ar.updateArtifact(a.id, aliceId, { url: 'https://self.example/same' });
+    expect(updated.url).toBe('https://self.example/same');
+  });
+
   it('re-points the url (the co-browse write) and bumps updatedAt', async () => {
     const a = await ar.createArtifact(aliceId, channelId, { url: 'https://co.example/a' });
     const moved = await ar.updateArtifact(a.id, bobId, { url: 'https://co.example/b' }); // any member can drive
