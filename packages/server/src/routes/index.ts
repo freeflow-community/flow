@@ -384,6 +384,19 @@ export function registerRoutes(app: FastifyInstance): void {
     return ws.updateWorkspace(id, req.user.id, body);
   });
 
+  // workspace avatar (#336): owner/admin sets or clears the image mark; both
+  // paths broadcast `workspace.updated` so every client restyles live.
+  app.post('/v1/workspaces/:id/avatar', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const { mimeType, data } = await readUpload(req);
+    return ws.setWorkspaceAvatar(id, req.user.id, data, mimeType);
+  });
+
+  app.delete('/v1/workspaces/:id/avatar', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ws.clearWorkspaceAvatar(id, req.user.id);
+  });
+
   // ---- Slack-compat app management (phase 4, owner/admin, web-only UI) ----
   app.post('/v1/workspaces/:id/apps', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };

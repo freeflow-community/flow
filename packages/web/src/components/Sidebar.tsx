@@ -13,6 +13,7 @@ import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
 import { FeaturesModal } from './FeaturesModal';
 import StatusFooter from './StatusPicker';
+import { AuthImg } from './Avatar';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
 /**
@@ -253,6 +254,9 @@ export default function Sidebar() {
           className="flex min-w-0 items-center gap-1 rounded px-1 text-left text-base font-bold hover:bg-white/10"
           onClick={() => setWsMenuOpen((v) => !v)}
         >
+          {ws?.avatarUrl && (
+            <AuthImg path={ws.avatarUrl} alt={ws.name} className="h-5 w-5 shrink-0 rounded object-cover" />
+          )}
           <span className="truncate">{ws?.name ?? 'Workspace'}</span>
           <span className="text-xs text-white/55">▾</span>
         </button>
@@ -275,7 +279,7 @@ export default function Sidebar() {
             {isAdmin && (
               <>
                 <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
-                  Workspace color…
+                  Workspace appearance…
                 </MenuItem>
                 <MenuItem testid="menu-emoji" onClick={() => { setWsMenuOpen(false); setShowEmoji(true); }}>
                   Custom Emoji…

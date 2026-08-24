@@ -516,6 +516,40 @@ struct SidebarDrawer: View {
 
 /// The 64px workspace rail (web/macOS design column 1): the active workspace's
 /// siblings as initial chips, plus a "+" that offers create/accept-invite.
+/// The workspace identity mark: its avatar image when one is set (#336),
+/// otherwise the initial on a color chip. Display-only on iOS — the avatar is
+/// managed from web/macOS. Active is a white fill for the initial mark and a
+/// white ring for an avatar, since an image can't be tinted.
+private struct WorkspaceMark: View {
+    let workspace: Workspace
+    let size: CGFloat
+    var cornerRadius: CGFloat = 12
+    var active: Bool = true
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        Group {
+            if let path = workspace.avatarUrl, path.hasPrefix("/v1/avatars/") {
+                AuthImage(path: path) { shape.fill(Color.white.opacity(0.15)) }
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(shape)
+                    .opacity(active ? 1 : 0.7)
+                    .overlay(active ? shape.strokeBorder(Color.white, lineWidth: 2) : nil)
+            } else {
+                shape
+                    .fill(active ? Color.white : Color.white.opacity(0.15))
+                    .frame(width: size, height: size)
+                    .overlay(
+                        Text(String(workspace.name.prefix(1)).uppercased())
+                            .font(.system(size: size * 0.4, weight: .heavy))
+                            .foregroundStyle(active ? MC.accent : .white)
+                    )
+            }
+        }
+    }
+}
+
 private struct WorkspaceRail: View {
     let workspaces: [Workspace]
     let palette: SidebarPalette
@@ -531,14 +565,7 @@ private struct WorkspaceRail: View {
                     Button {
                         if !active { app.selectWorkspace(ws.id) }
                     } label: {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(active ? Color.white : Color.white.opacity(0.15))
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                Text(String(ws.name.prefix(1)).uppercased())
-                                    .font(.system(size: 16, weight: .heavy))
-                                    .foregroundStyle(active ? MC.accent : .white)
-                            )
+                        WorkspaceMark(workspace: ws, size: 40, cornerRadius: 12, active: active)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("rail.workspace.\(ws.slug)")

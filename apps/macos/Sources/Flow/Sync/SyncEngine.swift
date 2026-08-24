@@ -423,6 +423,28 @@ actor SyncEngine {
         return ws
     }
 
+    /// Workspace avatar (#336): owner/admin only, server-enforced. The response
+    /// is the updated workspace; every other client hears the same thing on the
+    /// `workspace.updated` broadcast.
+    func uploadWorkspaceAvatar(workspaceId: String, fileURL: URL) async throws -> Workspace {
+        let data = try Data(contentsOf: fileURL)
+        let ws: Workspace = try await api.upload(
+            "/v1/workspaces/\(workspaceId)/avatar",
+            filename: fileURL.lastPathComponent,
+            mimeType: Self.mimeType(for: fileURL),
+            data: data
+        )
+        await saveWorkspacePreservingRole(ws)
+        return ws
+    }
+
+    /// Removes it — back to the color/initial mark.
+    func clearWorkspaceAvatar(workspaceId: String) async throws -> Workspace {
+        let ws: Workspace = try await api.delete("/v1/workspaces/\(workspaceId)/avatar")
+        await saveWorkspacePreservingRole(ws)
+        return ws
+    }
+
     /// Saves a workspace row, keeping the locally cached `role` when the
     /// incoming DTO doesn't carry one (broadcast DTOs are role-less).
     private func saveWorkspacePreservingRole(_ ws: Workspace) async {

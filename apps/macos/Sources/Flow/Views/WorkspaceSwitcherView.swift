@@ -24,14 +24,23 @@ struct WorkspaceSwitcherView: View {
                         win.selectWorkspace(ws.id)
                     } label: {
                         HStack {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(.tint)
+                            if let path = ws.avatarUrl, path.hasPrefix("/v1/avatars/") {
+                                AuthImage(path: path) {
+                                    RoundedRectangle(cornerRadius: 6).fill(.tint)
+                                }
+                                .scaledToFill()
                                 .frame(width: 32, height: 32)
-                                .overlay(
-                                    Text(String(ws.name.prefix(1)).uppercased())
-                                        .flowFont(.headline)
-                                        .foregroundStyle(.white)
-                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            } else {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(.tint)
+                                    .frame(width: 32, height: 32)
+                                    .overlay(
+                                        Text(String(ws.name.prefix(1)).uppercased())
+                                            .flowFont(.headline)
+                                            .foregroundStyle(.white)
+                                    )
+                            }
                             VStack(alignment: .leading) {
                                 Text(ws.name).flowFont(.headline)
                                 Text(ws.slug).flowFont(.caption).foregroundStyle(.secondary)

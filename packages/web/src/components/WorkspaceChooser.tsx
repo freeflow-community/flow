@@ -6,6 +6,7 @@ import { useAuth, useSelection } from '../state';
 import { useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { EMPTY_SLUG_FIELD, slugEdited, slugForName } from '../lib/slugify';
 import { OpenInAppButton } from './OpenInApp';
+import { AuthImg } from './Avatar';
 
 export default function WorkspaceChooser() {
   const auth = useAuth();
@@ -67,9 +68,13 @@ export default function WorkspaceChooser() {
             onClick={() => sel.selectWorkspace(ws.id)}
             className="flex w-full items-center gap-3 rounded-lg border border-hairline bg-white p-3 text-left shadow-sm hover:border-accent"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent font-bold text-white">
-              {ws.name.slice(0, 1).toUpperCase()}
-            </span>
+            {ws.avatarUrl ? (
+              <AuthImg path={ws.avatarUrl} alt={ws.name} className="h-10 w-10 shrink-0 rounded-lg object-cover" />
+            ) : (
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent font-bold text-white">
+                {ws.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
             <span className="flex-1">
               <span className="block font-semibold text-ink">{ws.name}</span>
               <span className="block text-sm text-muted">{ws.slug}</span>

@@ -226,6 +226,12 @@ struct AppDatabase: Sendable {
                 t.add(column: "unreadThreadRootIds", .text)
             }
         }
+        // Workspace avatar (#336): the optional image mark, nil until one is set.
+        migrator.registerMigration("v16") { db in
+            try db.alter(table: "workspace") { t in
+                t.add(column: "avatarUrl", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 
