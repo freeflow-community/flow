@@ -525,13 +525,39 @@ export class AgentBridge {
     setTimeout(() => this.exitProcess(update ? EXIT_UPDATE : EXIT_RESTART), 300);
   }
 
+  /**
+   * Consecutive agent-authored messages per channel since a human last spoke
+   * (our own posts count — they are agent traffic too). The circuit breaker
+   * (`agentChainLimit`) reads this: a channel where only agents have been
+   * talking for a while is a loop, whatever the messages say.
+   */
+  private agentChain = new Map<string, number>();
+
   /** Sender gating + self/agent loop guard + event-scope filter. */
   private async inScope(msg: MessageDTO): Promise<boolean> {
-    if (msg.userId === this.me.id) return false; // never our own messages (incl. MCP-sent)
     if (msg.deletedAt) return false;
     const sender = this.members.get(msg.userId);
+    // Chain accounting first, on every real message we can attribute — a
+    // human speaking re-arms the channel; agent chatter (ours included)
+    // burns it down. Status/system lines don't count either way.
+    let chain = 0;
+    if (sender && !msg.systemKind && !msg.body.startsWith(THINKING_PREFIX)) {
+      chain = sender.isAgent ? (this.agentChain.get(msg.channelId) ?? 0) + 1 : 0;
+      this.agentChain.set(msg.channelId, chain);
+    }
+    if (msg.userId === this.me.id) return false; // never our own messages (incl. MCP-sent)
     if (!sender) return false; // only workspace members
     if (sender.isAgent && !this.cfg.respondToAgents) return false; // agent-to-agent loop guard
+    if (sender.isAgent && this.cfg.agentChainLimit > 0 && chain > this.cfg.agentChainLimit) {
+      this.log(
+        `loop breaker: ${chain} consecutive agent messages in ${msg.channelId} — ignoring until a human speaks`,
+      );
+      return false;
+    }
+    // Agent-to-agent traffic must be an explicit hand-off: with
+    // agentMentionsOnly, an agent's message triggers us only when it
+    // @-mentions us — including in DMs, where the ping-pong loops live.
+    if (sender.isAgent && this.cfg.agentMentionsOnly && !msg.body.includes(`<@${this.me.id}>`)) return false;
     const chan = this.channels.get(msg.channelId);
     if (!chan?.isMember) return false; // only channels we're in
     // Channel event lines ("Alice joined the channel") are notices for humans,
