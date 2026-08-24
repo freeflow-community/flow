@@ -79,8 +79,75 @@ struct VideoPlayerSheet: View {
     }
 }
 
-/// A bare, ephemeral WKWebView pointed at one URL. Same shape as the mermaid
-/// and artifact web views: no persistence, no bridge, nothing to script.
+/// The page the player web view actually loads (#318).
+///
+/// An embedded player has to be *embedded*: navigating the web view straight
+/// at the embed URL makes it the top-level document, which arrives at YouTube
+/// with no `Referer` and no embedding origin, and YouTube answers that with
+/// "Error 153 — video player configuration error". The web client never hit
+/// this because its `<iframe>` sits inside the web app's page. So the native
+/// clients get a page of their own to sit inside.
+///
+/// It is *our* markup, built here from the URL the server assembled out of the
+/// parsed video id — the provider's own oEmbed HTML is still discarded on the
+/// server (#302) and nothing provider-supplied is interpolated.
+enum VideoPlayerPage {
+    /// The origin the wrapper page claims, and therefore the referrer YouTube
+    /// sees. Deliberately the web client's real origin and deliberately a
+    /// constant: a dev build points `Server.baseURL` at `http://127.0.0.1`,
+    /// which is not an origin worth asking a third-party player to accept, and
+    /// a player that only works in production builds is a trap.
+    static let embeddingOrigin = URL(string: "https://app.freeflow.im/")!
+
+    /// A minimal page holding one iframe. `playsinline`/`allow="autoplay"`
+    /// keep iOS playing in place instead of taking the screen over.
+    static func html(playerSrc: String) -> String {
+        let src = escaped(playerSrc)
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+        <meta name="referrer" content="strict-origin-when-cross-origin">
+        <style>
+        html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+        iframe { display: block; width: 100%; height: 100%; border: 0; }
+        </style>
+        </head>
+        <body>
+        <iframe src="\(src)"
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                allowfullscreen
+                frameborder="0"></iframe>
+        </body>
+        </html>
+        """
+    }
+
+    /// Attribute escaping, so a URL can never close the attribute and open a
+    /// tag. The id is already bounded to `[A-Za-z0-9_-]` on the server; this is
+    /// the second lock, held on the side that does the interpolating.
+    static func escaped(_ value: String) -> String {
+        var out = ""
+        out.reserveCapacity(value.count)
+        for char in value {
+            switch char {
+            case "&": out += "&amp;"
+            case "<": out += "&lt;"
+            case ">": out += "&gt;"
+            case "\"": out += "&quot;"
+            case "'": out += "&#39;"
+            default: out.append(char)
+            }
+        }
+        return out
+    }
+}
+
+/// A bare, ephemeral WKWebView holding the wrapper page. Same shape as the
+/// mermaid and artifact web views: no persistence, no bridge, nothing to
+/// script.
 @MainActor
 private func makePlayerWebView() -> WKWebView {
     let config = WKWebViewConfiguration()
@@ -92,6 +159,14 @@ private func makePlayerWebView() -> WKWebView {
     return WKWebView(frame: .zero, configuration: config)
 }
 
+@MainActor
+private func loadPlayer(_ view: WKWebView, url: URL) {
+    view.loadHTMLString(
+        VideoPlayerPage.html(playerSrc: url.absoluteString),
+        baseURL: VideoPlayerPage.embeddingOrigin
+    )
+}
+
 #if os(iOS)
 private struct EmbeddedVideoWebView: UIViewRepresentable {
     let url: URL
@@ -101,14 +176,18 @@ private struct EmbeddedVideoWebView: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .black
         view.scrollView.isScrollEnabled = false
-        view.load(URLRequest(url: url))
+        context.coordinator.loaded = url
+        loadPlayer(view, url: url)
         return view
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
-        guard view.url != url else { return }
-        view.load(URLRequest(url: url))
+        guard context.coordinator.loaded != url else { return }
+        context.coordinator.loaded = url
+        loadPlayer(view, url: url)
     }
+
+    func makeCoordinator() -> LoadedURL { LoadedURL() }
 }
 #else
 private struct EmbeddedVideoWebView: NSViewRepresentable {
@@ -116,13 +195,26 @@ private struct EmbeddedVideoWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let view = makePlayerWebView()
-        view.load(URLRequest(url: url))
+        context.coordinator.loaded = url
+        loadPlayer(view, url: url)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        guard view.url != url else { return }
-        view.load(URLRequest(url: url))
+        guard context.coordinator.loaded != url else { return }
+        context.coordinator.loaded = url
+        loadPlayer(view, url: url)
     }
+
+    func makeCoordinator() -> LoadedURL { LoadedURL() }
 }
 #endif
+
+/// What the web view was last asked to play. `view.url` used to answer this,
+/// but a wrapper page reports the *base* URL, which is the same for every
+/// video — without this, switching videos in a reused web view would show the
+/// first one forever.
+@MainActor
+final class LoadedURL {
+    var loaded: URL?
+}
