@@ -227,6 +227,11 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Scrolling the active channel into view on non-click navigation (#319) is web
+  + macOS only. iOS has no persistent channel list — its `SidebarDrawer` is
+  dismissed the moment you pick a channel, so there is no stale scroll position
+  to correct. If the drawer ever becomes persistent, the fix is the same
+  `ScrollViewReader` + nil anchor the macOS `SidebarView` now uses.
 - The floating pill header (#298) is iOS-only, by operator ruling. It answers a
   phone problem — a full-screen conversation with no sidebar beside it to carry
   the workspace colour. macOS and web both show the channel list next to the

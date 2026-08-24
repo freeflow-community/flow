@@ -102,6 +102,63 @@ struct SidebarView: View {
         Dictionary(uniqueKeysWithValues: members.value.map { ($0.userId, $0) })
     }
 
+    /// The scrolling channel list. Extracted from `body` so the `ScrollViewReader`
+    /// that wraps it (#319) doesn't re-indent the whole thing, and so the body
+    /// stays cheap to type-check.
+    private var channelList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1) {
+                activityRow
+
+                sectionHeader("Channels") {
+                    Button {
+                        showCreateChannel = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .flowFont(.caption)
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Create a channel")
+                }
+                ForEach(joinedChannels, id: \.channel.id) { row in
+                    channelWithArtifacts(row.channel) {
+                        channelRow(row.channel, isNested: row.isNested)
+                    }
+                }
+
+                sectionHeader("Direct messages") {
+                    Button {
+                        showNewDM = true
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .flowFont(.caption)
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                    .buttonStyle(.plain)
+                    .help("New direct message")
+                    .accessibilityIdentifier("sidebar.newDM")
+                }
+                ForEach(dmChannels) { channel in
+                    channelWithArtifacts(channel) { dmRow(channel) }
+                    ForEach(dmChildren[channel.id] ?? []) { child in
+                        channelWithArtifacts(child) { channelRow(child, isNested: true) }
+                    }
+                }
+
+                if !browsableChannels.isEmpty {
+                    sectionHeader("Browse") {}
+                    ForEach(browsableChannels) { channel in
+                        browseRow(channel)
+                    }
+                }
+
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -109,56 +166,28 @@ struct SidebarView: View {
                 .padding(.top, 18)
                 .padding(.bottom, 6)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    activityRow
-
-                    sectionHeader("Channels") {
-                        Button {
-                            showCreateChannel = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .flowFont(.caption)
-                                .foregroundStyle(.white.opacity(0.55))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Create a channel")
-                    }
-                    ForEach(joinedChannels, id: \.channel.id) { row in
-                        channelWithArtifacts(row.channel) {
-                            channelRow(row.channel, isNested: row.isNested)
-                        }
-                    }
-
-                    sectionHeader("Direct messages") {
-                        Button {
-                            showNewDM = true
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                                .flowFont(.caption)
-                                .foregroundStyle(.white.opacity(0.55))
-                        }
-                        .buttonStyle(.plain)
-                        .help("New direct message")
-                        .accessibilityIdentifier("sidebar.newDM")
-                    }
-                    ForEach(dmChannels) { channel in
-                        channelWithArtifacts(channel) { dmRow(channel) }
-                        ForEach(dmChildren[channel.id] ?? []) { child in
-                            channelWithArtifacts(child) { channelRow(child, isNested: true) }
+            ScrollViewReader { scroll in
+                channelList
+                    // Arriving at a channel by any route other than clicking it
+                    // here — a notification, a deep link, being added to a
+                    // channel — left the sidebar wherever it was, so the row you
+                    // just landed on could sit below the fold (#319). A nil
+                    // anchor is SwiftUI's minimal scroll: a row already on
+                    // screen does not move, which is why a plain sidebar click
+                    // still never jumps.
+                    //
+                    // The hop to the next runloop is for the invite case: the
+                    // new row and the new selection arrive in the same update,
+                    // and the row has to exist in the lazy stack before it can
+                    // be scrolled to.
+                    .onChange(of: win.selectedChannelId) { _, id in
+                        guard let id else { return }
+                        DispatchQueue.main.async {
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                scroll.scrollTo(AppState.sidebarRowID(id))
+                            }
                         }
                     }
-
-                    if !browsableChannels.isEmpty {
-                        sectionHeader("Browse") {}
-                        ForEach(browsableChannels) { channel in
-                            browseRow(channel)
-                        }
-                    }
-
-                }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 10)
             }
 
             inviteAgentButton
@@ -428,6 +457,7 @@ struct SidebarView: View {
         // Indent outside the background so the pill insets with the row rather
         // than the label sliding around inside a full-width pill.
         .padding(.leading, isNested ? 12 : 0)
+        .id(AppState.sidebarRowID(channel.id))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
         .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
@@ -492,6 +522,7 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .id(AppState.sidebarRowID(channel.id))
         .accessibilityElement(children: .combine)
         // badge-free id: QA targets DMs by plain member names
         .accessibilityIdentifier("sidebar.dm.\(title.replacingOccurrences(of: " 🤖", with: ""))")
