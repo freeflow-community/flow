@@ -90,13 +90,13 @@ struct MessageListView: View {
 
     private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
         defer { syncSignals() }
-        guard case .stick(let animated) = command, let lastId = messages.last?.id else { return }
+        guard case .stick(let animated) = command, let lastKey = messages.lastRowKey else { return }
         if animated {
             withAnimation(.easeOut(duration: 0.15)) {
-                proxy.scrollTo(lastId, anchor: .bottom)
+                proxy.scrollTo(lastKey, anchor: .bottom)
             }
         } else {
-            proxy.scrollTo(lastId, anchor: .bottom)
+            proxy.scrollTo(lastKey, anchor: .bottom)
         }
     }
 
@@ -303,17 +303,18 @@ struct MessageListView: View {
                     // still loaded, else land at the bottom.
                     appliedKey = scrollKey
                     let remembered = scrollKey.flatMap { MessageScrollMemory.fresh($0) }
-                    if let remembered, messages.contains(where: { $0.id == remembered }) {
+                    if let remembered, let rememberedKey = messages.rowKey(forMessageId: remembered) {
                         // Mid-history: unpin so no glue fights the restore.
                         memoryLog.notice("restore hit \(remembered, privacy: .public)")
                         followBox.model.positionRestored(atBottom: false)
                         followBox.model.landingIssued()
-                        proxy.scrollTo(remembered, anchor: .top)
+                        proxy.scrollTo(rememberedKey, anchor: .top)
                         // Re-anchored again below as attachments size — a row
                         // above the target growing late pushes the whole
                         // restore down a viewport (the storms-video effect).
                         pendingRestoreId = remembered
-                    } else if remembered != nil, let firstId = messages.first?.id {
+                    } else if remembered != nil, let firstId = messages.first?.id,
+                              let firstKey = messages.firstRowKey {
                         // Remembered, but the row slid outside the message
                         // window (a reader parked at the top is one new
                         // message away from this). The top of the window is
@@ -321,13 +322,15 @@ struct MessageListView: View {
                         memoryLog.notice("restore miss -> window top \(firstId, privacy: .public)")
                         followBox.model.positionRestored(atBottom: false)
                         followBox.model.landingIssued()
-                        proxy.scrollTo(firstId, anchor: .top)
+                        proxy.scrollTo(firstKey, anchor: .top)
                         pendingRestoreId = firstId
                     } else {
                         memoryLog.notice("restore none -> bottom")
                         followBox.model.positionRestored(atBottom: true)
                         followBox.model.landingIssued()
-                        proxy.scrollTo(newId, anchor: .bottom)
+                        if let lastKey = messages.lastRowKey {
+                            proxy.scrollTo(lastKey, anchor: .bottom)
+                        }
                     }
                 } else {
                     // A genuinely new message in the current channel. The model
@@ -345,8 +348,8 @@ struct MessageListView: View {
             .onChange(of: messages.first?.id) { _, _ in
                 guard let anchor = loadOlderAnchorId else { return }
                 loadOlderAnchorId = nil
-                if messages.contains(where: { $0.id == anchor }) {
-                    proxy.scrollTo(anchor, anchor: .top)
+                if let anchorKey = messages.rowKey(forMessageId: anchor) {
+                    proxy.scrollTo(anchorKey, anchor: .top)
                 }
             }
             // First open must land on the newest message: scrollTo from
@@ -407,10 +410,10 @@ struct MessageListView: View {
                     // "reader took over" and quit). Only a jump target or
                     // the row leaving the window stops the window.
                     guard !followBox.model.focusActive,
-                          messages.contains(where: { $0.id == target }) else { break }
+                          let targetKey = messages.rowKey(forMessageId: target) else { break }
                     followBox.model.positionRestored(atBottom: false)
                     followBox.model.landingIssued()
-                    proxy.scrollTo(target, anchor: .top)
+                    proxy.scrollTo(targetKey, anchor: .top)
                 }
                 pendingRestoreId = nil
             }
@@ -480,10 +483,10 @@ struct MessageListView: View {
     /// Center + flash the jump target once it's actually in the list, then
     /// release the target (paging in ChannelView brings it in if it's old).
     private func tryFocus(_ proxy: ScrollViewProxy) {
-        guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
+        guard let fid = focusMessageId, let key = messages.rowKey(forMessageId: fid) else { return }
         followBox.model.focusEngaged() // stop the bottom-glue from fighting the centering scroll
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(fid, anchor: .center)
+            proxy.scrollTo(key, anchor: .center)
         }
         // The jump decided this channel's scroll position — mark it applied so
         // the scroll-memory restore doesn't yank away once focus is cleared.

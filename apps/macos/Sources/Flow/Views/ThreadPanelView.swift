@@ -97,8 +97,12 @@ struct ThreadPanelView: View {
                 .defaultScrollAnchor(.bottom) // open at the newest reply
                 .onChange(of: thread.value.last?.id) { _, newId in
                     // A pending jump owns the scroll position.
-                    guard win.focusMessageId == nil, let newId else { return }
-                    proxy.scrollTo(newId, anchor: .bottom)
+                    guard win.focusMessageId == nil, newId != nil,
+                          let lastKey = thread.value.lastRowKey else { return }
+                    // Rows are keyed on clientMsgId (see the `.id()` above), so
+                    // the scroll target has to be that key — a message id
+                    // matches no row and scrolls nowhere (#329).
+                    proxy.scrollTo(lastKey, anchor: .bottom)
                 }
                 // Jump-to-message (phase 12): scroll to + flash a thread reply
                 // reached from the Activity feed. The thread loads whole, so no
@@ -171,9 +175,10 @@ struct ThreadPanelView: View {
     /// Center + flash the jump-to-message target once the thread has loaded it,
     /// then release the shared target.
     private func tryFocus(_ proxy: ScrollViewProxy) {
-        guard let fid = win.focusMessageId, thread.value.contains(where: { $0.id == fid }) else { return }
+        guard let fid = win.focusMessageId,
+              let key = thread.value.rowKey(forMessageId: fid) else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(fid, anchor: .center)
+            proxy.scrollTo(key, anchor: .center) // row identity, not message id (#329)
         }
         flashId = fid
         win.focusMessageId = nil

@@ -291,19 +291,21 @@ actor SyncEngine {
         for root in await appState?.openThreadRootIds ?? [] {
             await fetchThread(rootId: root)
         }
+        // Every reconciling fetch has had its turn (this also runs on the
+        // first connect after launch, which is where rows orphaned by a quit
+        // mid-send get their verdict).
+        await sweepStalePending()
         await refreshNotificationBadge()
     }
 
     /// Fills the gap between the server head and our newest local message by
     /// paging backwards (cursor `before`) until we overlap local history.
     private func backfillChannel(_ channelId: String) async {
-        let newestLocalId: String? = try? await db.reader.read { db in
-            try String.fetchOne(
-                db,
-                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 ORDER BY id DESC LIMIT 1",
-                arguments: [channelId]
-            )
-        }
+        // The same probe `catchUpRead` uses, and for the same reason it excludes
+        // thread replies: the pages being walked back are top-level only, so a
+        // newer reply standing in as the overlap mark ends the gap-fill before
+        // it has actually overlapped (#328).
+        let newestLocalId = await newestCachedMessageId(channelId: channelId)
         var before: String? = nil
         var pages = 0
         // The first page (the newest messages) is stored as soon as it lands,
@@ -769,13 +771,20 @@ actor SyncEngine {
             return true
         } catch {
             try? await db.writer.write { db in
+                // `AND pending = 1`: if the WS echo reconciled this send while
+                // the POST was timing out, the message is delivered — flagging
+                // it "Failed to send" would be a lie about a message everyone
+                // else can see.
                 try db.execute(
-                    sql: "UPDATE message SET pending = 0, failed = 1 WHERE clientMsgId = ?",
+                    sql: "UPDATE message SET pending = 0, failed = 1 WHERE clientMsgId = ? AND pending = 1",
                     arguments: [local.clientMsgId]
                 )
                 // A failed reply un-bumps the root rollup it optimistically
-                // incremented, so counts reflect only confirmed replies.
-                if let root = local.threadRootId { try Self.unbumpThreadRollup(db, rootId: root) }
+                // incremented, so counts reflect only confirmed replies — but
+                // only when the flag actually flipped, or a confirmed reply
+                // loses a count it earned.
+                guard db.changesCount > 0, let root = local.threadRootId else { return }
+                try Self.unbumpThreadRollup(db, rootId: root)
             }
             return false
         }
@@ -1377,13 +1386,78 @@ actor SyncEngine {
         await fetchThread(rootId: rootId)
     }
 
+    /// Pages the *whole* thread in (cursor `after`, replies ascending). Two
+    /// things depend on that: the panel is built on "the thread loads whole"
+    /// — its jump-to-reply has no paging of its own — and this is the only
+    /// fallback that reconciles an optimistic reply whose ack was missed.
+    /// Dropping `hasMore` broke both past 100 replies, and the orphaned
+    /// pending row then spun forever (#328).
     private func fetchThread(rootId: String) async {
-        guard let resp: ThreadResponse = try? await api.get(
-            "/v1/messages/\(rootId)/thread",
-            query: [URLQueryItem(name: "limit", value: "100")]
-        ) else { return }
-        await storeMessages([resp.root] + resp.messages)
-        await markThreadRead(channelId: resp.root.channelId, rootId: rootId)
+        var after: String? = nil
+        var pages = 0
+        var channelId: String? = nil
+        var reachedTail = false
+        while pages < Self.threadMaxPages {
+            let query: [URLQueryItem] = [
+                URLQueryItem(name: "limit", value: "\(Self.threadPageSize)"),
+                after.map { URLQueryItem(name: "after", value: $0) },
+            ].compactMap(\.self)
+            guard let resp: ThreadResponse = try? await api.get(
+                "/v1/messages/\(rootId)/thread", query: query
+            ) else { break }
+            pages += 1
+            // The root only comes with the first page; later pages are replies.
+            await storeMessages(pages == 1 ? [resp.root] + resp.messages : resp.messages)
+            channelId = resp.root.channelId
+            guard resp.hasMore, let last = resp.messages.last?.id else {
+                reachedTail = true
+                break
+            }
+            after = last
+        }
+        // Nothing arrived: don't claim the thread was read.
+        guard let channelId else { return }
+        // Only once the tail is actually local is a still-pending reply here
+        // known to have missed its ack, rather than sitting on a page a
+        // dropped request never fetched.
+        if reachedTail { await sweepStalePending(threadRootId: rootId) }
+        await markThreadRead(channelId: channelId, rootId: rootId)
+    }
+
+    /// Thread paging: 100 replies a page, capped at 50 pages. The cap is a
+    /// runaway guard, not a product limit — a thread past 5 000 replies pages
+    /// no further, which costs the tail, not correctness of what is shown.
+    private static let threadPageSize = 100
+    private static let threadMaxPages = 50
+
+    /// A pending row older than this is not in flight any more: the POST that
+    /// owned it died with the app, the network, or a half-open socket.
+    private static let stalePendingAge: TimeInterval = 120
+
+    /// Flip orphaned optimistic rows to `failed`, so the user gets the Retry
+    /// affordance instead of a spinner that never stops (#328).
+    ///
+    /// Always runs *after* a fetch that could have reconciled them (reconnect
+    /// backfill, thread open), so a row the server actually has is already
+    /// gone by the time the sweep looks. And when the sweep is wrong anyway —
+    /// delivered, but in a channel this pass didn't fetch — it costs one
+    /// re-POST and no duplicate: retries reuse the `clientMsgId` the server is
+    /// idempotent on, and a server twin deletes the local row on arrival.
+    private func sweepStalePending(threadRootId: String? = nil) async {
+        let now = Date()
+        try? await db.writer.write { db in
+            let pending = try Message.filter(Column("pending") == true).fetchAll(db)
+            for m in pending {
+                if let root = threadRootId, m.threadRootId != root { continue }
+                guard let created = ISO8601.parse(m.createdAt),
+                      now.timeIntervalSince(created) > Self.stalePendingAge else { continue }
+                try db.execute(
+                    sql: "UPDATE message SET pending = 0, failed = 1 WHERE id = ?",
+                    arguments: [m.id]
+                )
+                if let root = m.threadRootId { try Self.unbumpThreadRollup(db, rootId: root) }
+            }
+        }
     }
 
     // MARK: - Typing
@@ -1701,11 +1775,16 @@ actor SyncEngine {
         guard !messages.isEmpty else { return }
         try? await db.writer.write { db in
             for m in messages {
+                // A local twin of a server row is optimistic by definition
+                // (`clientMsgId` is unique per channel server-side). `failed`
+                // as well as `pending`: the stale-pending sweep can flag a
+                // message the server did receive, and its twin arriving here
+                // is the proof — leaving it would show the send twice.
                 try Message
                     .filter(Column("channelId") == m.channelId)
                     .filter(Column("clientMsgId") == m.clientMsgId)
                     .filter(Column("id") != m.id)
-                    .filter(Column("pending") == true)
+                    .filter(Column("pending") == true || Column("failed") == true)
                     .deleteAll(db)
                 try m.save(db)
             }
