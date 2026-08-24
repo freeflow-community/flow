@@ -32,17 +32,52 @@ const channelLabel = (c: { name: string | null; kind: string }): string =>
  * so an agent that forgets to clear it doesn't leave a channel spinning. */
 const MANUAL_INDICATOR_TTL_SECONDS = 300;
 
+/** Where a messaging tool call lands (#320).
+ *
+ * The ambient conversation — the channel, plus the thread when the agent was
+ * asked inside one — is inherited only by a call that names no channel of its
+ * own. Naming `channelId` means "post there, top-level", even when it is the
+ * very channel the ambient thread lives in: an agent conversing in a thread
+ * has to be able to reach the channel itself (dispatching another agent, say),
+ * and before this it could not. A thread is joined only by asking for it — a
+ * non-empty `threadRootId`. The empty string is an explicit "top-level", never
+ * a silent fall back to the ambient thread. */
+export function resolveMessageTarget(
+  args: { channelId?: unknown; threadRootId?: unknown },
+  ambient: { channelId: string; threadRootId: string | undefined },
+): { channelId: string; threadRootId: string | undefined } {
+  const channelId = typeof args.channelId === 'string' ? args.channelId.trim() : '';
+  const threadGiven = typeof args.threadRootId === 'string';
+  const threadRootId = threadGiven ? (args.threadRootId as string).trim() : '';
+  if (threadRootId) return { channelId: channelId || ambient.channelId, threadRootId };
+  if (threadGiven || channelId) return { channelId: channelId || ambient.channelId, threadRootId: undefined };
+  return { channelId: ambient.channelId, threadRootId: ambient.threadRootId };
+}
+
 const TOOLS = [
   {
     name: 'send_message',
     description:
-      'Send a message to a Flow channel or thread immediately. Defaults to the current conversation. Mention users as <@userId>.',
+      'Send a message to a Flow channel or thread immediately. With no channelId it replies in the current ' +
+      'conversation — inside the current thread, when you were asked in one. Passing channelId posts TOP-LEVEL in ' +
+      'that channel (this is how you reach a channel from inside a thread); add threadRootId to reply into a ' +
+      'specific thread instead. Mention users as <@userId>.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Message body (markdown).' },
-        channelId: { type: 'string', description: 'Target channel id (default: current conversation).' },
-        threadRootId: { type: 'string', description: 'Thread root message id (default: current thread, if any).' },
+        channelId: {
+          type: 'string',
+          description:
+            'Target channel id. Omit for the current conversation; naming one posts top-level there unless ' +
+            'threadRootId is also given.',
+        },
+        threadRootId: {
+          type: 'string',
+          description:
+            'Reply into this thread. Omitting it inherits the current thread only when channelId is omitted too; ' +
+            'pass an empty string to force top-level.',
+        },
       },
       required: ['text'],
     },
@@ -61,13 +96,25 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: 'Upload a local file and post it to a Flow channel (defaults to the current conversation).',
+    description:
+      'Upload a local file and post it to a Flow channel. Targeting works exactly like send_message: no channelId ' +
+      'posts in the current conversation (and current thread), naming a channelId posts top-level there.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Path to the file on disk.' },
-        channelId: { type: 'string', description: 'Target channel id (default: current conversation).' },
-        threadRootId: { type: 'string', description: 'Thread root message id (default: current thread, if any).' },
+        channelId: {
+          type: 'string',
+          description:
+            'Target channel id. Omit for the current conversation; naming one posts top-level there unless ' +
+            'threadRootId is also given.',
+        },
+        threadRootId: {
+          type: 'string',
+          description:
+            'Reply into this thread. Omitting it inherits the current thread only when channelId is omitted too; ' +
+            'pass an empty string to force top-level.',
+        },
         comment: { type: 'string', description: 'Optional message text to accompany the file.' },
       },
       required: ['path'],
@@ -380,8 +427,10 @@ export async function runMcpServer(): Promise<void> {
   }
 
   async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const channelId = (args.channelId as string | undefined) || defaultChannelId;
-    const threadRootId = (args.threadRootId as string | undefined) || defaultThreadRootId;
+    const { channelId, threadRootId } = resolveMessageTarget(args, {
+      channelId: defaultChannelId,
+      threadRootId: defaultThreadRootId,
+    });
     switch (name) {
       case 'send_message': {
         const msg = await api.sendMessage(channelId, String(args.text ?? ''), threadRootId);
