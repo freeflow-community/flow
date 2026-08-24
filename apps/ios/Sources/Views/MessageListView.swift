@@ -89,20 +89,23 @@ struct MessageListView: View {
         if followBox.model.showJump != jumpSignal { jumpSignal = followBox.model.showJump }
     }
 
+    /// Scrolls to the row *identity*, never a message id (#329/#332: rows are
+    /// keyed on `clientMsgId`, so a message id matches no row and silently
+    /// scrolls nowhere).
     private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
         defer { syncSignals() }
         #if DEBUG
         if case .stick = command {
-            listLog.info("run stick lastId=\(messages.last?.id ?? "nil") count=\(messages.count)")
+            listLog.info("run stick lastKey=\(messages.lastRowKey ?? "nil") count=\(messages.count)")
         }
         #endif
-        guard case .stick(let animated) = command, let lastId = messages.last?.id else { return }
+        guard case .stick(let animated) = command, let lastKey = messages.lastRowKey else { return }
         if animated {
             withAnimation(.easeOut(duration: 0.15)) {
-                proxy.scrollTo(lastId, anchor: .bottom)
+                proxy.scrollTo(lastKey, anchor: .bottom)
             }
         } else {
-            proxy.scrollTo(lastId, anchor: .bottom)
+            proxy.scrollTo(lastKey, anchor: .bottom)
         }
     }
 
@@ -145,7 +148,14 @@ struct MessageListView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                    ForEach(rowCache.rows(for: messages)) { row in
+                    // Keyed on `clientMsgId` here as well as in the `.id()`
+                    // below (#333/#332): with the ForEach still keyed on the
+                    // message id, an optimistic row reconciling with its
+                    // server echo reads as a delete + insert whose two views
+                    // claim one `.id()`, and the leaving pending view wins —
+                    // the spinner stays on screen. One element with a changed
+                    // value re-renders in place instead.
+                    ForEach(rowCache.rows(for: messages), id: \.message.clientMsgId) { row in
                         VStack(alignment: .leading, spacing: 0) {
                             if row.startsNewDay {
                                 DayDividerView(iso: row.message.createdAt)
@@ -269,8 +279,11 @@ struct MessageListView: View {
             .onChange(of: messages.first?.id) { _, _ in
                 guard let anchor = loadOlderAnchorId else { return }
                 loadOlderAnchorId = nil
-                if messages.contains(where: { $0.id == anchor }) {
-                    proxy.scrollTo(anchor, anchor: .top)
+                // Row identity, not the message id (#332) — and the lookup
+                // doubles as the "is it in the list?" guard the old
+                // `contains(where:)` gave.
+                if let anchorKey = messages.rowKey(forMessageId: anchor) {
+                    proxy.scrollTo(anchorKey, anchor: .top)
                 }
             }
             // The single scroll driver. Everything else that moves this list
@@ -316,6 +329,25 @@ struct MessageListView: View {
                     try? await Task.sleep(nanoseconds: delay)
                     guard case .stick = followBox.model.settleCommand() else { return }
                     run(followBox.model.settleCommand(), proxy)
+                }
+            }
+            // The arrival settle (#334, ported with #332): the follow above
+            // fires the instant a new message lands — before its row has a
+            // height — so the scroll comes up short and an incoming reply sits
+            // below the fold. The shared model's glue corrects that when the
+            // row sizes, but only if a geometry event actually arrives; this
+            // belt re-asserts the end across the settling window either way.
+            // Keyed on the row identity, not the message id, so an optimistic
+            // row reconciling with its echo doesn't re-run it (#312/#329), and
+            // gated entirely on the model — a back-scrolled, focused or
+            // mid-drag reader gets `.none`.
+            .task(id: messages.lastRowKey) {
+                guard !messages.isEmpty else { return }
+                for delay in Self.settleDelays {
+                    try? await Task.sleep(nanoseconds: delay)
+                    let command = followBox.model.arrivalSettleCommand()
+                    guard case .stick = command else { return }
+                    run(command, proxy)
                 }
             }
         }
@@ -381,14 +413,14 @@ struct MessageListView: View {
     }
 
     private func tryFocus(_ proxy: ScrollViewProxy) {
-        guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
+        guard let fid = focusMessageId, let key = messages.rowKey(forMessageId: fid) else { return }
         // The jump landed mid-history: unpin, so the next message follows the
         // reader's choice (the pill offers the way back) rather than yanking
         // them off the message they came to see. macOS has always done this;
         // iOS used to stay pinned (a quiet divergence, now gone).
         followBox.model.focusEngaged()
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(fid, anchor: .center)
+            proxy.scrollTo(key, anchor: .center) // row identity, not message id (#332)
         }
         flashId = fid
         onFocused()

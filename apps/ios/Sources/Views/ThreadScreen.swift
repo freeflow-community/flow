@@ -26,6 +26,23 @@ struct ThreadScreen: View {
     /// Viewport height, watched so the keyboard's resize can re-stick the list
     /// to the newest reply (#191).
     @State private var viewportHeight: CGFloat = 0
+    /// A jump owns the scroll position after it lands (#332). macOS gets this
+    /// from its follow model — `focusEngaged()` unpins, so no glue or follow
+    /// fights the centring scroll — and this screen has no follow model, so it
+    /// records the claim itself. Without it the keyboard glue and the new-reply
+    /// follow both fire ~70ms after the jump and drag the reader to the end;
+    /// they were harmless only while they targeted message ids and no-oped.
+    /// Released by my own reply, which always re-pins (#111/#334).
+    @State private var jumpEngaged = false
+    /// The jump target, held while its centring scroll settles (#332). Unlike
+    /// the channel transcript — eager below 100 rows, so `tryFocus` lands first
+    /// time — this screen is pushed fresh and its LazyVStack has laid out
+    /// nothing when the scroll is issued, so the first attempt comes up at the
+    /// end. Same belt the transcript's restore and the #334 arrival settle use.
+    @State private var pendingFocusId: String?
+
+    /// The window a freshly pushed thread takes to lay its rows out.
+    private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
     private var userNames: [String: String] {
         Dictionary(users.value.map { ($0.id, $0.displayNameWithBadge) }, uniquingKeysWith: { a, _ in a })
@@ -46,7 +63,13 @@ struct ThreadScreen: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(thread.value) { message in
+                        // Keyed on `clientMsgId` here as well as in the
+                        // `.id()` below (#333/#332): keyed on the message id,
+                        // an optimistic reply reconciling with its server twin
+                        // reads as a delete + insert whose two views claim one
+                        // `.id()`, and the leaving pending view wins — the row
+                        // keeps its spinner for as long as the screen is up.
+                        ForEach(thread.value, id: \.clientMsgId) { message in
                             MessageRow(
                                 message: message,
                                 userNames: userNames,
@@ -100,16 +123,32 @@ struct ThreadScreen: View {
                                 // changing the content, and a position worked
                                 // out from a LazyVStack's estimates lands past
                                 // the end of everything laid out.
-                                if let lastId = thread.value.last?.id {
-                                    proxy.scrollTo(lastId, anchor: .bottom)
+                                // Row identity, never a message id (#332):
+                                // rows are keyed on `clientMsgId`, so a
+                                // message id matches no row and the scroll
+                                // silently does nothing.
+                                if !jumpEngaged, let lastKey = thread.value.lastRowKey {
+                                    proxy.scrollTo(lastKey, anchor: .bottom)
                                 }
                             }
                     }
                 )
                 .onChange(of: thread.value.last?.id) { _, newId in
-                    guard let newId else { return }
+                    // A jump owns the scroll position, pending or landed
+                    // (#332). This follow and `focusPinnedMessage` both fire on
+                    // the update that first delivers the replies, and an
+                    // ungated follow simply wins — the thread opens at its
+                    // newest reply and the jump is never seen.
+                    guard newId != nil else { return }
+                    // My own reply always re-pins, the channel list's rule
+                    // (#111/#334), so replying after a jump follows it down.
+                    if let me = app.currentUser?.id, thread.value.last?.userId == me {
+                        jumpEngaged = false
+                    }
+                    guard app.focusMessageId == nil, !jumpEngaged,
+                          let lastKey = thread.value.lastRowKey else { return }
                     withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(newId, anchor: .bottom)
+                        proxy.scrollTo(lastKey, anchor: .bottom) // row identity (#332)
                     }
                 }
                 // Size-change role removed on iOS 18+ — same short-back-pull
@@ -118,6 +157,18 @@ struct ThreadScreen: View {
                 .onChange(of: app.focusMessageId) { _, _ in focusPinnedMessage(proxy) }
                 .onChange(of: thread.value.count) { _, _ in focusPinnedMessage(proxy) }
                 .onAppear { focusPinnedMessage(proxy) }
+                // Re-assert the jump across the settling window. Stops early
+                // once the row leaves the thread; `jumpEngaged` keeps the glue
+                // and the follow off the position for the whole run.
+                .task(id: pendingFocusId) {
+                    guard let target = pendingFocusId else { return }
+                    for delay in Self.settleDelays {
+                        try? await Task.sleep(nanoseconds: delay)
+                        guard let key = thread.value.rowKey(forMessageId: target) else { break }
+                        proxy.scrollTo(key, anchor: .center)
+                    }
+                    pendingFocusId = nil
+                }
             }
             .dismissesKeyboardOnChatInteraction()
             if let chId = channelId.value {
@@ -169,9 +220,11 @@ struct ThreadScreen: View {
 
     private func focusPinnedMessage(_ proxy: ScrollViewProxy) {
         guard let messageId = app.focusMessageId,
-              thread.value.contains(where: { $0.id == messageId }) else { return }
+              let key = thread.value.rowKey(forMessageId: messageId) else { return }
+        jumpEngaged = true // this position is the jump's now, not the follow's
+        pendingFocusId = messageId
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(messageId, anchor: .center)
+            proxy.scrollTo(key, anchor: .center) // row identity, not message id (#332)
         }
         flashId = messageId
         app.focusMessageId = nil

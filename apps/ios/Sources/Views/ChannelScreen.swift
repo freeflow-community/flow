@@ -234,10 +234,13 @@ struct ChannelScreen: View {
                     onDelete: { msg in
                         Task { await app.engine.deleteMessage(id: msg.id) }
                     },
-                    // Jump-to-message (phase 12): the Activity feed only sets a
-                    // target for top-level messages on iOS (thread replies live
-                    // in a separate pushed screen — see CHANGELOG Parity).
-                    focusMessageId: app.focusMessageId,
+                    // Jump-to-message (phase 12): the main list owns the target
+                    // unless a thread is open, in which case the reply is
+                    // ThreadScreen's to land on. The Activity feed only ever
+                    // sets a top-level target on iOS, but the pins sheet jumps
+                    // straight into a thread — so the condition, not the
+                    // caller, is what keeps the two lists from both claiming it.
+                    focusMessageId: app.openThreadRootId == nil ? app.focusMessageId : nil,
                     onFocused: { app.focusMessageId = nil },
                     onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
                 )
@@ -363,9 +366,10 @@ struct ChannelScreen: View {
         }
     }
 
-    /// Page older history toward a jump-to-message target until it's loaded.
+    /// Page older history toward a jump-to-message target until it's loaded
+    /// (thread-reply targets are handled by ThreadScreen, not here).
     private func pageToFocusIfNeeded() {
-        guard let fid = app.focusMessageId else { return }
+        guard app.openThreadRootId == nil, let fid = app.focusMessageId else { return }
         if transcript.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
         if hasMoreCached {
             transcriptWindow += Self.windowStep // cached but outside the window
