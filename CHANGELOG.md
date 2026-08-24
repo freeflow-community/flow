@@ -13,13 +13,10 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- The thread panel's jump-to-message fix (#329) is macOS-only. iOS's
-  `ThreadScreen` already scopes its bottom anchor, so it should not carry the
-  same defect — but its rows are keyed `.id(message.clientMsgId)` while its
-  `ForEach` and every `proxy.scrollTo` still use `message.id`, which is the
-  shape that produced the stuck-spinner render on macOS (#328). Worth an
-  hour on a device before it is called clean; the fix, if needed, is the same
-  two-line re-key.
+- The thread panel's stuck-spinner re-render (#328) and scoped bottom anchor
+  (#329) landed on macOS only. iOS keys its `ForEach`s on `message.id` under
+  rows carrying `.id(message.clientMsgId)` — the same shape — and re-keying
+  there also means translating every `scrollTo` call site; tracked as #332.
 - Per-user notification alert prefs have a UI on web only — macOS and iOS
   render every kind and honour the server's `suppressAlert`, but offer no way
   to change the toggles behind it. Noted with the `channelInvite` pref (#303),
