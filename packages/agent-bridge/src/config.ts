@@ -64,6 +64,20 @@ export interface BridgeConfig {
   eventScope: EventScope;
   /** Never respond to other agents (loop safety). Default false. */
   respondToAgents: boolean;
+  /**
+   * With respondToAgents on: an agent-authored message must @-mention me
+   * (<@userId>) to trigger a run — even in DMs and group DMs, where every
+   * message is otherwise in scope. Stops two agents' stray final replies from
+   * ping-ponging. Default false.
+   */
+  agentMentionsOnly: boolean;
+  /**
+   * Circuit breaker: after this many consecutive agent-authored messages in a
+   * channel with no human speaking, stop responding there until a human posts.
+   * Instructions ask agents not to loop; this makes a loop mechanically
+   * impossible to sustain. 0 disables. Default 6.
+   */
+  agentChainLimit: number;
   /** Max conversations processed concurrently (serial within one conversation). */
   concurrency: number;
   progress: ProgressMode;
@@ -83,6 +97,8 @@ interface RawConfig {
   runtime?: Partial<RuntimeConfig> & { kind?: string };
   eventScope?: string;
   respondToAgents?: boolean;
+  agentMentionsOnly?: boolean;
+  agentChainLimit?: number;
   concurrency?: number;
   progress?: string;
   relayText?: boolean;
@@ -158,6 +174,8 @@ export function loadConfig(configPath: string): BridgeConfig {
     runtime,
     eventScope,
     respondToAgents: raw.respondToAgents ?? false,
+    agentMentionsOnly: raw.agentMentionsOnly ?? false,
+    agentChainLimit: Math.max(0, raw.agentChainLimit ?? 6),
     concurrency: Math.max(1, raw.concurrency ?? 4),
     progress,
     relayText: raw.relayText ?? true,
