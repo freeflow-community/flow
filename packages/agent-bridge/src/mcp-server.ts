@@ -197,15 +197,16 @@ const TOOLS = [
   {
     name: 'create_artifact',
     description:
-      'Create an artifact — a named file pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Provide the content inline, or a local file path, or the id of an already-uploaded file. Returns the artifact id (use it with update_artifact).',
+      'Create an artifact — a named object pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Two kinds: a FILE artifact (provide the content inline, or a local file path, or the id of an already-uploaded file) or a LINK artifact (provide a url — members get the live page, not a file). Returns the artifact id (use it with update_artifact).',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'Display name for the artifact (defaults to the file name).' },
+        name: { type: 'string', description: 'Display name for the artifact (defaults to the file name, or to a name derived from the url).' },
         content: { type: 'string', description: 'Inline file content to upload (use with name; mimeType recommended).' },
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML artifacts).' },
         path: { type: 'string', description: 'Path to a local file to upload instead of inline content.' },
         fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to pin as-is.' },
+        url: { type: 'string', description: 'http(s) URL to pin as a link artifact instead of a file. Mutually exclusive with content/path/fileId.' },
         channelId: { type: 'string', description: 'Channel to pin the artifact in (default: the current conversation).' },
       },
     },
@@ -213,7 +214,7 @@ const TOOLS = [
   {
     name: 'update_artifact',
     description:
-      'Update an existing artifact in place — rename it and/or replace its content. Everyone viewing it sees the new version. Provide new content inline, a local file path, or the id of an already-uploaded file to replace the backing file; and/or a new name.',
+      'Update an existing artifact in place — rename it and/or replace its content. Everyone viewing it sees the new version. For a file artifact provide new content inline, a local file path, or the id of an already-uploaded file; for a link artifact provide a new url; and/or a new name for either kind.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -223,6 +224,7 @@ const TOOLS = [
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML).' },
         path: { type: 'string', description: 'Path to a local file whose contents replace the artifact.' },
         fileId: { type: 'string', description: 'Id of an already-uploaded file to point the artifact at.' },
+        url: { type: 'string', description: 'New http(s) URL for a link artifact. Mutually exclusive with content/path/fileId; rejected on file artifacts.' },
       },
       required: ['artifactId'],
     },
@@ -542,22 +544,43 @@ export async function runMcpServer(): Promise<void> {
         if (!channelId) {
           return toolText('create_artifact needs a channelId (no conversation context to infer the channel)', true);
         }
+        const artifactName = (args.name as string | undefined) || undefined;
+        const url = (args.url as string | undefined) || undefined;
+        const hasFileSource = Boolean(args.fileId || args.path || typeof args.content === 'string');
+        if (url && hasFileSource) {
+          return toolText('create_artifact takes either url (link artifact) or one file source (content/path/fileId), not both', true);
+        }
+        if (url) {
+          if (!/^https?:\/\//i.test(url)) return toolText('url must be http(s)', true);
+          const created = await api.createArtifact(channelId, { url, name: artifactName });
+          return toolText(`link artifact "${created.name}" created (id ${created.id})`);
+        }
         // resolve a file id: pin an existing file, or upload path/content (owned)
-        const resolved = await resolveArtifactFile(args, (args.name as string | undefined) || undefined);
-        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, or fileId`, true);
-        const created = await api.createArtifact(channelId, resolved.fileId, resolved.label, resolved.ownsFile);
+        const resolved = await resolveArtifactFile(args, artifactName);
+        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, fileId, or url`, true);
+        const created = await api.createArtifact(channelId, {
+          fileId: resolved.fileId,
+          name: resolved.label,
+          ownsFile: resolved.ownsFile,
+        });
         return toolText(`artifact "${created.name}" created (id ${created.id})`);
       }
       case 'update_artifact': {
         const artifactId = (args.artifactId as string | undefined) || '';
         if (!artifactId) return toolText('update_artifact needs an artifactId', true);
         const name = (args.name as string | undefined) || undefined;
+        const url = (args.url as string | undefined) || undefined;
         const hasNewContent = args.fileId || args.path || typeof args.content === 'string';
-        if (!name && !hasNewContent) {
-          return toolText('update_artifact needs a name and/or new content (content, path, or fileId)', true);
+        if (url && hasNewContent) {
+          return toolText('update_artifact takes either url (link artifact) or new file content, not both', true);
         }
-        const patch: { name?: string; fileId?: string; ownsFile?: boolean } = {};
+        if (url && !/^https?:\/\//i.test(url)) return toolText('url must be http(s)', true);
+        if (!name && !hasNewContent && !url) {
+          return toolText('update_artifact needs a name, a url (link artifacts), and/or new content (content, path, or fileId)', true);
+        }
+        const patch: { name?: string; fileId?: string; ownsFile?: boolean; url?: string } = {};
         if (name) patch.name = name;
+        if (url) patch.url = url;
         if (hasNewContent) {
           const resolved = await resolveArtifactFile(args, name);
           if ('error' in resolved) return toolText('update_artifact could not read the new content', true);
