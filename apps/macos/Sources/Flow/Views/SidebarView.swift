@@ -1,3 +1,4 @@
+import AppKit
 import GRDB
 import SwiftUI
 
@@ -716,7 +717,7 @@ struct SidebarView: View {
             }
             Divider()
             if canEditWorkspace {
-                Button("Workspace Color…") { showColorPicker = true }
+                Button("Workspace Appearance…") { showColorPicker = true }
             }
             Button("Create Workspace…") { showCreateWorkspace = true }
             Button("Accept Invite…") { showAcceptInvite = true }
@@ -967,15 +968,18 @@ struct ProfileTarget: Identifiable {
     var id: String { userId }
 }
 
-/// Owner/admin picker for the workspace's sidebar color preset (ruling 3).
-/// Selecting a swatch PATCHes the workspace; the saved row + broadcast
-/// restyle every client live.
+/// Owner/admin workspace branding: the sidebar color preset (ruling 3) and the
+/// optional avatar image (#336). Either write PATCHes the workspace; the saved
+/// row + broadcast restyle every client live.
 struct WorkspaceColorSheet: View {
     let workspace: Workspace
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
+    /// Local mirror of the workspace's avatar so the preview updates in place —
+    /// the sheet holds a snapshot row, not a live query.
+    @State private var avatarUrl: String?
 
     private var currentId: String {
         SidebarPalette.palette(for: workspace.sidebarColor).id
@@ -985,10 +989,13 @@ struct WorkspaceColorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Workspace Color").flowFont(.headline)
+            Text("Workspace Appearance").flowFont(.headline)
             Text("Applies to everyone in \(workspace.name).")
                 .flowFont(.caption)
                 .foregroundStyle(.secondary)
+            avatarSection
+            Divider()
+            Text("Color").flowFont(.caption).foregroundStyle(.secondary)
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(SidebarPalette.all) { palette in
                     swatch(palette)
@@ -1005,6 +1012,76 @@ struct WorkspaceColorSheet: View {
         // ids in the AX tree (see status.picker).
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.colorSheet")
+        .onAppear { avatarUrl = workspace.avatarUrl }
+    }
+
+    private var avatarSection: some View {
+        HStack(spacing: 12) {
+            WorkspaceMark(
+                workspace: Workspace(
+                    id: workspace.id, slug: workspace.slug, name: workspace.name,
+                    createdBy: workspace.createdBy, createdAt: workspace.createdAt,
+                    role: workspace.role, sidebarColor: workspace.sidebarColor,
+                    avatarUrl: avatarUrl
+                ),
+                size: 48,
+                cornerRadius: 10
+            )
+            .background(RoundedRectangle(cornerRadius: 10).fill(MC.accent))
+            .id(avatarUrl ?? "none") // repaint when the key changes
+            VStack(alignment: .leading, spacing: 2) {
+                Button(avatarUrl == nil ? "Upload Image…" : "Replace Image…") { pickAvatar() }
+                    .buttonStyle(.link)
+                    .disabled(busy)
+                    .accessibilityIdentifier("workspace.avatar.upload")
+                if avatarUrl == nil {
+                    Text("PNG, JPEG, GIF or WebP — under 1MB.")
+                        .flowFont(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Remove") { clearAvatar() }
+                        .buttonStyle(.link)
+                        .disabled(busy)
+                        .accessibilityIdentifier("workspace.avatar.remove")
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func pickAvatar() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP]
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            busy = true
+            Task { @MainActor in
+                defer { busy = false }
+                do {
+                    let ws = try await app.engine.uploadWorkspaceAvatar(
+                        workspaceId: workspace.id, fileURL: url
+                    )
+                    avatarUrl = ws.avatarUrl
+                } catch {
+                    app.showError(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func clearAvatar() {
+        busy = true
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                _ = try await app.engine.clearWorkspaceAvatar(workspaceId: workspace.id)
+                avatarUrl = nil
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
     }
 
     private func swatch(_ palette: SidebarPalette) -> some View {

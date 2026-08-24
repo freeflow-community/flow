@@ -121,6 +121,9 @@ export const workspaces = pgTable('workspaces', {
   slug: citext('slug').notNull().unique(),
   name: text('name').notNull(),
   sidebarColor: text('sidebar_color').notNull().default('violet'), // preset id (phase 3.5)
+  // #336: optional image mark, a `/v1/avatars/<key>` path like users.avatar_url;
+  // null = the color/initial mark clients have always drawn.
+  avatarUrl: text('avatar_url'),
   // Phase 11 §10: workspace switch, plus optional allowlist mode for regulated
   // deployments (null = allow all domains).
   unfurlEnabled: boolean('unfurl_enabled').notNull().default(true),

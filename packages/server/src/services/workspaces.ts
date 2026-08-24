@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import {
   SIDEBAR_COLOR_IDS,
@@ -15,6 +16,7 @@ import { newId } from '../lib/ids.js';
 import { hashToken, newLinkToken, newToken } from '../lib/tokens.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
+import { blobStore } from '../storage/index.js';
 import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
 import { emailSender } from '../email/index.js';
 import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents, tombstoneUser } from './memberRemoval.js';
@@ -37,6 +39,7 @@ export function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberR
     slug: w.slug,
     name: w.name,
     sidebarColor: w.sidebarColor,
+    avatarUrl: w.avatarUrl,
     googleSelfRegisterDomain: w.googleSelfRegisterDomain,
     createdBy: w.createdBy,
     createdAt: w.createdAt.toISOString(),
@@ -88,8 +91,7 @@ export async function updateWorkspace(
     googleSelfRegisterDomain?: string | null | undefined;
   },
 ): Promise<WorkspaceDTO> {
-  const m = await requireMembership(workspaceId, actorId);
-  if (m.role !== 'owner' && m.role !== 'admin') throw forbidden('only owners and admins can change workspace settings');
+  const m = await requireWorkspaceAdmin(workspaceId, actorId);
   const set: Partial<{
     sidebarColor: string;
     unfurlEnabled: boolean;
@@ -131,6 +133,97 @@ export async function updateWorkspace(
     data: dto,
   });
   return toWorkspaceDTO(updated[0], m.role);
+}
+
+/**
+ * Workspace avatar (#336). Deliberately the *user* avatar pipeline, not the
+ * custom-emoji one: the bytes are square-cropped to a small webp and stored
+ * under the same `avatars/` blob prefix, so the DTO carries a plain
+ * `/v1/avatars/<key>` path that every client already knows how to fetch with
+ * its auth header. A file id would have meant new URL plumbing in three
+ * clients for an image that renders at 20-40px.
+ */
+const WORKSPACE_AVATAR_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Same rationale as the custom-emoji cap: this is a 20-40px mark, and the
+ * cost of a fat one is paid by every client on every render. */
+const MAX_WORKSPACE_AVATAR_BYTES = 1024 * 1024;
+
+const WORKSPACE_AVATAR_KEY_RE = /^[0-9a-f-]{36}-\d+\.webp$/;
+
+async function requireWorkspaceAdmin(workspaceId: string, actorId: string) {
+  const m = await requireMembership(workspaceId, actorId);
+  if (m.role !== 'owner' && m.role !== 'admin') {
+    throw forbidden('only owners and admins can change workspace settings');
+  }
+  return m;
+}
+
+/** Best-effort removal of the blob a replaced/cleared avatar pointed at. */
+async function dropAvatarBlob(url: string | null): Promise<void> {
+  if (!url?.startsWith('/v1/avatars/')) return;
+  const key = url.slice('/v1/avatars/'.length);
+  if (WORKSPACE_AVATAR_KEY_RE.test(key)) await blobStore().delete(`avatars/${key}`).catch(() => {});
+}
+
+async function saveWorkspaceAvatar(
+  workspaceId: string,
+  role: MemberRole,
+  avatarUrl: string | null,
+): Promise<WorkspaceDTO> {
+  const before = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0];
+  if (!before) throw notFound('workspace not found');
+  const updated = await db
+    .update(workspaces)
+    .set({ avatarUrl })
+    .where(eq(workspaces.id, workspaceId))
+    .returning();
+  if (!updated[0]) throw notFound('workspace not found');
+  await dropAvatarBlob(before.avatarUrl);
+  const dto = toWorkspaceDTO(updated[0]);
+  // Same broadcast the color picker uses, so every connected client restyles
+  // its workspace mark live without a refresh.
+  publishEvent(subjectMeta(workspaceId), {
+    type: 'workspace.updated',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: dto,
+  });
+  return toWorkspaceDTO(updated[0], role);
+}
+
+export async function setWorkspaceAvatar(
+  workspaceId: string,
+  actorId: string,
+  data: Buffer,
+  mimeType: string,
+): Promise<WorkspaceDTO> {
+  const m = await requireWorkspaceAdmin(workspaceId, actorId);
+  if (!WORKSPACE_AVATAR_MIMES.has(mimeType)) {
+    throw badRequest('bad_image', 'workspace avatar must be a PNG, JPEG, GIF or WebP image');
+  }
+  if (data.length > MAX_WORKSPACE_AVATAR_BYTES) {
+    throw badRequest('file_too_large', `workspace avatar must be under ${MAX_WORKSPACE_AVATAR_BYTES / 1024}KB`);
+  }
+  let webp: Buffer;
+  try {
+    webp = await sharp(data)
+      .resize({ width: config.avatarPx, height: config.avatarPx, fit: 'cover' }) // square crop
+      .webp({ quality: 85 })
+      .toBuffer();
+  } catch {
+    throw badRequest('bad_image', 'could not decode image');
+  }
+  const key = `${workspaceId}-${Date.now()}.webp`;
+  await blobStore().put(`avatars/${key}`, webp);
+  return saveWorkspaceAvatar(workspaceId, m.role, `/v1/avatars/${key}`);
+}
+
+/** Remove: back to the color/initial mark, exactly what a workspace that never
+ * had an avatar renders. */
+export async function clearWorkspaceAvatar(workspaceId: string, actorId: string): Promise<WorkspaceDTO> {
+  const m = await requireWorkspaceAdmin(workspaceId, actorId);
+  return saveWorkspaceAvatar(workspaceId, m.role, null);
 }
 
 export async function requireMembership(workspaceId: string, userId: string) {

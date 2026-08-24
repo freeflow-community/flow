@@ -1,5 +1,5 @@
 // REST client: same-origin (Vite proxy in dev, Fastify static in prod).
-import type { FileDTO, PresignedUploadDTO } from '@flow/shared';
+import type { FileDTO, PresignedUploadDTO, WorkspaceDTO } from '@flow/shared';
 import { prepareImageForUpload } from './imagePrep';
 
 export class ApiError extends Error {
@@ -78,17 +78,33 @@ export async function uploadFile(workspaceId: string, original: File): Promise<F
   return api<FileDTO>('POST', `/v1/files/${pres.file.id}/complete`);
 }
 
-export async function uploadAvatar(file: File): Promise<unknown> {
+/** POST one file as multipart — the server-buffered upload path avatars use.
+ * Surfaces the server's own error text, so a rejected mime type or an
+ * over-cap image says why rather than "upload failed". */
+async function uploadMultipart<T>(path: string, file: File): Promise<T> {
   const form = new FormData();
   form.append('file', file, file.name);
-  const res = await fetch('/v1/me/avatar', {
+  const res = await fetch(path, {
     method: 'POST',
     headers: { authorization: `Bearer ${getToken() ?? ''}` },
     body: form,
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, 'avatar_failed', 'avatar upload failed');
-  return json;
+  if (!res.ok) {
+    const err = (json as { error?: { code: string; message: string } }).error;
+    throw new ApiError(res.status, err?.code ?? 'upload_failed', err?.message ?? 'upload failed');
+  }
+  return json as T;
+}
+
+export function uploadAvatar(file: File): Promise<unknown> {
+  return uploadMultipart('/v1/me/avatar', file);
+}
+
+/** Workspace avatar (#336) — owner/admin only; the response is the updated
+ * workspace, and every other client hears about it on `workspace.updated`. */
+export function uploadWorkspaceAvatar(workspaceId: string, file: File): Promise<WorkspaceDTO> {
+  return uploadMultipart<WorkspaceDTO>(`/v1/workspaces/${workspaceId}/avatar`, file);
 }
 
 // Authenticated blobs (<img> can't send Authorization): fetch → object URL.

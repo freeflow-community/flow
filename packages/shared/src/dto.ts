@@ -59,6 +59,9 @@ export interface WorkspaceDTO {
   createdBy: string;
   createdAt: string;
   sidebarColor: string; // preset id from SIDEBAR_COLORS (phase 3.5)
+  /** #336: optional workspace avatar, an authenticated `/v1/avatars/<key>`
+   * path (same route user avatars use). null = draw the color/initial mark. */
+  avatarUrl: string | null;
   /** Phase 16 §5a: when set, any Google user with a *verified* email on this
    * domain self-enrols on sign-in — no invite. null = off (the default). */
   googleSelfRegisterDomain: string | null;

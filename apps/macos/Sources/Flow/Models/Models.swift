@@ -45,14 +45,17 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
     var createdAt: String
     var role: String?
     var sidebarColor: String? // preset id (see SidebarPalette); nil = default
+    /// Workspace avatar (#336): a `/v1/avatars/<key>` path, or nil for the
+    /// color/initial mark every workspace drew before.
+    var avatarUrl: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, slug, name, createdBy, createdAt, role, sidebarColor
+        case id, slug, name, createdBy, createdAt, role, sidebarColor, avatarUrl
     }
 
     init(
         id: String, slug: String, name: String, createdBy: String, createdAt: String,
-        role: String? = nil, sidebarColor: String? = nil
+        role: String? = nil, sidebarColor: String? = nil, avatarUrl: String? = nil
     ) {
         self.id = id
         self.slug = slug
@@ -61,6 +64,7 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         self.createdAt = createdAt
         self.role = role
         self.sidebarColor = sidebarColor
+        self.avatarUrl = avatarUrl
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +76,7 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         createdAt = try c.decode(String.self, forKey: .createdAt)
         role = try c.decodeIfPresent(String.self, forKey: .role)
         sidebarColor = try c.decodeIfPresent(String.self, forKey: .sidebarColor)
+        avatarUrl = try c.decodeIfPresent(String.self, forKey: .avatarUrl)
     }
 }
 

@@ -28,6 +28,7 @@ import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
 import HuddleMiniBar from './HuddleMiniBar';
 import { MobileMenuButton } from './MobileMenuButton';
+import { AuthImg } from './Avatar';
 
 export default function Main() {
   const auth = useAuth();
@@ -460,19 +461,29 @@ function WorkspaceRail() {
     >
       {(workspaces.data ?? []).map((w) => {
         const active = w.id === sel.workspaceId;
+        // With an avatar (#336) the image *is* the mark, so "active" can't be
+        // the white fill any more — a white ring plus full opacity says it.
         return (
           <button
             key={w.id}
             data-testid={`rail-workspace-${w.slug}`}
             title={w.name}
-            className={`flex h-10 w-10 items-center justify-center rounded-xl ${
-              active
-                ? 'bg-white text-[17px] font-extrabold text-accent'
-                : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
+            className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ${
+              w.avatarUrl
+                ? active
+                  ? 'ring-2 ring-white'
+                  : 'opacity-70 hover:opacity-100'
+                : active
+                  ? 'bg-white text-[17px] font-extrabold text-accent'
+                  : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
             }`}
             onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
           >
-            {w.name.slice(0, 1).toUpperCase()}
+            {w.avatarUrl ? (
+              <AuthImg path={w.avatarUrl} alt={w.name} className="h-10 w-10 object-cover" />
+            ) : (
+              w.name.slice(0, 1).toUpperCase()
+            )}
           </button>
         );
       })}

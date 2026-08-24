@@ -238,6 +238,10 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Workspace avatars (#336) are *managed* from web and macOS only; iOS displays
+  the mark but offers no upload or remove, as the issue specified. iOS has no
+  workspace-settings surface at all today — the sidebar colour isn't editable
+  there either — so this inherits that gap rather than adding a new one.
 - Scrolling the active channel into view on non-click navigation (#319) is web
   + macOS only. iOS has no persistent channel list — its `SidebarDrawer` is
   dismissed the moment you pick a channel, so there is no stale scroll position

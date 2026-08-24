@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { SIDEBAR_COLORS, PROFILE_BIO_MAX, PROFILE_WEBSITE_MAX, isProfileWebsiteUrl } from '@flow/shared';
 import type { ChannelDTO, InviteDTO, JoinLinkDTO, NotificationPrefs, UserDTO } from '@flow/shared';
-import { api, uploadAvatar } from '../lib/api';
+import { api, uploadAvatar, uploadWorkspaceAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { AuthImg, Avatar } from './Avatar';
@@ -525,18 +525,23 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
 }
 
 /** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
+/** Owner/admin workspace branding: the sidebar color preset, and the optional
+ * avatar image (#336) that replaces the color/initial mark when set. */
 export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
-  const current = (workspaces.data ?? []).find((w) => w.id === workspaceId)?.sidebarColor;
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  const current = ws?.sidebarColor;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pick = async (id: string) => {
+  /** Both branding writes look the same from here: run it, refresh the list
+   * (the server has already broadcast `workspace.updated` to everyone else). */
+  const save = async (write: () => Promise<unknown>) => {
     setError(null);
     setBusy(true);
     try {
-      await api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id });
+      await write();
       await qc.invalidateQueries({ queryKey: ['workspaces'] });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed');
@@ -545,9 +550,59 @@ export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: str
     }
   };
 
+  const pick = (id: string) => save(() => api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id }));
+
+  const pickAvatar = (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    void save(() => uploadWorkspaceAvatar(workspaceId, file));
+  };
+
   return (
     <Modal onClose={onClose} testid="workspace-color-modal">
-      <h3 className="mb-3 font-bold">Workspace color</h3>
+      <h3 className="mb-3 font-bold">Workspace appearance</h3>
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Avatar</label>
+      <div className="mb-4 flex items-center gap-3">
+        {ws?.avatarUrl ? (
+          <AuthImg
+            path={ws.avatarUrl}
+            alt={ws.name}
+            className="h-12 w-12 rounded-xl object-cover"
+          />
+        ) : (
+          <span
+            data-testid="workspace-avatar-placeholder"
+            className="flex h-12 w-12 items-center justify-center rounded-xl bg-daypill text-lg font-bold text-muted"
+          >
+            {(ws?.name ?? '?').slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        <div className="flex flex-col items-start gap-0.5">
+          <label className="cursor-pointer text-sm text-accent-soft hover:underline">
+            {busy ? 'Working…' : ws?.avatarUrl ? 'Replace image…' : 'Upload image…'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              hidden
+              data-testid="workspace-avatar-input"
+              onChange={(e) => { pickAvatar(e.target.files); e.target.value = ''; }}
+            />
+          </label>
+          {ws?.avatarUrl ? (
+            <button
+              data-testid="workspace-avatar-remove"
+              disabled={busy}
+              className="text-sm text-ink-soft hover:underline disabled:opacity-50"
+              onClick={() => void save(() => api('DELETE', `/v1/workspaces/${workspaceId}/avatar`))}
+            >
+              Remove
+            </button>
+          ) : (
+            <span className="text-xs text-faint">PNG, JPEG, GIF or WebP — under 1MB.</span>
+          )}
+        </div>
+      </div>
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Color</label>
       <div className="mb-3 grid grid-cols-4 gap-2">
         {SIDEBAR_COLORS.map((c) => (
           <button
