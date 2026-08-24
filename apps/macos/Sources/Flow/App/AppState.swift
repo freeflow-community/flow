@@ -48,6 +48,15 @@ final class AppState: ObservableObject {
         selectedChannelId == rowId && selectedArtifactId == nil && !showActivity
     }
 
+    /// Scroll identity for a sidebar channel/DM row (#319), so the sidebar can
+    /// scroll the active channel into view when you arrive from a notification,
+    /// a deep link or being added to a channel. Namespaced rather than the bare
+    /// channel id: the same id already identifies the `ForEach` element that
+    /// wraps the row *and its artifacts*, and scrolling should target the row.
+    nonisolated static func sidebarRowID(_ channelId: String) -> String {
+        "sidebar-row-\(channelId)"
+    }
+
     /// Visible artifacts per workspace (phase 13) — those in channels I'm a
     /// member of, newest first. Keyed by workspace because two windows can
     /// show two workspaces at once; each window reads its own slice.

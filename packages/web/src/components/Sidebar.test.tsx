@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ChannelDTO } from '@flow/shared';
-import { ActivitySpinner, nestChannels } from './Sidebar';
+import { ActivitySpinner, nearestScrollDelta, nestChannels } from './Sidebar';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
 // child whose parent isn't in the list must still be rendered, or you lose a
@@ -88,5 +88,39 @@ describe('ActivitySpinner', () => {
     // It sits after a truncating label — without shrink-0 the ring is what
     // collapses when a long channel name fills the row.
     expect(renderToStaticMarkup(<ActivitySpinner active />)).toContain('shrink-0');
+  });
+});
+
+// Scrolling the active channel into view (#319). Coordinates are relative to
+// the sidebar's scroll viewport; the result is a scrollTop delta.
+describe('nearestScrollDelta', () => {
+  const ROW = 30;
+  const VIEW = 300;
+
+  it('does not move a row that is already fully visible', () => {
+    // The sidebar-click case: any scroll here would be a visible jump.
+    expect(nearestScrollDelta(0, ROW, VIEW)).toBe(0);
+    expect(nearestScrollDelta(120, ROW, VIEW)).toBe(0);
+    expect(nearestScrollDelta(VIEW - ROW, ROW, VIEW)).toBe(0);
+  });
+
+  it('scrolls down by just enough for a row below the fold', () => {
+    // The reported bug: click a notification for a channel low in the list.
+    expect(nearestScrollDelta(400, ROW, VIEW)).toBe(130);
+    expect(nearestScrollDelta(VIEW, ROW, VIEW)).toBe(ROW);
+  });
+
+  it('scrolls up by just enough for a row above the fold', () => {
+    expect(nearestScrollDelta(-50, ROW, VIEW)).toBe(-50);
+  });
+
+  it('brings a partly-cut row the rest of the way in', () => {
+    expect(nearestScrollDelta(VIEW - 10, ROW, VIEW)).toBe(20);
+    expect(nearestScrollDelta(-1, ROW, VIEW)).toBe(-1);
+  });
+
+  it('aligns a row taller than the viewport to its top', () => {
+    // Bottom-aligning it would push the start of the row off-screen.
+    expect(nearestScrollDelta(40, 500, VIEW)).toBe(40);
   });
 });

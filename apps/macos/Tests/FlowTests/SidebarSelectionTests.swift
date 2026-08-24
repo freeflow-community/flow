@@ -56,3 +56,21 @@ final class SidebarSelectionTests: XCTestCase {
         XCTAssertTrue(highlighted(activity: false))
     }
 }
+
+/// Scroll identity for sidebar rows (#319).
+final class SidebarRowIDTests: XCTestCase {
+    func testRowIDIsStableForAChannel() {
+        XCTAssertEqual(AppState.sidebarRowID("c1"), AppState.sidebarRowID("c1"))
+    }
+
+    func testDifferentChannelsGetDifferentRowIDs() {
+        XCTAssertNotEqual(AppState.sidebarRowID("c1"), AppState.sidebarRowID("c2"))
+    }
+
+    /// The reason it is namespaced: the bare channel id already identifies the
+    /// `ForEach` element wrapping the row *and its pinned artifacts*, and the
+    /// scroll target has to be the row itself.
+    func testRowIDIsNotTheBareChannelID() {
+        XCTAssertNotEqual(AppState.sidebarRowID("c1"), "c1")
+    }
+}

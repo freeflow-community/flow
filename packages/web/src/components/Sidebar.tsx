@@ -50,6 +50,36 @@ export function nestChannels(list: ChannelDTO[]): { channel: ChannelDTO; nested:
   ]);
 }
 
+/**
+ * Minimal scroll (#319): how far the sidebar must move to bring a row into
+ * view, in scrollTop pixels. Zero when the row is already fully visible — that
+ * is what keeps clicking a channel in the sidebar from jumping the list.
+ *
+ * All three arguments are relative to the scroll viewport: `rowTop` is the
+ * row's top edge measured from the viewport's top edge (negative = above the
+ * fold). A row taller than the viewport aligns to its top rather than its
+ * bottom, so you see the start of it.
+ */
+export function nearestScrollDelta(rowTop: number, rowHeight: number, viewHeight: number): number {
+  if (rowTop < 0 || rowHeight > viewHeight) return rowTop;
+  const overshoot = rowTop + rowHeight - viewHeight;
+  return overshoot > 0 ? overshoot : 0;
+}
+
+/**
+ * Scroll a sidebar row into view within the sidebar's own scroller. Deliberately
+ * not `Element.scrollIntoView`, which also scrolls every scrollable ancestor —
+ * here only the channel list should move.
+ */
+function scrollRowIntoView(row: HTMLElement) {
+  const view = row.closest('[data-sidebar-scroll]') as HTMLElement | null;
+  if (!view) return;
+  const r = row.getBoundingClientRect();
+  const v = view.getBoundingClientRect();
+  const delta = nearestScrollDelta(r.top - v.top, r.height, v.height);
+  if (delta !== 0) view.scrollTop += delta;
+}
+
 const WIDTH_KEY = 'flow.sidebarWidth';
 const DEFAULT_WIDTH = 240;
 const clampWidth = (w: number) => Math.min(360, Math.max(180, w));
@@ -274,7 +304,10 @@ export default function Sidebar() {
         )}
       </div>
 
-      <div className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm">
+      <div
+        data-sidebar-scroll
+        className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm"
+      >
         <ActivityRow
           active={sel.channelId === ACTIVITY_VIEW_ID}
           unread={live.notificationUnread}
@@ -658,8 +691,19 @@ function ChannelRow({
   // reactions; every message in a DM) and nothing else.
   const unread = channel.unreadCount > 0 && !hideUnread;
   const notifications = hideUnread ? 0 : channel.unreadNotifications;
+  // Arriving at a channel by any route other than clicking it here — a
+  // notification, a deep link, the switcher, being added to a channel — left the
+  // sidebar wherever it was, so the row you just landed on could sit below the
+  // fold (#319). Scroll it back into view, by the minimum needed: a row that is
+  // already visible does not move, which is why a plain sidebar click still
+  // never jumps.
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (active && rowRef.current) scrollRowIntoView(rowRef.current);
+  }, [active]);
   return (
     <div
+      ref={rowRef}
       data-nested={nested ? 'true' : undefined}
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${nested ? 'ml-3' : ''} ${
         active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
