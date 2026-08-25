@@ -12,7 +12,7 @@ import XCTest
 /// that shared a fixture would break whichever test ran after it. Override the
 /// server and the account with `FLOW_TEST_SERVER_URL` / `FLOW_TEST_EMAIL` /
 /// `FLOW_TEST_PASSWORD`, and the workspaces with
-/// `FLOW_TEST_{MEMBER,LEAVABLE,OWNED,SOLO,DELETABLE}_WORKSPACE(_SLUG)`.
+/// `FLOW_TEST_{MEMBER,LEAVABLE,OWNED,SOLO,DELETABLE,FRAGILE}_WORKSPACE(_SLUG)`.
 final class LeaveWorkspaceTests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
@@ -69,6 +69,15 @@ final class LeaveWorkspaceTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLOW_TEST_DELETABLE_WORKSPACE_SLUG"] ?? "doomed-room"
     }
 
+    /// A third solo-owned workspace. The refusal test gains a second member
+    /// partway through, so it can't share a fixture either.
+    private var fragileWorkspace: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_FRAGILE_WORKSPACE"] ?? "Fragile Room"
+    }
+    private var fragileSlug: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_FRAGILE_WORKSPACE_SLUG"] ?? "fragile-room"
+    }
+
     private func launch() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = env
@@ -99,10 +108,30 @@ final class LeaveWorkspaceTests: XCTestCase {
 
     /// The menu without asserting which of the two exit items is in it — the
     /// item is Leave or Delete depending on whether anyone is left to hand the
-    /// workspace to, and two of the tests below are about exactly that choice.
+    /// workspace to, and several of the tests below are about exactly that
+    /// choice.
     private func openWorkspaceMenuRaw(_ app: XCUIApplication) {
         if !app.buttons["sidebar.workspaceMenu"].exists { openDrawer(app) }
         app.buttons["sidebar.workspaceMenu"].tap()
+    }
+
+    /// Reopen the menu until it offers Delete.
+    ///
+    /// A SwiftUI `Menu` snapshots its contents when it opens, and the choice
+    /// between Leave and Delete comes from the workspace's roster — which is
+    /// only *known* once the member fetch lands. Right after a cold launch the
+    /// first open can therefore still show the ordinary Leave item; reopening
+    /// picks up the answer. Deliberately not papered over with a sleep: this is
+    /// the real behaviour, and a sole owner may have to open the menu twice on
+    /// a slow connection.
+    @discardableResult
+    private func openMenuUntilDeleteAppears(_ app: XCUIApplication) -> Bool {
+        for _ in 0..<10 {
+            openWorkspaceMenuRaw(app)
+            if app.buttons["sidebar.deleteWorkspace"].waitForExistence(timeout: 2) { return true }
+            app.tap() // dismiss and try again with a fresher roster
+        }
+        return false
     }
 
     /// Open the drawer without opening the workspace menu.
@@ -214,10 +243,8 @@ final class LeaveWorkspaceTests: XCTestCase {
     func testSoleOwnerIsOfferedDeleteInsteadOfLeave() {
         let app = launch()
         selectWorkspace(app, slug: soloSlug, name: soloWorkspace)
-
-        openWorkspaceMenuRaw(app)
+        XCTAssertTrue(openMenuUntilDeleteAppears(app), "a sole owner was never offered Delete Workspace")
         let delete = app.buttons["sidebar.deleteWorkspace"]
-        XCTAssertTrue(delete.waitForExistence(timeout: 10), "a sole owner was not offered Delete Workspace")
         XCTAssertTrue(delete.isEnabled, "Delete Workspace is there but disabled")
         XCTAssertFalse(
             app.buttons["sidebar.leaveWorkspace"].exists,
@@ -231,7 +258,7 @@ final class LeaveWorkspaceTests: XCTestCase {
         let app = launch()
         selectWorkspace(app, slug: deletableSlug, name: deletableWorkspace)
 
-        openWorkspaceMenuRaw(app)
+        XCTAssertTrue(openMenuUntilDeleteAppears(app), "a sole owner was never offered Delete")
         app.buttons["sidebar.deleteWorkspace"].tap()
 
         XCTAssertTrue(
@@ -249,5 +276,56 @@ final class LeaveWorkspaceTests: XCTestCase {
         }
         XCTAssertFalse(rail.exists, "the workspace is still in the switcher after deleting")
         attach("08-after-delete")
+    }
+
+    /// Delete must never be offered where the server would refuse it. The
+    /// original bug read an unloaded roster as "nobody else here", so every
+    /// workspace whose members hadn't arrived yet offered it.
+    func testDeleteIsNeverOfferedOnAWorkspaceWithCompany() {
+        let app = launch()
+        selectWorkspace(app, slug: ownedSlug, name: ownedWorkspace)
+
+        openWorkspaceMenuRaw(app)
+        XCTAssertTrue(
+            app.buttons["sidebar.leaveWorkspace"].waitForExistence(timeout: 10),
+            "no exit item at all in the menu"
+        )
+        XCTAssertFalse(
+            app.buttons["sidebar.deleteWorkspace"].exists,
+            "Delete was offered on a workspace that still has other people in it"
+        )
+    }
+
+    /// And when the server refuses anyway — someone joined between the menu
+    /// rendering and the tap — the refusal has to be *visible*. It wasn't:
+    /// `showError` set a message no iOS view rendered, so a refused delete
+    /// looked exactly like a no-op, which is how this shipped.
+    ///
+    /// Driven by fault injection rather than by racing a real second member:
+    /// a real join publishes `member.joined`, which refreshes the roster and
+    /// closes the open menu, so the race can't be staged reliably. Run the app
+    /// against a proxy that answers `DELETE /v1/workspaces/*` with 409 and set
+    /// `FLOW_TEST_EXPECT_DELETE_REFUSED=1`; skipped otherwise.
+    func testAServerRefusalIsShownRatherThanSwallowed() throws {
+        guard ProcessInfo.processInfo.environment["FLOW_TEST_EXPECT_DELETE_REFUSED"] == "1" else {
+            throw XCTSkip("needs a server/proxy that refuses DELETE /v1/workspaces/*")
+        }
+        let app = launch()
+        selectWorkspace(app, slug: fragileSlug, name: fragileWorkspace)
+        XCTAssertTrue(openMenuUntilDeleteAppears(app), "a sole owner was never offered Delete")
+        app.buttons["sidebar.deleteWorkspace"].tap()
+
+        XCTAssertTrue(app.buttons["Delete Workspace"].waitForExistence(timeout: 10))
+        app.buttons["Delete Workspace"].tap()
+
+        XCTAssertTrue(
+            app.alerts.firstMatch.waitForExistence(timeout: 20),
+            "the server refused the delete and the app said nothing"
+        )
+        attach("09-refusal-surfaced")
+        XCTAssertTrue(
+            app.buttons["rail.workspace.\(fragileSlug)"].exists,
+            "the workspace vanished from the switcher despite the server refusing"
+        )
     }
 }

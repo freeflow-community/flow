@@ -11,7 +11,7 @@ import GRDB
 /// macOS does, then calls `onSelect` so `MainView` can close the drawer and let
 /// the conversation take the full screen (matching the web's mobile behavior).
 /// Just enough of the roster to answer "is this workspace down to one person?"
-struct WorkspaceRosterEntry: Decodable, FetchableRecord, Equatable, Sendable {
+struct WorkspaceRosterEntry: Decodable, FetchableRecord, Equatable, Sendable, WorkspaceRosterMember {
     var userId: String
     var isAgent: Bool?
     var isBot: Bool?
@@ -56,18 +56,15 @@ struct SidebarDrawer: View {
         SidebarPalette.palette(for: currentWorkspace?.sidebarColor)
     }
 
-    /// The owner can't walk out on their own workspace (#340) — no
-    /// ownership-transfer flow yet, so leaving would strand it.
-    private var isWorkspaceOwner: Bool {
-        currentWorkspace?.role == "owner"
-    }
 
-    /// Nobody left to hand the workspace to. Agents and bots don't count —
-    /// they're the owner's own tooling, and the server's delete guard counts
-    /// humans the same way. An owner alone gets Delete instead of a
-    /// permanently disabled Leave.
-    private var isSoleHuman: Bool {
-        roster.value.filter { $0.isAgent != true && $0.isBot != true }.count <= 1
+    /// Which way out this workspace offers — see `WorkspaceExit`, which is
+    /// shared with macOS and holds the "empty roster means don't know" rule.
+    private var workspaceExit: WorkspaceExit {
+        WorkspaceExit.offered(
+            role: currentWorkspace?.role,
+            roster: roster.value,
+            me: app.currentUser?.id
+        )
     }
 
     /// Joined standard channels in sidebar order — sub-channels (#118) follow
@@ -286,18 +283,20 @@ struct SidebarDrawer: View {
                 .accessibilityIdentifier("sidebar.invitePeople")
             Button("Add Workspace…") { showAddWorkspace = true }
             if currentWorkspace != nil {
-                if isWorkspaceOwner && isSoleHuman {
+                switch workspaceExit {
+                case .delete:
                     Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
                         .accessibilityIdentifier("sidebar.deleteWorkspace")
-                } else {
+                case .leave, .transferFirst:
                     // Destructive, and disabled for the owner with the reason in
                     // the label — a menu item has nowhere else to put a hint
                     // (web + macOS parity, #340).
+                    let blocked = workspaceExit == .transferFirst
                     Button(
-                        isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                        blocked ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
                         role: .destructive
                     ) { confirmLeaveWorkspace = true }
-                        .disabled(isWorkspaceOwner)
+                        .disabled(blocked)
                         .accessibilityIdentifier("sidebar.leaveWorkspace")
                 }
             }
@@ -590,6 +589,13 @@ struct SidebarDrawer: View {
 
     private func reloadRoster() {
         guard let wsId = app.selectedWorkspaceId else { return }
+        // Fetch the roster directly rather than waiting for `selectWorkspace`'s
+        // channels → members → artifacts chain to reach it. The workspace menu
+        // decides between Leave and Delete from this list, and a SwiftUI `Menu`
+        // snapshots its contents when it opens — so a roster that arrives late
+        // doesn't correct an already-open menu, it just makes the next one
+        // right (#340 follow-up).
+        Task { await app.engine.refreshMembers(workspaceId: wsId) }
         roster.start(db: app.db, reset: []) { db in
             try WorkspaceRosterEntry.fetchAll(
                 db,

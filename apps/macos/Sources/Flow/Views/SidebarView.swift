@@ -3,7 +3,7 @@ import GRDB
 import SwiftUI
 
 /// Row model for the members section (member ⋈ user).
-struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable {
+struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable, WorkspaceRosterMember {
     var userId: String
     var displayName: String
     var role: String
@@ -50,18 +50,15 @@ struct SidebarView: View {
         currentWorkspace.map { $0.role == "owner" || $0.role == "admin" } ?? false
     }
 
-    /// The owner can't walk out on their own workspace (#340) — there is no
-    /// ownership-transfer flow yet, so leaving would strand it.
-    private var isWorkspaceOwner: Bool {
-        currentWorkspace?.role == "owner"
-    }
 
-    /// Nobody left to hand the workspace to. Agents and bots don't count —
-    /// they're the owner's own tooling, and the server's delete guard counts
-    /// humans the same way. An owner alone gets Delete instead of a
-    /// permanently disabled Leave.
-    private var isSoleHuman: Bool {
-        members.value.filter { $0.isAgent != true && $0.isBot != true }.count <= 1
+    /// Which way out this workspace offers — see `WorkspaceExit`, which is
+    /// shared with iOS and holds the "empty roster means don't know" rule.
+    private var workspaceExit: WorkspaceExit {
+        WorkspaceExit.offered(
+            role: currentWorkspace?.role,
+            roster: members.value,
+            me: app.currentUser?.id
+        )
     }
 
     /// Ids of the DMs I'm in — a sub-channel of one of these belongs to that
@@ -251,6 +248,12 @@ struct SidebarView: View {
                     .order(Column("name").collating(.nocase))
                     .fetchAll(db)
             }
+            // Fetch the roster directly rather than waiting for
+            // `selectWorkspace`'s channels → members → artifacts chain to reach
+            // it: the workspace menu decides between Leave and Delete from this
+            // list, and an NSMenu snapshots its contents when it opens
+            // (#340 follow-up).
+            Task { await app.engine.refreshMembers(workspaceId: wsId) }
             members.start(db: app.db, reset: []) { db in
                 try MemberInfo.fetchAll(
                     db,
@@ -795,17 +798,19 @@ struct SidebarView: View {
             Divider()
             Button("All Workspaces") { win.selectWorkspace(nil) }
             if currentWorkspace != nil {
-                if isWorkspaceOwner && isSoleHuman {
+                switch workspaceExit {
+                case .delete:
                     Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
                         .accessibilityIdentifier("sidebar.deleteWorkspace")
-                } else {
+                case .leave, .transferFirst:
                     // Destructive, and disabled for the owner with the reason in
                     // the label — a macOS menu item has nowhere else to say it.
+                    let blocked = workspaceExit == .transferFirst
                     Button(
-                        isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                        blocked ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
                         role: .destructive
                     ) { confirmLeaveWorkspace = true }
-                        .disabled(isWorkspaceOwner)
+                        .disabled(blocked)
                         .accessibilityIdentifier("sidebar.leaveWorkspace")
                 }
             }
