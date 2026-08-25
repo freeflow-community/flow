@@ -1184,6 +1184,44 @@ actor SyncEngine {
         )
     }
 
+    /// Leave a workspace (#340). The server revokes every channel membership
+    /// there and publishes `member.left`; the local mirror is cleared here
+    /// rather than waiting for that round trip, so the switcher updates the
+    /// instant the call returns. Returns the workspace to land on — the first
+    /// one left, or nil for the chooser when this was the last.
+    @discardableResult
+    func leaveWorkspace(_ workspaceId: String) async throws -> String? {
+        let _: OkResponse = try await api.post("/v1/workspaces/\(workspaceId)/leave")
+        return await purgeLeftWorkspace(workspaceId)
+    }
+
+    /// Forget a workspace we are no longer in. Two callers: our own Leave
+    /// above, and the `member.left` that arrives when another client of ours
+    /// left it or an admin removed us — the local state has to end up the same
+    /// either way. Returns the workspace to land on (nil = the chooser).
+    @discardableResult
+    func purgeLeftWorkspace(_ workspaceId: String) async -> String? {
+        let channelIds = (try? await db.reader.read { db in
+            try String.fetchAll(db, sql: "SELECT id FROM channel WHERE workspaceId = ?", arguments: [workspaceId])
+        }) ?? []
+        try? await db.writer.write { db in
+            try db.execute(
+                sql: "DELETE FROM message WHERE channelId IN (SELECT id FROM channel WHERE workspaceId = ?)",
+                arguments: [workspaceId]
+            )
+            try db.execute(sql: "DELETE FROM channel WHERE workspaceId = ?", arguments: [workspaceId])
+            try db.execute(sql: "DELETE FROM member WHERE workspaceId = ?", arguments: [workspaceId])
+            try db.execute(sql: "DELETE FROM workspace WHERE id = ?", arguments: [workspaceId])
+        }
+        for id in channelIds { historyLoaded.remove(id) } // re-fetch if we ever rejoin (#269)
+        // Server truth, in case membership changed elsewhere while we were away.
+        await refreshWorkspaces()
+        let next = try? await db.reader.read { db in
+            try String.fetchOne(db, sql: "SELECT id FROM workspace ORDER BY name COLLATE NOCASE LIMIT 1")
+        }
+        return next ?? nil
+    }
+
     func leaveChannel(_ channelId: String) async throws {
         let _: OkResponse = try await api.post("/v1/channels/\(channelId)/leave")
         try? await db.writer.write { db in
@@ -1581,6 +1619,14 @@ actor SyncEngine {
 
         case .memberLeft(let ml):
             if ml.channelId == nil {
+                if ml.userId == currentUser?.id {
+                    // We left this workspace — from another client of ours, or
+                    // an admin removed us (#340). Drop it locally and move
+                    // every window showing it somewhere it can still read.
+                    let next = await purgeLeftWorkspace(event.workspaceId)
+                    await appState?.workspaceBecameUnavailable(event.workspaceId, landOn: next)
+                    return
+                }
                 // Workspace-level departure (member removed / app deleted):
                 // refresh so the member and mention lists drop them.
                 if await appState?.isWorkspaceOpen(event.workspaceId) == true {

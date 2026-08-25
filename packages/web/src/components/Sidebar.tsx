@@ -6,7 +6,14 @@ import { api } from '../lib/api';
 import { fileGlyph } from '../lib/fileKind';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
-import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
+import {
+  ChannelMenu,
+  CreateChannelModal,
+  InviteModal,
+  LeaveWorkspaceModal,
+  NewDmModal,
+  WorkspaceColorModal,
+} from './modals';
 import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
 import { EmojiModal } from './EmojiModal';
@@ -112,6 +119,7 @@ export default function Sidebar() {
   const [showInvite, setShowInvite] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showColor, setShowColor] = useState(false);
+  const [showLeave, setShowLeave] = useState(false);
   const [showApps, setShowApps] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
@@ -145,6 +153,7 @@ export default function Sidebar() {
 
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
+  const isOwner = ws?.role === 'owner';
   const color = sidebarColor(ws?.sidebarColor);
 
   // Restored-workspace guard + default channel: a stale persisted workspace id
@@ -294,6 +303,18 @@ export default function Sidebar() {
             )}
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
+            </MenuItem>
+            {/* Leaving is self-service for everyone but the owner (#340) —
+                who has nobody to hand the workspace to until there's an
+                ownership-transfer flow. */}
+            <MenuItem
+              testid="menu-leave-workspace"
+              destructive
+              disabled={isOwner}
+              title={isOwner ? 'Transfer ownership first' : undefined}
+              onClick={() => { setWsMenuOpen(false); setShowLeave(true); }}
+            >
+              Leave workspace{isOwner && <span className="ml-1 text-ink/35">— transfer ownership first</span>}
             </MenuItem>
             <hr className="my-1 border-hairline3" />
             <button
@@ -479,6 +500,9 @@ export default function Sidebar() {
       {showInvite && sel.workspaceId && <InviteModal workspaceId={sel.workspaceId} onClose={() => setShowInvite(false)} />}
       {showNewDm && sel.workspaceId && <NewDmModal workspaceId={sel.workspaceId} onClose={() => setShowNewDm(false)} />}
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
+      {showLeave && sel.workspaceId && (
+        <LeaveWorkspaceModal workspaceId={sel.workspaceId} onClose={() => setShowLeave(false)} />
+      )}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {showEmoji && sel.workspaceId && <EmojiModal workspaceId={sel.workspaceId} onClose={() => setShowEmoji(false)} />}
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
@@ -758,15 +782,28 @@ function MenuItem({
   children,
   onClick,
   testid,
+  destructive,
+  disabled,
+  title,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   testid?: string;
+  destructive?: boolean;
+  disabled?: boolean;
+  /** Hover hint — how a disabled item explains itself. */
+  title?: string;
 }) {
   return (
     <button
       data-testid={testid}
-      className="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent/10"
+      title={title}
+      disabled={disabled}
+      className={`block w-full px-3 py-1.5 text-left text-sm ${
+        disabled
+          ? 'cursor-default text-ink/35'
+          : `${destructive ? 'text-red-600 hover:bg-red-50' : ''} hover:bg-accent/10`
+      }`}
       onClick={onClick}
     >
       {children}

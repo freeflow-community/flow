@@ -134,6 +134,10 @@ export class AgentBridge {
   private workspace!: WorkspaceDTO;
   private channels = new Map<string, ChannelDTO>();
   private members = new Map<string, WorkspaceMemberDTO>();
+  /** Set once we learn we are no longer a member of this workspace (#340).
+   * Every workspace-scoped call would 404 from here on, so we stop making
+   * them rather than logging a failed refresh on every event. */
+  private departed = false;
   private conversations = new Map<string, Conversation>();
   /** Channels homing a start_task run. The bridge converses in them DM-style —
    * top-level, one session — so the run and human interjections share context.
@@ -386,7 +390,7 @@ export class AgentBridge {
   }
 
   private scheduleRefresh(): void {
-    if (this.refreshTimer) return;
+    if (this.departed || this.refreshTimer) return;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
       this.refreshDirectory().catch((err: Error) => this.log(`directory refresh failed: ${err.message}`));
@@ -394,7 +398,37 @@ export class AgentBridge {
     this.refreshTimer.unref();
   }
 
+  /**
+   * We were removed from the workspace — the sponsor left and took us with
+   * them, or an admin removed us (#340). Nothing here is recoverable without a
+   * re-invite, so say so once and go quiet: the alternative is a directory
+   * refresh that 404s on every subsequent event. The process stays up so a
+   * supervisor sees a clean exit reason rather than a crash.
+   */
+  private handleOwnRemoval(): void {
+    if (this.departed) return;
+    this.departed = true;
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    this.channels.clear();
+    this.members.clear();
+    this.log(
+      `removed from workspace ${this.workspace.name} — no longer serving it ` +
+        `(ask an admin to re-invite this agent, then restart the bridge)`,
+    );
+  }
+
   private handleEvent(ev: Event): void {
+    // Our own workspace-level departure, before anything else: a `member.left`
+    // with no channelId naming us is the last event we can act on.
+    if (ev.type === 'member.left' && !ev.channelId && (ev.data as { userId?: string })?.userId === this.me.id) {
+      this.handleOwnRemoval();
+      return;
+    }
+    // Someone else's membership change while we're out: nothing to refresh.
+    if (this.departed) return;
     if (ev.type === 'member.joined' || ev.type === 'member.left' || ev.type === 'channel.created') {
       this.scheduleRefresh();
       return;

@@ -125,6 +125,15 @@ final class WindowState: ObservableObject {
     }
 
     /// Active channel was archived or left — drop the selection.
+    /// This window was showing a workspace we just left: move it to `landOn`
+    /// (the first workspace we still belong to) or to the chooser. Goes
+    /// through `selectWorkspace` so the persisted "active workspace" follows —
+    /// otherwise the next launch would restore the one we walked out of.
+    func workspaceBecameUnavailable(_ workspaceId: String, landOn: String?) {
+        guard selectedWorkspaceId == workspaceId else { return }
+        selectWorkspace(landOn)
+    }
+
     func channelBecameUnavailable(_ channelId: String) {
         openThreadByChannel.removeValue(forKey: channelId) // nothing to come back to
         if Self.lastChannelId == channelId { Self.lastChannelId = nil } // don't reopen it next launch

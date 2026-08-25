@@ -72,7 +72,7 @@ import * as fl from '../services/files.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
 import { deleteMyAccount } from '../services/accountDeletion.js';
-import { disconnectUser } from '../gateway/index.js';
+import { detachUserFromWorkspace, disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
@@ -535,6 +535,17 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/workspaces/:id/members', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return { members: await ws.listMembers(id, req.user.id) };
+  });
+
+  // Self-service departure (#340). Not under the admin block below: any
+  // member may leave, and the only one who may not is the owner.
+  app.post('/v1/workspaces/:id/leave', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ws.leaveWorkspace(id, req.user.id);
+    // Sockets last: the service published member.left, and detaching writes it
+    // straight to this user's other clients before dropping the subscription.
+    detachUserFromWorkspace(req.user.id, id);
+    return { ok: true };
   });
 
   // ---- admin panel: manage users (owner/admin, web-only UI) ----

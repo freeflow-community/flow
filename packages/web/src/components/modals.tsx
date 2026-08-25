@@ -524,6 +524,61 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
   );
 }
 
+/**
+ * Leaving a workspace (#340). Destructive and irreversible from the leaver's
+ * side — they need a re-invite to come back — so it confirms first and says
+ * plainly what survives. The owner never reaches this dialog; the menu item
+ * that opens it is disabled for them.
+ */
+export function LeaveWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const sel = useSelection();
+  const workspaces = useWorkspaces();
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const leave = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api('POST', `/v1/workspaces/${workspaceId}/leave`);
+      // Land somewhere valid before the list refetches, so no render sees a
+      // selection pointing at a workspace that is gone.
+      const next = (workspaces.data ?? []).find((w) => w.id !== workspaceId);
+      sel.selectWorkspace(next?.id ?? null);
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="leave-workspace-modal">
+      <h3 className="mb-2 font-bold">Leave {ws?.name ?? 'workspace'}?</h3>
+      <p className="mb-4 text-sm text-ink-soft">
+        You&rsquo;ll lose access to all its channels. Your past messages will remain.
+      </p>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          data-testid="leave-workspace-confirm"
+          className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void leave()}
+        >
+          {busy ? 'Leaving…' : 'Leave workspace'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
 /** Owner/admin workspace branding: the sidebar color preset, and the optional
  * avatar image (#336) that replaces the color/initial mark when set. */

@@ -31,6 +31,7 @@ struct SidebarView: View {
     @State private var showColorPicker = false
     @State private var showFeatures = false
     @State private var showInviteAgent = false
+    @State private var confirmLeaveWorkspace = false
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
     @State private var ensuredSelfDmWs: String?
@@ -45,6 +46,12 @@ struct SidebarView: View {
 
     private var canEditWorkspace: Bool {
         currentWorkspace.map { $0.role == "owner" || $0.role == "admin" } ?? false
+    }
+
+    /// The owner can't walk out on their own workspace (#340) — there is no
+    /// ownership-transfer flow yet, so leaving would strand it.
+    private var isWorkspaceOwner: Bool {
+        currentWorkspace?.role == "owner"
     }
 
     /// Ids of the DMs I'm in — a sub-channel of one of these belongs to that
@@ -272,6 +279,16 @@ struct SidebarView: View {
             }
         }
         .sheet(isPresented: $showFeatures) { FeaturesView() }
+        .confirmationDialog(
+            "Leave \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmLeaveWorkspace,
+            titleVisibility: .visible
+        ) {
+            Button("Leave Workspace", role: .destructive) { leaveWorkspace() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You'll lose access to all its channels. Your past messages will remain.")
+        }
         .sheet(isPresented: $showInviteAgent) {
             if let wsId = win.selectedWorkspaceId {
                 InviteAgentSheetView(workspaceId: wsId)
@@ -702,6 +719,21 @@ struct SidebarView: View {
         }
     }
 
+    /// Confirmed departure (#340): the engine calls the endpoint, clears the
+    /// local mirror and reports where to land; `workspaceBecameUnavailable`
+    /// moves every window showing it, including this one.
+    private func leaveWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.leaveWorkspace(ws.id)
+                await app.workspaceBecameUnavailable(ws.id, landOn: next)
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
     private var workspaceMenu: some View {
         Menu {
             ForEach(workspaces.value) { ws in
@@ -724,6 +756,16 @@ struct SidebarView: View {
             Button("Invite People…") { showInvite = true }
             Divider()
             Button("All Workspaces") { win.selectWorkspace(nil) }
+            if currentWorkspace != nil {
+                // Destructive, and disabled for the owner with the reason in
+                // the label — a macOS menu item has nowhere else to say it.
+                Button(
+                    isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                    role: .destructive
+                ) { confirmLeaveWorkspace = true }
+                    .disabled(isWorkspaceOwner)
+                    .accessibilityIdentifier("sidebar.leaveWorkspace")
+            }
             Divider()
             // Version tag (web parity): clicking it opens the "What's new" sheet.
             Button { showFeatures = true } label: {
