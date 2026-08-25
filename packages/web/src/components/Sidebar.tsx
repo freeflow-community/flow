@@ -4,6 +4,7 @@ import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { fileGlyph } from '../lib/fileKind';
+import { workspaceExit } from '../lib/workspaceExit';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
 import {
@@ -155,12 +156,9 @@ export default function Sidebar() {
 
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
-  const isOwner = ws?.role === 'owner';
-  // The owner's exit depends on whether anyone is left to hand the workspace
-  // to. Agents and bots don't count — they're the owner's own tooling, and the
-  // server's delete guard counts humans the same way (#340).
-  const isSoleHuman =
-    (members.data ?? []).filter((m) => !m.isAgent && !m.isBot).length <= 1;
+  // Which way out this workspace offers — see lib/workspaceExit, which is
+  // mirrored in Swift and holds the "roster not loaded yet" rule.
+  const exit = workspaceExit(ws?.role, members.data, auth.user.id);
   const color = sidebarColor(ws?.sidebarColor);
 
   // Restored-workspace guard + default channel: a stale persisted workspace id
@@ -315,7 +313,7 @@ export default function Sidebar() {
                 owner with company has to hand the workspace over first; an
                 owner on their own has nobody to hand it to, so they get to end
                 it instead of staring at a permanently disabled row. */}
-            {isOwner && isSoleHuman ? (
+            {exit === 'delete' ? (
               <MenuItem
                 testid="menu-delete-workspace"
                 destructive
@@ -327,11 +325,14 @@ export default function Sidebar() {
               <MenuItem
                 testid="menu-leave-workspace"
                 destructive
-                disabled={isOwner}
-                title={isOwner ? 'Transfer ownership first' : undefined}
+                disabled={exit === 'transferFirst'}
+                title={exit === 'transferFirst' ? 'Transfer ownership first' : undefined}
                 onClick={() => { setWsMenuOpen(false); setShowLeave(true); }}
               >
-                Leave workspace{isOwner && <span className="ml-1 text-ink/35">— transfer ownership first</span>}
+                Leave workspace
+                {exit === 'transferFirst' && (
+                  <span className="ml-1 text-ink/35">— transfer ownership first</span>
+                )}
               </MenuItem>
             )}
             <hr className="my-1 border-hairline3" />
