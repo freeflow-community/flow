@@ -41,11 +41,7 @@ struct MainView: View {
                 HuddleBar()
                 detail
             }
-            // The detail column must be allowed to shrink below its contents'
-            // ideal width. Otherwise opening the fixed-width side panel makes
-            // this HStack wider than the window and SwiftUI clips the rail and
-            // sidebar off the leading edge.
-            .frame(minWidth: 0, maxWidth: .infinity)
+            .frame(maxWidth: .infinity)
             .background(MC.base)
         }
     }
@@ -127,9 +123,7 @@ struct MainView: View {
         } else if let channelId = win.selectedChannelId {
             HStack(spacing: 0) {
                 ChannelView(channelId: channelId)
-                    // Message previews and the channel header can have a wide
-                    // ideal size; keep that from becoming the split's minimum.
-                    .frame(minWidth: 0, maxWidth: .infinity)
+                    .frame(maxWidth: .infinity)
                 // Tabbed side panel: Thread + the channel's artifacts (phase 13).
                 if win.openThreadRootId != nil || win.selectedArtifactId != nil || win.filesOpen {
                     sidePanelResizer
