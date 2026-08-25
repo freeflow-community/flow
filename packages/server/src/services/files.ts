@@ -9,8 +9,8 @@
 // swept at boot + daily in-process (decision log ruling 5).
 import path from 'node:path';
 import sharp from 'sharp';
-import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
-import type { FileDTO, PresignedUploadDTO } from '@flow/shared';
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
+import type { ChannelFilePage, FileDTO, PresignedUploadDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, notFound } from '../lib/errors.js';
@@ -22,7 +22,7 @@ import { requireChannelAccess } from './channels.js';
 
 // `artifacts` is used for the phase-9 access grant below — the table only, not
 // the artifacts service, so there's no import cycle (that service imports us).
-const { files, messageFiles, messages, artifacts } = schema;
+const { files, messageFiles, messages, artifacts, users } = schema;
 
 type FileRow = typeof files.$inferSelect;
 
@@ -452,4 +452,128 @@ export function startOrphanSweep(log: { info(o: unknown, msg: string): void; err
     sweepTimer = setInterval(run, 24 * 3600_000);
     sweepTimer.unref();
   }
+}
+
+// ---- Channel Files panel (#347) ---------------------------------
+//
+// Every file attached to a live message in one channel, in one of four sort
+// orders. Paging is cursor-based rather than offset-based so a new upload
+// mid-scroll can't shift rows past the reader. The cursor is opaque to
+// clients: it packs the sort key of the last row seen plus the (messageId,
+// fileId) pair that identifies it, and the query resumes strictly after that
+// tuple, which keeps paging stable under ties (two files the same size, or
+// two attachments on the same message).
+
+const CHANNEL_FILE_SORTS = {
+  newest: { key: 'created', dir: 'desc' },
+  oldest: { key: 'created', dir: 'asc' },
+  name: { key: 'name', dir: 'asc' },
+  size: { key: 'size', dir: 'desc' },
+} as const;
+
+type ChannelFileSortName = keyof typeof CHANNEL_FILE_SORTS;
+
+function encodeFileCursor(key: string, messageId: string, fileId: string): string {
+  return Buffer.from([key, messageId, fileId].join('|'), 'utf8').toString('base64url');
+}
+
+function decodeFileCursor(cursor: string): { key: string; messageId: string; fileId: string } {
+  const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+  if (parts.length !== 3 || !parts[1] || !parts[2]) throw badRequest('bad_cursor', 'invalid cursor');
+  return { key: parts[0]!, messageId: parts[1]!, fileId: parts[2]! };
+}
+
+/**
+ * List the files shared in a channel. Reading follows normal channel
+ * visibility (`requireChannelAccess`, the same rule as reading the messages
+ * they came from), and attachments of deleted messages are excluded: deleting
+ * a message takes its files out of the panel too.
+ */
+export async function listChannelFiles(
+  channelId: string,
+  userId: string,
+  sort: ChannelFileSortName,
+  before: string | undefined,
+  limit: number,
+): Promise<ChannelFilePage> {
+  await requireChannelAccess(channelId, userId);
+  const { key, dir } = CHANNEL_FILE_SORTS[sort] ?? CHANNEL_FILE_SORTS.newest;
+
+  // The sort key doubles as the cursor key, so it has to be a stable string:
+  // messages.id is a v7 uuid (time-ordered), lower(name) sorts case-blind, and
+  // size is left-padded so it compares lexically the way it compares
+  // numerically. All three then break ties on (messageId, fileId).
+  const sortKey =
+    key === 'name'
+      ? sql<string>`lower(${files.name})`
+      : key === 'size'
+        ? sql<string>`lpad(${files.sizeBytes}::text, 20, '0')`
+        : sql<string>`${messages.id}::text`;
+
+  const live = and(
+    eq(messages.channelId, channelId),
+    isNull(messages.deletedAt),
+    isNull(files.deletedAt),
+    eq(files.status, 'ready'),
+  );
+
+  const conds = [live];
+  if (before) {
+    const c = decodeFileCursor(before);
+    // strict tuple comparison: everything ordered after the row the cursor names
+    conds.push(
+      dir === 'desc'
+        ? sql`(${sortKey}, ${messages.id}::text, ${files.id}::text) < (${c.key}, ${c.messageId}, ${c.fileId})`
+        : sql`(${sortKey}, ${messages.id}::text, ${files.id}::text) > (${c.key}, ${c.messageId}, ${c.fileId})`,
+    );
+  }
+
+  const order =
+    dir === 'desc'
+      ? [sql`${sortKey} desc`, desc(messages.id), desc(files.id)]
+      : [sql`${sortKey} asc`, asc(messages.id), asc(files.id)];
+
+  const rows = await db
+    .select({
+      f: files,
+      messageId: messages.id,
+      sharedAt: messages.createdAt,
+      uploaderName: users.displayName,
+      sortKey,
+    })
+    .from(messageFiles)
+    .innerJoin(messages, eq(messages.id, messageFiles.messageId))
+    .innerJoin(files, eq(files.id, messageFiles.fileId))
+    .innerJoin(users, eq(users.id, files.userId))
+    .where(and(...conds))
+    .orderBy(...order)
+    .limit(limit + 1);
+
+  const totalRows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(messageFiles)
+    .innerJoin(messages, eq(messages.id, messageFiles.messageId))
+    .innerJoin(files, eq(files.id, messageFiles.fileId))
+    .where(live);
+
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    files: page.map((r) => ({
+      id: r.f.id,
+      name: r.f.name,
+      mimeType: r.f.mimeType,
+      sizeBytes: r.f.sizeBytes,
+      width: r.f.width,
+      height: r.f.height,
+      hasThumb: r.f.thumbKey !== null,
+      userId: r.f.userId,
+      uploaderName: r.uploaderName,
+      createdAt: r.sharedAt.toISOString(),
+      messageId: r.messageId,
+    })),
+    total: totalRows[0]?.n ?? 0,
+    nextCursor: hasMore && last ? encodeFileCursor(String(last.sortKey), last.messageId, last.f.id) : null,
+  };
 }

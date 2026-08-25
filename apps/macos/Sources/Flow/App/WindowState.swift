@@ -15,6 +15,9 @@ final class WindowState: ObservableObject {
     /// Open artifact (phase 13) — when set, the right-hand side panel shows the
     /// artifact next to its channel (mutually exclusive with the thread panel).
     @Published var selectedArtifactId: String?
+    /// Channel Files tab (#347) — another tab on the same side panel as the
+    /// thread and the artifacts. True means the Files tab is the visible one.
+    @Published var filesOpen: Bool = false
     /// Activity feed (phase 12) — covers the content pane; the selected channel
     /// stays put behind it so picking a channel returns to a conversation.
     @Published var showActivity: Bool = false
@@ -46,6 +49,7 @@ final class WindowState: ObservableObject {
         openThreadRootId = nil
         openThreadByChannel.removeAll()
         selectedArtifactId = nil
+        filesOpen = false
         showActivity = false
         // Active workspace survives relaunch (phase 3.5 fixes). Shared across
         // windows on purpose: the *last* pick is what a fresh window starts on.
@@ -95,6 +99,8 @@ final class WindowState: ObservableObject {
         // Selecting a channel always closes an open artifact panel or the
         // activity feed — even when it's the same channel that's behind them.
         selectedArtifactId = nil
+        // Files are per-channel: the tab doesn't follow you to the next one.
+        filesOpen = false
         showActivity = false
         guard id != selectedChannelId else { return }
         switchChannel(to: id)
@@ -140,6 +146,7 @@ final class WindowState: ObservableObject {
         if selectedChannelId == channelId {
             selectedChannelId = nil
             openThreadRootId = nil
+            filesOpen = false
         }
     }
 
@@ -163,7 +170,10 @@ final class WindowState: ObservableObject {
     // MARK: - Threads
 
     func openThread(_ rootId: String?) {
-        if rootId != nil { selectedArtifactId = nil } // shares the slot with the artifact panel (phase 13)
+        if rootId != nil {
+            selectedArtifactId = nil // shares the slot with the artifact panel (phase 13)
+            filesOpen = false
+        }
         openThreadRootId = rootId
         rememberOpenThread() // so leaving this channel and coming back restores it
         let engine = self.engine
@@ -173,11 +183,25 @@ final class WindowState: ObservableObject {
     /// Switch the side panel to the Thread tab (the thread stays open).
     func showThread() {
         selectedArtifactId = nil
+        filesOpen = false
+    }
+
+    // MARK: - Files
+
+    /// Open (or close) the channel Files tab (#347). It takes the panel the way
+    /// an artifact tab does; the thread, if any, stays open behind it.
+    func openFiles(_ open: Bool) {
+        filesOpen = open
+        if open {
+            selectedArtifactId = nil
+            showActivity = false
+        }
     }
 
     /// Close the whole side panel — clears the thread and the active artifact.
     func closeSidePanel() {
         selectedArtifactId = nil
+        filesOpen = false
         if openThreadRootId != nil {
             openThreadRootId = nil
             rememberOpenThread() // an explicit close: don't restore it later
@@ -196,6 +220,7 @@ final class WindowState: ObservableObject {
     func selectArtifact(_ id: String?) {
         if let id {
             showActivity = false
+            filesOpen = false
             if let a = artifacts().first(where: { $0.id == id }), a.channelId != selectedChannelId {
                 // Same park-and-restore as an ordinary channel switch, or the
                 // Thread tab would keep showing the *previous* channel's thread
@@ -240,6 +265,7 @@ final class WindowState: ObservableObject {
     /// content pane while the channel selection stays put behind it.
     func showActivityFeed() {
         selectedArtifactId = nil
+        filesOpen = false
         showActivity = true
     }
 
@@ -280,6 +306,7 @@ final class WindowState: ObservableObject {
         openThreadRootId = nil
         openThreadByChannel.removeAll()
         selectedArtifactId = nil
+        filesOpen = false
         showActivity = false
         focusMessageId = nil
     }

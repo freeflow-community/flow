@@ -23,6 +23,8 @@ struct ChannelScreen: View {
     /// whole content pane unable to push, pop, or even hit-test (nav "stuck").
     @State private var restoredParkedThread = false
     @State private var showPins = false
+    /// Channel Files list (#348) — pushed, not presented.
+    @State private var filesRoute: FilesRoute?
     /// How many of the newest cached messages the transcript shows (see the
     /// macOS twin in ChannelView: one window keeps every ordinary open on the
     /// exact, eager path; "Load earlier" widens it). The fetch grabs one row
@@ -139,6 +141,13 @@ struct ChannelScreen: View {
 
     private var channelMenu: some View {
         Menu {
+            Button {
+                filesRoute = FilesRoute(channelId: channelId)
+            } label: {
+                Label("Files", systemImage: "paperclip")
+            }
+            .accessibilityIdentifier("channel.files")
+
             Button {
                 showPins = true
             } label: {
@@ -285,6 +294,11 @@ struct ChannelScreen: View {
         }
         .navigationDestination(item: $threadRoute) { route in
             ThreadScreen(rootId: route.rootId)
+        }
+        // Channel Files (#348) pushes full-screen — the phone's answer to the
+        // side panel web and macOS open for the same list.
+        .navigationDestination(item: $filesRoute) { route in
+            FilesScreen(channelId: route.channelId)
         }
         // This binding is the single owner of the app-level thread state: a
         // set pushes and records the open thread, a pop clears it. It used to

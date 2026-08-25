@@ -195,13 +195,15 @@ struct ImageLightboxView: View {
     }
 }
 
-private struct ShareFile: Identifiable {
+/// Internal, not private: the channel Files screen (#348) shares this rather
+/// than growing a third copy of the same two types.
+struct ShareFile: Identifiable {
     let url: URL
     var id: String { url.path }
 }
 
 /// System share sheet wrapper.
-private struct ActivityView: UIViewControllerRepresentable {
+struct ActivityView: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {

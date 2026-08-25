@@ -10,6 +10,7 @@ import {
   CreateWorkspaceEmojiBody,
   EditMessageBody,
   EmojiParam,
+  ListChannelFilesQuery,
   ListMessagesQuery,
   ListNotificationsQuery,
   ListThreadQuery,
@@ -674,6 +675,14 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const q = parse(ListMessagesQuery, req.query);
     return msg.listMessages(id, req.user.id, q.before, q.limit);
+  });
+
+  // Channel Files panel (#347): every file shared in the channel, sorted and
+  // cursor-paged. Membership is checked in the service, same as reading.
+  app.get('/v1/channels/:id/files', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const q = parse(ListChannelFilesQuery, req.query);
+    return fl.listChannelFiles(id, req.user.id, q.sort, q.before, q.limit);
   });
 
   app.get('/v1/channels/:id/pins', { preHandler: requireAuth }, async (req) => {

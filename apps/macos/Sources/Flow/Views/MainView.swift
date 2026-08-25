@@ -131,7 +131,7 @@ struct MainView: View {
                     // ideal size; keep that from becoming the split's minimum.
                     .frame(minWidth: 0, maxWidth: .infinity)
                 // Tabbed side panel: Thread + the channel's artifacts (phase 13).
-                if win.openThreadRootId != nil || win.selectedArtifactId != nil {
+                if win.openThreadRootId != nil || win.selectedArtifactId != nil || win.filesOpen {
                     sidePanelResizer
                     SidePanelView()
                         .frame(width: clampedSidePanelWidth)

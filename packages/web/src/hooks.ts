@@ -12,6 +12,8 @@ import type {
   AppDTO,
   ArtifactDTO,
   ChannelDTO,
+  ChannelFilePage,
+  ChannelFileSort,
   FileDTO,
   MessageDTO,
   MessagePage,
@@ -177,6 +179,25 @@ export function useMessages(channelId: string | null) {
     initialPageParam: '',
     getNextPageParam: (last) =>
       last.hasMore && last.messages.length > 0 ? last.messages[last.messages.length - 1]!.id : undefined,
+    enabled: channelId !== null,
+  });
+}
+
+/**
+ * Channel Files panel (#347): every file shared in the channel, one sort order
+ * at a time. Keyed by sort so switching links swaps to a cached list rather
+ * than refetching, and paged with the server's opaque cursor.
+ */
+export function useChannelFiles(channelId: string | null, sort: ChannelFileSort) {
+  return useInfiniteQuery({
+    queryKey: ['channelFiles', channelId, sort],
+    queryFn: ({ pageParam }) =>
+      api<ChannelFilePage>(
+        'GET',
+        `/v1/channels/${channelId}/files?sort=${sort}&limit=30${pageParam ? `&before=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled: channelId !== null,
   });
 }

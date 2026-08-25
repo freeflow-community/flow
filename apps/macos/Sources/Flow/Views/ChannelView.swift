@@ -353,11 +353,19 @@ struct ChannelView: View {
         }
     }
 
-    /// The header's "⋯" menu (#188): pinned messages, this channel's artifacts
-    /// and channel options in one place, matching web and iOS. Replaces the
+    /// The header's "⋯" menu (#188): the channel's shared files (#347), pinned
+    /// messages, its artifacts and channel options in one place, matching web
+    /// and iOS. Replaces the
     /// standalone pin button that used to sit next to the avatars.
     private var channelMenu: some View {
         Menu {
+            Button {
+                win.openFiles(true)
+            } label: {
+                Label("Files", systemImage: "paperclip")
+            }
+            .accessibilityIdentifier("channel.files")
+
             Button {
                 showPins = true
             } label: {
