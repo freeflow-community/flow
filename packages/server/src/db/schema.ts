@@ -303,7 +303,11 @@ export const messageFiles = pgTable(
   'message_files',
   {
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
-    fileId: uuid('file_id').notNull().references(() => files.id),
+    // Cascade (migration 0031): workspace deletion reaches files down two FK
+    // paths at once (workspaces→files, workspaces→…→messages→message_files);
+    // without ON DELETE CASCADE here the files leg can fire first and trip
+    // this constraint mid-cascade (23503), 500ing the whole delete.
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
   },
   (t) => [primaryKey({ columns: [t.messageId, t.fileId] }), index('message_files_file_idx').on(t.fileId)],
 );
