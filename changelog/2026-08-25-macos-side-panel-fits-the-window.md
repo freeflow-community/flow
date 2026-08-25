@@ -9,6 +9,10 @@
 - `[macos]` The preference is now a ceiling: the panel keeps it while there is
   room, gives up width before the chat column drops below 320pt, and squeezes to
   240pt before chat yields at all. Nothing is ever pushed past the window edge.
+- `[macos]` Image and video attachment cards fit the transcript column instead
+  of holding a fixed width and clipping out of it. Their size cap is unchanged
+  (480/560pt); below that they now scale with the column, which is what a
+  message beside an open panel needs.
 
 ## Feature
 

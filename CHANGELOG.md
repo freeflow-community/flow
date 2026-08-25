@@ -239,7 +239,8 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
-- Clamping the side panel to the space available (#354) is macOS-only. Web has
+- Clamping the side panel to the space available, and making attachment cards
+  fit the transcript column (#354), is macOS-only. Web has
   the same fixed-width panel, but flexbox squeezes where SwiftUI's `HStack`
   clips, and below the `md` breakpoint web's panel becomes a full-screen overlay
   instead — so the defect does not exist there. iOS pushes Files and threads
