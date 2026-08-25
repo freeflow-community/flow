@@ -29,7 +29,7 @@ const {
   invites,
   channels,
   channelMembers,
-  messages,
+  notifications,
   files,
   users,
   oauthIdentities,
@@ -294,37 +294,19 @@ export async function getWorkspace(workspaceId: string, userId: string): Promise
 }
 
 /**
- * Unread messages per workspace for one user (#345) — the number the sidebar
- * rail badge shows. One grouped query for every workspace rather than a channel
- * list per workspace, and it applies exactly the rules `listChannels` already
- * uses per channel: top-level, live, non-system messages from someone else,
- * after this member's read cursor. Muted channels (notify_level 0) and archived
- * channels contribute nothing — a muted channel is one you asked not to be
- * nagged about, and the rail badge is the nag.
+ * Unread notifications per workspace for one user (#345) — the number the
+ * sidebar rail badge shows. It counts the same unread rows the Activity feed
+ * and the per-channel sidebar numbers count (operator ruling 2026-07-26: a
+ * rendered count means "this needs you" — notifications, never raw unread
+ * messages), so opening the Activity feed drains it and the three surfaces
+ * always agree. One grouped query, served by notifications_unread_channel_idx.
  */
 async function unreadByWorkspace(userId: string): Promise<Map<string, number>> {
   const rows = await db
     .select({ workspaceId: channels.workspaceId, n: sql<number>`count(*)::int` })
-    .from(channelMembers)
-    .innerJoin(channels, eq(channels.id, channelMembers.channelId))
-    .innerJoin(
-      messages,
-      and(
-        eq(messages.channelId, channelMembers.channelId),
-        isNull(messages.threadRootId),
-        isNull(messages.deletedAt),
-        isNull(messages.systemKind),
-        ne(messages.userId, userId),
-        sql`(${channelMembers.lastReadMsgId} IS NULL OR ${messages.id} > ${channelMembers.lastReadMsgId})`,
-      ),
-    )
-    .where(
-      and(
-        eq(channelMembers.userId, userId),
-        isNull(channels.archivedAt),
-        ne(channelMembers.notifyLevel, 0),
-      ),
-    )
+    .from(notifications)
+    .innerJoin(channels, eq(channels.id, notifications.channelId))
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
     .groupBy(channels.workspaceId);
   return new Map(rows.map((r) => [r.workspaceId, r.n]));
 }
