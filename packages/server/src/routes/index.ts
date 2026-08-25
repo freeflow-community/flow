@@ -537,6 +537,15 @@ export function registerRoutes(app: FastifyInstance): void {
     return { members: await ws.listMembers(id, req.user.id) };
   });
 
+  // The sole owner's only way out (#340 follow-up): they cannot leave a
+  // workspace with nobody to transfer it to, so they can end it instead.
+  app.delete('/v1/workspaces/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ws.deleteWorkspace(id, req.user.id);
+    detachUserFromWorkspace(req.user.id, id);
+    return { ok: true };
+  });
+
   // Self-service departure (#340). Not under the admin block below: any
   // member may leave, and the only one who may not is the owner.
   app.post('/v1/workspaces/:id/leave', { preHandler: requireAuth }, async (req) => {

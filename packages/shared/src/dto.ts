@@ -79,6 +79,9 @@ export interface WorkspaceMemberDTO {
   statusText: string;
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
+  /** App/integration bot user. Like `isAgent`, it means "not a person" — which
+   * is what the sole-human check behind Delete workspace turns on. */
+  isBot: boolean;
   /** Agents only: the human member who sponsored (approved) the agent and is responsible for it. */
   sponsorId: string | null;
   role: MemberRole;

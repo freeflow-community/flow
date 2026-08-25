@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import {
   SIDEBAR_COLOR_IDS,
   emailDomain,
@@ -29,6 +29,7 @@ const {
   invites,
   channels,
   channelMembers,
+  files,
   users,
   oauthIdentities,
 } = schema;
@@ -312,6 +313,7 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
     isAgent: r.u.isAgent,
+    isBot: r.u.isBot,
     sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
@@ -335,6 +337,7 @@ export async function toMemberDTO(workspaceId: string, userId: string): Promise<
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
     isAgent: r.u.isAgent,
+    isBot: r.u.isBot,
     sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
@@ -414,6 +417,89 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
       .limit(1);
     if (stillMember.length > 0) return;
     await tombstoneUser(tx, targetId, u.email);
+  });
+}
+
+/**
+ * Delete a workspace outright (#340 follow-up). Owner only, and only when they
+ * are the **last human** in it — the sole owner would otherwise be stuck: they
+ * cannot leave (nobody to transfer to) and nothing else can end the workspace.
+ * Anyone with company still has to hand ownership over or clear the room first,
+ * which keeps this from becoming a way to delete other people's history.
+ *
+ * Agents and bots do not count as company. They are the owner's own tooling,
+ * and making someone remove their own bot before they can close an empty
+ * workspace is busywork — but they must be *torn down*, not merely cascaded
+ * away: `killAgentCredentials` and the app-row delete are what stop a daemon
+ * re-authenticating against a workspace that no longer exists.
+ *
+ * Everything else rides the `workspaces` row's ON DELETE CASCADE (channels,
+ * messages, members, invites, join links, emoji, artifacts, files, apps).
+ * Blobs have no cascade, so uploaded files, their thumbnails and the workspace
+ * avatar are swept first, best-effort — a failed blob delete must not leave the
+ * workspace half-deleted.
+ */
+export async function deleteWorkspace(workspaceId: string, actorId: string): Promise<void> {
+  const m = await requireMembership(workspaceId, actorId);
+  if (m.role !== 'owner') throw forbidden('only the workspace owner can delete a workspace');
+
+  const others = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        ne(workspaceMembers.userId, actorId),
+        eq(users.isBot, false),
+        eq(users.isAgent, false),
+      ),
+    )
+    .limit(1);
+  if (others.length > 0) {
+    throw conflict(
+      'workspace_not_empty',
+      'other members are still in this workspace — remove them or transfer ownership first',
+    );
+  }
+
+  const [w] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+  if (!w) throw notFound('workspace not found');
+
+  // Machine members first: revoke what they authenticate with while their
+  // rows still exist. The cascade would drop the memberships but leave live
+  // agent tokens pointing at nothing.
+  const machines = await db
+    .select({ userId: workspaceMembers.userId, isAgent: users.isAgent })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), ne(workspaceMembers.userId, actorId)));
+  for (const machine of machines) {
+    if (machine.isAgent) await killAgentCredentials(machine.userId);
+  }
+
+  // Blobs, before the rows that name them disappear.
+  const blobs = await db
+    .select({ storageKey: files.storageKey, thumbKey: files.thumbKey })
+    .from(files)
+    .where(eq(files.workspaceId, workspaceId));
+  const store = blobStore();
+  for (const b of blobs) {
+    await store.delete(b.storageKey).catch(() => {});
+    if (b.thumbKey) await store.delete(b.thumbKey).catch(() => {});
+  }
+  await dropAvatarBlob(w.avatarUrl);
+
+  await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+
+  // Reuse the departure event rather than minting a new type: to every client
+  // "this workspace is gone for me" is the same fact whether it was left or
+  // deleted, and that path is already handled on web, macOS and iOS.
+  publishEvent(subjectMeta(workspaceId), {
+    type: 'member.left',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: { userId: actorId, workspaceId },
   });
 }
 

@@ -25,6 +25,9 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var website: String?
     var bio: String?
     var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
+    // App/integration bot. Like `isAgent` it means "not a person", which is
+    // what the sole-human check behind Delete workspace turns on (#340).
+    var isBot: Bool?
     var sponsorId: String? // agents only: the human member who sponsored them
     var createdAt: String?
 
@@ -33,6 +36,9 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var displayNameWithBadge: String {
         isAgent == true ? "\(displayName) 🤖" : displayName
     }
+
+    /// A person, as opposed to an agent or an app bot (#340).
+    var isHuman: Bool { isAgent != true && isBot != true }
 }
 
 struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
@@ -571,6 +577,8 @@ struct MemberDTO: Decodable, Sendable {
     let statusEmoji: String?
     let statusText: String?
     let isAgent: Bool?
+    /// Optional so a client pointed at a server predating the field decodes.
+    let isBot: Bool?
     let role: String
     let joinedAt: String?
 }

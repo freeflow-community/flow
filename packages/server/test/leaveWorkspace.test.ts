@@ -1,6 +1,8 @@
-// Self-service workspace departure (#340): POST /v1/workspaces/:id/leave.
-// The member goes, their messages stay, the owner is refused, and the account
-// survives even when it was the last workspace. DB-backed — runs against a
+// Self-service workspace departure (#340): POST /v1/workspaces/:id/leave, plus
+// DELETE /v1/workspaces/:id — the sole owner's only way out, since they have
+// nobody to transfer to. The member goes, their messages stay, the owner is
+// refused, and the account survives even when it was the last workspace.
+// DB-backed — runs against a
 // scratch database on the dev postgres (docker compose in packages/infra, host
 // port 5442). NATS is not required (publishEvent is a no-op without a bus).
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
@@ -29,9 +31,9 @@ const ws = await import('../src/services/workspaces.js');
 const ch = await import('../src/services/channels.js');
 const msg = await import('../src/services/messages.js');
 const ag = await import('../src/services/agents.js');
-const { and, eq } = await import('drizzle-orm');
+const { and, eq, isNull } = await import('drizzle-orm');
 
-const { users, workspaceMembers, channelMembers, invites } = schema;
+const { users, workspaces, workspaceMembers, channels, channelMembers, messages, invites } = schema;
 
 let seq = 0;
 
@@ -201,5 +203,94 @@ describe('leaveWorkspace', () => {
     const rejoined = await ws.acceptInvite(member.id, token);
     expect(rejoined.id).toBe(workspaceId);
     expect((await ws.myWorkspaces(member.id)).map((w) => w.id)).toContain(workspaceId);
+  });
+});
+
+describe('deleteWorkspace', () => {
+  it('lets a sole owner delete the workspace, taking its channels and messages', async () => {
+    const { owner, member, workspaceId } = await setup();
+    const general = (await ch.listChannels(workspaceId, owner.id))[0]!;
+    await msg.sendMessage(general.id, owner.id, randomUUID(), 'last words');
+    await ws.leaveWorkspace(workspaceId, member.id); // now the owner is alone
+
+    await ws.deleteWorkspace(workspaceId, owner.id);
+
+    expect(await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))).toHaveLength(0);
+    expect(await db.select().from(channels).where(eq(channels.workspaceId, workspaceId))).toHaveLength(0);
+    expect(await db.select().from(messages).where(eq(messages.channelId, general.id))).toHaveLength(0);
+    expect(await ws.myWorkspaces(owner.id)).toHaveLength(0);
+  });
+
+  it('refuses while another human is still a member', async () => {
+    const { owner, workspaceId } = await setup();
+    await expect(ws.deleteWorkspace(workspaceId, owner.id)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'workspace_not_empty',
+    });
+    expect(await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))).toHaveLength(1);
+  });
+
+  it('refuses a non-owner, even one left alone with it', async () => {
+    const { owner, member, workspaceId } = await setup();
+    await ws.setMemberRole(workspaceId, owner.id, member.id, 'admin');
+    await expect(ws.deleteWorkspace(workspaceId, member.id)).rejects.toMatchObject({ statusCode: 403 });
+    expect(await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))).toHaveLength(1);
+  });
+
+  it('refuses a non-member', async () => {
+    const { workspaceId } = await setup();
+    const stranger = await registerHuman('Stranger');
+    await expect(ws.deleteWorkspace(workspaceId, stranger.id)).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('counts only humans — an agent in the room does not block deletion', async () => {
+    const { owner, member, workspaceId } = await setup();
+    await ws.leaveWorkspace(workspaceId, member.id);
+    const inv = await ag.createAgentInvite(workspaceId, owner.id);
+    await ag.redeemAgentInvite({
+      code: inv.code,
+      username: `helper-${randomBytes(3).toString('hex')}`,
+      key: `flow-agent-key-${randomBytes(24).toString('base64url')}`,
+      name: 'Helper',
+    });
+
+    await expect(ws.deleteWorkspace(workspaceId, owner.id)).resolves.toBeUndefined();
+    expect(await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))).toHaveLength(0);
+  });
+
+  it('revokes the agent\'s credentials rather than orphaning them', async () => {
+    const { owner, member, workspaceId } = await setup();
+    await ws.leaveWorkspace(workspaceId, member.id);
+    const inv = await ag.createAgentInvite(workspaceId, owner.id);
+    const agent = await ag.redeemAgentInvite({
+      code: inv.code,
+      username: `zombie-${randomBytes(3).toString('hex')}`,
+      key: `flow-agent-key-${randomBytes(24).toString('base64url')}`,
+      name: 'Zombie',
+    });
+
+    await ws.deleteWorkspace(workspaceId, owner.id);
+
+    // A live token here would keep authenticating against a workspace that no
+    // longer exists — the daemon would look signed in and act on nothing.
+    const [row] = await db.select().from(users).where(eq(users.id, agent.user.id));
+    expect(row?.agentUsername).toBeNull();
+    expect(row?.agentKeyHash).toBeNull();
+    const live = await db
+      .select()
+      .from(schema.agentTokens)
+      .where(and(eq(schema.agentTokens.userId, agent.user.id), isNull(schema.agentTokens.revokedAt)));
+    expect(live).toHaveLength(0);
+  });
+
+  it('leaves the owner signed in with an intact account', async () => {
+    const { owner, member, workspaceId } = await setup();
+    await ws.leaveWorkspace(workspaceId, member.id);
+
+    await ws.deleteWorkspace(workspaceId, owner.id);
+
+    const [row] = await db.select().from(users).where(eq(users.id, owner.id));
+    expect(row?.deletedAt).toBeNull();
+    expect(row?.email).not.toContain('tombstone+');
   });
 });

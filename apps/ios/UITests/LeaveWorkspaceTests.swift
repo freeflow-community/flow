@@ -5,13 +5,14 @@ import XCTest
 /// assertable from outside the simulator: this file is the acceptance criteria
 /// written down, and the source of the PR screenshots.
 ///
-/// Needs a dev server with **three** workspaces for the signed-in account: one
-/// it owns (the disabled case), one it belongs to (the dialog), and a second it
-/// belongs to that the destructive test is free to consume — leaving is one-way
-/// without an admin to re-invite, so that test must not eat the fixture the
-/// others need. Override the server and the account with `FLOW_TEST_SERVER_URL`
-/// / `FLOW_TEST_EMAIL` / `FLOW_TEST_PASSWORD`, and the workspaces with
-/// `FLOW_TEST_{MEMBER,LEAVABLE,OWNED}_WORKSPACE(_SLUG)`.
+/// Needs a dev server with **five** workspaces for the signed-in account: one
+/// it belongs to (the dialog), one it owns *with company* (leave disabled), one
+/// it owns **alone** (delete offered) — and one apiece for the two destructive
+/// tests to consume. Leaving and deleting are one-way, so a destructive test
+/// that shared a fixture would break whichever test ran after it. Override the
+/// server and the account with `FLOW_TEST_SERVER_URL` / `FLOW_TEST_EMAIL` /
+/// `FLOW_TEST_PASSWORD`, and the workspaces with
+/// `FLOW_TEST_{MEMBER,LEAVABLE,OWNED,SOLO,DELETABLE}_WORKSPACE(_SLUG)`.
 final class LeaveWorkspaceTests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
@@ -42,12 +43,30 @@ final class LeaveWorkspaceTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLOW_TEST_LEAVABLE_WORKSPACE_SLUG"] ?? "second-room"
     }
 
-    /// A workspace the account owns — the one it may not.
+    /// A workspace the account owns *with other people in it* — the one it may
+    /// not leave, because there is somebody to hand it to first.
     private var ownedWorkspace: String {
-        ProcessInfo.processInfo.environment["FLOW_TEST_OWNED_WORKSPACE"] ?? "Bo Owns This"
+        ProcessInfo.processInfo.environment["FLOW_TEST_OWNED_WORKSPACE"] ?? "Crowded Room"
     }
     private var ownedSlug: String {
-        ProcessInfo.processInfo.environment["FLOW_TEST_OWNED_WORKSPACE_SLUG"] ?? "bo-owns-this"
+        ProcessInfo.processInfo.environment["FLOW_TEST_OWNED_WORKSPACE_SLUG"] ?? "crowded-room"
+    }
+
+    /// A workspace the account owns **alone** — nobody to hand it to, so the
+    /// menu offers deletion instead of a permanently disabled Leave.
+    private var soloWorkspace: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_SOLO_WORKSPACE"] ?? "Solo Room"
+    }
+    private var soloSlug: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_SOLO_WORKSPACE_SLUG"] ?? "solo-room"
+    }
+
+    /// A second solo-owned workspace, sacrificed by the destructive delete test.
+    private var deletableWorkspace: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_DELETABLE_WORKSPACE"] ?? "Doomed Room"
+    }
+    private var deletableSlug: String {
+        ProcessInfo.processInfo.environment["FLOW_TEST_DELETABLE_WORKSPACE_SLUG"] ?? "doomed-room"
     }
 
     private func launch() -> XCUIApplication {
@@ -72,11 +91,18 @@ final class LeaveWorkspaceTests: XCTestCase {
     /// the drawer and leave the assertions reading a view on its way out.
     @discardableResult
     private func openWorkspaceMenu(_ app: XCUIApplication) -> XCUIElement {
-        if !app.buttons["sidebar.workspaceMenu"].exists { openDrawer(app) }
-        app.buttons["sidebar.workspaceMenu"].tap()
+        openWorkspaceMenuRaw(app)
         let leave = app.buttons["sidebar.leaveWorkspace"]
         XCTAssertTrue(leave.waitForExistence(timeout: 10), "the workspace menu has no Leave Workspace item")
         return leave
+    }
+
+    /// The menu without asserting which of the two exit items is in it — the
+    /// item is Leave or Delete depending on whether anyone is left to hand the
+    /// workspace to, and two of the tests below are about exactly that choice.
+    private func openWorkspaceMenuRaw(_ app: XCUIApplication) {
+        if !app.buttons["sidebar.workspaceMenu"].exists { openDrawer(app) }
+        app.buttons["sidebar.workspaceMenu"].tap()
     }
 
     /// Open the drawer without opening the workspace menu.
@@ -181,5 +207,47 @@ final class LeaveWorkspaceTests: XCTestCase {
             "the disabled item does not explain itself — got \(leave.label)"
         )
         attach("05-owner-disabled")
+    }
+
+    /// Acceptance 4b (#340 follow-up): an owner who is the last person left is
+    /// offered deletion, not a Leave they can never use.
+    func testSoleOwnerIsOfferedDeleteInsteadOfLeave() {
+        let app = launch()
+        selectWorkspace(app, slug: soloSlug, name: soloWorkspace)
+
+        openWorkspaceMenuRaw(app)
+        let delete = app.buttons["sidebar.deleteWorkspace"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 10), "a sole owner was not offered Delete Workspace")
+        XCTAssertTrue(delete.isEnabled, "Delete Workspace is there but disabled")
+        XCTAssertFalse(
+            app.buttons["sidebar.leaveWorkspace"].exists,
+            "the dead-end Leave item is still in the menu alongside Delete"
+        )
+        attach("06-sole-owner-delete")
+    }
+
+    /// …and confirming it actually ends the workspace, for good.
+    func testDeletingTheWorkspaceRemovesIt() {
+        let app = launch()
+        selectWorkspace(app, slug: deletableSlug, name: deletableWorkspace)
+
+        openWorkspaceMenuRaw(app)
+        app.buttons["sidebar.deleteWorkspace"].tap()
+
+        XCTAssertTrue(
+            app.staticTexts["Delete \(deletableWorkspace)?"].waitForExistence(timeout: 10),
+            "confirming dialog never named the workspace"
+        )
+        XCTAssertTrue(app.buttons["Cancel"].exists, "no way out of the dialog")
+        attach("07-delete-dialog")
+        app.buttons["Delete Workspace"].tap()
+
+        let rail = app.buttons["rail.workspace.\(deletableSlug)"]
+        let deadline = Date().addingTimeInterval(30)
+        while rail.exists && Date() < deadline {
+            usleep(500_000)
+        }
+        XCTAssertFalse(rail.exists, "the workspace is still in the switcher after deleting")
+        attach("08-after-delete")
     }
 }

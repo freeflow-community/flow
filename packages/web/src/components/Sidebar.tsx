@@ -9,6 +9,7 @@ import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers,
 import {
   ChannelMenu,
   CreateChannelModal,
+  DeleteWorkspaceModal,
   InviteModal,
   LeaveWorkspaceModal,
   NewDmModal,
@@ -120,6 +121,7 @@ export default function Sidebar() {
   const [showNewDm, setShowNewDm] = useState(false);
   const [showColor, setShowColor] = useState(false);
   const [showLeave, setShowLeave] = useState(false);
+  const [showDeleteWs, setShowDeleteWs] = useState(false);
   const [showApps, setShowApps] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
@@ -154,6 +156,11 @@ export default function Sidebar() {
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
   const isOwner = ws?.role === 'owner';
+  // The owner's exit depends on whether anyone is left to hand the workspace
+  // to. Agents and bots don't count — they're the owner's own tooling, and the
+  // server's delete guard counts humans the same way (#340).
+  const isSoleHuman =
+    (members.data ?? []).filter((m) => !m.isAgent && !m.isBot).length <= 1;
   const color = sidebarColor(ws?.sidebarColor);
 
   // Restored-workspace guard + default channel: a stale persisted workspace id
@@ -304,18 +311,29 @@ export default function Sidebar() {
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
             </MenuItem>
-            {/* Leaving is self-service for everyone but the owner (#340) —
-                who has nobody to hand the workspace to until there's an
-                ownership-transfer flow. */}
-            <MenuItem
-              testid="menu-leave-workspace"
-              destructive
-              disabled={isOwner}
-              title={isOwner ? 'Transfer ownership first' : undefined}
-              onClick={() => { setWsMenuOpen(false); setShowLeave(true); }}
-            >
-              Leave workspace{isOwner && <span className="ml-1 text-ink/35">— transfer ownership first</span>}
-            </MenuItem>
+            {/* Leaving is self-service for everyone but the owner (#340). An
+                owner with company has to hand the workspace over first; an
+                owner on their own has nobody to hand it to, so they get to end
+                it instead of staring at a permanently disabled row. */}
+            {isOwner && isSoleHuman ? (
+              <MenuItem
+                testid="menu-delete-workspace"
+                destructive
+                onClick={() => { setWsMenuOpen(false); setShowDeleteWs(true); }}
+              >
+                Delete workspace…
+              </MenuItem>
+            ) : (
+              <MenuItem
+                testid="menu-leave-workspace"
+                destructive
+                disabled={isOwner}
+                title={isOwner ? 'Transfer ownership first' : undefined}
+                onClick={() => { setWsMenuOpen(false); setShowLeave(true); }}
+              >
+                Leave workspace{isOwner && <span className="ml-1 text-ink/35">— transfer ownership first</span>}
+              </MenuItem>
+            )}
             <hr className="my-1 border-hairline3" />
             <button
               data-testid="build-number"
@@ -502,6 +520,9 @@ export default function Sidebar() {
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
       {showLeave && sel.workspaceId && (
         <LeaveWorkspaceModal workspaceId={sel.workspaceId} onClose={() => setShowLeave(false)} />
+      )}
+      {showDeleteWs && sel.workspaceId && (
+        <DeleteWorkspaceModal workspaceId={sel.workspaceId} onClose={() => setShowDeleteWs(false)} />
       )}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {showEmoji && sel.workspaceId && <EmojiModal workspaceId={sel.workspaceId} onClose={() => setShowEmoji(false)} />}
