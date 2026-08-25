@@ -661,6 +661,14 @@ actor SyncEngine {
                 sql: "UPDATE channel SET unreadNotifications = 0 WHERE id = ?",
                 arguments: [channelId]
             )
+            // The rail badge (#345) is the per-workspace sum of these rows.
+            try db.execute(
+                sql: """
+                    UPDATE workspace SET unreadCount = MAX(0, unreadCount - ?)
+                    WHERE id = ? AND unreadCount IS NOT NULL
+                    """,
+                arguments: [ch.unreadNotifications, ch.workspaceId]
+            )
             return (ch.unreadNotifications, ch.workspaceId)
         }
         guard let cleared else { return }
@@ -704,27 +712,10 @@ actor SyncEngine {
     /// event, which is what settles the badge.
     func markRead(channelId: String, lastReadMsgId: String) async {
         try? await db.writer.write { db in
-            // The workspace rail badge (#345) is the sum of these counts, so it
-            // has to come down by whatever this channel was carrying — read the
-            // old value before clearing it. A nil workspace count means "not
-            // fetched yet", and stays nil rather than becoming a made-up 0.
-            let cleared = try Int.fetchOne(
-                db, sql: "SELECT unreadCount FROM channel WHERE id = ?", arguments: [channelId]
-            ) ?? 0
             try db.execute(
                 sql: "UPDATE channel SET unreadCount = 0, lastReadMsgId = ? WHERE id = ?",
                 arguments: [lastReadMsgId, channelId]
             )
-            if cleared > 0 {
-                try db.execute(
-                    sql: """
-                        UPDATE workspace SET unreadCount = MAX(0, unreadCount - ?)
-                        WHERE id = (SELECT workspaceId FROM channel WHERE id = ?)
-                          AND unreadCount IS NOT NULL
-                        """,
-                    arguments: [cleared, channelId]
-                )
-            }
         }
         let _: OkResponse? = try? await api.post(
             "/v1/channels/\(channelId)/read",
@@ -732,33 +723,6 @@ actor SyncEngine {
         )
     }
 
-    /// Move the workspace rail badge (#345) for a message that just landed
-    /// unread. Local arithmetic when we know the channel — a badge that lags a
-    /// network round trip behind the message isn't live. When we *don't* know
-    /// it (a workspace whose channel list this session never fetched, so the
-    /// row can't say whether I'm even a member) the count can't be reasoned
-    /// about locally, so ask the server for the totals instead.
-    private func bumpWorkspaceUnread(channelId: String) async {
-        let channel = (try? await db.reader.read { db in
-            try Channel.fetchOne(db, key: channelId)
-        }) ?? nil
-        guard let channel else {
-            await refreshWorkspaces()
-            return
-        }
-        // Not a channel of mine, or one I muted — the server won't count it
-        // either, so the badge must not move.
-        guard channel.isMember, channel.notifyLevel != 0 else { return }
-        try? await db.writer.write { db in
-            try db.execute(
-                sql: """
-                    UPDATE workspace SET unreadCount = unreadCount + 1
-                    WHERE id = ? AND unreadCount IS NOT NULL
-                    """,
-                arguments: [channel.workspaceId]
-            )
-        }
-    }
 
     /// The app came back to the front with `channelId` on screen: everything
     /// that arrived while it was hidden has now genuinely been seen. Called from
@@ -1631,7 +1595,6 @@ actor SyncEngine {
                             arguments: [m.channelId]
                         )
                     }
-                    await bumpWorkspaceUnread(channelId: m.channelId)
                 }
             }
 
@@ -1752,10 +1715,17 @@ actor SyncEngine {
             // (#270), so the transcript says *which* thread, not just that the
             // channel has something. Read-modify-write — it's a JSON array.
             let notifThreadRootId = n.message.threadRootId
+            let notifWorkspaceId = n.workspaceId
             try? await db.writer.write { db in
                 try db.execute(
                     sql: "UPDATE channel SET unreadNotifications = unreadNotifications + 1 WHERE id = ? AND isMember = 1",
                     arguments: [notifChannelId]
+                )
+                // The rail badge (#345) counts these same rows per workspace —
+                // move it in the same write. Nil = "not fetched yet", stays nil.
+                try db.execute(
+                    sql: "UPDATE workspace SET unreadCount = unreadCount + 1 WHERE id = ? AND unreadCount IS NOT NULL",
+                    arguments: [notifWorkspaceId]
                 )
                 guard let rootId = notifThreadRootId,
                       var chan = try Channel.filter(key: notifChannelId).fetchOne(db),
@@ -1801,6 +1771,8 @@ actor SyncEngine {
             for workspaceId in await appState?.openWorkspaceIds ?? [] {
                 await refreshChannels(workspaceId: workspaceId)
             }
+            // …and the rail badges (#345), which count the same rows.
+            await refreshWorkspaces()
 
         case .workspaceUpdated(let ws):
             await saveWorkspacePreservingRole(ws)
