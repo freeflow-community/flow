@@ -125,7 +125,7 @@ struct MainView: View {
                 ChannelView(channelId: channelId)
                     .frame(maxWidth: .infinity)
                 // Tabbed side panel: Thread + the channel's artifacts (phase 13).
-                if win.openThreadRootId != nil || win.selectedArtifactId != nil {
+                if win.openThreadRootId != nil || win.selectedArtifactId != nil || win.filesOpen {
                     sidePanelResizer
                     SidePanelView()
                         .frame(width: clampedSidePanelWidth)

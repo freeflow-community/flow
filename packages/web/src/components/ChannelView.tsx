@@ -239,6 +239,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
               artifacts={channelArtifacts}
               pinCount={pins.data?.length ?? 0}
               showOptions={channel?.kind === 'standard'}
+              onOpenFiles={() => sel.openFiles(true)}
               onOpenPins={() => setPinsOpen(true)}
               onOpenArtifact={(id) => sel.selectArtifact(id)}
               onOpenOptions={() => setEditChannel(true)}

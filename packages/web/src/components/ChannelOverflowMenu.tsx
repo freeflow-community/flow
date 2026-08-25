@@ -1,6 +1,7 @@
 // The channel header's "⋯" menu (#188). One home on every client for the
-// operations that used to be scattered across separate header buttons: pinned
-// messages, the channel's artifacts, and channel options (name, topic, delete).
+// operations that used to be scattered across separate header buttons: the
+// channel's shared files (#347), pinned messages, its artifacts, and channel
+// options (name, topic, delete).
 // The sidebar keeps its own nested artifact rows — this is the in-channel route
 // to the same things, and the only one on iOS.
 import { useEffect, useRef } from 'react';
@@ -11,6 +12,7 @@ export default function ChannelOverflowMenu({
   artifacts,
   pinCount,
   showOptions,
+  onOpenFiles,
   onOpenPins,
   onOpenArtifact,
   onOpenOptions,
@@ -20,6 +22,7 @@ export default function ChannelOverflowMenu({
   pinCount: number;
   /** DMs have no name/topic/archive — the item is hidden rather than disabled. */
   showOptions: boolean;
+  onOpenFiles: () => void;
   onOpenPins: () => void;
   onOpenArtifact: (id: string) => void;
   onOpenOptions: () => void;
@@ -56,6 +59,17 @@ export default function ChannelOverflowMenu({
       aria-label="Channel menu"
       className="absolute top-[46px] right-0 z-30 max-h-[70vh] w-60 overflow-y-auto rounded-[14px] bg-white p-2 shadow-[0_12px_40px_rgba(20,8,40,.25)]"
     >
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="channel-menu-files"
+        className={item}
+        onClick={() => { onClose(); onOpenFiles(); }}
+      >
+        <span aria-hidden>📎</span>
+        <span className="flex-1">Files</span>
+      </button>
+
       <button
         type="button"
         role="menuitem"

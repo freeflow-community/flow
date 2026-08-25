@@ -234,6 +234,35 @@ export interface FileDTO {
   createdAt: string;
 }
 
+/** One row of the channel Files panel (#347): a file attached to a live
+ * message in the channel. `messageId` is the message it was shared in, so a
+ * client can jump to it; a file shared twice appears once per message. */
+export interface ChannelFileDTO {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  hasThumb: boolean;
+  /** who uploaded it — id plus a display name so a row renders without a roster */
+  userId: string;
+  uploaderName: string;
+  /** when the file was shared (the message's timestamp) */
+  createdAt: string;
+  messageId: string;
+}
+
+export type ChannelFileSort = 'newest' | 'oldest' | 'name' | 'size';
+
+/** GET /v1/channels/:id/files. `nextCursor` is opaque — hand it straight back
+ * as `before` for the next page; null means the list is exhausted. */
+export interface ChannelFilePage {
+  files: ChannelFileDTO[];
+  total: number;
+  nextCursor: string | null;
+}
+
 /** Response of POST /v1/workspaces/:id/files/presign: upload the bytes to
  * `upload.url` with the given method/headers, then POST /v1/files/:id/complete. */
 export interface PresignedUploadDTO {

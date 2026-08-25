@@ -167,6 +167,13 @@ export default function Main() {
         // Pin/unpin and delete events are full message updates; keep the
         // channel's independently fetched pinned-message list in sync too.
         void qc.invalidateQueries({ queryKey: ['pins', msg.channelId] });
+        // The Files panel (#347) is built from message attachments, so a new
+        // upload — or the deletion that takes one out of the list — has to
+        // reach an open panel. Only messages that carry files can move it.
+        // (a tombstone carries no files, so deletions can't be gated on them)
+        if (msg.files.length > 0 || event.type === 'message.deleted') {
+          void qc.invalidateQueries({ queryKey: ['channelFiles', msg.channelId] });
+        }
         // Sidebar unread counts/ordering still come from the channels query.
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         // The rail badge is a per-workspace total (#345) and the socket carries
@@ -453,7 +460,7 @@ export default function Main() {
               <>
                 <ChannelView key={sel.channelId} channelId={sel.channelId} />
                 {/* tabbed side panel: Thread + the channel's artifacts (phase 13) */}
-                {(sel.threadRootId || sel.artifactId) && <SidePanel />}
+                {(sel.threadRootId || sel.artifactId || sel.filesOpen) && <SidePanel />}
               </>
             ) : (
               <div className="flex min-w-0 flex-1 flex-col">

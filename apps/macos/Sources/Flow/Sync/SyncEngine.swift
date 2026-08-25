@@ -1020,6 +1020,29 @@ actor SyncEngine {
         }
     }
 
+    /// Channel Files panel (#347/#348): one page of the channel's shared files.
+    /// Browsing-only, so it never touches the GRDB cache — the panel is opened
+    /// on demand and the server list is the truth for it.
+    func channelFiles(
+        channelId: String, sort: ChannelFileSort, before: String?, limit: Int = 30
+    ) async throws -> ChannelFilePage {
+        var query = [
+            URLQueryItem(name: "sort", value: sort.rawValue),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if let before { query.append(URLQueryItem(name: "before", value: before)) }
+        return try await api.get("/v1/channels/\(channelId)/files", query: query)
+    }
+
+    /// Presigned in-place streaming URL for a file (server mints it after the
+    /// same access check as a download). nil when the storage driver can't
+    /// presign — callers must have a no-network fallback.
+    func streamURL(fileId: String) async -> URL? {
+        guard let response: StreamUrlResponse = try? await api.get("/v1/files/\(fileId)/url"),
+              let raw = response.url else { return nil }
+        return URL(string: raw)
+    }
+
     /// Pin or unpin for the whole channel; the returned full message is the
     /// immediate local update and the websocket echo converges other clients.
     func togglePin(_ message: Message) async {

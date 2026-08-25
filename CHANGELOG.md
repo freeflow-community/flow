@@ -13,6 +13,13 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- The channel Files list (#347/#348) shows a video's first frame on web only.
+  The browser can paint one from the presigned stream URL for free; macOS and
+  iOS render a play badge on a tinted block instead, because AVFoundation would
+  have to decode a frame to produce the same thing. The duration badge itself
+  is on all three. Closing this means either a server-side video thumbnail
+  (needs a decoder the server doesn't have) or a one-frame AVAssetImageGenerator
+  pass on the native clients.
 - Jump-to-message does not land in a transcript deep enough to need paging
   (#332): with the target more than one 100-row window back, `ChannelScreen`
   widens the window and the centring scroll still leaves the row off screen.

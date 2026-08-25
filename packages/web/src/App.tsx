@@ -67,6 +67,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [channelId, setChannelId] = useState<string | null>(null);
   const [artifactId, setArtifactId] = useState<string | null>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
@@ -224,6 +225,7 @@ export default function App() {
           workspaceId,
           channelId,
           artifactId,
+          filesOpen,
           threadRootId,
           editingMessageId,
           focusMessageId,
@@ -235,6 +237,7 @@ export default function App() {
             threadMemory.clear();
             setChannelId(null);
             setArtifactId(null);
+            setFilesOpen(false);
             setThreadRootId(null);
             setEditingMessageId(null);
             setFocusMessageId(null);
@@ -250,6 +253,8 @@ export default function App() {
             else threadMemory.remember(channelId, threadRootId);
             setChannelId(id);
             setArtifactId(null);
+            // Files are per-channel: the tab doesn't follow you to the next one.
+            setFilesOpen(false);
             setThreadRootId(threadMemory.recall(id));
             setEditingMessageId(null);
             setFocusMessageId(null);
@@ -258,6 +263,7 @@ export default function App() {
           // any) stays open — they're tabs in the same panel (phase 13).
           selectArtifact: (id) => {
             setArtifactId(id);
+            if (id) setFilesOpen(false);
             setEditingMessageId(null);
             setFocusMessageId(null);
             // select the artifact's channel so the conversation shows behind it
@@ -277,20 +283,33 @@ export default function App() {
           openThread: (id) => {
             setThreadRootId(id);
             threadMemory.remember(channelId, id);
-            if (id) setArtifactId(null);
+            if (id) {
+              setArtifactId(null);
+              setFilesOpen(false);
+            }
+          },
+          // The Files tab (#347) takes the panel the way an artifact tab does.
+          openFiles: (open) => {
+            setFilesOpen(open);
+            if (open) setArtifactId(null);
           },
           // Switch the side panel to the Thread tab (thread stays open).
-          showThread: () => setArtifactId(null),
+          showThread: () => {
+            setArtifactId(null);
+            setFilesOpen(false);
+          },
           // Close the whole side panel.
           closeSidePanel: () => {
             setThreadRootId(null);
             threadMemory.remember(channelId, null);
             setArtifactId(null);
+            setFilesOpen(false);
           },
           setEditingMessage: setEditingMessageId,
           jumpToMessage: (toChannelId, messageId, toThreadRootId) => {
             threadMemory.remember(channelId, threadRootId);
             setArtifactId(null);
+            setFilesOpen(false);
             setChannelId(toChannelId);
             // An explicit jump decides what's open in the target channel — a
             // top-level target closes whatever thread it had parked.
