@@ -1,7 +1,7 @@
 import SwiftUI
 
-// Tabbed side panel (phase 13): the right-hand pane that hosts the open Thread
-// and the active channel's artifacts as switchable tabs. It owns the tab strip,
+// Tabbed side panel (phase 13): the right-hand pane that hosts the open Thread,
+// the active channel's artifacts and its Files list (#347) as switchable tabs. It owns the tab strip,
 // the panel close, and the leading-edge shadow, and shows the active tab's body
 // (ThreadPanelView embedded, or ArtifactPanelView). Threads and artifacts
 // coexist; the tab strip picks which one shows. Mirrors the web SidePanel.
@@ -18,7 +18,10 @@ struct SidePanelView: View {
         VStack(spacing: 0) {
             tabStrip
             Divider()
-            if let artifactId = win.selectedArtifactId {
+            if win.filesOpen, let channelId = win.selectedChannelId {
+                FilesPanelView(channelId: channelId)
+                    .id(channelId)
+            } else if let artifactId = win.selectedArtifactId {
                 ArtifactPanelView(artifactId: artifactId)
                     .id(artifactId)
             } else if let rootId = win.openThreadRootId {
@@ -43,17 +46,27 @@ struct SidePanelView: View {
                         PanelTab(
                             icon: "💬",
                             label: "Thread",
-                            active: win.selectedArtifactId == nil,
+                            active: win.selectedArtifactId == nil && !win.filesOpen,
                             onSelect: { win.showThread() },
                             onClose: { win.openThread(nil) },
                             accessibilityId: "side.tab.thread"
+                        )
+                    }
+                    if win.filesOpen {
+                        PanelTab(
+                            icon: "📎",
+                            label: "Files",
+                            active: true,
+                            onSelect: { win.openFiles(true) },
+                            onClose: { win.openFiles(false) },
+                            accessibilityId: "side.tab.files"
                         )
                     }
                     ForEach(channelArtifacts) { artifact in
                         PanelTab(
                             icon: artifact.glyph,
                             label: artifact.name,
-                            active: win.selectedArtifactId == artifact.id,
+                            active: !win.filesOpen && win.selectedArtifactId == artifact.id,
                             onSelect: { win.selectArtifact(artifact.id) },
                             onClose: nil,
                             accessibilityId: "side.tab.artifact.\(artifact.name)"
@@ -106,7 +119,7 @@ private struct PanelTab: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(MC.faint)
-                .help("Close thread")
+                .help("Close tab")
             }
         }
         .frame(maxWidth: 180)

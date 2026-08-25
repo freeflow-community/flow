@@ -269,6 +269,13 @@ export const ListMessagesQuery = z.object({
 });
 export type ListMessagesQuery = z.infer<typeof ListMessagesQuery>;
 
+export const ListChannelFilesQuery = z.object({
+  sort: z.enum(['newest', 'oldest', 'name', 'size']).default('newest'),
+  before: z.string().optional(), // opaque cursor from the previous page
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
+export type ListChannelFilesQuery = z.infer<typeof ListChannelFilesQuery>;
+
 export const ListThreadQuery = z.object({
   after: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),

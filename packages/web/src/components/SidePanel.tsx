@@ -1,5 +1,5 @@
-// Tabbed side panel (phase 13): the right-hand pane that hosts the open Thread
-// and the channel's artifacts as switchable tabs. It owns the panel chrome —
+// Tabbed side panel (phase 13): the right-hand pane that hosts the open Thread,
+// the channel's artifacts and its Files list (#347) as switchable tabs. It owns the panel chrome —
 // width + left-edge resizer, the tab strip, and the panel close — and renders
 // the active tab's body (ThreadPanel embedded, or an ArtifactBody). Threads and
 // artifacts coexist; the tab strip picks which one shows.
@@ -9,6 +9,7 @@ import { useMobileNav, useSelection } from '../state';
 import { useArtifacts } from '../hooks';
 import ThreadPanel from './ThreadPanel';
 import ArtifactBody from './ArtifactView';
+import FilesPanel from './FilesPanel';
 
 const WIDTH_KEY = 'flow.sidePanelWidth';
 const DEFAULT_WIDTH = 480;
@@ -28,7 +29,7 @@ export default function SidePanel() {
   // Tabs = the open thread (if any) + every artifact pinned in the active
   // channel, so you can switch to any of them.
   const channelArtifacts = (artifacts.data ?? []).filter((a) => a.channelId === sel.channelId);
-  const threadActive = !sel.artifactId && !!sel.threadRootId;
+  const threadActive = !sel.artifactId && !sel.filesOpen && !!sel.threadRootId;
 
   return (
     <aside
@@ -75,13 +76,23 @@ export default function SidePanel() {
               onClose={() => sel.openThread(null)}
             />
           )}
+          {sel.filesOpen && (
+            <PanelTab
+              testid="side-tab-files"
+              icon="📎"
+              label="Files"
+              active={sel.filesOpen}
+              onClick={() => sel.openFiles(true)}
+              onClose={() => sel.openFiles(false)}
+            />
+          )}
           {channelArtifacts.map((a) => (
             <PanelTab
               key={a.id}
               testid={`side-tab-artifact-${a.name}`}
               icon={fileGlyph(a.file)}
               label={a.name}
-              active={sel.artifactId === a.id}
+              active={!sel.filesOpen && sel.artifactId === a.id}
               onClick={() => sel.selectArtifact(a.id)}
             />
           ))}
@@ -96,7 +107,9 @@ export default function SidePanel() {
         </button>
       </div>
 
-      {sel.artifactId ? (
+      {sel.filesOpen && sel.channelId ? (
+        <FilesPanel key={sel.channelId} channelId={sel.channelId} />
+      ) : sel.artifactId ? (
         <ArtifactBody key={sel.artifactId} artifactId={sel.artifactId} />
       ) : sel.threadRootId ? (
         <ThreadPanel key={sel.threadRootId} rootId={sel.threadRootId} embedded />
