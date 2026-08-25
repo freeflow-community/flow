@@ -227,11 +227,28 @@ export default function Main() {
       case 'channel.updated':
       case 'channel.archived':
       case 'member.joined':
-      case 'member.left':
+      case 'member.left': {
+        // Our own workspace-level departure (#340) — left from another client,
+        // or removed by an admin. Drop the workspace before refetching, so no
+        // render sees a selection pointing at one we can no longer read, and
+        // *remove* its caches rather than invalidating them: an invalidate
+        // refetches, and every one of those refetches is now a 404.
+        const left = event.data as { userId?: string } | undefined;
+        if (event.type === 'member.left' && !event.channelId && left?.userId === auth.user.id) {
+          if (cur.workspaceId === event.workspaceId) cur.selectWorkspace(null);
+          const gone = qc.getQueryData<{ channels: ChannelDTO[] }>(['channels', event.workspaceId]);
+          for (const c of gone?.channels ?? []) qc.removeQueries({ queryKey: ['channelMembers', c.id] });
+          qc.removeQueries({ queryKey: ['channels', event.workspaceId] });
+          qc.removeQueries({ queryKey: ['members', event.workspaceId] });
+          qc.removeQueries({ queryKey: ['artifacts', event.workspaceId] });
+          void qc.invalidateQueries({ queryKey: ['workspaces'] });
+          break;
+        }
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         void qc.invalidateQueries({ queryKey: ['members', event.workspaceId] });
         void qc.invalidateQueries({ queryKey: ['channelMembers'] });
         break;
+      }
       case 'member.updated':
         // Role change (admin panel): refresh the roster, and the workspace list
         // so the affected member's own menu gating (owner/admin) re-derives.

@@ -26,6 +26,7 @@ struct SidebarDrawer: View {
     /// The channel whose "Invite to Channel…" sheet is open (long-press a row).
     @State private var inviteChannel: Channel?
     @State private var showFeatures = false
+    @State private var confirmLeaveWorkspace = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
 
@@ -41,6 +42,12 @@ struct SidebarDrawer: View {
     }
     private var palette: SidebarPalette {
         SidebarPalette.palette(for: currentWorkspace?.sidebarColor)
+    }
+
+    /// The owner can't walk out on their own workspace (#340) — no
+    /// ownership-transfer flow yet, so leaving would strand it.
+    private var isWorkspaceOwner: Bool {
+        currentWorkspace?.role == "owner"
     }
 
     /// Joined standard channels in sidebar order — sub-channels (#118) follow
@@ -147,6 +154,19 @@ struct SidebarDrawer: View {
         .sheet(item: $inviteChannel) { InviteToChannelSheet(channel: $0) }
         .modifier(DebugOpenNewDm { showNewDm = true })
         .sheet(isPresented: $showFeatures) { FeaturesSheet() }
+        // `.alert`, not `.confirmationDialog`: hung off the drawer the dialog
+        // adapts to a *popover*, which drops the cancel button entirely and
+        // leaves tapping outside as the only way back (#340). An alert always
+        // renders both choices.
+        .alert(
+            "Leave \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmLeaveWorkspace
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Leave Workspace", role: .destructive) { leaveWorkspace() }
+        } message: {
+            Text("You'll lose access to all its channels. Your past messages will remain.")
+        }
     }
 
     // MARK: - Sidebar column
@@ -228,6 +248,17 @@ struct SidebarDrawer: View {
                 .disabled(app.selectedWorkspaceId == nil)
                 .accessibilityIdentifier("sidebar.invitePeople")
             Button("Add Workspace…") { showAddWorkspace = true }
+            if currentWorkspace != nil {
+                // Destructive, and disabled for the owner with the reason in
+                // the label — a menu item has nowhere else to put a hint
+                // (web + macOS parity, #340).
+                Button(
+                    isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                    role: .destructive
+                ) { confirmLeaveWorkspace = true }
+                    .disabled(isWorkspaceOwner)
+                    .accessibilityIdentifier("sidebar.leaveWorkspace")
+            }
             Divider()
             // Version tag + release notes (web + macOS parity: macOS hangs the
             // sheet off the version label at the foot of this same menu).
@@ -471,6 +502,22 @@ struct SidebarDrawer: View {
     private func open(_ channelId: String) {
         app.selectChannel(channelId)
         onSelect()
+    }
+
+    /// Confirmed departure (#340): the engine leaves, clears the local mirror
+    /// and reports where to land; `workspaceBecameUnavailable` moves the
+    /// window. Closing the drawer afterwards puts the new workspace on screen.
+    private func leaveWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.leaveWorkspace(ws.id)
+                app.workspaceBecameUnavailable(ws.id, landOn: next)
+                onSelect()
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
     }
 
     private func join(_ channel: Channel) {

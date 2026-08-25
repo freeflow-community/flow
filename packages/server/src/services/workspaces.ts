@@ -417,6 +417,45 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
   });
 }
 
+/**
+ * Self-service departure (#340): the caller removes themselves from
+ * `workspaceId`. Same cascade as the admin path — `removeMemberDeep` revokes
+ * every channel membership, cleans up dead 1:1 DMs, retires the unread signal
+ * and publishes `member.left` — and their messages stay, still attributed.
+ *
+ * Two deliberate differences from `removeMember` and from `deleteMyAccount`:
+ *
+ *  - **No tombstone.** Admin removal tombstones a member whose last workspace
+ *    this was (decision_log 2026-07-21) — reasonable when someone else is
+ *    ending your relationship with the product, wrong when you are only
+ *    leaving one room. Leaving your last workspace must not silently delete
+ *    your account; the account survives and the client lands on the empty
+ *    state.
+ *  - **No ownership transfer.** `deleteMyAccount` hands a departing owner's
+ *    workspace to the longest-standing admin, because deletion has to be
+ *    completable in-app. Leaving does not: the owner is refused and told to
+ *    transfer ownership first (#340 leaves that flow for later).
+ *
+ * The sponsor-departure cascade still applies — the agents you sponsor here go
+ * with you (AGENT_MEMBERS.md), same as every other way of leaving.
+ */
+export async function leaveWorkspace(workspaceId: string, userId: string): Promise<void> {
+  const m = await requireMembership(workspaceId, userId);
+  if (m.role === 'owner') {
+    throw forbidden('the workspace owner cannot leave — transfer ownership first');
+  }
+  const [u] = await db
+    .select({ isBot: users.isBot, isAgent: users.isAgent })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (u?.isBot || u?.isAgent) {
+    throw forbidden('agent accounts are removed by their sponsor or a workspace admin');
+  }
+  await removeSponsoredAgents(workspaceId, userId);
+  await removeMemberDeep(workspaceId, userId);
+}
+
 /** Owner/admin only (spec permission rules). Returns invite URL with raw token (shown once). */
 export async function createInvite(workspaceId: string, inviterId: string, email: string): Promise<InviteDTO> {
   const m = await requireMembership(workspaceId, inviterId);

@@ -494,6 +494,14 @@ final class AppState: ObservableObject {
         windows.forEach { $0.channelBecameUnavailable(channelId) }
     }
 
+    /// A workspace we left (#340) — every window showing it moves to `landOn`,
+    /// or to the chooser when that was the last one. Its Activity badge goes
+    /// with it: the count belongs to a workspace we can no longer read.
+    func workspaceBecameUnavailable(_ workspaceId: String, landOn: String?) {
+        notificationUnreadByWorkspace.removeValue(forKey: workspaceId)
+        windows.forEach { $0.workspaceBecameUnavailable(workspaceId, landOn: landOn) }
+    }
+
     /// A tapped OS banner routes to the key window (see `AppDelegate`) — the
     /// window the user last worked in is where the jump should happen.
     func openNotification(workspaceId: String, channelId: String, messageId: String, threadRootId: String?) {
