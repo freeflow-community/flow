@@ -30,11 +30,14 @@ const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
 const ch = await import('../src/services/channels.js');
 const msg = await import('../src/services/messages.js');
-const { eq } = await import('drizzle-orm');
+const { newId } = await import('../src/lib/ids.js');
+const { eq, inArray } = await import('drizzle-orm');
 
-const { messages } = schema;
+const { messages, notifications, reactions, workspaceMembers } = schema;
 
 let userId = '';
+let adminId = '';
+let memberId = '';
 let channelId = '';
 let cmid = 0;
 const nextCmid = (): string =>
@@ -56,6 +59,23 @@ beforeEach(async () => {
   const wsDto = await ws.createWorkspace(userId, 'WS', `ws-${Date.now()}`);
   const chan = await ch.createChannel(wsDto.id, userId, `chan-${Date.now()}`);
   channelId = chan.id;
+  const admin = await auth.register('admin@example.test', {
+    password: 'password123',
+    displayName: 'Admin',
+    autoVerify: true,
+  });
+  const member = await auth.register('member@example.test', {
+    password: 'password123',
+    displayName: 'Member',
+    autoVerify: true,
+  });
+  if (!('token' in admin) || !('token' in member)) throw new Error('expected autoVerify sessions');
+  adminId = admin.user.id;
+  memberId = member.user.id;
+  await db.insert(workspaceMembers).values([
+    { workspaceId: wsDto.id, userId: adminId, role: 'admin' },
+    { workspaceId: wsDto.id, userId: memberId, role: 'member' },
+  ]);
 });
 
 afterAll(async () => {
@@ -102,17 +122,60 @@ describe('hard delete / purge', () => {
     expect(rootRow!.lastReplyAt?.toISOString()).toBe(first.createdAt); // recomputed to the survivor
   });
 
-  it('enforces author-only, same as soft delete', async () => {
-    const other = await auth.register('intruder@example.test', {
-      password: 'password123',
-      displayName: 'Intruder',
-      autoVerify: true,
-    });
-    if (!('token' in other)) throw new Error('expected autoVerify session');
+  it('does not let an ordinary member permanently delete another author', async () => {
     const m = await msg.sendMessage(channelId, userId, nextCmid(), 'mine');
-    await expect(msg.deleteMessage(m.id, other.user.id, { hard: true })).rejects.toThrow();
+    await expect(msg.deleteMessage(m.id, memberId, { hard: true })).rejects.toThrow();
     // still present
     const rows = await db.select().from(messages).where(eq(messages.id, m.id));
     expect(rows.length).toBe(1);
+  });
+
+  it.each(['owner', 'admin'] as const)('%s can permanently delete another member’s message', async (role) => {
+    const m = await msg.sendMessage(channelId, memberId, nextCmid(), 'moderate me');
+    await msg.deleteMessage(m.id, role === 'owner' ? userId : adminId, { hard: true });
+    expect(await db.select().from(messages).where(eq(messages.id, m.id))).toHaveLength(0);
+  });
+
+  it('requires the explicit purge mode when an admin deletes another author', async () => {
+    const m = await msg.sendMessage(channelId, memberId, nextCmid(), 'not a soft moderation action');
+    await expect(msg.deleteMessage(m.id, adminId)).rejects.toThrow();
+    expect(await db.select().from(messages).where(eq(messages.id, m.id))).toHaveLength(1);
+  });
+
+  it('lets an admin remove an existing soft-delete tombstone', async () => {
+    const m = await msg.sendMessage(channelId, memberId, nextCmid(), 'first soft, then gone');
+    await msg.deleteMessage(m.id, memberId);
+    let rows = await db.select().from(messages).where(eq(messages.id, m.id));
+    expect(rows[0]!.deletedAt).not.toBeNull();
+
+    await msg.deleteMessage(m.id, adminId, { hard: true });
+    rows = await db.select().from(messages).where(eq(messages.id, m.id));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('permanently deleting a root removes the complete thread', async () => {
+    const root = await msg.sendMessage(channelId, memberId, nextCmid(), 'bad bot root');
+    const one = await msg.sendMessage(channelId, userId, nextCmid(), 'first reply', root.id);
+    const two = await msg.sendMessage(channelId, adminId, nextCmid(), 'second reply', root.id);
+    await db.insert(reactions).values({ messageId: one.id, userId: memberId, emoji: '👍' });
+    await db.insert(notifications).values({
+      id: newId(),
+      userId: memberId,
+      messageId: two.id,
+      channelId,
+      kind: 2,
+      actorId: adminId,
+    });
+
+    await msg.deleteMessage(root.id, adminId, { hard: true });
+
+    const targetIds = [root.id, one.id, two.id];
+    const rows = await db
+      .select()
+      .from(messages)
+      .where(inArray(messages.id, targetIds));
+    expect(rows).toHaveLength(0);
+    expect(await db.select().from(reactions).where(inArray(reactions.messageId, targetIds))).toHaveLength(0);
+    expect(await db.select().from(notifications).where(inArray(notifications.messageId, targetIds))).toHaveLength(0);
   });
 });

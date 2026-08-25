@@ -132,9 +132,15 @@ export default function Main() {
     const cur = selRef.current;
     switch (event.type) {
       case 'message.purged': {
-        // Hard delete: remove the message entirely (no tombstone). Used for
-        // the agent's ephemeral "thinking…" status.
-        removeMessageFromCache(qc, event.data as MessageDTO);
+        // Hard delete: remove the message entirely (no tombstone). This covers
+        // agent status cleanup and owner/admin moderation.
+        const msg = event.data as MessageDTO;
+        removeMessageFromCache(qc, msg);
+        if (msg.threadRootId === null && cur.threadRootId === msg.id) cur.openThread(null);
+        void qc.invalidateQueries({ queryKey: ['messages', msg.channelId] });
+        if (msg.threadRootId) void qc.invalidateQueries({ queryKey: ['thread', msg.threadRootId] });
+        void qc.invalidateQueries({ queryKey: ['notifications'] });
+        void refreshNotificationBadge();
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         break;
       }

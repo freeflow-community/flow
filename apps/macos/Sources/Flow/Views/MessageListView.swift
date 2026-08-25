@@ -6,12 +6,13 @@ struct MessageListView: View {
     let userNames: [String: String]
     var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
     let hasMore: Bool
     let showThreadAffordances: Bool
     let onLoadOlder: () -> Void
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     /// Tapping a sender's avatar opens their profile (ui_nits).
     var onOpenProfile: (String) -> Void = { _ in }
     /// Enables per-channel scroll-position memory (channels pass their id;
@@ -100,6 +101,7 @@ struct MessageListView: View {
                                     userNames: userNames,
                                     userStatuses: userStatuses,
                                     currentUserId: currentUserId,
+                                    canPermanentlyDelete: canPermanentlyDelete,
                                     showHeader: showsHeader(at: index),
                                     showThreadAffordances: showThreadAffordances,
                                     highlighted: message.id == flashId,
@@ -329,13 +331,14 @@ struct MessageRow: View {
     let userNames: [String: String]
     var userStatuses: [String: String] = [:]
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
     let showHeader: Bool
     let showThreadAffordances: Bool
     /// Flashing after a jump-to-message (phase 12).
     var highlighted: Bool = false
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     var onOpenProfile: (String) -> Void = { _ in }
 
     @EnvironmentObject private var app: AppState
@@ -347,6 +350,17 @@ struct MessageRow: View {
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
+    private var deleteMode: MessageDeleteMode? {
+        MessageDeletePolicy.mode(
+            isMine: isMine,
+            isDeleted: message.isDeleted,
+            isSystem: message.systemKind != nil,
+            canPermanentlyDelete: canPermanentlyDelete
+        )
+    }
+    private var deleteLabel: String {
+        deleteMode == .permanent ? "Permanently Delete" : "Delete"
+    }
 
     /// Hover-menu hysteresis (ui_nits: menu "stutters"/blinks while hovering).
     /// The toolbar is an overlay pinned to the row's top-trailing edge, so the
@@ -504,20 +518,28 @@ struct MessageRow: View {
         // down (operator-reported bug at the item-6 checkpoint).
         .overlay(alignment: .topTrailing) {
             if hovering || showReactionPicker || showDeleteConfirm,
-               !message.isDeleted, !message.pending, !message.failed {
+               (!message.isDeleted || deleteMode == .permanent), !message.pending, !message.failed {
                 hoverMenu
                     .padding(.trailing, 22)
             }
         }
         .confirmationDialog(
-            "Delete this message?",
+            deleteMode == .permanent ? "Permanently delete this message?" : "Delete this message?",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) { onDelete(message) }
+            Button(deleteLabel, role: .destructive) {
+                onDelete(message, deleteMode == .permanent)
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This can't be undone.")
+            if deleteMode == .permanent, message.threadRootId == nil, message.replyCount > 0 {
+                Text("This will permanently delete the message and all \(message.replyCount) replies. This can't be undone.")
+            } else if deleteMode == .permanent {
+                Text("This message will disappear for everyone. This can't be undone.")
+            } else {
+                Text("The message will be replaced by a deletion notice.")
+            }
         }
         .contextMenu {
             if !message.isDeleted, !message.pending, !message.failed {
@@ -549,7 +571,9 @@ struct MessageRow: View {
             }
             if isMine, !message.isDeleted, !message.pending {
                 Button("Edit…") { onEdit(message) }
-                Button("Delete", role: .destructive) { showDeleteConfirm = true }
+            }
+            if deleteMode != nil, !message.pending {
+                Button(deleteLabel, role: .destructive) { showDeleteConfirm = true }
             }
         }
     }
@@ -565,71 +589,75 @@ struct MessageRow: View {
     /// edit / delete gated by the same conditions.
     private var hoverMenu: some View {
         HStack(spacing: 2) {
-            ForEach(Self.quickReactions, id: \.self) { emoji in
-                MenuIconButton(help: "React \(emoji)") {
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+            if !message.isDeleted {
+                ForEach(Self.quickReactions, id: \.self) { emoji in
+                    MenuIconButton(help: "React \(emoji)") {
+                        Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                    } label: {
+                        Text(emoji)
+                    }
+                    .accessibilityIdentifier("msg.quickReact.\(emoji)")
+                }
+
+                Rectangle()
+                    .fill(MC.hairline)
+                    .frame(width: 1, height: 22)
+                    .padding(.horizontal, 2)
+
+                MenuIconButton(help: "Add reaction") {
+                    showReactionPicker = true
                 } label: {
-                    Text(emoji)
+                    Text("🙂")
                 }
-                .accessibilityIdentifier("msg.quickReact.\(emoji)")
-            }
+                .accessibilityIdentifier("msg.addReaction")
+                .popover(isPresented: $showReactionPicker) {
+                    EmojiPickerView { emoji in
+                        showReactionPicker = false
+                        Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                    }
+                }
 
-            Rectangle()
-                .fill(MC.hairline)
-                .frame(width: 1, height: 22)
-                .padding(.horizontal, 2)
+                if showThreadAffordances {
+                    MenuIconButton(help: "Reply in thread") {
+                        onOpenThread(message.threadRootId ?? message.id)
+                    } label: {
+                        Text("💬")
+                    }
+                    .accessibilityIdentifier("msg.replyInThread")
+                }
 
-            MenuIconButton(help: "Add reaction") {
-                showReactionPicker = true
-            } label: {
-                Text("🙂")
-            }
-            .accessibilityIdentifier("msg.addReaction")
-            .popover(isPresented: $showReactionPicker) {
-                EmojiPickerView { emoji in
-                    showReactionPicker = false
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                if !message.body.isEmpty {
+                    MenuIconButton(help: "Copy text") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.body, forType: .string)
+                    } label: {
+                        Text("📋")
+                    }
+                    .accessibilityIdentifier("msg.copy")
+                }
+
+                if !message.files.isEmpty {
+                    MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
+                        // Web draws this one as an inline SVG (box + leaving arrow);
+                        // the matching SF Symbol keeps the same open-external read.
+                        Image(systemName: "arrow.up.right.square")
+                            .flowFont(size: 15)
+                            .foregroundStyle(MC.inkSoft)
+                    }
+                    .accessibilityIdentifier("msg.saveArtifact")
+                }
+
+                if isMine {
+                    MenuIconButton(help: "Edit") {
+                        onEdit(message)
+                    } label: {
+                        Text("✏️")
+                    }
+                    .accessibilityIdentifier("msg.edit")
                 }
             }
-
-            if showThreadAffordances {
-                MenuIconButton(help: "Reply in thread") {
-                    onOpenThread(message.threadRootId ?? message.id)
-                } label: {
-                    Text("💬")
-                }
-                .accessibilityIdentifier("msg.replyInThread")
-            }
-
-            if !message.body.isEmpty {
-                MenuIconButton(help: "Copy text") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.body, forType: .string)
-                } label: {
-                    Text("📋")
-                }
-                .accessibilityIdentifier("msg.copy")
-            }
-
-            if !message.files.isEmpty {
-                MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
-                    // Web draws this one as an inline SVG (box + leaving arrow);
-                    // the matching SF Symbol keeps the same open-external read.
-                    Image(systemName: "arrow.up.right.square")
-                        .flowFont(size: 15)
-                        .foregroundStyle(MC.inkSoft)
-                }
-                .accessibilityIdentifier("msg.saveArtifact")
-            }
-
-            if isMine {
-                MenuIconButton(help: "Edit") {
-                    onEdit(message)
-                } label: {
-                    Text("✏️")
-                }
-                .accessibilityIdentifier("msg.edit")
-                MenuIconButton(help: "Delete") {
+            if deleteMode != nil {
+                MenuIconButton(help: deleteLabel) {
                     showDeleteConfirm = true
                 } label: {
                     Text("🗑")

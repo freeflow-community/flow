@@ -45,7 +45,11 @@ struct ActivityFeedView: View {
         // task(id:) → refetches whenever a new notification arrives while we're
         // open, or the workspace changes; marking read below bumps the count to
         // 0, which settles here.
-        .task(id: FeedKey(unread: app.notificationUnread, workspaceId: app.selectedWorkspaceId)) {
+        .task(id: FeedKey(
+            unread: app.notificationUnread,
+            revision: app.notificationRevision,
+            workspaceId: app.selectedWorkspaceId
+        )) {
             defer { loading = false }
             if let resp = try? await app.engine.fetchNotifications(
                 workspaceId: app.selectedWorkspaceId
@@ -72,6 +76,7 @@ struct ActivityFeedView: View {
     /// workspace is a different feed).
     private struct FeedKey: Equatable {
         let unread: Int
+        let revision: Int
         let workspaceId: String?
     }
 

@@ -6,6 +6,7 @@ import {
   applyTopLevel,
   markSendFailed,
   pendingId,
+  removeMessageFromCache,
   removePendingMessage,
   type LocalMessage,
   type MessagesData,
@@ -184,5 +185,63 @@ describe('removePendingMessage', () => {
     removePendingMessage(qc, 'chan-1', 'cm-d', 'root-3');
     expect(qc.getQueryData<ThreadData>(['thread', 'root-3'])!.messages).toHaveLength(0);
     expect(channelCache(qc).find((m) => m.id === 'root-3')!.replyCount).toBe(0);
+  });
+});
+
+describe('removeMessageFromCache', () => {
+  it('permanently removes a root and its cached thread', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-purge', replyCount: 1 });
+    const reply = msg({ id: 'reply-purge', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [reply], hasMore: false });
+
+    removeMessageFromCache(qc, root);
+
+    expect(channelCache(qc)).toHaveLength(0);
+    expect(qc.getQueryData(['thread', root.id])).toBeUndefined();
+  });
+
+  it('removes one reply and exactly recomputes the cached root rollup', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-reply-purge', replyCount: 2 });
+    const first = msg({
+      id: 'reply-first',
+      threadRootId: root.id,
+      userId: 'user-b',
+      createdAt: '2026-08-25T01:00:00.000Z',
+    });
+    const last = msg({
+      id: 'reply-last',
+      threadRootId: root.id,
+      userId: 'user-c',
+      createdAt: '2026-08-25T02:00:00.000Z',
+    });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [first, last], hasMore: false });
+
+    removeMessageFromCache(qc, last);
+    removeMessageFromCache(qc, last); // API response + websocket echo
+
+    const thread = qc.getQueryData<ThreadData>(['thread', root.id])!;
+    expect(thread.messages.map((m) => m.id)).toEqual([first.id]);
+    expect(thread.root.replyCount).toBe(1);
+    expect(thread.root.lastReplyAt).toBe(first.createdAt);
+    expect(thread.root.replyParticipantUserIds).toEqual(['user-b']);
+    expect(channelCache(qc).find((m) => m.id === root.id)!.replyCount).toBe(1);
+  });
+
+  it('decrements a partially loaded thread without replacing the server reply count', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-partial', replyCount: 250, lastReplyAt: '2026-08-25T03:00:00.000Z' });
+    const loaded = msg({ id: 'reply-loaded', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [loaded], hasMore: true });
+
+    removeMessageFromCache(qc, loaded);
+
+    const cachedRoot = qc.getQueryData<ThreadData>(['thread', root.id])!.root;
+    expect(cachedRoot.replyCount).toBe(249);
+    expect(cachedRoot.lastReplyAt).toBe(root.lastReplyAt);
   });
 });

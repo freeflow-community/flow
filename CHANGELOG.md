@@ -10,6 +10,13 @@ Keep entries very succinct — one or two lines each: what changed, plus the why
 only when it isn't obvious. Reasoning, investigation notes and file lists go in
 the commit message, not here. This is a ledger to scan, not a narrative.
 
+### 2026-08-25 — Permanent message moderation
+
+- Workspace owners and admins can permanently remove visible user, bot, or
+  agent messages and tombstones; purging a root removes its full thread. `[server] [web] [macos] [ios]`
+- Purges reconcile attachments, Activity rows, unread badges, thread rollups,
+  and connected-client caches. `[server] [web] [macos] [ios] [qa]`
+
 ## Parity
 
 ### Gaps to close

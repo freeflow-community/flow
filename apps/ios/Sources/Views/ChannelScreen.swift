@@ -9,6 +9,7 @@ struct ChannelScreen: View {
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
+    @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var threadRoute: ThreadRoute?
 
@@ -42,6 +43,7 @@ struct ChannelScreen: View {
                     userNames: usersById.mapValues { $0.displayNameWithBadge },
                     userStatuses: statusesById,
                     currentUserId: app.currentUser?.id,
+                    canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
                     hasMore: app.hasMore[channelId] ?? false,
                     showThreadAffordances: true,
                     onLoadOlder: {
@@ -51,8 +53,8 @@ struct ChannelScreen: View {
                         threadRoute = ThreadRoute(rootId: rootId)
                     },
                     onEdit: { editingMessage = $0 },
-                    onDelete: { msg in
-                        Task { await app.engine.deleteMessage(id: msg.id) }
+                    onDelete: { msg, permanently in
+                        Task { await app.engine.deleteMessage(id: msg.id, permanently: permanently) }
                     },
                     // Jump-to-message (phase 12): the Activity feed only sets a
                     // target for top-level messages on iOS (thread replies live
@@ -100,6 +102,13 @@ struct ChannelScreen: View {
             }
             users.start(db: app.db) { try User.fetchAll($0) }
             channel.start(db: app.db) { try Channel.filter(key: channelId).fetchOne($0) }
+            currentRole.start(db: app.db, reset: nil) { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT w.role FROM workspace w JOIN channel c ON c.workspaceId = w.id WHERE c.id = ?",
+                    arguments: [channelId]
+                )
+            }
             messages.start(db: app.db, reset: []) { db in
                 try Message
                     .filter(Column("channelId") == channelId && Column("threadRootId") == nil)

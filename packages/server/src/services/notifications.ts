@@ -414,6 +414,33 @@ async function unreadCount(userId: string, workspaceId?: string | undefined): Pr
 }
 
 /**
+ * A hard-deleted message cascades its notification rows out of the database.
+ * Reuse the existing notification.read convergence event so older clients
+ * invalidate Activity and refresh their badges too. The ids name rows that
+ * were retired rather than flipped to read, but the client response is the
+ * same: refetch the server-authoritative list and count.
+ */
+export async function publishNotificationRetirements(
+  retired: Array<{ id: string; userId: string }>,
+  workspaceId: string,
+  channelId: string,
+): Promise<void> {
+  if (retired.length === 0) return;
+  const byUser = new Map<string, string[]>();
+  for (const row of retired) byUser.set(row.userId, [...(byUser.get(row.userId) ?? []), row.id]);
+  const readAt = new Date().toISOString();
+  for (const [userId, ids] of byUser) {
+    publishEvent(subjectUserNotify(userId), {
+      type: 'notification.read',
+      workspaceId,
+      channelId,
+      ts: readAt,
+      data: { ids, unreadCount: await unreadCount(userId), readAt },
+    });
+  }
+}
+
+/**
  * Flip the rows matched by `where` to read and tell every session of this user
  * (badge + Activity list). No rows changed → no event: the implicit
  * channel/thread paths run on every read-cursor bump and are usually no-ops.

@@ -7,7 +7,8 @@ import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
 import { useSendMessage, useToggleReaction } from '../hooks';
-import type { LocalMessage } from '../lib/messageCache';
+import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
+import { messageDeleteMode } from '../lib/messagePermissions';
 import { Avatar, AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
@@ -323,7 +324,10 @@ function MessageRow({
   // menu while it's the one loaded in the composer.
   const editing = sel.editingMessageId === message.id;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const mine = message.userId === auth.user.id;
+  const deleteMode = messageDeleteMode(message, auth.user.id, membersById[auth.user.id]?.role);
   const sender = names[message.userId] ?? 'Unknown';
   const member = membersById[message.userId];
   // Optimistic row awaiting the server echo: dimmed, actions suppressed.
@@ -337,6 +341,29 @@ function MessageRow({
   const stopping = message.reactions.some(
     (r) => r.emoji === INTERRUPT_EMOJI && r.userIds.includes(auth.user.id),
   );
+
+  const deleteSelectedMessage = async () => {
+    if (!deleteMode || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api('DELETE', `/v1/messages/${message.id}${deleteMode === 'permanent' ? '?purge=true' : ''}`);
+      if (deleteMode === 'permanent') {
+        removeMessageFromCache(qc, message);
+        if (message.threadRootId === null && sel.threadRootId === message.id) sel.openThread(null);
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ['messages', message.channelId] }),
+          qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] }),
+          qc.invalidateQueries({ queryKey: ['notifications'] }),
+        ]);
+      }
+      setConfirmDelete(false);
+    } catch (err) {
+      setDeleteError((err as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // Pin the message's file(s) as shared artifacts in this channel (phase 13);
   // the new artifact opens in the side panel automatically.
@@ -521,79 +548,86 @@ function MessageRow({
         )}
       </div>
 
-      {!message.deletedAt && !editing && !pending && !failed && (
+      {!editing && !pending && !failed && (!message.deletedAt || deleteMode === 'permanent') && (
         <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
-          {QUICK_REACTIONS.map((emoji) => {
-            const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
-            return (
-              <button
-                key={emoji}
-                data-testid={`quick-react-${emoji}-${message.id}`}
-                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-                title={`React ${emoji}`}
-                onClick={() => toggle.mutate({ message, emoji, mine: mineR })}
-              >
-                {emoji}
-              </button>
-            );
-          })}
-          <div className="mx-0.5 h-6 w-px self-center bg-hairline" />
-          <button
-            data-testid={`add-reaction-${message.id}`}
-            className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-            title="Add reaction"
-            onClick={() => setShowPicker(true)}
-          >
-            🙂
-          </button>
-          {showThreadAffordances && (
-            <button
-              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title="Reply in thread"
-              onClick={() => sel.openThread(message.threadRootId ?? message.id)}
-            >
-              💬
-            </button>
-          )}
-          {message.body && (
-            <button
-              data-testid={`copy-message-${message.id}`}
-              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title="Copy text"
-              onClick={() => void navigator.clipboard?.writeText(message.body)}
-            >
-              📋
-            </button>
-          )}
-          {message.files.length > 0 && (
-            <button
-              data-testid={`pin-artifact-${message.id}`}
-              className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title="Pin as artifact"
-              onClick={() => void pinFiles()}
-            >
-              <ExternalLinkIcon />
-            </button>
-          )}
-          {mine && (
+          {!message.deletedAt && (
             <>
+              {QUICK_REACTIONS.map((emoji) => {
+                const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
+                return (
+                  <button
+                    key={emoji}
+                    data-testid={`quick-react-${emoji}-${message.id}`}
+                    className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                    title={`React ${emoji}`}
+                    onClick={() => toggle.mutate({ message, emoji, mine: mineR })}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+              <div className="mx-0.5 h-6 w-px self-center bg-hairline" />
               <button
-                data-testid={`edit-message-${message.id}`}
+                data-testid={`add-reaction-${message.id}`}
                 className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-                title="Edit"
-                onClick={() => sel.setEditingMessage(message.id)}
+                title="Add reaction"
+                onClick={() => setShowPicker(true)}
               >
-                ✏️
+                🙂
               </button>
-              <button
-                data-testid={`delete-message-${message.id}`}
-                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-                title="Delete"
-                onClick={() => setConfirmDelete(true)}
-              >
-                🗑
-              </button>
+              {showThreadAffordances && (
+                <button
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Reply in thread"
+                  onClick={() => sel.openThread(message.threadRootId ?? message.id)}
+                >
+                  💬
+                </button>
+              )}
+              {message.body && (
+                <button
+                  data-testid={`copy-message-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Copy text"
+                  onClick={() => void navigator.clipboard?.writeText(message.body)}
+                >
+                  📋
+                </button>
+              )}
+              {message.files.length > 0 && (
+                <button
+                  data-testid={`pin-artifact-${message.id}`}
+                  className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Pin as artifact"
+                  onClick={() => void pinFiles()}
+                >
+                  <ExternalLinkIcon />
+                </button>
+              )}
+              {mine && (
+                <button
+                  data-testid={`edit-message-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Edit"
+                  onClick={() => sel.setEditingMessage(message.id)}
+                >
+                  ✏️
+                </button>
+              )}
             </>
+          )}
+          {deleteMode && (
+            <button
+              data-testid={`delete-message-${message.id}`}
+              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+              title={deleteMode === 'permanent' ? 'Permanently delete' : 'Delete'}
+              onClick={() => {
+                setDeleteError(null);
+                setConfirmDelete(true);
+              }}
+            >
+              🗑
+            </button>
           )}
         </div>
       )}
@@ -602,19 +636,27 @@ function MessageRow({
 
       {confirmDelete && (
         <Modal onClose={() => setConfirmDelete(false)} testid="delete-confirm-modal">
-          <h3 className="mb-2 font-bold">Delete message?</h3>
-          <p className="mb-3 text-sm text-muted">This can't be undone.</p>
+          <h3 className="mb-2 font-bold">
+            {deleteMode === 'permanent' ? 'Permanently delete message?' : 'Delete message?'}
+          </h3>
+          <p className="mb-3 text-sm text-muted">
+            {deleteMode === 'permanent' && message.threadRootId === null && message.replyCount > 0
+              ? `This will permanently delete the message and all ${message.replyCount} replies.`
+              : deleteMode === 'permanent'
+                ? 'This message will disappear for everyone.'
+                : 'The message will be replaced by a deletion notice.'}{' '}
+            This can&apos;t be undone.
+          </p>
+          {deleteError && <p className="mb-3 text-sm text-red-600">{deleteError}</p>}
           <div className="flex justify-end gap-2">
-            <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={() => setConfirmDelete(false)}>Cancel</button>
+            <button disabled={deleting} className="px-3 py-1.5 text-sm text-ink-soft" onClick={() => setConfirmDelete(false)}>Cancel</button>
             <button
               data-testid="delete-confirm"
+              disabled={deleting}
               className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white"
-              onClick={() => {
-                setConfirmDelete(false);
-                void api('DELETE', `/v1/messages/${message.id}`);
-              }}
+              onClick={() => void deleteSelectedMessage()}
             >
-              Delete
+              {deleting ? 'Deleting…' : deleteMode === 'permanent' ? 'Permanently delete' : 'Delete'}
             </button>
           </div>
         </Modal>

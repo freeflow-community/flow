@@ -157,18 +157,42 @@ export function removeMessageFromCache(qc: QueryClient, msg: MessageDTO): void {
         ? { ...old, pages: old.pages.map((p) => ({ ...p, messages: p.messages.filter((m) => m.id !== msg.id) })) }
         : old,
     );
+    // A permanent root delete removes the whole thread on the server. Drop an
+    // open/cached thread too so replies cannot linger after the root vanishes.
+    qc.removeQueries({ queryKey: ['thread', msg.id], exact: true });
     return;
   }
   const rootId = msg.threadRootId;
+  // If the thread cache exists it is our idempotency marker: the API response
+  // may remove a reply immediately, then its websocket echo arrives later.
+  // Only the first call that actually finds the row adjusts the channel root.
+  // With no thread cache (the common remote-session case), the event still
+  // needs to decrement the visible channel rollup.
+  let adjustChannelRoot = true;
   qc.setQueryData<ThreadData>(['thread', rootId], (old) =>
     old
-      ? {
-          ...old,
-          messages: old.messages.filter((m) => m.id !== msg.id),
-          root: { ...old.root, replyCount: Math.max(0, old.root.replyCount - 1) },
-        }
+      ? (() => {
+          const found = old.messages.some((m) => m.id === msg.id);
+          adjustChannelRoot = found;
+          if (!found) return old;
+          const messages = old.messages.filter((m) => m.id !== msg.id);
+          const fullyLoaded = !old.hasMore;
+          return {
+            ...old,
+            messages,
+            root: {
+              ...old.root,
+              replyCount: Math.max(0, old.root.replyCount - 1),
+              lastReplyAt: fullyLoaded ? messages.at(-1)?.createdAt ?? null : old.root.lastReplyAt,
+              replyParticipantUserIds: fullyLoaded
+                ? [...new Set(messages.map((m) => m.userId))].slice(0, 4)
+                : old.root.replyParticipantUserIds,
+            },
+          };
+        })()
       : old,
   );
+  if (!adjustChannelRoot) return;
   qc.setQueryData<MessagesData>(['messages', msg.channelId], (old) =>
     old
       ? {

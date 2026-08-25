@@ -1,5 +1,15 @@
 # Decision log
 
+## 2026-08-25 — Permanent message deletion is an owner/admin moderation power (operator)
+
+- Workspace `owner` and `admin` roles may permanently delete any non-system
+  message they can access, including bot/agent messages and existing soft-delete
+  tombstones. Regular members retain soft delete for their own live messages.
+- Permanent deletion removes the row rather than leaving a courtesy line. A
+  thread-root purge removes every reply atomically; a reply purge preserves the
+  thread and recomputes its rollup. The server remains the authorization boundary,
+  and clients must reconcile Activity, unread counts, attachments, and caches.
+
 ## 2026-07-29 — Replica scaling is scheduled work; presence gossips over NATS, not Redis (operator)
 
 - The operator wants the `app` service able to run `replicas > 1` on Railway

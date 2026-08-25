@@ -18,6 +18,7 @@ struct ThreadScreen: View {
     @StateObject private var thread = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channelId = DBObserved<String?>(initial: nil)
+    @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
 
     private var userNames: [String: String] {
@@ -45,12 +46,13 @@ struct ThreadScreen: View {
                                 userNames: userNames,
                                 userStatuses: statusesById,
                                 currentUserId: app.currentUser?.id,
+                                canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
                                 showHeader: true,
                                 showThreadAffordances: false,
                                 onOpenThread: { _ in },
                                 onEdit: { editingMessage = $0 },
-                                onDelete: { msg in
-                                    Task { await app.engine.deleteMessage(id: msg.id) }
+                                onDelete: { msg, permanently in
+                                    Task { await app.engine.deleteMessage(id: msg.id, permanently: permanently) }
                                 }
                             )
                             .id(message.id)
@@ -107,6 +109,18 @@ struct ThreadScreen: View {
                 try String.fetchOne(
                     db,
                     sql: "SELECT channelId FROM message WHERE id = ?",
+                    arguments: [rootId]
+                )
+            }
+            currentRole.start(db: app.db, reset: nil) { db in
+                try String.fetchOne(
+                    db,
+                    sql: """
+                        SELECT w.role FROM workspace w
+                        JOIN channel c ON c.workspaceId = w.id
+                        JOIN message m ON m.channelId = c.id
+                        WHERE m.id = ?
+                        """,
                     arguments: [rootId]
                 )
             }
