@@ -176,11 +176,6 @@ export default function Main() {
         }
         // Sidebar unread counts/ordering still come from the channels query.
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
-        // The rail badge is a per-workspace total (#345) and the socket carries
-        // every workspace I'm in, so this is what moves workspace B's badge
-        // while I'm looking at workspace A. Only someone else's message can
-        // change it — my own never counts as unread, here or on the server.
-        if (msg.userId !== auth.user.id) void qc.invalidateQueries({ queryKey: ['workspaces'] });
         break;
       }
       case 'reaction.added':
@@ -321,6 +316,8 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['notifications'] });
         // the sidebar badge is this channel's unread-notification count
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
+        // …and the rail badge (#345) counts these same rows per workspace.
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
         // "Looking at it" means the row is actually on screen: this channel,
         // tab visible, and — when the message lives in a thread (a reply, a
         // mention in a reply, a reaction on your reply) — that thread open.
