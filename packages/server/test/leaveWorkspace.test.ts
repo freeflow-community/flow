@@ -7,10 +7,16 @@
 // port 5442). NATS is not required (publishEvent is a no-op without a bus).
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 process.env.DATABASE_URL = process.env.FLOW_TEST_DATABASE_URL
   ?? 'postgres://flow:flow_dev@localhost:5442/flow_leave_workspace_test';
 process.env.FLOW_DATA_KEY = randomBytes(32).toString('base64');
+// The attachment-delete case uploads a real file; keep it on the local driver.
+process.env.FLOW_FILE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-leave-ws-test-'));
+delete process.env.FLOW_BLOB_DRIVER;
 
 // self-sufficient: create the scratch database if it doesn't exist yet
 {
@@ -31,6 +37,7 @@ const ws = await import('../src/services/workspaces.js');
 const ch = await import('../src/services/channels.js');
 const msg = await import('../src/services/messages.js');
 const ag = await import('../src/services/agents.js');
+const fl = await import('../src/services/files.js');
 const { and, eq, isNull } = await import('drizzle-orm');
 
 const { users, workspaces, workspaceMembers, channels, channelMembers, messages, invites } = schema;
@@ -71,6 +78,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await closeDb();
+  fs.rmSync(process.env.FLOW_FILE_DIR!, { recursive: true, force: true });
 });
 
 describe('leaveWorkspace', () => {
@@ -219,6 +227,22 @@ describe('deleteWorkspace', () => {
     expect(await db.select().from(channels).where(eq(channels.workspaceId, workspaceId))).toHaveLength(0);
     expect(await db.select().from(messages).where(eq(messages.channelId, general.id))).toHaveLength(0);
     expect(await ws.myWorkspaces(owner.id)).toHaveLength(0);
+  });
+
+  it('deletes a workspace whose messages carry file attachments (the 23503 regression)', async () => {
+    const { owner, member, workspaceId } = await setup();
+    await ws.leaveWorkspace(workspaceId, member.id);
+    const [general] = await ch.listChannels(workspaceId, owner.id);
+    // A message with an attachment creates the message_files row whose FK
+    // (files leg vs messages leg of the cascade) used to 500 the delete.
+    const file = await fl.uploadFile(workspaceId, owner.id, 'report.txt', 'text/plain', Buffer.from('bytes'));
+    await msg.sendMessage(general!.id, owner.id, randomUUID(), 'with attachment', undefined, [file.id], undefined);
+
+    await ws.deleteWorkspace(workspaceId, owner.id);
+
+    expect(await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))).toHaveLength(0);
+    expect(await db.select().from(schema.files).where(eq(schema.files.workspaceId, workspaceId))).toHaveLength(0);
+    expect(await db.select().from(schema.messageFiles)).toHaveLength(0);
   });
 
   it('refuses while another human is still a member', async () => {
