@@ -479,6 +479,7 @@ actor SyncEngine {
                     website: existing?.website,
                     bio: existing?.bio,
                     isAgent: m.isAgent ?? existing?.isAgent ?? false,
+                    isBot: m.isBot ?? existing?.isBot ?? false,
                     createdAt: existing?.createdAt
                 ).save(db)
                 try Member(workspaceId: workspaceId, userId: m.userId, role: m.role).save(db)
@@ -1182,6 +1183,16 @@ actor SyncEngine {
             "/v1/channels/\(channelId)/members",
             body: AddMemberBody(userId: userId)
         )
+    }
+
+    /// Delete a workspace (#340 follow-up). The sole owner's only way out: they
+    /// cannot leave a workspace with nobody to transfer it to. Local cleanup
+    /// and the landing choice are exactly `leaveWorkspace`'s — from the
+    /// client's side "this workspace is gone for me" is one fact.
+    @discardableResult
+    func deleteWorkspace(_ workspaceId: String) async throws -> String? {
+        let _: OkResponse = try await api.delete("/v1/workspaces/\(workspaceId)")
+        return await purgeLeftWorkspace(workspaceId)
     }
 
     /// Leave a workspace (#340). The server revokes every channel membership

@@ -10,6 +10,7 @@ struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable
     var statusEmoji: String?
     var statusText: String?
     var isAgent: Bool? // first-class AI agent → 🤖 badge
+    var isBot: Bool? // app/integration bot — like an agent, not a person (#340)
     var id: String { userId }
 }
 
@@ -32,6 +33,7 @@ struct SidebarView: View {
     @State private var showFeatures = false
     @State private var showInviteAgent = false
     @State private var confirmLeaveWorkspace = false
+    @State private var confirmDeleteWorkspace = false
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
     @State private var ensuredSelfDmWs: String?
@@ -52,6 +54,14 @@ struct SidebarView: View {
     /// ownership-transfer flow yet, so leaving would strand it.
     private var isWorkspaceOwner: Bool {
         currentWorkspace?.role == "owner"
+    }
+
+    /// Nobody left to hand the workspace to. Agents and bots don't count —
+    /// they're the owner's own tooling, and the server's delete guard counts
+    /// humans the same way. An owner alone gets Delete instead of a
+    /// permanently disabled Leave.
+    private var isSoleHuman: Bool {
+        members.value.filter { $0.isAgent != true && $0.isBot != true }.count <= 1
     }
 
     /// Ids of the DMs I'm in — a sub-channel of one of these belongs to that
@@ -247,7 +257,7 @@ struct SidebarView: View {
                     sql: """
                         SELECT m.userId AS userId, u.displayName AS displayName, m.role AS role,
                                u.statusEmoji AS statusEmoji, u.statusText AS statusText,
-                               u.isAgent AS isAgent
+                               u.isAgent AS isAgent, u.isBot AS isBot
                         FROM member m JOIN user u ON u.id = m.userId
                         WHERE m.workspaceId = ?
                         ORDER BY u.displayName COLLATE NOCASE
@@ -288,6 +298,20 @@ struct SidebarView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("You'll lose access to all its channels. Your past messages will remain.")
+        }
+        .confirmationDialog(
+            "Delete \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmDeleteWorkspace,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Workspace", role: .destructive) { deleteWorkspace() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "You're the only one left, so there's nobody to hand it to. "
+                    + "Deleting removes the workspace and every channel, message and file in it, "
+                    + "for good. This cannot be undone."
+            )
         }
         .sheet(isPresented: $showInviteAgent) {
             if let wsId = win.selectedWorkspaceId {
@@ -734,6 +758,20 @@ struct SidebarView: View {
         }
     }
 
+    /// Confirmed deletion (#340 follow-up). Same landing as leaving — the
+    /// workspace is gone for us either way.
+    private func deleteWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.deleteWorkspace(ws.id)
+                await app.workspaceBecameUnavailable(ws.id, landOn: next)
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
     private var workspaceMenu: some View {
         Menu {
             ForEach(workspaces.value) { ws in
@@ -757,14 +795,19 @@ struct SidebarView: View {
             Divider()
             Button("All Workspaces") { win.selectWorkspace(nil) }
             if currentWorkspace != nil {
-                // Destructive, and disabled for the owner with the reason in
-                // the label — a macOS menu item has nowhere else to say it.
-                Button(
-                    isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
-                    role: .destructive
-                ) { confirmLeaveWorkspace = true }
-                    .disabled(isWorkspaceOwner)
-                    .accessibilityIdentifier("sidebar.leaveWorkspace")
+                if isWorkspaceOwner && isSoleHuman {
+                    Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
+                        .accessibilityIdentifier("sidebar.deleteWorkspace")
+                } else {
+                    // Destructive, and disabled for the owner with the reason in
+                    // the label — a macOS menu item has nowhere else to say it.
+                    Button(
+                        isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                        role: .destructive
+                    ) { confirmLeaveWorkspace = true }
+                        .disabled(isWorkspaceOwner)
+                        .accessibilityIdentifier("sidebar.leaveWorkspace")
+                }
             }
             Divider()
             // Version tag (web parity): clicking it opens the "What's new" sheet.

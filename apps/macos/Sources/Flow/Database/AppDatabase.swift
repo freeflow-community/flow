@@ -232,6 +232,13 @@ struct AppDatabase: Sendable {
                 t.add(column: "avatarUrl", .text)
             }
         }
+        // Sole-human check behind Delete workspace (#340): the roster has to be
+        // able to tell an app bot from a person, not just an agent from one.
+        migrator.registerMigration("v17") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "isBot", .boolean)
+            }
+        }
         try migrator.migrate(writer)
     }
 

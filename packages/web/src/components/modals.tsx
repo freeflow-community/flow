@@ -579,6 +579,63 @@ export function LeaveWorkspaceModal({ workspaceId, onClose }: { workspaceId: str
   );
 }
 
+/**
+ * Deleting a workspace (#340 follow-up). Only reachable by an owner who is the
+ * last person in it — otherwise there is somebody to hand it to, and the menu
+ * offers "transfer ownership first" instead.
+ *
+ * Confirmation weight matches "Delete account" in `ProfileModal`, the nearest
+ * equally irreversible action in this app: an explicit destructive press, no
+ * type-the-name gesture. The blast radius here is one person's own workspace.
+ */
+export function DeleteWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const sel = useSelection();
+  const workspaces = useWorkspaces();
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const destroy = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api('DELETE', `/v1/workspaces/${workspaceId}`);
+      const next = (workspaces.data ?? []).find((w) => w.id !== workspaceId);
+      sel.selectWorkspace(next?.id ?? null);
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="delete-workspace-modal">
+      <h3 className="mb-2 font-bold">Delete {ws?.name ?? 'workspace'}?</h3>
+      <p className="mb-4 text-sm text-ink-soft">
+        You&rsquo;re the only one left, so there&rsquo;s nobody to hand it to. Deleting removes the workspace
+        and every channel, message and file in it, for good. This cannot be undone.
+      </p>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          data-testid="delete-workspace-confirm"
+          className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void destroy()}
+        >
+          {busy ? 'Deleting…' : 'Delete workspace'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
 /** Owner/admin workspace branding: the sidebar color preset, and the optional
  * avatar image (#336) that replaces the color/initial mark when set. */

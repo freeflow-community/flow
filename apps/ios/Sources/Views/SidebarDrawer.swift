@@ -10,6 +10,13 @@ import GRDB
 /// Selecting anything (channel, DM, activity) drives `AppState` the same way
 /// macOS does, then calls `onSelect` so `MainView` can close the drawer and let
 /// the conversation take the full screen (matching the web's mobile behavior).
+/// Just enough of the roster to answer "is this workspace down to one person?"
+struct WorkspaceRosterEntry: Decodable, FetchableRecord, Equatable, Sendable {
+    var userId: String
+    var isAgent: Bool?
+    var isBot: Bool?
+}
+
 struct SidebarDrawer: View {
     /// Called after a selection so the host can dismiss the drawer.
     var onSelect: () -> Void = {}
@@ -18,6 +25,10 @@ struct SidebarDrawer: View {
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
+    /// The current workspace's roster, for the sole-human check behind Delete
+    /// workspace (#340). `users` is every user we've ever cached, which is not
+    /// the same question.
+    @StateObject private var roster = DBObserved<[WorkspaceRosterEntry]>(initial: [])
 
     @State private var showCreateChannel = false
     @State private var showNewDm = false
@@ -27,6 +38,7 @@ struct SidebarDrawer: View {
     @State private var inviteChannel: Channel?
     @State private var showFeatures = false
     @State private var confirmLeaveWorkspace = false
+    @State private var confirmDeleteWorkspace = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
 
@@ -48,6 +60,14 @@ struct SidebarDrawer: View {
     /// ownership-transfer flow yet, so leaving would strand it.
     private var isWorkspaceOwner: Bool {
         currentWorkspace?.role == "owner"
+    }
+
+    /// Nobody left to hand the workspace to. Agents and bots don't count —
+    /// they're the owner's own tooling, and the server's delete guard counts
+    /// humans the same way. An owner alone gets Delete instead of a
+    /// permanently disabled Leave.
+    private var isSoleHuman: Bool {
+        roster.value.filter { $0.isAgent != true && $0.isBot != true }.count <= 1
     }
 
     /// Joined standard channels in sidebar order — sub-channels (#118) follow
@@ -128,9 +148,13 @@ struct SidebarDrawer: View {
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
             }
             users.start(db: app.db) { try User.fetchAll($0) }
+            reloadRoster()
             reloadChannels()
         }
-        .onChange(of: app.selectedWorkspaceId) { _, _ in reloadChannels() }
+        .onChange(of: app.selectedWorkspaceId) { _, _ in
+            reloadRoster()
+            reloadChannels()
+        }
         // Default channel + persistent self-DM (macOS SidebarView parity): a
         // workspace opened with nothing selected lands on #general; every
         // workspace gets a "<Name> (you)" DM (idempotent server upsert).
@@ -166,6 +190,19 @@ struct SidebarDrawer: View {
             Button("Leave Workspace", role: .destructive) { leaveWorkspace() }
         } message: {
             Text("You'll lose access to all its channels. Your past messages will remain.")
+        }
+        .alert(
+            "Delete \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmDeleteWorkspace
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Workspace", role: .destructive) { deleteWorkspace() }
+        } message: {
+            Text(
+                "You're the only one left, so there's nobody to hand it to. "
+                    + "Deleting removes the workspace and every channel, message and file in it, "
+                    + "for good. This cannot be undone."
+            )
         }
     }
 
@@ -249,15 +286,20 @@ struct SidebarDrawer: View {
                 .accessibilityIdentifier("sidebar.invitePeople")
             Button("Add Workspace…") { showAddWorkspace = true }
             if currentWorkspace != nil {
-                // Destructive, and disabled for the owner with the reason in
-                // the label — a menu item has nowhere else to put a hint
-                // (web + macOS parity, #340).
-                Button(
-                    isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
-                    role: .destructive
-                ) { confirmLeaveWorkspace = true }
-                    .disabled(isWorkspaceOwner)
-                    .accessibilityIdentifier("sidebar.leaveWorkspace")
+                if isWorkspaceOwner && isSoleHuman {
+                    Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
+                        .accessibilityIdentifier("sidebar.deleteWorkspace")
+                } else {
+                    // Destructive, and disabled for the owner with the reason in
+                    // the label — a menu item has nowhere else to put a hint
+                    // (web + macOS parity, #340).
+                    Button(
+                        isWorkspaceOwner ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                        role: .destructive
+                    ) { confirmLeaveWorkspace = true }
+                        .disabled(isWorkspaceOwner)
+                        .accessibilityIdentifier("sidebar.leaveWorkspace")
+                }
             }
             Divider()
             // Version tag + release notes (web + macOS parity: macOS hangs the
@@ -520,6 +562,21 @@ struct SidebarDrawer: View {
         }
     }
 
+    /// Confirmed deletion (#340 follow-up). Same landing as leaving — the
+    /// workspace is gone for us either way.
+    private func deleteWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.deleteWorkspace(ws.id)
+                app.workspaceBecameUnavailable(ws.id, landOn: next)
+                onSelect()
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
     private func join(_ channel: Channel) {
         Task {
             do {
@@ -528,6 +585,21 @@ struct SidebarDrawer: View {
             } catch {
                 app.showError(error.localizedDescription)
             }
+        }
+    }
+
+    private func reloadRoster() {
+        guard let wsId = app.selectedWorkspaceId else { return }
+        roster.start(db: app.db, reset: []) { db in
+            try WorkspaceRosterEntry.fetchAll(
+                db,
+                sql: """
+                    SELECT m.userId AS userId, u.isAgent AS isAgent, u.isBot AS isBot
+                    FROM member m JOIN user u ON u.id = m.userId
+                    WHERE m.workspaceId = ?
+                    """,
+                arguments: [wsId]
+            )
         }
     }
 
