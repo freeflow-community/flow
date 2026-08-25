@@ -197,10 +197,19 @@ struct WorkspaceRailView: View {
                     if !active { win.selectWorkspace(ws.id) }
                 } label: {
                     WorkspaceMark(workspace: ws, size: 40, cornerRadius: 12, active: active)
+                        // Unread across this workspace's channels (#345). The
+                        // overlay sits outside the mark's clip shape, so the
+                        // badge can overhang the corner as designed.
+                        .overlay(alignment: .topTrailing) {
+                            WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: railColor)
+                                .offset(x: 7, y: -7)
+                                .accessibilityIdentifier("rail.unread.\(ws.slug)")
+                        }
                 }
                 .buttonStyle(.plain)
-                .help(ws.name)
+                .help(unreadBadgeLabel(ws.unreadCount).map { "\(ws.name) — \($0) unread" } ?? ws.name)
                 .accessibilityIdentifier("rail.workspace.\(ws.slug)")
+                .accessibilityValue((ws.unreadCount ?? 0) > 0 ? "\(ws.unreadCount!) unread" : "read")
                 .accessibilityAddTraits(active ? [.isSelected] : [])
             }
             Button {

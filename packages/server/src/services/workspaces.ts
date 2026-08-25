@@ -29,12 +29,17 @@ const {
   invites,
   channels,
   channelMembers,
+  messages,
   files,
   users,
   oauthIdentities,
 } = schema;
 
-export function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberRole): WorkspaceDTO {
+export function toWorkspaceDTO(
+  w: typeof workspaces.$inferSelect,
+  role?: MemberRole,
+  unreadCount?: number,
+): WorkspaceDTO {
   const dto: WorkspaceDTO = {
     id: w.id,
     slug: w.slug,
@@ -46,6 +51,7 @@ export function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberR
     createdAt: w.createdAt.toISOString(),
   };
   if (role) dto.role = role;
+  if (unreadCount !== undefined) dto.unreadCount = unreadCount;
   return dto;
 }
 
@@ -287,6 +293,42 @@ export async function getWorkspace(workspaceId: string, userId: string): Promise
   return toWorkspaceDTO(rows[0], m.role);
 }
 
+/**
+ * Unread messages per workspace for one user (#345) — the number the sidebar
+ * rail badge shows. One grouped query for every workspace rather than a channel
+ * list per workspace, and it applies exactly the rules `listChannels` already
+ * uses per channel: top-level, live, non-system messages from someone else,
+ * after this member's read cursor. Muted channels (notify_level 0) and archived
+ * channels contribute nothing — a muted channel is one you asked not to be
+ * nagged about, and the rail badge is the nag.
+ */
+async function unreadByWorkspace(userId: string): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ workspaceId: channels.workspaceId, n: sql<number>`count(*)::int` })
+    .from(channelMembers)
+    .innerJoin(channels, eq(channels.id, channelMembers.channelId))
+    .innerJoin(
+      messages,
+      and(
+        eq(messages.channelId, channelMembers.channelId),
+        isNull(messages.threadRootId),
+        isNull(messages.deletedAt),
+        isNull(messages.systemKind),
+        ne(messages.userId, userId),
+        sql`(${channelMembers.lastReadMsgId} IS NULL OR ${messages.id} > ${channelMembers.lastReadMsgId})`,
+      ),
+    )
+    .where(
+      and(
+        eq(channelMembers.userId, userId),
+        isNull(channels.archivedAt),
+        ne(channelMembers.notifyLevel, 0),
+      ),
+    )
+    .groupBy(channels.workspaceId);
+  return new Map(rows.map((r) => [r.workspaceId, r.n]));
+}
+
 export async function myWorkspaces(userId: string): Promise<WorkspaceDTO[]> {
   const rows = await db
     .select({ w: workspaces, role: workspaceMembers.role })
@@ -294,7 +336,8 @@ export async function myWorkspaces(userId: string): Promise<WorkspaceDTO[]> {
     .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
     .where(eq(workspaceMembers.userId, userId))
     .orderBy(workspaceMembers.joinedAt);
-  return rows.map((r) => toWorkspaceDTO(r.w, r.role));
+  const unread = await unreadByWorkspace(userId);
+  return rows.map((r) => toWorkspaceDTO(r.w, r.role, unread.get(r.w.id) ?? 0));
 }
 
 export async function listMembers(workspaceId: string, userId: string): Promise<WorkspaceMemberDTO[]> {

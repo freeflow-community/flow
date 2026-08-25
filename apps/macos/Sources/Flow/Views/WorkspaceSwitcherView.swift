@@ -46,6 +46,10 @@ struct WorkspaceSwitcherView: View {
                                 Text(ws.slug).flowFont(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
+                            // Same unread total as the rail badge (#345) — this
+                            // chooser is the other way into a workspace.
+                            WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: .clear)
+                                .accessibilityIdentifier("switcher.unread.\(ws.slug)")
                             if let role = ws.role {
                                 Text(role)
                                     .flowFont(.caption)
