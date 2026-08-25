@@ -66,6 +66,11 @@ export interface WorkspaceDTO {
    * domain self-enrols on sign-in — no invite. null = off (the default). */
   googleSelfRegisterDomain: string | null;
   role?: MemberRole; // present on "my workspaces"
+  /** #345: unread messages across the channels I'm a member of in this
+   * workspace — the number the sidebar rail badge shows. Muted and archived
+   * channels don't contribute. Present on "my workspaces" only; absent
+   * elsewhere means "not computed", not zero. */
+  unreadCount?: number;
 }
 
 export type MemberRole = 'owner' | 'admin' | 'member';

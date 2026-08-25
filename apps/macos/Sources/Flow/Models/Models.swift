@@ -54,14 +54,20 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
     /// Workspace avatar (#336): a `/v1/avatars/<key>` path, or nil for the
     /// color/initial mark every workspace drew before.
     var avatarUrl: String?
+    /// Unread messages across the channels I'm in here (#345) — the rail badge.
+    /// Only `/v1/me/workspaces` computes it; nil on a row that arrived any
+    /// other way means "unknown", which is why the cached value is kept rather
+    /// than overwritten (see `saveWorkspacePreservingRole`).
+    var unreadCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, slug, name, createdBy, createdAt, role, sidebarColor, avatarUrl
+        case id, slug, name, createdBy, createdAt, role, sidebarColor, avatarUrl, unreadCount
     }
 
     init(
         id: String, slug: String, name: String, createdBy: String, createdAt: String,
-        role: String? = nil, sidebarColor: String? = nil, avatarUrl: String? = nil
+        role: String? = nil, sidebarColor: String? = nil, avatarUrl: String? = nil,
+        unreadCount: Int? = nil
     ) {
         self.id = id
         self.slug = slug
@@ -71,6 +77,7 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         self.role = role
         self.sidebarColor = sidebarColor
         self.avatarUrl = avatarUrl
+        self.unreadCount = unreadCount
     }
 
     init(from decoder: Decoder) throws {
@@ -83,6 +90,7 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         role = try c.decodeIfPresent(String.self, forKey: .role)
         sidebarColor = try c.decodeIfPresent(String.self, forKey: .sidebarColor)
         avatarUrl = try c.decodeIfPresent(String.self, forKey: .avatarUrl)
+        unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount)
     }
 }
 

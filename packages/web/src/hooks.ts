@@ -360,7 +360,12 @@ export function useMarkRead() {
         lastReadMsgId: input.lastReadMsgId,
         ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
       }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['channels'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['channels'] });
+      // Reading a channel drops that workspace's rail badge (#345) — the total
+      // lives on the workspace list, so it has to be refetched too.
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    },
   });
 }
 

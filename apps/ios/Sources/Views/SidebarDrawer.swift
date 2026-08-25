@@ -265,13 +265,17 @@ struct SidebarDrawer: View {
     private var header: some View {
         Menu {
             ForEach(workspaces.value) { ws in
+                // The switcher spells the count out (#345): the rail badge is a
+                // 10pt number on a 40pt icon, and this menu is the accessible
+                // way to the same information.
+                let title = unreadBadgeLabel(ws.unreadCount).map { "\(ws.name) (\($0))" } ?? ws.name
                 Button {
                     app.selectWorkspace(ws.id)
                 } label: {
                     if ws.id == app.selectedWorkspaceId {
-                        Label(ws.name, systemImage: "checkmark")
+                        Label(title, systemImage: "checkmark")
                     } else {
-                        Text(ws.name)
+                        Text(title)
                     }
                 }
             }
@@ -691,10 +695,19 @@ private struct WorkspaceRail: View {
                         if !active { app.selectWorkspace(ws.id) }
                     } label: {
                         WorkspaceMark(workspace: ws, size: 40, cornerRadius: 12, active: active)
+                            // Unread across this workspace's channels (#345) —
+                            // the overlay sits outside the mark's clip shape,
+                            // so it can overhang the corner as designed.
+                            .overlay(alignment: .topTrailing) {
+                                WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: palette.rail)
+                                    .offset(x: 7, y: -7)
+                                    .accessibilityIdentifier("rail.unread.\(ws.slug)")
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("rail.workspace.\(ws.slug)")
                     .accessibilityLabel(ws.name)
+                    .accessibilityValue((ws.unreadCount ?? 0) > 0 ? "\(ws.unreadCount!) unread" : "read")
                     .accessibilityAddTraits(active ? [.isSelected] : [])
                 }
                 Button(action: onAdd) {
@@ -713,6 +726,10 @@ private struct WorkspaceRail: View {
                 .accessibilityLabel("Add a workspace")
             }
             .padding(.vertical, 16)
+            // The scroll content is clipped to its own width, and the unread
+            // badge (#345) overhangs its icon — without this the content sizes
+            // to the 40pt marks and the badge loses its right-hand edge.
+            .frame(maxWidth: .infinity)
         }
         .frame(width: 64)
         .frame(maxHeight: .infinity)

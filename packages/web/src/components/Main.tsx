@@ -29,6 +29,7 @@ import { OpenInAppBanner } from './OpenInApp';
 import HuddleMiniBar from './HuddleMiniBar';
 import { MobileMenuButton } from './MobileMenuButton';
 import { AuthImg } from './Avatar';
+import { RailUnreadBadge } from './RailUnreadBadge';
 
 export default function Main() {
   const auth = useAuth();
@@ -168,6 +169,11 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['pins', msg.channelId] });
         // Sidebar unread counts/ordering still come from the channels query.
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
+        // The rail badge is a per-workspace total (#345) and the socket carries
+        // every workspace I'm in, so this is what moves workspace B's badge
+        // while I'm looking at workspace A. Only someone else's message can
+        // change it — my own never counts as unread, here or on the server.
+        if (msg.userId !== auth.user.id) void qc.invalidateQueries({ queryKey: ['workspaces'] });
         break;
       }
       case 'reaction.added':
@@ -340,6 +346,8 @@ export default function Main() {
         void refreshNotificationBadge();
         // rows can span workspaces (Activity feed) — refresh every channel list
         void qc.invalidateQueries({ queryKey: ['channels'] });
+        // …and the rail badges, which another session's reading also moves.
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
         break;
       }
       default:
@@ -471,37 +479,47 @@ function WorkspaceRail() {
   const sel = useSelection();
   const workspaces = useWorkspaces();
   const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
+  const railBg = sidebarColor(activeWs?.sidebarColor).rail;
   return (
     <nav
       className="flex w-16 shrink-0 flex-col items-center gap-3.5 py-4"
-      style={{ background: sidebarColor(activeWs?.sidebarColor).rail }}
+      style={{ background: railBg }}
     >
       {(workspaces.data ?? []).map((w) => {
         const active = w.id === sel.workspaceId;
+        // Unread across this workspace's channels (#345). Rides the workspace
+        // list, so it's live for every workspace — including the ones not on
+        // screen, which is the whole point of the badge.
+        const unread = w.unreadCount ?? 0;
         // With an avatar (#336) the image *is* the mark, so "active" can't be
         // the white fill any more — a white ring plus full opacity says it.
         return (
-          <button
-            key={w.id}
-            data-testid={`rail-workspace-${w.slug}`}
-            title={w.name}
-            className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ${
-              w.avatarUrl
-                ? active
-                  ? 'ring-2 ring-white'
-                  : 'opacity-70 hover:opacity-100'
-                : active
-                  ? 'bg-white text-[17px] font-extrabold text-accent'
-                  : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
-            }`}
-            onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
-          >
-            {w.avatarUrl ? (
-              <AuthImg path={w.avatarUrl} alt={w.name} className="h-10 w-10 object-cover" />
-            ) : (
-              w.name.slice(0, 1).toUpperCase()
-            )}
-          </button>
+          // The badge overhangs the icon's corner, so it can't live inside the
+          // button — that one clips its children (overflow-hidden, for round
+          // avatars). The wrapper is what it's positioned against.
+          <div key={w.id} className="relative">
+            <button
+              data-testid={`rail-workspace-${w.slug}`}
+              title={unread > 0 ? `${w.name} — ${unread} unread` : w.name}
+              className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ${
+                w.avatarUrl
+                  ? active
+                    ? 'ring-2 ring-white'
+                    : 'opacity-70 hover:opacity-100'
+                  : active
+                    ? 'bg-white text-[17px] font-extrabold text-accent'
+                    : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
+              }`}
+              onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
+            >
+              {w.avatarUrl ? (
+                <AuthImg path={w.avatarUrl} alt={w.name} className="h-10 w-10 object-cover" />
+              ) : (
+                w.name.slice(0, 1).toUpperCase()
+              )}
+            </button>
+            <RailUnreadBadge count={unread} ringColor={railBg} testId={`rail-unread-${w.slug}`} />
+          </div>
         );
       })}
       <button

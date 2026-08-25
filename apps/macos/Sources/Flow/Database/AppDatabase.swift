@@ -239,6 +239,14 @@ struct AppDatabase: Sendable {
                 t.add(column: "isBot", .boolean)
             }
         }
+        // Per-workspace unread total (#345), the sidebar rail badge. Nil on a
+        // cached row until the next workspace list arrives — no badge yet,
+        // never a wrong one.
+        migrator.registerMigration("v18") { db in
+            try db.alter(table: "workspace") { t in
+                t.add(column: "unreadCount", .integer)
+            }
+        }
         try migrator.migrate(writer)
     }
 
