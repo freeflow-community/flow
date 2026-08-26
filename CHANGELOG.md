@@ -17,6 +17,10 @@ This file keeps two things:
   (#371) and **macOS** (#372); **iOS** (external open) still opens an `isApp`
   artifact with no token and lands on the guard's 401. Build-order step 3, one
   small PR for the remaining surface.
+- Mini apps (`docs/design/MINI_APPS.md`) mint-before-open is on **web** (#371)
+  and **iOS** (#373); **macOS** (artifact-panel webview) still opens an `isApp`
+  artifact with no token and lands on the guard's 401. Build-order step 3, one
+  small PR left (#372).
 - Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
   measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
   frame nor sends one already established first-party, and the guard's 302 to
@@ -30,6 +34,17 @@ This file keeps two things:
   subresource and XHR all authenticated). The limitation is framing, not WebKit.
   iOS should measure its own web view the same way rather than assume either
   result.
+  page call `requestStorageAccess()`. **iOS measured its own webview (#373) and
+  is not affected**: a top-level load is first-party to the guard, so both
+  mobile Safari and Flow's in-app `WKWebView` store and replay the cookie
+  across the 302 and the app loads authenticated. The block is iframe-specific,
+  not WebKit-wide — macOS should measure rather than assume.
+- An `isApp` artifact cannot be framed in the **co-browser** on any client
+  without a fix: the guard's 302 to the clean url reads as a user navigation,
+  so the client PATCHes the shared artifact and re-points it for every member
+  (seen on iOS in #373). Web and iOS both open apps out-of-frame today, so
+  nothing is broken — but "show the app inline" needs the broadcast suppressed
+  for `isApp` first.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a
