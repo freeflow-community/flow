@@ -486,7 +486,7 @@ struct ChannelView: View {
 
     /// You're online by definition — this client is the one connected.
     private func isOnline(_ userId: String) -> Bool {
-        userId == app.currentUser?.id || app.presence[userId] == true
+        userId == app.currentUser?.id || app.isOnline(userId, in: win.selectedWorkspaceId)
     }
 
     private var membersPopover: some View {

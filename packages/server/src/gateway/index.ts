@@ -17,18 +17,40 @@ import {
   subjectWorkspaceAll,
   subscribeBus,
 } from '../bus.js';
-import { online } from '../presence.js';
+import {
+  addWorkspace as addPresenceWorkspace,
+  hasAnyConnection,
+  onlineUsersIn,
+  registerConnection,
+  removeWorkspace as removePresenceWorkspace,
+  sweepStale,
+  touchConnection,
+  unregisterConnection,
+} from '../presence.js';
 import { routeUpgrade } from './upgrade.js';
 
 const { workspaceMembers, channels, channelMembers } = schema;
 
 const HEARTBEAT_MS = Number(process.env.FLOW_HEARTBEAT_MS ?? 30_000); // spec: 30s; env override for tests
 const AUTH_TIMEOUT_MS = 10_000;
+// Presence TTL backstop (#364): three missed beats. The 'close' handler is the
+// fast path; this catches connections whose close never arrives (half-open
+// socket, slept laptop, killed process) so a dot can't stay green forever.
+const PRESENCE_TTL_MS = Number(process.env.FLOW_PRESENCE_TTL_MS ?? HEARTBEAT_MS * 3);
 
 interface SocketState {
   sessionId: string;
   userId: string;
+  /** every workspace this socket receives events for (all of the user's) */
   workspaces: Set<string>;
+  /**
+   * The workspaces this connection declared it actually serves (#364), or null
+   * for "all of them". An agent bridge runs one process per workspace and
+   * ignores events for the others, so announcing it online everywhere put a
+   * green dot next to an agent that was not listening. Subscription scope is
+   * deliberately left alone — only presence is narrowed.
+   */
+  declared: Set<string> | null;
   /** channelId -> {workspaceId, isPrivate} for channels visible at auth (or learned via meta). */
   chans: Map<string, { workspaceId: string; isPrivate: boolean }>;
   /** channels the user is a member of */
@@ -40,9 +62,9 @@ interface SocketState {
   sock: WebSocket;
 }
 
-// single-node presence: the userId -> socket-count map lives in ../presence.js
-// (shared with the notification service for <!here> resolution).
-// userId -> workspaces (for presence fan-out on disconnect)
+// single-node presence: the (user, workspace) connection registry lives in
+// ../presence.js (shared with the notification service for <!here> resolution).
+// userId -> live sockets (force-close, workspace detach)
 const socketsByUser = new Map<string, Set<SocketState>>();
 
 function send(sock: WebSocket, frame: ServerFrame): void {
@@ -86,6 +108,11 @@ export function detachUserFromWorkspace(userId: string, workspaceId: string): vo
     s.wsSubs.get(workspaceId)?.unsubscribe();
     s.wsSubs.delete(workspaceId);
     s.workspaces.delete(workspaceId);
+    s.declared?.delete(workspaceId);
+    // presence goes with the membership: no dot in a workspace we just left
+    if (removePresenceWorkspace(s.sessionId, workspaceId)) {
+      publishEvent(subjectPresence(workspaceId), presenceEvent(workspaceId, userId, 'offline'));
+    }
     for (const [chanId, meta] of s.chans) {
       if (meta.workspaceId !== workspaceId) continue;
       s.chans.delete(chanId);
@@ -186,19 +213,18 @@ async function loadWorkspaceIntoState(s: SocketState, wsId: string): Promise<voi
   for (const m of memRows) if (s.chans.has(m.channelId)) s.member.add(m.channelId);
 }
 
-/** Tell this socket who is currently online in shared workspaces (local map, single node). */
+/**
+ * Tell this socket who is currently online, per workspace (local registry,
+ * single node). Presence is per (user, workspace) since #364, so the snapshot
+ * is a straight read of each workspace's online set — a user online in one of
+ * our workspaces is *not* reported online in the others.
+ */
 function sendPresenceSnapshot(s: SocketState, sock: WebSocket, onlyWorkspaceId?: string): void {
-  for (const [uid, n] of online) {
-    if (n <= 0 || uid === s.userId) continue;
-    const other = socketsByUser.get(uid);
-    if (!other) continue;
-    for (const otherState of other) {
-      for (const wsId of otherState.workspaces) {
-        if (s.workspaces.has(wsId) && (!onlyWorkspaceId || wsId === onlyWorkspaceId)) {
-          send(sock, { op: 'event', event: presenceEvent(wsId, uid, 'online') });
-        }
-      }
-      break; // one socket is enough to know their workspaces
+  for (const wsId of s.workspaces) {
+    if (onlyWorkspaceId && wsId !== onlyWorkspaceId) continue;
+    for (const uid of onlineUsersIn(wsId)) {
+      if (uid === s.userId) continue;
+      send(sock, { op: 'event', event: presenceEvent(wsId, uid, 'online') });
     }
   }
 }
@@ -233,10 +259,19 @@ export function attachGateway(server: HttpServer): { close(): void } {
             const user = await auth.authenticate(frame.token);
             clearTimeout(authTimer);
             const loaded = await loadState(user.id);
+            // #364: a client may declare which workspaces this connection
+            // actually serves. Unknown ids are dropped (membership is the
+            // server's call); omitting the field means "all of them", which is
+            // right for the human clients — one app window is genuinely
+            // reachable in every workspace it shows.
+            const declared = Array.isArray(frame.workspaces)
+              ? new Set(frame.workspaces.filter((w) => loaded.workspaces.has(w)))
+              : null;
             state = {
               sessionId: randomUUID(),
               userId: user.id,
               ...loaded,
+              declared,
               subs: [],
               wsSubs: new Map(),
               sock,
@@ -261,7 +296,9 @@ export function attachGateway(server: HttpServer): { close(): void } {
                   s.workspaces.add(event.workspaceId);
                   await loadWorkspaceIntoState(s, event.workspaceId);
                   attachWorkspaceSub(s, sock, event.workspaceId);
-                  if ((online.get(s.userId) ?? 0) > 0) {
+                  // a scoped connection (agent bridge) doesn't start serving a
+                  // workspace just because its user was added to one
+                  if (!s.declared && addPresenceWorkspace(s.sessionId, event.workspaceId)) {
                     publishEvent(
                       subjectPresence(event.workspaceId),
                       presenceEvent(event.workspaceId, s.userId, 'online'),
@@ -292,15 +329,13 @@ export function attachGateway(server: HttpServer): { close(): void } {
               }
             })();
 
-            // presence bookkeeping (single node: local map is authoritative)
+            // presence bookkeeping (single node: the local registry is
+            // authoritative). Only the workspaces this connection serves, and
+            // only the ones where it is the *first* live connection.
             if (!socketsByUser.has(s.userId)) socketsByUser.set(s.userId, new Set());
             socketsByUser.get(s.userId)!.add(s);
-            const count = (online.get(s.userId) ?? 0) + 1;
-            online.set(s.userId, count);
-            if (count === 1) {
-              for (const wsId of s.workspaces) {
-                publishEvent(subjectPresence(wsId), presenceEvent(wsId, s.userId, 'online'));
-              }
+            for (const wsId of registerConnection(s.sessionId, s.userId, s.declared ?? s.workspaces)) {
+              publishEvent(subjectPresence(wsId), presenceEvent(wsId, s.userId, 'online'));
             }
 
             send(sock, { op: 'hello', sessionId: s.sessionId });
@@ -317,6 +352,8 @@ export function attachGateway(server: HttpServer): { close(): void } {
         if (!state) {
           return send(sock, { op: 'error', code: 'unauthorized', message: 'authenticate first' });
         }
+        // anything from the client is proof of life for the presence TTL
+        touchConnection(state.sessionId);
 
         if (frame.op === 'pong') {
           liveness.set(sock, true);
@@ -348,20 +385,18 @@ export function attachGateway(server: HttpServer): { close(): void } {
       if (!state) return;
       for (const sub of state.subs) sub.unsubscribe();
       for (const sub of state.wsSubs.values()) sub.unsubscribe();
-      socketsByUser.get(state.userId)?.delete(state);
-      const count = (online.get(state.userId) ?? 1) - 1;
-      if (count <= 0) {
-        online.delete(state.userId);
-        socketsByUser.delete(state.userId);
-        for (const wsId of state.workspaces) {
-          publishEvent(subjectPresence(wsId), presenceEvent(wsId, state.userId, 'offline'));
-        }
+      const peers = socketsByUser.get(state.userId);
+      peers?.delete(state);
+      if (peers?.size === 0) socketsByUser.delete(state.userId);
+      // one event per workspace this close actually took the user offline in
+      for (const wsId of unregisterConnection(state.sessionId)) {
+        publishEvent(subjectPresence(wsId), presenceEvent(wsId, state.userId, 'offline'));
+      }
+      if (!peers || peers.size === 0) {
         // Going offline retracts any activity spinners this user left running
         // (#137) — an agent whose process died shouldn't spin a channel until
         // its TTL lapses.
         clearIndicatorsOnDisconnect(state.userId);
-      } else {
-        online.set(state.userId, count);
       }
       state = null;
     });
@@ -377,6 +412,14 @@ export function attachGateway(server: HttpServer): { close(): void } {
       }
       liveness.set(sock, false);
       send(sock, { op: 'ping' });
+    }
+    // TTL backstop (#364): a socket whose 'close' never fired still stops
+    // answering, so its presence expires here rather than staying green.
+    for (const stale of sweepStale(PRESENCE_TTL_MS)) {
+      for (const wsId of stale.wentOffline) {
+        publishEvent(subjectPresence(wsId), presenceEvent(wsId, stale.userId, 'offline'));
+      }
+      if (!hasAnyConnection(stale.userId)) clearIndicatorsOnDisconnect(stale.userId);
     }
   }, HEARTBEAT_MS);
 

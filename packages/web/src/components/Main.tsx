@@ -38,7 +38,10 @@ export default function Main() {
   const [status, setStatus] = useState<SocketStatus>('connecting');
   // Post-connect refetches in flight (#234) — see the socket effect below.
   const [catchUpCount, setCatchUpCount] = useState(0);
-  const [presence, setPresence] = useState<Record<string, boolean>>({});
+  // workspaceId -> userId -> online? Presence is per (user, workspace) since
+  // #364 — one socket carries every workspace we belong to, so a flat
+  // userId -> bool map lit the dot in all of them at once.
+  const [presence, setPresence] = useState<Record<string, Record<string, boolean>>>({});
   const [typing, setTyping] = useState<Record<string, Record<string, number>>>({});
   const [notificationUnread, setNotificationUnread] = useState(0);
   // Responsive layout: below `md` the rail+sidebar collapse into a slide-in
@@ -115,6 +118,9 @@ export default function Main() {
           // The refetch is what the reconnect bar waits on (#234): the socket
           // says hello long before the screen stops being stale. Counted, not
           // flagged, so a second reconnect mid-refetch can't clear the first.
+          // the server sends a fresh presence snapshot right after hello, and
+          // nobody sends `offline` for a user who left while we were down
+          setPresence({});
           setCatchUpCount((n) => n + 1);
           void qc.invalidateQueries().finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
         }
@@ -228,7 +234,10 @@ export default function Main() {
       }
       case 'presence': {
         const p = event.data as PresenceData;
-        setPresence((prev) => ({ ...prev, [p.userId]: p.status === 'online' }));
+        setPresence((prev) => ({
+          ...prev,
+          [event.workspaceId]: { ...prev[event.workspaceId], [p.userId]: p.status === 'online' },
+        }));
         break;
       }
       case 'channel.created':
@@ -406,14 +415,14 @@ export default function Main() {
     () => ({
       status,
       syncing: status !== 'connected' || catchUpCount > 0,
-      presence,
+      isOnline: (userId: string) => !!(sel.workspaceId && presence[sel.workspaceId]?.[userId]),
       typing,
       notificationUnread,
       setNotificationUnread,
       sendTyping: (channelId: string, threadRootId?: string) =>
         socketRef.current?.sendTyping(channelId, threadRootId),
     }),
-    [status, catchUpCount, presence, typing, notificationUnread],
+    [status, catchUpCount, presence, sel.workspaceId, typing, notificationUnread],
   );
 
   const mobileNav = useMemo(

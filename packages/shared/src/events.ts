@@ -126,7 +126,12 @@ export interface WorkspaceInvitedData {
 
 // ---- WS protocol frames (phase1.md §4) --------------------------
 export type ClientFrame =
-  | { op: 'auth'; token: string }
+  // `workspaces` (optional, #364) narrows *presence* to the workspaces this
+  // connection actually serves — an agent bridge runs one process per
+  // workspace and would otherwise show a green dot in every workspace its
+  // agent belongs to. Omitted means "all of them", which is what the human
+  // clients want: one window is reachable in every workspace it shows.
+  | { op: 'auth'; token: string; workspaces?: string[] }
   // threadRootId scopes the indicator to a thread's composer; absent = the
   // channel's main composer. Older clients omit it and read as main-composer.
   | { op: 'typing'; channelId: string; threadRootId?: string }

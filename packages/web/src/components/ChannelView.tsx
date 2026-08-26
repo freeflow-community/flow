@@ -110,7 +110,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       statusEmoji: m?.statusEmoji ?? '',
       statusText: m?.statusText ?? '',
       // You're online by definition — this client is the one connected.
-      online: id === auth.user.id || !!live.presence[id],
+      online: id === auth.user.id || live.isOnline(id),
       isSelf: id === auth.user.id,
     };
   });

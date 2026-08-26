@@ -6,6 +6,11 @@ import type { ClientFrame, Event, ServerFrame } from '@flow/shared';
 export interface FlowSocketOpts {
   serverUrl: string;
   token: string;
+  /** Workspaces this connection serves — presence is announced only there
+   * (#364). One bridge process serves one workspace, so without this the agent
+   * showed online in every workspace it belongs to, including ones nothing was
+   * listening in. */
+  workspaces?: string[];
   onEvent(event: Event): void;
   onOpen?(): void;
   log(msg: string): void;
@@ -41,7 +46,11 @@ export class FlowSocket {
     }, LIVENESS_CHECK_MS);
     ws.on('open', () => {
       lastActivity = Date.now();
-      this.send({ op: 'auth', token: this.opts.token });
+      this.send({
+        op: 'auth',
+        token: this.opts.token,
+        ...(this.opts.workspaces ? { workspaces: this.opts.workspaces } : {}),
+      });
     });
     ws.on('message', (raw: WebSocket.RawData) => {
       lastActivity = Date.now();

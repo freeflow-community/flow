@@ -262,6 +262,9 @@ actor SyncEngine {
         switch signal {
         case .connected:
             await appState?.setConnection(.connected)
+            // The server re-snapshots presence right after hello, and nobody
+            // sends `offline` for someone who left while we were down (#364).
+            await appState?.presenceReset()
             await backfillAfterReconnect()
         case .disconnected:
             await appState?.setConnection(.reconnecting)
@@ -1677,7 +1680,8 @@ actor SyncEngine {
             }
 
         case .presence(let p):
-            await appState?.presenceReceived(userId: p.userId, online: p.status == "online")
+            await appState?.presenceReceived(
+                workspaceId: event.workspaceId, userId: p.userId, online: p.status == "online")
 
         case .channelIndicator(let ind):
             // Any non-nil state spins the row — an added state later shouldn't

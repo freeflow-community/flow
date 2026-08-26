@@ -163,7 +163,9 @@ export async function computeRecipients(
   if (groupTokens.has('channel') || groupTokens.has('everyone')) {
     for (const [uid] of memberLevel) propose(uid, 0, 'channel');
   } else if (groupTokens.has('here')) {
-    for (const [uid] of memberLevel) if (isOnline(uid)) propose(uid, 0, 'here');
+    // online *in this workspace* (#364): a member connected only to another
+    // workspace is not here.
+    for (const [uid] of memberLevel) if (isOnline(uid, chan.workspaceId)) propose(uid, 0, 'here');
   }
 
   // thread replies notify prior participants (root author + repliers) who are

@@ -440,7 +440,7 @@ export default function Sidebar() {
                       label={a.displayName}
                       statusEmoji={a.statusEmoji}
                       statusTitle={a.statusText}
-                      leading={<PresenceDot online={!!live.presence[a.userId]} />}
+                      leading={<PresenceDot online={live.isOnline(a.userId)} />}
                       onMenu={() => setMenuChannel(c)}
                     />
                     {(artifactsByChannel.get(c.id) ?? []).map((x) => (
@@ -464,7 +464,7 @@ export default function Sidebar() {
                     className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
                     onClick={() => void openDm(a.userId)}
                   >
-                    <PresenceDot online={!!live.presence[a.userId]} />
+                    <PresenceDot online={live.isOnline(a.userId)} />
                     <span className="truncate">{a.displayName}</span>
                   </button>
                 ),
@@ -498,7 +498,7 @@ export default function Sidebar() {
                 leading={
                   c.kind === 'dm' ? (
                     // self-DM: you're online by definition (this client is connected)
-                    <PresenceDot online={otherId ? !!live.presence[otherId] : true} />
+                    <PresenceDot online={otherId ? live.isOnline(otherId) : true} />
                   ) : (
                     <span className="text-xs text-white/60">👥</span>
                   )
