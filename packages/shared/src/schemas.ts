@@ -544,12 +544,18 @@ export const CreateArtifactBody = z
     url: z.string().url().max(2048).optional(),
     name: z.string().min(1).max(255).optional(),
     ownsFile: z.boolean().optional(),
+    /** Mini apps (MINI_APPS.md): register this link as an app — the row gets a
+     * per-artifact secret, returned once in the create response. Link-only. */
+    app: z.boolean().optional(),
   })
   .refine((b) => (b.fileId === undefined) !== (b.url === undefined), {
     message: 'provide exactly one of fileId or url',
   })
   .refine((b) => b.url === undefined || /^https?:\/\//i.test(b.url), {
     message: 'url must be http(s)',
+  })
+  .refine((b) => b.app !== true || b.url !== undefined, {
+    message: 'app is only valid with url',
   });
 export type CreateArtifactBody = z.infer<typeof CreateArtifactBody>;
 

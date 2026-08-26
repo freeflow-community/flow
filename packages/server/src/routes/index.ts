@@ -887,8 +887,26 @@ export function registerRoutes(app: FastifyInstance): void {
       url: body.url,
       name: body.name,
       ownsFile: body.ownsFile,
+      app: body.app,
     });
+    // With `app: true` this DTO carries `appSecret` — the only time it ever
+    // travels besides a rotation (MINI_APPS.md).
     return reply.status(201).send(dto);
+  });
+
+  // ---- mini apps (docs/design/MINI_APPS.md) ----
+  // Mint a 5-minute identity token for the caller; members only, same gate as
+  // every other artifact operation. The app's guard verifies it offline.
+  app.post('/v1/artifacts/:id/app-token', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.mintArtifactAppToken(id, req.user.id);
+  });
+
+  // Rotate the app's secret — returned once, and every token minted under the
+  // old one stops verifying. Creator or workspace admin.
+  app.post('/v1/artifacts/:id/app-secret', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.rotateArtifactAppSecret(id, req.user.id);
   });
 
   app.get('/v1/workspaces/:id/artifacts', { preHandler: requireAuth }, async (req) => {

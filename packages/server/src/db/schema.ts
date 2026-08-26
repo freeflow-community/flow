@@ -353,6 +353,14 @@ export const artifacts = pgTable(
     url: text('url'),
     ownsFile: boolean('owns_file').notNull().default(false),
     name: text('name').notNull(),
+    // Mini apps (MINI_APPS.md): a link artifact marked as an app owns a secret
+    // used to HMAC short-lived member identity tokens. Encrypted at rest with
+    // the message-body envelope; all four columns are NULL together, and a
+    // non-null app_secret is what `isApp` means.
+    appSecret: bytea('app_secret'),
+    appSecretNonce: bytea('app_secret_nonce'),
+    appEncKeyId: text('app_enc_key_id'),
+    appEncScheme: smallint('app_enc_scheme'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
