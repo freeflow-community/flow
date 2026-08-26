@@ -15,16 +15,19 @@
 // were personal bookmarks fanned out per recipient; they are now shared per
 // channel. Events ride a per-channel subject; the gateway's visible() filter
 // gates them by channel membership, so private channels stay private.
+import { randomBytes } from 'node:crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
-import type { ArtifactDTO } from '@flow/shared';
+import type { AppArtifactSecretDTO, AppTokenDTO, ArtifactDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { decryptBody, encryptBody } from '../crypto/index.js';
+import { mintAppToken } from '../lib/appToken.js';
 import { reapFileIfUnreferenced, requireFileAccess, toFileDTO } from './files.js';
 import { requireChannelAccess } from './channels.js';
 import { publishEvent, subjectArtifact } from '../bus.js';
 
-const { artifacts, files, channelMembers } = schema;
+const { artifacts, files, channelMembers, users, workspaceMembers } = schema;
 
 type ArtifactRow = typeof artifacts.$inferSelect;
 type FileRow = typeof files.$inferSelect;
@@ -39,6 +42,7 @@ function toArtifactDTO(a: ArtifactRow, f: FileRow | null): ArtifactDTO {
     url: a.url,
     name: a.name,
     ownsFile: a.ownsFile,
+    isApp: a.appSecret !== null,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
     file: f ? toFileDTO(f) : null,
@@ -63,6 +67,39 @@ async function requireChannelMember(channelId: string, userId: string) {
   return chan;
 }
 
+// ---- mini apps (docs/design/MINI_APPS.md) --------------------------
+// An "app" link artifact owns a 32-byte secret. Flow HMACs short-lived member
+// identity tokens with it; a guard in front of the app verifies them offline.
+// The secret is written encrypted (message-body envelope) and leaves the server
+// exactly twice per generation: the create response and the rotate response.
+
+const APP_SECRET_BYTES = 32;
+
+/** The four encrypted-secret columns for a fresh random secret, plus the raw
+ * bytes to hand back once. */
+function newAppSecretColumns(): { secret: Buffer; cols: Partial<ArtifactRow> } {
+  const secret = randomBytes(APP_SECRET_BYTES);
+  const enc = encryptBody(secret.toString('base64'));
+  return {
+    secret,
+    cols: {
+      appSecret: enc.body,
+      appSecretNonce: enc.bodyNonce,
+      appEncKeyId: enc.encKeyId,
+      appEncScheme: enc.encScheme,
+    },
+  };
+}
+
+/** The row's secret, or null when the artifact is not an app. */
+function readAppSecret(a: ArtifactRow): Buffer | null {
+  if (!a.appSecret || !a.appSecretNonce || !a.appEncKeyId || a.appEncScheme === null) return null;
+  return Buffer.from(
+    decryptBody({ body: a.appSecret, bodyNonce: a.appSecretNonce, encKeyId: a.appEncKeyId, encScheme: a.appEncScheme }),
+    'base64',
+  );
+}
+
 /** A friendly default name for a link artifact: the host without a leading www. */
 function linkName(url: string): string {
   try {
@@ -81,8 +118,15 @@ function linkName(url: string): string {
 export async function createArtifact(
   userId: string,
   channelId: string,
-  opts: { fileId?: string | undefined; url?: string | undefined; name?: string | undefined; ownsFile?: boolean | undefined },
-): Promise<ArtifactDTO> {
+  opts: {
+    fileId?: string | undefined;
+    url?: string | undefined;
+    name?: string | undefined;
+    ownsFile?: boolean | undefined;
+    app?: boolean | undefined;
+  },
+): Promise<ArtifactDTO | AppArtifactSecretDTO> {
+  if (opts.app && opts.url === undefined) throw badRequest('bad_request', 'app is only valid with url');
   const chan = await requireChannelMember(channelId, userId);
 
   // ---- link artifact -------------------------------------------------
@@ -93,7 +137,27 @@ export async function createArtifact(
       .from(artifacts)
       .where(and(eq(artifacts.channelId, channelId), eq(artifacts.kind, 'link'), eq(artifacts.url, opts.url)))
       .limit(1);
-    if (existing[0]) return toArtifactDTO(existing[0], null);
+    if (existing[0]) {
+      // Link pins are idempotent per channel. With `app: true` that would mean
+      // handing back a row whose secret we cannot show — so promote a plain pin
+      // into an app (returning the fresh secret), and refuse when it is already
+      // one: rotation is the documented way to get another secret, and doing it
+      // silently here would kill every token the existing app has out.
+      if (!opts.app) return toArtifactDTO(existing[0], null);
+      if (existing[0].appSecret) {
+        throw conflict('app_exists', 'that url is already pinned as an app in this channel; rotate its secret instead');
+      }
+      const { secret, cols } = newAppSecretColumns();
+      const promoted = await db
+        .update(artifacts)
+        .set({ ...cols, updatedAt: new Date() })
+        .where(eq(artifacts.id, existing[0].id))
+        .returning();
+      const dto = toArtifactDTO(promoted[0]!, null);
+      publishArtifactEvent('artifact.updated', dto);
+      return { ...dto, appSecret: secret.toString('base64url') };
+    }
+    const app = opts.app ? newAppSecretColumns() : null;
     const inserted = await db
       .insert(artifacts)
       .values({
@@ -105,11 +169,12 @@ export async function createArtifact(
         ownsFile: false,
         name: opts.name ?? linkName(opts.url),
         createdBy: userId,
+        ...(app?.cols ?? {}),
       })
       .returning();
     const dto = toArtifactDTO(inserted[0]!, null);
     publishArtifactEvent('artifact.created', dto);
-    return dto;
+    return app ? { ...dto, appSecret: app.secret.toString('base64url') } : dto;
   }
 
   // ---- file artifact -------------------------------------------------
@@ -269,4 +334,62 @@ export async function deleteArtifact(artifactId: string, userId: string): Promis
   await db.delete(artifacts).where(eq(artifacts.id, artifactId));
   if (a.ownsFile && a.fileId) await reapFileIfUnreferenced(a.fileId);
   publishArtifactEvent('artifact.deleted', toArtifactDTO(a, fRows[0] ?? null));
+}
+
+/**
+ * Mint a short-lived identity token for the caller against an app artifact
+ * (MINI_APPS.md §"The token"). The gate is the same one every artifact
+ * operation uses — membership of the artifact's channel — which is the whole
+ * point: membership stays enforced where it already lives, and a removed member
+ * simply fails their next mint. Verification is offline, so nothing here is
+ * recorded; the token's 5-minute life and single-use `jti` bound the damage if
+ * it leaks.
+ */
+export async function mintArtifactAppToken(artifactId: string, userId: string): Promise<AppTokenDTO> {
+  const { a } = await requireArtifactMember(artifactId, userId);
+  const secret = readAppSecret(a);
+  if (!secret) throw badRequest('not_an_app', 'artifact is not an app');
+  const who = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0];
+  if (!who) throw notFound('user not found');
+  const { token, expiresAt } = mintAppToken(secret, {
+    artifactId: a.id,
+    channelId: a.channelId,
+    workspaceId: a.workspaceId,
+    userId: who.id,
+    displayName: who.displayName,
+    isAgent: who.isAgent,
+  });
+  return { token, expiresAt: expiresAt.toISOString() };
+}
+
+/**
+ * Rotate an app's secret — the revocation lever beyond kicking members: every
+ * token minted under the old secret stops verifying the moment this returns.
+ * Creator or workspace owner/admin, because it is destructive to everyone
+ * currently inside the app, not just to the caller.
+ */
+export async function rotateArtifactAppSecret(artifactId: string, userId: string): Promise<AppArtifactSecretDTO> {
+  const { a } = await requireArtifactMember(artifactId, userId);
+  if (!a.appSecret) throw badRequest('not_an_app', 'artifact is not an app');
+  if (a.createdBy !== userId) {
+    const m = (
+      await db
+        .select({ role: workspaceMembers.role })
+        .from(workspaceMembers)
+        .where(and(eq(workspaceMembers.workspaceId, a.workspaceId), eq(workspaceMembers.userId, userId)))
+        .limit(1)
+    )[0];
+    if (!m || (m.role !== 'owner' && m.role !== 'admin')) {
+      throw forbidden('only the app’s creator or a workspace admin can rotate its secret');
+    }
+  }
+  const { secret, cols } = newAppSecretColumns();
+  const updated = await db
+    .update(artifacts)
+    .set({ ...cols, updatedAt: new Date() })
+    .where(eq(artifacts.id, artifactId))
+    .returning();
+  const dto = toArtifactDTO(updated[0]!, null);
+  publishArtifactEvent('artifact.updated', dto);
+  return { ...dto, appSecret: secret.toString('base64url') };
 }
