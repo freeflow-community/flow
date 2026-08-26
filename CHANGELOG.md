@@ -13,12 +13,18 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- Mini apps (`docs/design/MINI_APPS.md`) have their server (#369) and bridge
-  guard (#370) but no client yet: no surface mints a token before opening an
-  `isApp` link artifact, so opening one lands on the guard's 401 rather than
-  the app. Build-order step 3 is one small PR per surface (web iframe, macOS
-  webview, iOS external open) — and the Safari `SameSite=None`-in-an-iframe
-  spike gates the web one.
+- Mini apps (`docs/design/MINI_APPS.md`) mint-before-open landed on **web only**
+  (#371); macOS (artifact-panel webview) and iOS (external open) still open an
+  `isApp` artifact with no token and land on the guard's 401. Build-order step 3,
+  one small PR per remaining surface.
+- Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
+  measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
+  frame nor sends one already established first-party, and the guard's 302 to
+  the clean url drops the token — so re-minting per load can't help either. Web
+  routes Safari to a new tab, which works. Closing the gap needs a guard-side
+  change (bridge): keep the session in a url the guard controls, or have the 401
+  page call `requestStorageAccess()`. macOS/iOS should check their own webviews
+  against the same finding before copying the web shape.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a
