@@ -1241,6 +1241,16 @@ actor SyncEngine {
         await refreshArtifacts(workspaceId: artifact.workspaceId)
     }
 
+    /// Mints a short-lived identity token for an `isApp` artifact
+    /// (`docs/design/MINI_APPS.md`). Members only — the server applies the same
+    /// gate as every other artifact operation, so this throws `APIError` once
+    /// the caller has lost access or the artifact is gone. Nothing is cached:
+    /// the token is appended to the url being opened and then forgotten, and
+    /// the next open mints a fresh one.
+    func mintAppToken(artifactId: String) async throws -> AppTokenResponse {
+        try await api.post("/v1/artifacts/\(artifactId)/app-token")
+    }
+
     /// Deletes the shared artifact. The server reaps the backing file too if the
     /// artifact owned it (guarded).
     func deleteArtifact(_ artifact: Artifact) async throws {
