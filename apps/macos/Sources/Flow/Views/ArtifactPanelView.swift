@@ -357,7 +357,7 @@ struct LinkArtifactView: View {
     }
 
     private var loadKey: LoadKey {
-        LoadKey(artifactId: artifact.id, url: url, isApp: artifact.isApp, reload: reloadToken)
+        LoadKey(artifactId: artifact.id, url: url, isApp: artifact.isApp == true, reload: reloadToken)
     }
 
     /// One open of one app. A different artifact, or a reload, is a new open and
@@ -372,7 +372,7 @@ struct LinkArtifactView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                if artifact.isApp {
+                if artifact.isApp == true {
                     // Says why this artifact behaves differently from a pinned link.
                     Text("APP")
                         .flowFont(size: 9, weight: .semibold)
@@ -438,7 +438,7 @@ struct LinkArtifactView: View {
     /// would answer with its 401 helps nobody and leaks the open attempt.
     private func resolveFrame() async {
         let open = currentOpen
-        switch MiniApp.plan(url: url, isApp: artifact.isApp, hasAppSession: appSession == open) {
+        switch MiniApp.plan(url: url, isApp: artifact.isApp == true, hasAppSession: appSession == open) {
         case .idle:
             appSession = nil
             frame = .idle
@@ -474,7 +474,7 @@ struct LinkArtifactView: View {
     /// already burned.
     private func openExternally() {
         guard let plain = URL(string: url) else { return }
-        guard artifact.isApp else { NSWorkspace.shared.open(plain); return }
+        guard artifact.isApp == true else { NSWorkspace.shared.open(plain); return }
         Task {
             do {
                 let minted = try await app.engine.mintAppToken(artifactId: artifact.id)
