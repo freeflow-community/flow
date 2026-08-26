@@ -340,6 +340,10 @@ struct LinkArtifactView: View {
     /// What the pane is showing. A plain link goes straight to `.loaded(url)`
     /// and stays there, so its behaviour is bit-for-bit what it was.
     @State private var frame: FrameState = .idle
+    /// The open whose guard session cookie the web view is holding. While this
+    /// matches, following the shared url around the app needs no second token —
+    /// see `MiniApp.plan(url:isApp:hasAppSession:)` for why that matters.
+    @State private var appSession: AppOpen?
 
     private var url: String { artifact.url ?? "" }
 
@@ -355,6 +359,15 @@ struct LinkArtifactView: View {
     private var loadKey: LoadKey {
         LoadKey(artifactId: artifact.id, url: url, isApp: artifact.isApp, reload: reloadToken)
     }
+
+    /// One open of one app. A different artifact, or a reload, is a new open and
+    /// mints again; a url change within the same open does not.
+    private struct AppOpen: Equatable {
+        let artifactId: String
+        let reload: Int
+    }
+
+    private var currentOpen: AppOpen { AppOpen(artifactId: artifact.id, reload: reloadToken) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -424,10 +437,15 @@ struct LinkArtifactView: View {
     /// request is made to the app's tunnel at all — asking for a page the guard
     /// would answer with its 401 helps nobody and leaks the open attempt.
     private func resolveFrame() async {
-        switch MiniApp.plan(url: url, isApp: artifact.isApp) {
+        let open = currentOpen
+        switch MiniApp.plan(url: url, isApp: artifact.isApp, hasAppSession: appSession == open) {
         case .idle:
+            appSession = nil
             frame = .idle
         case let .load(plain):
+            // Either a plain link, or a co-browse hop inside an app we are
+            // already signed in to. Note the web view is *not* torn down here —
+            // `.loaded` to `.loaded` keeps it, so a hop doesn't flash.
             frame = .loaded(plain)
         case .mint:
             frame = .minting
@@ -441,9 +459,11 @@ struct LinkArtifactView: View {
                     frame = .failed("This app's address can't be opened.")
                     return
                 }
+                appSession = open
                 frame = .loaded(tokened.absoluteString)
             } catch {
                 guard !Task.isCancelled else { return }
+                appSession = nil
                 frame = .failed(error.localizedDescription)
             }
         }
@@ -607,19 +627,31 @@ private struct CoBrowserWebView: NSViewRepresentable {
         var lastRequested: String?
         var lastReloadToken = 0
 
+        /// The navigation `load` handed back for our own request, so we can
+        /// still recognise it after a redirect has changed the url out from
+        /// under it. An app's open is exactly that: we ask for the tokened url
+        /// and the guard 302s us to the clean one.
+        var ownNavigation: WKNavigation?
+
         func request(_ raw: String, on view: WKWebView, _ resolved: URL) {
             lastRequested = raw
             lastLoaded = raw
-            view.load(URLRequest(url: resolved))
+            ownNavigation = view.load(URLRequest(url: resolved))
         }
 
         init(onNavigate: @escaping (String) -> Void) { self.onNavigate = onNavigate }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             guard let s = webView.url?.absoluteString else { return }
-            // Ignore the programmatic load we issued for the current shared url;
-            // report only user-driven navigations (link clicks, form submits).
-            if s == lastLoaded { return }
+            let isOwnLoad = navigation != nil && navigation === ownNavigation
+            if isOwnLoad { ownNavigation = nil }
+            guard MiniApp.isMemberNavigation(committed: s, isOwnLoad: isOwnLoad, lastLoaded: lastLoaded)
+            else {
+                // Still remember where our own load landed, so a later update
+                // carrying that url doesn't re-request it.
+                lastLoaded = s
+                return
+            }
             lastLoaded = s
             onNavigate(s)
         }
