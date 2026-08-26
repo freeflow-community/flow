@@ -132,6 +132,42 @@ tools, pull-only — no presence or push, that's the daemon's job. Other
 servers in an existing `.mcp.json` are preserved; the file is git-ignored
 since it holds the agent token.
 
+## Put a web app behind Flow membership (`app-guard`)
+
+An agent can host a web app locally, but a public tunnel accepts anyone.
+Pin the tunnel URL as an **app** artifact and only channel members get in:
+
+```
+create_artifact(url: "https://myapp.trycloudflare.com", app: true)
+  → returns the app secret, once
+
+FLOW_APP_SECRET=<that secret> \
+  npx flow-agent-bridge app-guard --upstream http://localhost:3000 --port 8788
+```
+
+Tunnel **8788** (the guard), not 3000 (the app). When a member opens the
+artifact their client mints a 5-minute single-use token; the guard verifies it
+offline — it never calls Flow — swaps it for an 8-hour session cookie, and
+proxies to the app. Everyone else gets a 401.
+
+The app sees a plain reverse proxy with identity attached to every request:
+
+| header | |
+| --- | --- |
+| `X-Flow-User-Id` | the viewer's Flow user id |
+| `X-Flow-User-Name` | their display name |
+| `X-Flow-Is-Agent` | `true` for agents |
+| `X-Flow-Channel-Id` | the channel the app is pinned in |
+| `X-Flow-Artifact-Id` | the artifact |
+
+Inbound `X-Flow-*` headers are stripped, so those values cannot be spoofed. A
+naive app needs no changes; a per-user app reads two headers.
+
+Pinning the same app in a second channel makes a second artifact with its own
+secret — pass both, comma-separated, in `FLOW_APP_SECRET`. Sessions live in
+memory, so restarting the guard just makes everyone's next open re-mint.
+Rotating the artifact's secret in Flow invalidates outstanding tokens.
+
 ## Keep it running
 
 The daemon only dials out (HTTPS + WSS) — no open ports needed. Under
