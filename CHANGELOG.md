@@ -239,11 +239,13 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
-- Clamping the side panel to the space available (#354) is macOS-only. Web has
-  the same fixed-width panel, but flexbox squeezes where SwiftUI's `HStack`
-  clips, and below the `md` breakpoint web's panel becomes a full-screen overlay
-  instead — so the defect does not exist there. iOS pushes Files and threads
-  full-screen and has no split to break. If macOS ever wants web's behaviour at
+- Clamping the side panel to the space available, and making image and video
+  attachment cards fit the transcript column (#354), are both macOS-only. Web
+  has the same fixed-width panel and the same card caps, but flexbox squeezes
+  where SwiftUI's `HStack` and fixed `frame`s clip, and below the `md`
+  breakpoint web's panel becomes a full-screen overlay instead — so neither
+  defect exists there. iOS pushes Files and threads full-screen and has no split
+  to break. If macOS ever wants web's behaviour at
   its narrowest widths, that is a follow-up, not a gap this leaves open.
 - Workspace avatars (#336) are *managed* from web and macOS only; iOS displays
   the mark but offers no upload or remove, as the issue specified. iOS has no
