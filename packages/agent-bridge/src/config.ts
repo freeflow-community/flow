@@ -54,6 +54,18 @@ export interface BridgeConfig {
   serverUrl: string;
   agentToken: string;
   /**
+   * Which workspace this process serves, by slug (#357). Agents can belong to
+   * several workspaces now, and one bridge process serves exactly one: events
+   * from anywhere else are ignored and the MCP tools are scoped to it.
+   *
+   * Optional, and only meaningful when the agent is in more than one workspace
+   * — a single-workspace agent needs no config edit and behaves as it always
+   * did. Several configs may name different workspaces while sharing the same
+   * credentials (username + key + token); only `login` mints and revokes
+   * tokens, so starting a second process never disturbs the first.
+   */
+  workspace: string | null;
+  /**
    * Log file (every line the daemon prints, same timestamped format).
    * Default: <config name>.log next to the config (agent.json → agent.log).
    * Explicit JSON null disables file logging; `~` expands.
@@ -93,6 +105,7 @@ export interface BridgeConfig {
 interface RawConfig {
   serverUrl?: string;
   agentToken?: string;
+  workspace?: string;
   logFile?: string | null;
   runtime?: Partial<RuntimeConfig> & { kind?: string };
   eventScope?: string;
@@ -170,6 +183,7 @@ export function loadConfig(configPath: string): BridgeConfig {
   return {
     serverUrl,
     agentToken,
+    workspace: raw.workspace?.trim() || null,
     logFile,
     runtime,
     eventScope,
@@ -180,4 +194,38 @@ export function loadConfig(configPath: string): BridgeConfig {
     progress,
     relayText: raw.relayText ?? true,
   };
+}
+
+/** The minimum a workspace must expose for `resolveWorkspace` to pick between them. */
+export interface WorkspaceChoice {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+/**
+ * Which of the agent's workspaces this process serves (#357).
+ *
+ * One workspace: that one, config field or not — the overwhelmingly common
+ * case, and it must keep working with no config edit. More than one: the
+ * `workspace` slug decides, and its absence is a startup error that lists the
+ * slugs, because silently picking the first would have the agent answering in
+ * a room its operator never pointed it at.
+ */
+export function resolveWorkspace<T extends WorkspaceChoice>(all: T[], slug: string | null): T {
+  if (all.length === 0) throw new Error('agent belongs to no workspace');
+  if (slug) {
+    const want = slug.toLowerCase();
+    const found = all.find((w) => w.slug.toLowerCase() === want);
+    if (found) return found;
+    throw new Error(
+      `config: workspace "${slug}" is not one this agent belongs to — ` +
+        `available: ${all.map((w) => w.slug).join(', ')}`,
+    );
+  }
+  if (all.length === 1) return all[0]!;
+  throw new Error(
+    `this agent belongs to ${all.length} workspaces — set "workspace" in agent.json to one of: ` +
+      `${all.map((w) => w.slug).join(', ')} (one bridge process per workspace)`,
+  );
 }

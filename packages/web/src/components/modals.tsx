@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { SIDEBAR_COLORS, PROFILE_BIO_MAX, PROFILE_WEBSITE_MAX, isProfileWebsiteUrl } from '@flow/shared';
-import type { ChannelDTO, InviteDTO, JoinLinkDTO, NotificationPrefs, UserDTO } from '@flow/shared';
-import { api, uploadAvatar, uploadWorkspaceAvatar } from '../lib/api';
+import type {
+  ChannelDTO,
+  InviteDTO,
+  JoinLinkDTO,
+  NotificationPrefs,
+  UserDTO,
+  UserWorkspaceInviteResponse,
+  WorkspaceDTO,
+  WorkspaceInviteTargetsDTO,
+} from '@flow/shared';
+import { ApiError, api, uploadAvatar, uploadWorkspaceAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { AuthImg, Avatar } from './Avatar';
@@ -946,6 +955,132 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * "Invite to workspace" (#358): bring this member into another workspace of
+ * mine. One control for two flows, because from the inviter's side it is one
+ * intention — an agent joins on the spot (its sponsor vouches for it, #357), a
+ * person is asked and joins when they accept (#359).
+ *
+ * The list is the server's answer to "which of my workspaces is this member NOT
+ * in", so it never offers a move that can only fail.
+ */
+function InviteToWorkspace({ user, onDone }: { user: UserDTO; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [targets, setTargets] = useState<WorkspaceDTO[] | null>(null);
+  // Whether the server had nothing to offer in the first place. Distinct from
+  // "the list is empty now": after inviting into the last candidate, the right
+  // thing to say is the confirmation, not "already in all your workspaces".
+  const [noneToOffer, setNoneToOffer] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const show = async () => {
+    setOpen(true);
+    setError(null);
+    if (targets) return;
+    try {
+      const res = await api<WorkspaceInviteTargetsDTO>('GET', `/v1/users/${user.id}/workspace-invites`);
+      setTargets(res.workspaces);
+      setNoneToOffer(res.workspaces.length === 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
+
+  const invite = async (ws: WorkspaceDTO) => {
+    setBusy(ws.id);
+    setError(null);
+    try {
+      if (user.isAgent) {
+        await api('POST', `/v1/agents/${user.id}/workspace-invites`, { workspaceId: ws.id });
+        setDone(`${user.displayName} joined ${ws.name}`);
+        await qc.invalidateQueries({ queryKey: ['members', ws.id] });
+      } else {
+        // Idempotent server-side (#359): `created: false` means an identical
+        // invitation was already in flight, which is "already invited", not a
+        // second send.
+        const res = await api<UserWorkspaceInviteResponse>(
+          'POST',
+          `/v1/users/${user.id}/workspace-invites`,
+          { workspaceId: ws.id },
+        );
+        setDone(
+          res.created
+            ? `Invitation sent to ${user.displayName}`
+            : `${user.displayName} has already been invited to ${ws.name}`,
+        );
+      }
+      // Whatever happened, that workspace is no longer a candidate.
+      setTargets((prev) => (prev ?? []).filter((w) => w.id !== ws.id));
+      onDone();
+    } catch (err) {
+      setError(inviteErrorText(err, user, ws));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        data-testid="user-card-invite-workspace"
+        className="rounded border border-hairline px-4 py-1.5 text-sm"
+        onClick={() => void show()}
+      >
+        Invite to workspace
+      </button>
+    );
+  }
+
+  return (
+    <div data-testid="invite-workspace-panel" className="mt-2 w-full text-left">
+      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Invite to workspace</p>
+      {targets === null && !error && <p className="text-sm text-faint">Loading…</p>}
+      {noneToOffer && (
+        <p data-testid="invite-workspace-empty" className="text-sm text-muted">
+          {user.displayName} is already in all your workspaces.
+        </p>
+      )}
+      <div className="space-y-1">
+        {(targets ?? []).map((ws) => (
+          <button
+            key={ws.id}
+            data-testid={`invite-workspace-${ws.slug}`}
+            className="flex w-full items-center gap-2 rounded border border-hairline px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50"
+            disabled={busy !== null}
+            onClick={() => void invite(ws)}
+          >
+            {ws.avatarUrl ? (
+              <AuthImg path={ws.avatarUrl} alt={ws.name} className="h-5 w-5 rounded object-cover" />
+            ) : (
+              <span className="flex h-5 w-5 items-center justify-center rounded bg-accent text-[10px] font-bold text-white">
+                {ws.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <span className="flex-1 truncate text-left">{ws.name}</span>
+            {busy === ws.id && <span className="text-xs text-faint">…</span>}
+          </button>
+        ))}
+      </div>
+      {done && <p data-testid="invite-workspace-done" className="mt-1 text-sm text-accent-deep">{done}</p>}
+      {error && <p data-testid="invite-workspace-error" className="mt-1 text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+/** The inline message for a failed invite — the server's codes, said in names. */
+export function inviteErrorText(err: unknown, user: UserDTO, ws: WorkspaceDTO): string {
+  const code = err instanceof ApiError ? err.code : '';
+  if (code === 'already_member') return `${user.displayName} is already in ${ws.name}.`;
+  if (code === 'username_taken') {
+    return `A member of ${ws.name} already uses ${user.displayName}'s handle — rename one of them first.`;
+  }
+  if (code === 'invite_exists') return `${user.displayName} has already been invited to ${ws.name}.`;
+  return err instanceof Error ? err.message : 'failed';
+}
+
 /** Member profile card: avatar, email, local time, Message button. */
 export function UserCard({ userId, onClose }: { userId: string; onClose: () => void }) {
   const auth = useAuth();
@@ -1041,11 +1176,18 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
               <span className="text-sm font-semibold">{sponsor.displayName}</span>
             </div>
           )}
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-wrap justify-center gap-2">
             {userId !== auth.user.id && (
               <button data-testid="user-card-message"
                 className="rounded bg-accent px-4 py-1.5 text-sm font-semibold text-white"
                 onClick={() => void message()}>Message</button>
+            )}
+            {/* Never on your own profile: you are already in your workspaces. */}
+            {userId !== auth.user.id && (
+              <InviteToWorkspace
+                user={user}
+                onDone={() => void qc.invalidateQueries({ queryKey: ['workspaces'] })}
+              />
             )}
             <button className="rounded border border-hairline px-4 py-1.5 text-sm" onClick={onClose}>Close</button>
           </div>

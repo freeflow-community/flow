@@ -408,13 +408,62 @@ actor SyncEngine {
     }
 
     func acceptInvite(token: String) async throws -> Workspace {
-        let ws: Workspace = try await api.post(
-            "/v1/invites/accept",
-            body: AcceptInviteBody(token: token)
-        )
+        try await acceptInvite(body: AcceptInviteBody(token: token))
+    }
+
+    /// Accept an in-app workspace invitation (#359) — same endpoint and same
+    /// row as the emailed link, addressed by id because the invitee never sees
+    /// a token.
+    func acceptWorkspaceInvite(inviteId: String) async throws -> Workspace {
+        try await acceptInvite(body: AcceptInviteBody(inviteId: inviteId))
+    }
+
+    private func acceptInvite(body: AcceptInviteBody) async throws -> Workspace {
+        let ws: Workspace = try await api.post("/v1/invites/accept", body: body)
         try? await db.writer.write { db in try ws.save(db) }
         await refreshWorkspaces()
         return ws
+    }
+
+    /// Decline an in-app workspace invitation (#359). Quiet: no membership, and
+    /// nothing said to the inviter.
+    func declineWorkspaceInvite(inviteId: String) async throws {
+        let _: OkResponse = try await api.post("/v1/invites/decline", body: DeclineInviteBody(inviteId: inviteId))
+    }
+
+    /// Workspace invitations addressed to me right now (#359).
+    func fetchWorkspaceInvites() async throws -> [PendingWorkspaceInvite] {
+        let resp: WorkspaceInvitesResponse = try await api.get("/v1/me/workspace-invites")
+        return resp.invites
+    }
+
+    /// The picker behind "Invite to workspace" (#358): my workspaces this
+    /// member is not in yet. Same question for an agent and a person.
+    func workspaceInviteTargets(userId: String) async throws -> [Workspace] {
+        let resp: WorkspaceInviteTargetsResponse = try await api.get("/v1/users/\(userId)/workspace-invites")
+        return resp.workspaces
+    }
+
+    /// Add an existing agent to another of my workspaces (#357). It joins
+    /// immediately and I become its sponsor there.
+    func inviteAgentToWorkspace(agentUserId: String, workspaceId: String) async throws -> Workspace {
+        let resp: AgentWorkspaceInviteResponse = try await api.post(
+            "/v1/agents/\(agentUserId)/workspace-invites",
+            body: WorkspaceInviteBody(workspaceId: workspaceId)
+        )
+        return resp.workspace
+    }
+
+    /// Invite a person into another of my workspaces (#359). They join when
+    /// they accept — nothing changes until then. Returns false when an
+    /// identical invitation was already pending.
+    @discardableResult
+    func inviteUserToWorkspace(userId: String, workspaceId: String) async throws -> Bool {
+        let resp: WorkspaceInviteResponse = try await api.post(
+            "/v1/users/\(userId)/workspace-invites",
+            body: WorkspaceInviteBody(workspaceId: workspaceId)
+        )
+        return resp.created
     }
 
     /// Sets the workspace's sidebar color preset (owner/admin only, server-enforced).

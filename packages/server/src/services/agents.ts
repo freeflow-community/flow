@@ -10,17 +10,23 @@
 // responsible for what the agent does. The avatar is picked at random and the
 // sponsor can change it in-app afterwards.
 import { randomBytes, randomInt } from 'node:crypto';
-import { and, eq, isNull, sql } from 'drizzle-orm';
-import type { AgentInviteDTO, AgentLoginResponse, AgentRedeemResponse, RedeemAgentInviteBody } from '@flow/shared';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type {
+  AgentInviteDTO,
+  AgentLoginResponse,
+  AgentRedeemResponse,
+  AgentWorkspaceInviteResponse,
+  RedeemAgentInviteBody,
+} from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
 import { newId } from '../lib/ids.js';
 import { hashToken, newToken } from '../lib/tokens.js';
-import { badRequest, forbidden, notFound, unauthorized } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound, unauthorized } from '../lib/errors.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 import { postSystemMessage } from './messages.js';
-import { requireMembership, toWorkspaceDTO } from './workspaces.js';
-import { killAgentCredentials, removeMemberDeep } from './memberRemoval.js';
+import { announceJoin, enrollInWorkspace, requireMembership, toWorkspaceDTO } from './workspaces.js';
+import { removeAgentFromWorkspace } from './memberRemoval.js';
 import { hashSecret, toUserDTO, verifySecret } from './auth.js';
 import { setAvatar } from './users.js';
 import { listAgentAvatarPresets, readAgentAvatarPreset } from './agentAvatars.js';
@@ -66,6 +72,50 @@ export async function createAgentInvite(workspaceId: string, sponsorId: string):
 }
 
 /**
+ * Is `username` already spoken for inside `workspaceId`? (#357)
+ *
+ * Handles are unique per workspace now, not per server: two unrelated agents may
+ * both be `@builder` as long as they never share a room. The check therefore
+ * runs against the target workspace's roster whenever a membership is created —
+ * redeem, or the invite below — instead of against a global unique index.
+ * `exceptUserId` lets an agent's own row pass when re-checking its own handle.
+ */
+async function usernameTakenIn(
+  tx: DbLike,
+  workspaceId: string,
+  username: string,
+  exceptUserId?: string,
+): Promise<boolean> {
+  const rows = await tx
+    .select({ id: users.id })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(users.agentUsername, username)))
+    .limit(2);
+  return rows.some((r) => r.id !== exceptUserId);
+}
+
+type DbLike = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * The agent this (username, key) pair identifies, or null. The pair IS the
+ * identity now that handles are only per-workspace unique (#357) — several rows
+ * can share a username, so every candidate's key is verified and the one that
+ * matches wins. Returns null for "no such agent", which is also what a wrong
+ * key looks like: callers must not distinguish the two.
+ */
+async function findAgentByCredentials(username: string, key: string) {
+  const candidates = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.agentUsername, username.toLowerCase()), eq(users.isAgent, true)));
+  for (const u of candidates) {
+    if (u.agentKeyHash && (await verifySecret(u.agentKeyHash, key))) return u;
+  }
+  return null;
+}
+
+/**
  * Redeem a one-time invite code (unauthenticated — the code IS the auth). Creates
  * the agent's user account (credentials from the request; sponsor + workspace
  * from the invite), assigns a random preset avatar, joins the workspace +
@@ -81,11 +131,18 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
   if (invite.expiresAt < new Date()) {
     throw badRequest('invite_expired', 'this invite code has expired — generate a new one in Flow');
   }
-  const taken = await db.select({ one: sql`1` }).from(users).where(eq(users.agentUsername, username)).limit(1);
-  if (taken.length > 0) throw badRequest('username_taken', 'that agent username is already registered');
-
-  const userId = newId();
-  const keyHash = await hashSecret(input.key); // argon2 — do the heavy work before the transaction
+  if (await usernameTakenIn(db, invite.workspaceId, username)) {
+    throw badRequest('username_taken', 'that agent username is already taken in this workspace');
+  }
+  // #357: the (username, key) pair is the identity. A pair that already names
+  // an agent redeems as "add me here too" — same account, new membership — so
+  // one bridge identity can serve several workspaces. Anything else (unknown
+  // handle, or a handle held elsewhere under a different key) creates a fresh
+  // account, which is what every redeem did before.
+  const existing = await findAgentByCredentials(username, input.key);
+  const userId = existing?.id ?? newId();
+  // argon2 — do the heavy work before the transaction
+  const keyHash = existing?.agentKeyHash ?? (await hashSecret(input.key));
   const agentToken = `flow-agent-token-${newToken()}`;
   let generalChannel: { id: string; workspaceId: string; kind: string } | null = null;
   await db.transaction(async (tx) => {
@@ -97,24 +154,30 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
       .where(and(eq(agentInvites.id, invite.id), isNull(agentInvites.redeemedAt)))
       .returning();
     if (!claimed[0]) throw badRequest('invite_used', 'this invite code has already been used');
-    const takenTx = await tx.select({ one: sql`1` }).from(users).where(eq(users.agentUsername, username)).limit(1);
-    if (takenTx.length > 0) throw badRequest('username_taken', 'that agent username is already registered');
-    // Same recipe as app bot users: synthetic unique email, unusable password
-    // hash, emailVerifiedAt stamped (agents never do the email flow).
-    await tx.insert(users).values({
-      id: userId,
-      email: `agent-${userId}@agents.flow.local`,
-      passwordHash: `!agent:${randomBytes(24).toString('hex')}`,
-      displayName: input.name.trim(),
-      statusText: input.description?.slice(0, 80) ?? '',
-      isAgent: true,
-      emailVerifiedAt: new Date(),
-      sponsorUserId: invite.sponsorUserId,
-      agentUsername: username,
-      agentKeyHash: keyHash,
-    });
+    if (await usernameTakenIn(tx, invite.workspaceId, username, userId)) {
+      throw badRequest('username_taken', 'that agent username is already taken in this workspace');
+    }
+    if (!existing) {
+      // Same recipe as app bot users: synthetic unique email, unusable password
+      // hash, emailVerifiedAt stamped (agents never do the email flow).
+      await tx.insert(users).values({
+        id: userId,
+        email: `agent-${userId}@agents.flow.local`,
+        passwordHash: `!agent:${randomBytes(24).toString('hex')}`,
+        displayName: input.name.trim(),
+        statusText: input.description?.slice(0, 80) ?? '',
+        isAgent: true,
+        emailVerifiedAt: new Date(),
+        sponsorUserId: invite.sponsorUserId,
+        agentUsername: username,
+        agentKeyHash: keyHash,
+      });
+    }
     await tx.update(agentInvites).set({ agentUserId: userId }).where(eq(agentInvites.id, invite.id));
-    await tx.insert(workspaceMembers).values({ workspaceId: invite.workspaceId, userId, role: 'member' });
+    await tx
+      .insert(workspaceMembers)
+      .values({ workspaceId: invite.workspaceId, userId, role: 'member', sponsorUserId: invite.sponsorUserId })
+      .onConflictDoNothing();
     const general = await tx
       .select()
       .from(channels)
@@ -128,8 +191,9 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
   });
   // Random preset avatar through the normal pipeline (square-crop → webp → R2)
   // BEFORE announcing the join, so member.joined already carries the avatarUrl.
-  // Best-effort: a failure here shouldn't undo a successful join.
-  const preset = pickRandomAvatarPreset();
+  // Best-effort: a failure here shouldn't undo a successful join. An account
+  // that already exists keeps the avatar its sponsor may have since changed.
+  const preset = existing ? null : pickRandomAvatarPreset();
   if (preset) {
     try {
       await setAvatar(userId, readAgentAvatarPreset(preset), 'image/png');
@@ -167,19 +231,66 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
 }
 
 /**
+ * Add an agent that already exists to another of the caller's workspaces (#357)
+ * — the profile popup's "Invite to workspace" for agents.
+ *
+ * Same effect as a redeem minus the account: membership, #general, the join
+ * line. No approval step and no invite code, matching the agent-invite
+ * philosophy — a member vouches and the agent is in. The *inviter* becomes its
+ * sponsor there, because sponsorship is per-workspace: whoever brought it into
+ * this room answers for it in this room.
+ *
+ * The caller must both share a workspace with the agent (that is what makes the
+ * agent visible to them at all) and belong to the target. Failing either reads
+ * as 404, so the endpoint never confirms that a workspace or an agent exists to
+ * someone who couldn't otherwise tell.
+ */
+export async function inviteAgentToWorkspace(
+  agentUserId: string,
+  workspaceId: string,
+  inviterId: string,
+): Promise<AgentWorkspaceInviteResponse> {
+  await requireMembership(workspaceId, inviterId); // 404s for non-members
+  const agent = (await db.select().from(users).where(eq(users.id, agentUserId)).limit(1))[0];
+  if (!agent?.isAgent || agent.deletedAt) throw notFound('agent not found');
+  if (!(await sharesWorkspace(inviterId, agentUserId))) throw notFound('agent not found');
+
+  const already = await db
+    .select({ one: sql`1` })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, agentUserId)))
+    .limit(1);
+  if (already.length > 0) throw conflict('already_member', 'that agent is already in this workspace');
+  if (agent.agentUsername && (await usernameTakenIn(db, workspaceId, agent.agentUsername))) {
+    throw conflict('username_taken', `@${agent.agentUsername} is already taken in that workspace`);
+  }
+
+  const joined = await db.transaction((tx) =>
+    enrollInWorkspace(tx, workspaceId, agentUserId, 'member', inviterId),
+  );
+  if (joined) await announceJoin(workspaceId, agentUserId);
+  const wsRow = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0]!;
+  return { workspace: toWorkspaceDTO(wsRow, 'member') };
+}
+
+/** Do these two users share at least one workspace? (i.e. can A see B's profile) */
+export async function sharesWorkspace(a: string, b: string): Promise<boolean> {
+  const mine = db.select({ w: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.userId, a));
+  const rows = await db
+    .select({ one: sql`1` })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.userId, b), inArray(workspaceMembers.workspaceId, mine)))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
  * Username + key → fresh agent token (the "lost agent.json" path — no admin
  * involved). Revokes every prior token, so login doubles as rotation.
  */
 export async function agentLogin(username: string, key: string): Promise<AgentLoginResponse> {
-  const user = (
-    await db
-      .select()
-      .from(users)
-      .where(and(eq(users.agentUsername, username.toLowerCase()), eq(users.isAgent, true)))
-      .limit(1)
-  )[0];
-  const ok = user?.agentKeyHash ? await verifySecret(user.agentKeyHash, key) : false;
-  if (!user || !ok) throw unauthorized('invalid agent credentials');
+  const user = await findAgentByCredentials(username, key);
+  if (!user) throw unauthorized('invalid agent credentials');
   const agentToken = `flow-agent-token-${newToken()}`;
   await db.transaction(async (tx) => {
     await tx
@@ -192,24 +303,27 @@ export async function agentLogin(username: string, key: string): Promise<AgentLo
 }
 
 /**
- * Remove an agent (owner/admin, or the agent's sponsor) — same semantics as
- * app removal: leave the workspace + channels, delete 1:1 DMs, revoke every
- * token AND the username/key credentials, keep the user row for authorship.
- * Registering again mints a fresh identity.
+ * Remove an agent from ONE workspace (owner/admin, or its sponsor there) —
+ * same semantics as app removal: leave the workspace + channels, delete 1:1
+ * DMs, keep the user row for authorship. Since #357 an agent can live in
+ * several workspaces, so the credentials are only revoked when the last
+ * membership goes; until then the agent keeps working where it still belongs.
  */
 export async function removeAgent(workspaceId: string, agentUserId: string, actorId: string): Promise<void> {
   const actor = await requireMembership(workspaceId, actorId);
   const target = (await db.select().from(users).where(eq(users.id, agentUserId)).limit(1))[0];
   if (!target?.isAgent) throw notFound('agent not found');
   const membership = await db
-    .select({ one: sql`1` })
+    .select({ sponsorUserId: workspaceMembers.sponsorUserId })
     .from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, agentUserId)))
     .limit(1);
   if (membership.length === 0) throw notFound('agent not found');
-  if (actor.role !== 'owner' && actor.role !== 'admin' && target.sponsorUserId !== actorId) {
+  // #357: sponsorship is per-workspace — the sponsor who can remove the agent
+  // here is whoever brought it here, not whoever first created the account.
+  const sponsorHere = membership[0]!.sponsorUserId ?? target.sponsorUserId;
+  if (actor.role !== 'owner' && actor.role !== 'admin' && sponsorHere !== actorId) {
     throw forbidden('only owners, admins, or the agent’s sponsor can remove an agent');
   }
-  await killAgentCredentials(agentUserId);
-  await removeMemberDeep(workspaceId, agentUserId);
+  await removeAgentFromWorkspace(workspaceId, agentUserId);
 }

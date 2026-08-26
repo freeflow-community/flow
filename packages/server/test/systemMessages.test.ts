@@ -94,7 +94,7 @@ describe('join/leave system messages', () => {
     const newcomerId = await registerHuman('newcomer@example.test', 'Newcomer');
     const inv = await ws.createInvite(workspaceId, ownerId, 'newcomer@example.test');
     const token = inv.inviteUrl.slice(inv.inviteUrl.lastIndexOf('/') + 1);
-    await ws.acceptInvite(newcomerId, token);
+    await ws.acceptInvite(newcomerId, { token });
     const general = (await ch.listChannels(workspaceId, ownerId)).find((c) => c.name === 'general')!;
     const rows = await messagesOf(general.id, ownerId);
     const notice = rows.find((m) => m.systemKind === 'member_joined' && m.userId === newcomerId);

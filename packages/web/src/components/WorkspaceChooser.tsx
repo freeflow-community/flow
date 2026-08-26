@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { WorkspaceDTO } from '@flow/shared';
+import type { PendingWorkspaceInviteDTO, WorkspaceDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useSelfRegisterDomain, useWorkspaces } from '../hooks';
+import { useSelfRegisterDomain, useWorkspaceInvites, useWorkspaces } from '../hooks';
 import { EMPTY_SLUG_FIELD, slugEdited, slugForName } from '../lib/slugify';
 import { OpenInAppButton } from './OpenInApp';
 import { AuthImg } from './Avatar';
@@ -13,6 +13,11 @@ export default function WorkspaceChooser() {
   const sel = useSelection();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
+  // Invitations someone sent me from my profile popup (#359). They live here,
+  // above the workspaces I'm already in, because this screen is exactly the
+  // question they answer: which workspace do I go to?
+  const invites = useWorkspaceInvites();
+  const [busyInvite, setBusyInvite] = useState<string | null>(null);
   // Non-null only for a Google-authenticated creator on a non-consumer domain
   // (phase16 §5a) — we only ever offer *their* domain, never free text.
   const selfRegisterDomain = useSelfRegisterDomain();
@@ -56,10 +61,66 @@ export default function WorkspaceChooser() {
     }
   };
 
+  const respond = async (invite: PendingWorkspaceInviteDTO, accept: boolean) => {
+    setError(null);
+    setBusyInvite(invite.id);
+    try {
+      if (accept) {
+        const ws = await api<WorkspaceDTO>('POST', '/v1/invites/accept', { inviteId: invite.id });
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ['workspaces'] }),
+          qc.invalidateQueries({ queryKey: ['workspaceInvites'] }),
+        ]);
+        sel.selectWorkspace(ws.id);
+        return;
+      }
+      await api('POST', '/v1/invites/decline', { inviteId: invite.id });
+      await qc.invalidateQueries({ queryKey: ['workspaceInvites'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    } finally {
+      setBusyInvite(null);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-base">
       <h1 className="text-2xl font-bold text-ink">Choose a Workspace</h1>
       <OpenInAppButton />
+      {(invites.data ?? []).length > 0 && (
+        <div data-testid="workspace-invitations" className="w-96 space-y-2">
+          {(invites.data ?? []).map((inv) => (
+            <div
+              key={inv.id}
+              data-testid={`workspace-invite-${inv.workspaceSlug}`}
+              className="rounded-lg border border-accent/40 bg-accent/5 p-3 text-left"
+            >
+              <p className="text-sm text-ink">
+                <span className="font-semibold">{inv.inviterName}</span> invited you to{' '}
+                <span className="font-semibold">{inv.workspaceName}</span>
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  data-testid={`workspace-invite-accept-${inv.workspaceSlug}`}
+                  className="rounded bg-accent px-3 py-1 text-sm font-semibold text-white disabled:opacity-50"
+                  disabled={busyInvite === inv.id}
+                  onClick={() => void respond(inv, true)}
+                >
+                  Accept
+                </button>
+                <button
+                  data-testid={`workspace-invite-decline-${inv.workspaceSlug}`}
+                  className="rounded border border-hairline2 px-3 py-1 text-sm disabled:opacity-50"
+                  disabled={busyInvite === inv.id}
+                  onClick={() => void respond(inv, false)}
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="w-96 space-y-2">
         {(workspaces.data ?? []).map((ws) => (
           <button

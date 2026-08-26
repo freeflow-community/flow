@@ -33,8 +33,13 @@ export const users = pgTable('users', {
   // Agents only (AGENT_MEMBERS.md): the human member responsible for the agent,
   // and the agent's durable credentials (username + argon2 key hash) — nulled
   // on removal so a removed agent can never log back in.
+  // The agent's *original* sponsor. Per-workspace sponsorship lives on
+  // `workspace_members.sponsorUserId` (#357) — this stays as the identity-level
+  // answer to "whose agent is this" outside any workspace.
   sponsorUserId: uuid('sponsor_user_id').references((): AnyPgColumn => users.id),
-  agentUsername: citext('agent_username').unique(),
+  // #357: unique *per workspace*, not globally — identity is username + key,
+  // and the collision check runs when a membership is created.
+  agentUsername: citext('agent_username'),
   agentKeyHash: text('agent_key_hash'),
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
@@ -143,6 +148,10 @@ export const workspaceMembers = pgTable(
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     role: memberRole('role').notNull().default('member'),
+    // Agents only (#357): the human who vouched for this agent *in this
+    // workspace* — the inviter. Sponsorship is per-membership because an agent
+    // can be sponsored by different people in different workspaces.
+    sponsorUserId: uuid('sponsor_user_id').references(() => users.id, { onDelete: 'set null' }),
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.workspaceId, t.userId] }), index().on(t.userId)],
@@ -159,9 +168,22 @@ export const invites = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    // #359: set when the invite was addressed to an existing Flow user from
+    // their profile popup rather than emailed to an address. Such an invite is
+    // accepted/declined in-app by id; no email is ever sent.
+    invitedUserId: uuid('invited_user_id').references(() => users.id, { onDelete: 'cascade' }),
+    // #359: "no thanks" — terminal like acceptedAt, and it frees the pending slot.
+    declinedAt: timestamp('declined_at', { withTimezone: true }),
   },
-  // one PENDING invite per email; accepted invites are history, not locks
-  (t) => [uniqueIndex('invites_pending_unique').on(t.workspaceId, t.email).where(sql`accepted_at IS NULL`)],
+  // one PENDING invite per email; accepted/declined invites are history, not locks
+  (t) => [
+    uniqueIndex('invites_pending_unique')
+      .on(t.workspaceId, t.email)
+      .where(sql`accepted_at IS NULL AND declined_at IS NULL`),
+    index('invites_invited_user_idx')
+      .on(t.invitedUserId)
+      .where(sql`accepted_at IS NULL AND declined_at IS NULL`),
+  ],
 );
 
 /**

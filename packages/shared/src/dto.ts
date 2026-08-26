@@ -104,6 +104,44 @@ export interface InviteDTO {
 }
 
 /**
+ * A workspace invitation addressed to a Flow user in-app (#359) — what the
+ * invitee sees, and what they Accept or Decline. No token: an in-app invite is
+ * addressed by id, since only the invitee can read the row.
+ */
+export interface PendingWorkspaceInviteDTO {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
+  /** Authenticated `/v1/avatars/<key>` path, or null — same shape as WorkspaceDTO. */
+  workspaceAvatarUrl: string | null;
+  inviterId: string;
+  inviterName: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/**
+ * Response of POST /v1/users/:userId/workspace-invites (#359). `created` is
+ * false when an identical invitation was already pending — the call is
+ * idempotent, and the caller should say "already invited" rather than claim it
+ * sent a second one.
+ */
+export interface UserWorkspaceInviteResponse {
+  invite: PendingWorkspaceInviteDTO;
+  created: boolean;
+}
+
+/**
+ * GET /v1/users/:userId/workspace-invites — the workspaces the viewer could
+ * still bring this member into: the viewer's own, minus the ones the member is
+ * already in (#358's picker). Empty means "already everywhere you are".
+ */
+export interface WorkspaceInviteTargetsDTO {
+  workspaces: WorkspaceDTO[];
+}
+
+/**
  * The workspace's persistent join link (issue #85). One live link at a time:
  * regenerating replaces it and revoking removes it, so `joinUrl: null` means
  * "no link right now — generate one".
@@ -530,6 +568,15 @@ export interface AgentRedeemResponse {
   /** Non-expiring bearer token (`flow-agent-token-<token>`) — shown once, only the hash is stored. */
   agentToken: string;
   user: UserDTO;
+  workspace: WorkspaceDTO;
+}
+
+/**
+ * Response of POST /v1/agents/:agentUserId/workspace-invites (#357): the agent
+ * is a member of `workspace` as of now — no account was created, and the
+ * caller is its sponsor there.
+ */
+export interface AgentWorkspaceInviteResponse {
   workspace: WorkspaceDTO;
 }
 

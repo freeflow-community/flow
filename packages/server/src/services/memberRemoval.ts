@@ -5,7 +5,7 @@
 // only other member is gone renders as a broken self-DM; group DMs just lose
 // the membership), keeps the user row so message authorship keeps its name,
 // and publishes the same member.left events deleteApp always has.
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 
@@ -139,10 +139,32 @@ export async function killAgentCredentials(agentUserId: string): Promise<void> {
 }
 
 /**
+ * Take an agent out of ONE workspace (#357). The membership and its channels go
+ * immediately; the credentials only die with the agent's LAST membership,
+ * because an agent that still belongs somewhere must still be able to log in
+ * there. Fully removed, it is the same dead account it always was: username and
+ * key nulled, tokens revoked, user row kept for authorship.
+ */
+export async function removeAgentFromWorkspace(workspaceId: string, agentUserId: string): Promise<void> {
+  await removeMemberDeep(workspaceId, agentUserId);
+  const left = await db
+    .select({ one: sql`1` })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.userId, agentUserId))
+    .limit(1);
+  if (left.length === 0) await killAgentCredentials(agentUserId);
+}
+
+/**
  * Sponsor-departure cascade (AGENT_MEMBERS.md): when a human leaves a
  * workspace, the agents they sponsor there go with them — orphaned agents
  * falling to an admin would recreate the accountability gap sponsorship
  * closes. Runs before the sponsor's own removal.
+ *
+ * Per-workspace since #357: the agents that leave are the ones this human
+ * sponsors *here* (the membership's sponsor), and each is removed from this
+ * workspace only. An agent someone else sponsors elsewhere is untouched, and
+ * keeps its credentials.
  */
 export async function removeSponsoredAgents(workspaceId: string, sponsorId: string): Promise<void> {
   const sponsored = await db
@@ -150,10 +172,16 @@ export async function removeSponsoredAgents(workspaceId: string, sponsorId: stri
     .from(workspaceMembers)
     .innerJoin(users, eq(users.id, workspaceMembers.userId))
     .where(
-      and(eq(workspaceMembers.workspaceId, workspaceId), eq(users.sponsorUserId, sponsorId), eq(users.isAgent, true)),
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(users.isAgent, true),
+        // Rows written before #357 carry the sponsor on the user row only; the
+        // migration backfilled them, so the COALESCE is belt-and-braces for a
+        // membership created by an older code path mid-deploy.
+        sql`coalesce(${workspaceMembers.sponsorUserId}, ${users.sponsorUserId}) = ${sponsorId}`,
+      ),
     );
   for (const a of sponsored) {
-    await killAgentCredentials(a.userId);
-    await removeMemberDeep(workspaceId, a.userId);
+    await removeAgentFromWorkspace(workspaceId, a.userId);
   }
 }

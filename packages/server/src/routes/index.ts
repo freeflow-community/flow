@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { z, ZodTypeAny } from 'zod';
 import {
   AcceptInviteBody,
+  DeclineInviteBody,
+  WorkspaceInviteBody,
   AddChannelMemberBody,
   CreateChannelBody,
   CreateDmBody,
@@ -77,6 +79,7 @@ import { detachUserFromWorkspace, disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
+import * as wi from '../services/workspaceInvites.js';
 import * as ar from '../services/artifacts.js';
 
 declare module 'fastify' {
@@ -490,7 +493,44 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.post('/v1/invites/accept', { preHandler: requireAuth }, async (req) => {
     const body = parse(AcceptInviteBody, req.body);
-    return ws.acceptInvite(req.user.id, body.token);
+    return ws.acceptInvite(req.user.id, body);
+  });
+
+  // ---- "Invite to workspace" from a profile popup (#357 agents / #359 people)
+  // The picker's list: my workspaces this member isn't in yet. Same question
+  // for an agent and a person, so one route answers both.
+  app.get('/v1/users/:id/workspace-invites', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return wi.workspaceInviteTargets(id, req.user.id);
+  });
+
+  // Agents join on the spot — the inviter vouches for them and becomes their
+  // sponsor in the target workspace (#357).
+  app.post('/v1/agents/:id/workspace-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(WorkspaceInviteBody, req.body);
+    const res = await ag.inviteAgentToWorkspace(id, body.workspaceId, req.user.id);
+    return reply.status(201).send(res);
+  });
+
+  // People are asked, not added (#359): this creates a pending invitation they
+  // accept or decline. Repeating it returns the invitation already in flight.
+  app.post('/v1/users/:id/workspace-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(WorkspaceInviteBody, req.body);
+    const res = await wi.inviteUserToWorkspace(id, body.workspaceId, req.user.id);
+    return reply.status(res.created ? 201 : 200).send(res);
+  });
+
+  // The invitee's side: their live invitations, and the "no thanks" that ends one.
+  app.get('/v1/me/workspace-invites', { preHandler: requireAuth }, async (req) => {
+    return { invites: await wi.listMyWorkspaceInvites(req.user.id) };
+  });
+
+  app.post('/v1/invites/decline', { preHandler: requireAuth }, async (req) => {
+    const body = parse(DeclineInviteBody, req.body);
+    await ws.declineInvite(req.user.id, body.inviteId);
+    return { ok: true };
   });
 
   // ---- Persistent workspace join link (issue #85): one live link per

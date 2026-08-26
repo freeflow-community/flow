@@ -19,7 +19,7 @@ import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
 import { HuddleProvider } from '../huddle';
-import { useNameMap, useWorkspaces } from '../hooks';
+import { useNameMap, useWorkspaceInvites, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
@@ -257,6 +257,12 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['channelMembers'] });
         break;
       }
+      case 'workspace.invited':
+        // Someone invited me to a workspace (#359), or the invitation I was
+        // shown just ended (accepted on another device, declined, expired).
+        // Same refetch either way — the list IS the answer.
+        void qc.invalidateQueries({ queryKey: ['workspaceInvites'] });
+        break;
       case 'member.updated':
         // Role change (admin panel): refresh the roster, and the workspace list
         // so the affected member's own menu gating (owner/admin) re-derives.
@@ -484,6 +490,7 @@ function WorkspaceRail() {
   const workspaces = useWorkspaces();
   const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const railBg = sidebarColor(activeWs?.sidebarColor).rail;
+  const invites = (useWorkspaceInvites().data ?? []).length;
   return (
     <nav
       className="flex w-16 shrink-0 flex-col items-center gap-3.5 py-4"
@@ -526,14 +533,20 @@ function WorkspaceRail() {
           </div>
         );
       })}
-      <button
-        data-testid="rail-add-workspace"
-        title="Add a workspace"
-        className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-white/40 text-white/70 hover:border-white/70 hover:text-white"
-        onClick={() => sel.selectWorkspace(null)}
-      >
-        +
-      </button>
+      {/* Pending workspace invitations (#359) live on the chooser behind this
+          button, so it carries their badge — otherwise an invitation would be
+          found only by accident. */}
+      <div className="relative">
+        <button
+          data-testid="rail-add-workspace"
+          title={invites > 0 ? `${invites} workspace invitation${invites === 1 ? '' : 's'}` : 'Add a workspace'}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-white/40 text-white/70 hover:border-white/70 hover:text-white"
+          onClick={() => sel.selectWorkspace(null)}
+        >
+          +
+        </button>
+        <RailUnreadBadge count={invites} ringColor={railBg} testId="rail-workspace-invites" what="workspace invitations" />
+      </div>
     </nav>
   );
 }
