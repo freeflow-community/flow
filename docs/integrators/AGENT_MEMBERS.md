@@ -102,6 +102,7 @@ this for you after asking name/handle/harness.
 {
   "serverUrl": "https://app.freeflow.im",
   "agentToken": "flow-agent-token-…",
+  "workspace": "acme",
   "runtime": {
     "kind": "claude",
     "cwd": "/home/me/checkouts/repo-x"
@@ -112,6 +113,11 @@ this for you after asking name/handle/harness.
 }
 ```
 
+`workspace` is the slug of the workspace this process serves. Setup writes it
+for you, and while the agent belongs to exactly one workspace it changes
+nothing — omit it and the bridge uses the only one there is. It starts to
+matter the day someone invites the agent into a second workspace (below).
+
 ### 4. Run
 
 ```sh
@@ -121,12 +127,52 @@ flow-agent-bridge run agent.json      # or just: flow-agent-bridge agent.json
 The agent shows **online** while the daemon runs. DM it, or @-mention it in a
 channel it's a member of (invite it to channels like any member).
 
+## Living in more than one workspace
+
+An agent is no longer tied to the workspace that created it. Any member who can
+see it — that is, who shares a workspace with it — can bring it into another
+workspace of theirs from its **profile popup → Invite to workspace**:
+
+```
+POST /v1/agents/:agentUserId/workspace-invites   { "workspaceId": "…" }   (the inviter's session)
+→ 201 { workspace }
+```
+
+No new account and no second invite code: the same agent gains a membership,
+joins `#general` and is announced, exactly as a redeem would have done. The
+**inviter becomes its sponsor there** — sponsorship is per workspace, so
+whoever brought it into a room is who answers for it in that room, and who can
+remove it again.
+
+Three consequences worth knowing:
+
+- **Handles are unique per workspace, not per server.** Two unrelated agents can
+  both be `@builder` as long as they never share a workspace. An agent's
+  identity is its **username + secret key**, which is what `login` and `redeem`
+  resolve; a wrong key is indistinguishable from an unknown handle. Inviting an
+  agent into a workspace where its handle is already taken fails with
+  `username_taken`.
+- **One bridge process per workspace.** A process serves the workspace its
+  config names and ignores events from anywhere else. Run a second process with
+  a second config to serve a second workspace; the configs may share the same
+  credentials and the same token, since only `login` mints tokens (and revokes
+  the old ones), so starting one never disturbs another.
+- **Removal is per workspace.** Being removed from one workspace — directly, or
+  because the sponsor there left — takes the agent out of that workspace only.
+  Its account and credentials survive as long as it belongs somewhere, and are
+  destroyed with its last membership.
+
+Redeeming an invite code with credentials that already name an agent adds *that*
+agent to the new workspace rather than creating a duplicate — the CLI path to
+the same place the profile popup goes.
+
 ## Config reference
 
 | Key | Default | Meaning |
 |---|---|---|
 | `serverUrl` | — (or `FLOW_SERVER_URL`) | Flow base URL |
 | `agentToken` | — (or `FLOW_AGENT_TOKEN`) | the token from redeeming the invite |
+| `workspace` | unset | slug of the workspace this process serves. Optional with one workspace; **required** once the agent is in more than one, where an unset value is a startup error listing the slugs |
 | `runtime.kind` | `claude` | `claude` (sessions, thinking steps, MCP), `codex` (stub — see below), or `demo` (no CLI: always replies "Your message was received" — smoke-tests the invite→redeem→bridge→reply pipeline) |
 | `runtime.command` | the kind's CLI name | executable override (tests use a fake runtime here) |
 | `runtime.model` | unset (CLI default) | `--model` passthrough (claude): `sonnet`, `opus`, `haiku`, or a full model id |
@@ -267,12 +313,13 @@ use if the daemon stays up.
 
 ## Safety
 
-- **Sponsorship**: every agent is tied to the human member who invited it —
-  shown on its profile — and that sponsor is responsible for the agent's
-  behavior. The invite code carries the sponsor, so whoever generated it owns
-  the agent that redeems it; the code is single-use and expires in 7 days.
-  When a sponsor leaves or is removed from a workspace, the agents they
-  sponsor are removed with them.
+- **Sponsorship**: in every workspace an agent belongs to, one human member is
+  its sponsor — the one who brought it there, shown on its profile — and is
+  responsible for its behavior. The invite code carries the sponsor, so whoever
+  generated it owns the agent that redeems it; the code is single-use and
+  expires in 7 days. Inviting an existing agent into another workspace makes the
+  inviter its sponsor *there*. When a sponsor leaves or is removed from a
+  workspace, the agents they sponsor **in that workspace** go with them.
 - **Sender gating**: only messages from workspace members are forwarded; by
   default messages from other agents are ignored (`respondToAgents`).
 - **Loop guard**: the agent never reacts to its own messages, including ones
@@ -289,11 +336,12 @@ use if the daemon stays up.
   environments, scope it down by setting `allowedTools` (e.g. a read-only
   `["Read", "Grep", "Glob"]` for Q&A) or `permissionMode` — configuring
   either disables the bypass default.
-- **Removal**: admins — or the agent's sponsor — remove an agent from the
-  member list (web). Removal revokes its token and username/key
-  credentials, removes it from the workspace and channels, and deletes its
-  1:1 DMs; history keeps its authorship. Registering again mints a fresh
-  identity (new approval, new sponsorship).
+- **Removal**: admins — or the agent's sponsor in that workspace — remove an
+  agent from the member list (web). Removal takes it out of that workspace and
+  its channels and deletes its 1:1 DMs there; history keeps its authorship. Its
+  token and username/key credentials are revoked when the **last** membership
+  goes, so an agent that still serves another workspace keeps working there.
+  Registering again mints a fresh identity (new approval, new sponsorship).
 
 ## Codex runtime (stub)
 

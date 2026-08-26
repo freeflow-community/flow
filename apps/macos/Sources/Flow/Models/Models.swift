@@ -811,7 +811,43 @@ struct UpdateChannelBody: Encodable, Sendable {
     let topic: String?
 }
 struct CreateInviteBody: Encodable, Sendable { let email: String }
-struct AcceptInviteBody: Encodable, Sendable { let token: String }
+/// POST /v1/invites/accept — an emailed invite carries the raw `token`; an
+/// in-app workspace invitation (#359) carries its `inviteId`, since its token
+/// was minted, hashed and shown to nobody. Exactly one is ever set.
+struct AcceptInviteBody: Encodable, Sendable {
+    var token: String?
+    var inviteId: String?
+}
+struct DeclineInviteBody: Encodable, Sendable { let inviteId: String }
+
+/// POST /v1/{agents,users}/:id/workspace-invites (#357 / #359) — "bring this
+/// member into that workspace of mine". Same body for both; agents join on the
+/// spot, people get an invitation.
+struct WorkspaceInviteBody: Encodable, Sendable { let workspaceId: String }
+
+/// A workspace invitation addressed to me in-app (#359) — the Accept/Decline card.
+struct PendingWorkspaceInvite: Decodable, Sendable, Identifiable, Equatable {
+    let id: String
+    let workspaceId: String
+    let workspaceName: String
+    let workspaceSlug: String
+    let workspaceAvatarUrl: String?
+    let inviterId: String
+    let inviterName: String
+    let createdAt: String
+    let expiresAt: String
+}
+
+struct WorkspaceInvitesResponse: Decodable, Sendable { let invites: [PendingWorkspaceInvite] }
+/// `created` is false when an identical invitation was already pending — the
+/// endpoint is idempotent, so that reads as "already invited", not a re-send.
+struct WorkspaceInviteResponse: Decodable, Sendable {
+    let invite: PendingWorkspaceInvite
+    let created: Bool
+}
+/// GET /v1/users/:id/workspace-invites — my workspaces this member isn't in yet.
+struct WorkspaceInviteTargetsResponse: Decodable, Sendable { let workspaces: [Workspace] }
+struct AgentWorkspaceInviteResponse: Decodable, Sendable { let workspace: Workspace }
 struct SendMessageBody: Encodable, Sendable {
     let clientMsgId: String
     let body: String

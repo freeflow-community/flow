@@ -506,3 +506,164 @@ describe('sponsor departure cascade', () => {
     expect(u.agentUsername).toBeNull(); // credentials dead too
   });
 });
+
+// ---- Multi-workspace agents (#357) --------------------------------------
+//
+// An agent used to be a citizen of exactly one workspace: its handle was
+// globally unique, its sponsor lived on the user row, and losing its sponsor
+// killed the account. All three become per-workspace here.
+describe('multi-workspace agents (#357)', () => {
+  /** A second workspace owned by `ownerId`, with the agent NOT in it. */
+  async function secondWorkspace(owner = ownerId, label = 'second') {
+    seq += 1;
+    return ws.createWorkspace(owner, `WS ${label} ${seq}`, `${label}-${Date.now()}-${seq}`);
+  }
+
+  it('invites an existing agent into another workspace: membership, #general, join line, sponsor = inviter', async () => {
+    const a = await registerAgent('TravelBot');
+    const b = await secondWorkspace();
+
+    const res = await ag.inviteAgentToWorkspace(a.user.id, b.id, ownerId);
+    expect(res.workspace.id).toBe(b.id);
+
+    const m = (
+      await db
+        .select()
+        .from(workspaceMembers)
+        .where(and(eq(workspaceMembers.workspaceId, b.id), eq(workspaceMembers.userId, a.user.id)))
+    )[0]!;
+    expect(m.role).toBe('member');
+    expect(m.sponsorUserId).toBe(ownerId); // sponsorship is per-workspace now
+
+    const general = (
+      await db.select().from(channels).where(and(eq(channels.workspaceId, b.id), eq(channels.name, 'general')))
+    )[0]!;
+    const cm = await db
+      .select()
+      .from(channelMembers)
+      .where(and(eq(channelMembers.channelId, general.id), eq(channelMembers.userId, a.user.id)));
+    expect(cm.length).toBe(1);
+
+    // no new account, and the bridge already connected to the first workspace
+    // keeps working — same row, same token.
+    const rows = await db.select().from(users).where(eq(users.agentUsername, a.username));
+    expect(rows.length).toBe(1);
+    const who = await auth.authenticate(a.agentToken);
+    expect(who.id).toBe(a.user.id);
+  });
+
+  it('the inviter is the sponsor in the new workspace, and the original sponsor stays in the old one', async () => {
+    const inviter = await registerHuman(`inviter-${Date.now()}@example.test`, 'Inviter');
+    const a = await registerAgent('DualBot'); // sponsored by ownerId in `workspaceId`
+    const b = await ws.createWorkspace(inviter.id, `Inviter WS ${Date.now()}`, `inviter-ws-${Date.now()}`);
+    await db.insert(workspaceMembers).values({ workspaceId, userId: inviter.id, role: 'member' });
+
+    await ag.inviteAgentToWorkspace(a.user.id, b.id, inviter.id);
+    const here = await ws.toMemberDTO(workspaceId, a.user.id);
+    const there = await ws.toMemberDTO(b.id, a.user.id);
+    expect(here.sponsorId).toBe(ownerId);
+    expect(there.sponsorId).toBe(inviter.id);
+  });
+
+  it('rejects a non-member of the target workspace with 404 (no existence leak)', async () => {
+    const a = await registerAgent('PrivateBot');
+    const outsider = await registerHuman(`outsider-${Date.now()}@example.test`, 'Outsider');
+    const b = await secondWorkspace(outsider.id, 'outsider');
+    await expect(ag.inviteAgentToWorkspace(a.user.id, b.id, ownerId)).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('rejects an agent the caller cannot see (no shared workspace) with 404', async () => {
+    const stranger = await registerHuman(`stranger-${Date.now()}@example.test`, 'Stranger');
+    const theirWs = await secondWorkspace(stranger.id, 'stranger');
+    const theirAgent = await registerAgent('StrangerBot', { sponsorId: stranger.id, wsId: theirWs.id });
+    const mine = await secondWorkspace();
+    await expect(ag.inviteAgentToWorkspace(theirAgent.user.id, mine.id, ownerId)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+
+  it('rejects an agent already in the target workspace with already_member', async () => {
+    const a = await registerAgent('HomeBot');
+    await expect(ag.inviteAgentToWorkspace(a.user.id, workspaceId, ownerId)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'already_member',
+    });
+  });
+
+  it('rejects a handle collision in the target workspace with username_taken', async () => {
+    const handle = `twin-${Date.now()}`;
+    const a = await registerAgent('TwinA', { username: handle });
+    const b = await secondWorkspace();
+    // a *different* agent already holds that handle over in B
+    await registerAgent('TwinB', { username: handle, wsId: b.id });
+    await expect(ag.inviteAgentToWorkspace(a.user.id, b.id, ownerId)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'username_taken',
+    });
+  });
+
+  it('two agents hold the same @username in different workspaces; login resolves by username + key', async () => {
+    const handle = `shared-${Date.now()}`;
+    const b = await secondWorkspace();
+    const one = await registerAgent('SharedOne', { username: handle });
+    const two = await registerAgent('SharedTwo', { username: handle, wsId: b.id });
+    expect(one.user.id).not.toBe(two.user.id);
+
+    expect((await ag.agentLogin(handle, one.key)).user.id).toBe(one.user.id);
+    expect((await ag.agentLogin(handle, two.key)).user.id).toBe(two.user.id);
+    await expect(ag.agentLogin(handle, newKey())).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('redeeming with an existing (username, key) pair adds that same agent to the new workspace', async () => {
+    const a = await registerAgent('ReuseBot');
+    const b = await secondWorkspace();
+    const inv = await ag.createAgentInvite(b.id, ownerId);
+    const res = await ag.redeemAgentInvite({ code: inv.code, username: a.username, key: a.key, name: 'ReuseBot' });
+    expect(res.user.id).toBe(a.user.id); // same account, second membership
+    const rows = await db.select().from(users).where(eq(users.agentUsername, a.username));
+    expect(rows.length).toBe(1);
+    const m = await db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, b.id), eq(workspaceMembers.userId, a.user.id)));
+    expect(m.length).toBe(1);
+  });
+
+  it('removing an agent from one workspace leaves the other membership and its credentials alone', async () => {
+    const a = await registerAgent('SurvivorBot');
+    const b = await secondWorkspace();
+    await ag.inviteAgentToWorkspace(a.user.id, b.id, ownerId);
+
+    await ag.removeAgent(b.id, a.user.id, ownerId);
+
+    const left = await db.select().from(workspaceMembers).where(eq(workspaceMembers.userId, a.user.id));
+    expect(left.map((m) => m.workspaceId)).toEqual([workspaceId]);
+    const u = (await db.select().from(users).where(eq(users.id, a.user.id)))[0]!;
+    expect(u.agentUsername).toBe(a.username); // still alive where it still belongs
+    expect((await auth.authenticate(a.agentToken)).id).toBe(a.user.id);
+
+    // ...and the LAST membership is what kills it.
+    await ag.removeAgent(workspaceId, a.user.id, ownerId);
+    const dead = (await db.select().from(users).where(eq(users.id, a.user.id)))[0]!;
+    expect(dead.agentUsername).toBeNull();
+    await expect(auth.authenticate(a.agentToken)).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('a sponsor leaving one workspace removes their agent from that workspace only', async () => {
+    const sponsor = await registerHuman(`persponsor-${Date.now()}@example.test`, 'PerSponsor');
+    await db.insert(workspaceMembers).values({ workspaceId, userId: sponsor.id, role: 'member' });
+    const a = await registerAgent('PerWsBot', { sponsorId: sponsor.id });
+    const b = await secondWorkspace();
+    await db.insert(workspaceMembers).values({ workspaceId: b.id, userId: sponsor.id, role: 'member' });
+    // owner (not the sponsor) brings the agent into B, so B's sponsor is the owner
+    await ag.inviteAgentToWorkspace(a.user.id, b.id, ownerId);
+
+    await ws.removeMember(workspaceId, ownerId, sponsor.id);
+
+    const left = await db.select().from(workspaceMembers).where(eq(workspaceMembers.userId, a.user.id));
+    expect(left.map((m) => m.workspaceId)).toEqual([b.id]);
+    const u = (await db.select().from(users).where(eq(users.id, a.user.id)))[0]!;
+    expect(u.agentUsername).toBe(a.username);
+    expect((await auth.authenticate(a.agentToken)).id).toBe(a.user.id);
+  });
+});

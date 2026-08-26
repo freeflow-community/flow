@@ -19,6 +19,7 @@ import type {
   MessagePage,
   NotificationPage,
   OAuthIdentityDTO,
+  PendingWorkspaceInviteDTO,
   UserDTO,
   WorkspaceDTO,
   WorkspaceEmojiDTO,
@@ -39,6 +40,19 @@ export function useWorkspaces() {
     queryKey: ['workspaces'],
     queryFn: () => api<{ workspaces: WorkspaceDTO[] }>('GET', '/v1/me/workspaces'),
     select: (d) => d.workspaces,
+  });
+}
+
+/**
+ * Workspace invitations addressed to me (#359) — what the Accept / Decline
+ * cards on the workspace chooser are drawn from, and what puts the dot on the
+ * rail's "+". Live via the `workspace.invited` event.
+ */
+export function useWorkspaceInvites() {
+  return useQuery({
+    queryKey: ['workspaceInvites'],
+    queryFn: () => api<{ invites: PendingWorkspaceInviteDTO[] }>('GET', '/v1/me/workspace-invites'),
+    select: (d) => d.invites,
   });
 }
 

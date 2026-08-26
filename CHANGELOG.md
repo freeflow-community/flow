@@ -13,6 +13,12 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Invite to workspace** on the profile popup (#358) landed on web and macOS
+  only; iOS was explicitly out of scope for the batch. The server side (#357
+  agents, #359 people) is client-agnostic and complete, so closing this is a
+  `MemberProfileSheet` equivalent plus Accept/Decline cards on the iOS
+  workspace switcher — the same two views the other clients grew. Until then an
+  iOS-only user can be invited but cannot accept in the app.
 - The channel Files list (#347/#348) shows a video's first frame on web only.
   The browser can paint one from the presigned stream URL for free; macOS and
   iOS render a play badge on a tinted block instead, because AVFoundation would
