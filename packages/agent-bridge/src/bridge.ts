@@ -102,12 +102,20 @@ interface LiveRun {
   stoppedBy: string | null;
 }
 
+interface QueuedTurn {
+  msg: MessageDTO;
+  /** One-turn --model override (`/model <name> <prompt>`). */
+  model?: string | undefined;
+}
+
 interface Conversation {
   sessionId: string;
   /** true once a runtime turn has completed for this session (→ --resume). */
   started: boolean;
-  queue: MessageDTO[];
+  queue: QueuedTurn[];
   running: boolean;
+  /** Sticky --model override for this conversation (`/model <name>`). */
+  model?: string | undefined;
 }
 
 class Semaphore {
@@ -499,6 +507,7 @@ export class AgentBridge {
     // put the message in scope at all).
     const command = msg.body.replace(new RegExp(`^\\s*<@${this.me.id}>\\s*`), '').trim();
     if (command === '/reset') return this.handleReset(msg);
+    if (command === '/model' || command.startsWith('/model ')) return this.handleModel(msg, command);
     if (INTERRUPT_COMMANDS.has(command)) return this.handleStop(msg);
     if (command === '/update' || command === '/restart') {
       return this.handleRelaunch(msg, command === '/update');
@@ -700,14 +709,69 @@ export class AgentBridge {
       .catch((err: Error) => this.log(`reset reply failed: ${err.message}`));
   }
 
-  private enqueue(msg: MessageDTO): void {
+  /**
+   * `/model` — inspect or override the runtime model. Bare `/model` reports
+   * what is in effect; `/model <name>` pins it for this conversation;
+   * `/model <name> <prompt>` runs just that one turn on <name>;
+   * `/model default` clears the pin (with a trailing prompt, it also runs it).
+   * Per-turn switching is safe because each turn is a fresh CLI spawn:
+   * --model is per-invocation, and a --resume'd session accepts a different
+   * model than the turn before.
+   */
+  private async handleModel(msg: MessageDTO, command: string): Promise<void> {
+    const say = (text: string): Promise<unknown> =>
+      this.api
+        .sendMessage(msg.channelId, text, this.replyRoot(msg))
+        .catch((err: Error) => this.log(`model reply failed: ${err.message}`));
     const key = this.convKey(msg);
+    const conv = this.conversations.get(key);
+    const rest = command.slice('/model'.length).trim();
+    if (!rest) {
+      const configured = this.cfg.runtime.model;
+      if (conv?.model) await say(`🤖 model: ${conv.model} — set for this conversation; \`/model default\` reverts it.`);
+      else if (configured) await say(`🤖 model: ${configured} (configured default).`);
+      else await say('🤖 model: the CLI default (none configured). `/model <name>` overrides it.');
+      return;
+    }
+    const space = rest.search(/\s/);
+    const name = space < 0 ? rest : rest.slice(0, space);
+    const prompt = space < 0 ? '' : rest.slice(space).trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(name)) {
+      await say('🤖 usage: `/model <name> [prompt]` — e.g. `/model opus`, `/model haiku quick question`, `/model default`.');
+      return;
+    }
+    if (name === 'default') {
+      if (conv) conv.model = undefined;
+      if (!prompt) {
+        const fallback = this.cfg.runtime.model ? `the configured default (${this.cfg.runtime.model})` : 'the CLI default';
+        await say(`🤖 model override cleared — back to ${fallback}.`);
+        return;
+      }
+      return this.enqueue({ ...msg, body: prompt });
+    }
+    if (!prompt) {
+      // Sticky pin. Created eagerly so the pin exists before the first turn.
+      this.conversation(key).model = name;
+      await say(`🤖 model set to ${name} for this conversation — \`/model default\` reverts it.`);
+      return;
+    }
+    // One turn only: the pin (or configured default) resumes afterwards.
+    this.enqueue({ ...msg, body: prompt }, name);
+  }
+
+  private conversation(key: string): Conversation {
     let conv = this.conversations.get(key);
     if (!conv) {
       conv = { sessionId: randomUUID(), started: false, queue: [], running: false };
       this.conversations.set(key, conv);
     }
-    conv.queue.push(msg);
+    return conv;
+  }
+
+  private enqueue(msg: MessageDTO, model?: string): void {
+    const key = this.convKey(msg);
+    const conv = this.conversation(key);
+    conv.queue.push({ msg, model });
     if (!conv.running) void this.runConversation(key, conv);
   }
 
@@ -716,10 +780,10 @@ export class AgentBridge {
     conv.running = true;
     try {
       while (conv.queue.length > 0) {
-        const msg = conv.queue.shift()!;
+        const { msg, model } = conv.queue.shift()!;
         await this.sem.acquire();
         try {
-          await this.processMessage(conv, msg, key);
+          await this.processMessage(conv, msg, key, model);
         } catch (err) {
           this.log(`processing failed: ${(err as Error).message}`);
         } finally {
@@ -734,7 +798,7 @@ export class AgentBridge {
     }
   }
 
-  private async processMessage(conv: Conversation, msg: MessageDTO, key: string): Promise<void> {
+  private async processMessage(conv: Conversation, msg: MessageDTO, key: string, turnModel?: string): Promise<void> {
     // Everything about this turn — status line, MCP context, the reply itself
     // — targets the same thread (a new one when we're answering a top-level
     // channel message).
@@ -761,6 +825,7 @@ export class AgentBridge {
           sessionId: conv.sessionId,
           resume,
           prompt,
+          model: turnModel ?? conv.model,
           systemPrompt: this.buildSystemPrompt(msg, mcpConfigPath !== undefined),
           mcpConfigPath,
           signal: live.controller.signal,
