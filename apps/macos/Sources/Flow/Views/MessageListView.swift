@@ -1474,7 +1474,12 @@ struct AttachmentView: View {
                     .scaledToFit()
                 }
             }
-            .frame(width: displaySize.width, height: displaySize.height)
+            // `displaySize` is a ceiling, not a size: the card keeps the
+            // image's aspect ratio and shrinks to whatever the transcript
+            // column is, so opening the side panel narrows the picture instead
+            // of clipping it (#354).
+            .aspectRatio(displaySize.width / displaySize.height, contentMode: .fit)
+            .frame(maxWidth: displaySize.width, maxHeight: displaySize.height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
             .onTapGesture { showLightbox = true }

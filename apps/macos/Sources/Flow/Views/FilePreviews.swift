@@ -492,7 +492,11 @@ struct VideoAttachmentView: View {
                     placeholder
                 }
             }
-            .frame(width: displaySize.width, height: displaySize.height)
+            // Ceiling, not a size — same rule as the image card: keep the
+            // aspect ratio and fit the transcript column rather than clipping
+            // out of it when the side panel is open (#354).
+            .aspectRatio(displaySize.width / displaySize.height, contentMode: .fit)
+            .frame(maxWidth: displaySize.width, maxHeight: displaySize.height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
             .animation(.easeOut(duration: 0.15), value: displaySize)
