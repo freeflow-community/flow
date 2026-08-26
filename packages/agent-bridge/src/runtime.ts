@@ -15,6 +15,12 @@ export interface RunOpts {
   resume: boolean;
   prompt: string;
   systemPrompt: string;
+  /**
+   * --model for this run (claude), overriding cfg.model. Safe per turn: each
+   * turn is a fresh CLI spawn, and a --resume'd session accepts a different
+   * model than the turn before.
+   */
+  model?: string | undefined;
   /** Path to an MCP config JSON to pass via --mcp-config (claude only). */
   mcpConfigPath?: string | undefined;
   /**
@@ -171,7 +177,8 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   args.push(opts.resume ? '--resume' : '--session-id', opts.sessionId);
   args.push('--append-system-prompt', opts.systemPrompt);
   args.push('--max-turns', String(cfg.maxTurns));
-  if (cfg.model) args.push('--model', cfg.model);
+  const model = opts.model ?? cfg.model;
+  if (model) args.push('--model', model);
   if (cfg.permissionMode) args.push('--permission-mode', cfg.permissionMode);
   // Default is full permissions (operator ruling): with neither permissionMode
   // nor allowedTools configured, the agent runs unrestricted in its cwd.

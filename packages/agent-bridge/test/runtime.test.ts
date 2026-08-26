@@ -183,6 +183,13 @@ describe('buildClaudeArgs permissions', () => {
     expect(buildClaudeArgs({ ...base, model: 'opus' }, opts).join(' ')).toContain('--model opus');
     expect(buildClaudeArgs(base, opts).join(' ')).not.toContain('--model');
   });
+
+  it('a per-run model override beats the configured model', () => {
+    expect(buildClaudeArgs({ ...base, model: 'sonnet' }, { ...opts, model: 'opus' }).join(' ')).toContain(
+      '--model opus',
+    );
+    expect(buildClaudeArgs(base, { ...opts, model: 'haiku' }).join(' ')).toContain('--model haiku');
+  });
 });
 
 // A run ends when it goes quiet, not when it gets long: these drive real

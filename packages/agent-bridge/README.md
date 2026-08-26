@@ -65,6 +65,11 @@ onboarding.
   persistent `--session-id`/`--resume` session; separate conversations run
   concurrently, turns within one are serialized. Send `/reset` to start a
   conversation fresh.
+- **Model switching** — `/model` shows the model in effect; `/model opus`
+  pins one for the conversation; `/model opus <prompt>` runs just that one
+  turn on it; `/model default` reverts to the configured default. Works
+  mid-conversation: the session resumes on the new model with its context
+  intact. (`runtime.model` in the config sets the standing default.)
 - **Self-updating** — the CLI runs the daemon under a small supervisor, so
   sending **`/update`** (DM it, or @-mention + `/update` in a channel) makes
   the bridge npm-install the latest package and restart itself, then post

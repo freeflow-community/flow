@@ -131,9 +131,9 @@ describe('startTask — a successful handoff', () => {
     expect(out).toEqual({ ok: true, note: 'task run queued in #task-81' });
     const conv = b.conversations.get('task-81|');
     expect(conv.queue).toHaveLength(1);
-    expect(conv.queue[0].body).toBe('work batch 1: #81, #110');
-    expect(conv.queue[0].userId).toBe(HUMAN);
-    expect(conv.queue[0].threadRootId).toBeNull();
+    expect(conv.queue[0].msg.body).toBe('work batch 1: #81, #110');
+    expect(conv.queue[0].msg.userId).toBe(HUMAN);
+    expect(conv.queue[0].msg.threadRootId).toBeNull();
   });
 
   it('posts a provenance notice naming the source channel and requester', async () => {
@@ -155,7 +155,7 @@ describe('startTask — a successful handoff', () => {
   it('falls back to the agent as requester when the userId is unknown', async () => {
     const b = bridge();
     await start(b, { userId: 'not-a-member' });
-    expect(b.conversations.get('task-81|').queue[0].userId).toBe(AGENT);
+    expect(b.conversations.get('task-81|').queue[0].msg.userId).toBe(AGENT);
   });
 });
 
