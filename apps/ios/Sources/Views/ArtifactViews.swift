@@ -447,11 +447,25 @@ private struct ArtifactLinkPane: View {
     /// nothing changes server-side, so this is what makes it a reload.
     @State private var reloadToken: Int = 0
 
+    /// Set while a mint is in flight, so the button can't be double-tapped into
+    /// two tokens and the pane can say something is happening.
+    @State private var minting = false
+
     private var url: String { artifact.url ?? "" }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
+                if artifact.isApp {
+                    Text("APP")
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(MC.muted)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(MC.hairline3))
+                        .accessibilityIdentifier("artifact.link.appBadge")
+                }
                 TextField("Address", text: $draft)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
@@ -463,10 +477,13 @@ private struct ArtifactLinkPane: View {
                     .accessibilityIdentifier("artifact.link.urlField")
                 if let u = URL(string: url) {
                     Button {
-                        openURL(u)
+                        // An app's url is useless without a token, so this
+                        // button mints one first; a plain link opens as before.
+                        if artifact.isApp { openApp() } else { openURL(u) }
                     } label: {
                         Image(systemName: "safari")
                     }
+                    .disabled(minting)
                     .accessibilityIdentifier("artifact.link.open")
                     .accessibilityLabel("Open in Safari")
                 }
@@ -474,8 +491,12 @@ private struct ArtifactLinkPane: View {
             .padding(.horizontal, 12)
             .frame(height: 44)
             Rectangle().fill(MC.hairline).frame(height: 1)
-            CoBrowserWebView(url: url, reloadToken: reloadToken, onNavigate: broadcast)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if artifact.isApp {
+                AppHandoffPane(minting: minting, open: openApp)
+            } else {
+                CoBrowserWebView(url: url, reloadToken: reloadToken, onNavigate: broadcast)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .onAppear { draft = url }
         // Follow the shared url when it changes remotely (or via our own echo).
@@ -499,6 +520,28 @@ private struct ArtifactLinkPane: View {
         broadcast(withScheme)
     }
 
+    /// Mint, then hand the tokened url to the system browser
+    /// (`docs/design/MINI_APPS.md`). The mint comes first and its failure is
+    /// terminal: nothing is opened, so the app's origin is never asked for a
+    /// page its guard would answer with a 401.
+    private func openApp() {
+        guard !minting, !url.isEmpty else { return }
+        minting = true
+        Task {
+            defer { minting = false }
+            do {
+                let minted = try await app.engine.mintAppToken(artifactId: artifact.id)
+                guard let tokened = withAppToken(url, token: minted.token) else {
+                    app.showError("Couldn't open \(artifact.name): its address isn't a valid url.")
+                    return
+                }
+                openURL(tokened)
+            } catch {
+                app.showError("Couldn't open \(artifact.name): \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func broadcast(_ next: String) {
         guard !sameArtifactPage(next, url) else { return }
         Task {
@@ -509,6 +552,58 @@ private struct ArtifactLinkPane: View {
                 app.showError("Couldn't change the page: \(error.localizedDescription)")
             }
         }
+    }
+}
+
+/// What an `isApp` artifact shows instead of the co-browsing web view: a
+/// hand-off card, because a mini app can only be *opened*, not co-browsed.
+///
+/// It deliberately frames nothing. The url on its own renders the guard's 401,
+/// and the token that would fix that can't survive the trip: the #371 spike
+/// measured WebKit dropping the guard's cookie across its 302 in a cross-site
+/// frame, so re-minting per load doesn't help either (CHANGELOG → Parity).
+/// Handing the tokened url to the system browser is the path that does work —
+/// a top-level Safari load, which is exactly what web falls back to.
+private struct AppHandoffPane: View {
+    let minting: Bool
+    let open: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text("Open this app in Safari")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(MC.ink)
+            Text("You'll be signed in automatically — only channel members can open it.")
+                .font(.caption)
+                .foregroundStyle(MC.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: open) {
+                HStack(spacing: 6) {
+                    if minting { ProgressView().controlSize(.small) }
+                    Text(minting ? "Opening…" : "Open app")
+                        .font(.callout.weight(.semibold))
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 9)
+                .background(Capsule().fill(MC.accent))
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(minting)
+            .padding(.top, 2)
+            .accessibilityIdentifier("artifact.link.openApp")
+        }
+        .padding(24)
+        .frame(maxWidth: 340)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.background))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MC.hairline, lineWidth: 1))
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
     }
 }
 
