@@ -13,18 +13,23 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- Mini apps (`docs/design/MINI_APPS.md`) mint-before-open landed on **web only**
-  (#371); macOS (artifact-panel webview) and iOS (external open) still open an
-  `isApp` artifact with no token and land on the guard's 401. Build-order step 3,
-  one small PR per remaining surface.
+- Mini apps (`docs/design/MINI_APPS.md`) mint-before-open landed on **web**
+  (#371) and **macOS** (#372); **iOS** (external open) still opens an `isApp`
+  artifact with no token and lands on the guard's 401. Build-order step 3, one
+  small PR for the remaining surface.
 - Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
   measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
   frame nor sends one already established first-party, and the guard's 302 to
   the clean url drops the token — so re-minting per load can't help either. Web
   routes Safari to a new tab, which works. Closing the gap needs a guard-side
   change (bridge): keep the session in a url the guard controls, or have the 401
-  page call `requestStorageAccess()`. macOS/iOS should check their own webviews
-  against the same finding before copying the web shape.
+  page call `requestStorageAccess()`.
+  **macOS is not affected** — #372 re-ran the spike against the panel's own
+  `WKWebView` and it passes: the app loads as a *top-level* document, so the
+  guard's cookie is first-party and ITP has nothing to block (document,
+  subresource and XHR all authenticated). The limitation is framing, not WebKit.
+  iOS should measure its own web view the same way rather than assume either
+  result.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a
