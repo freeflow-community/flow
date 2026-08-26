@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO } from '@flow/shared';
-import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
+import { ApiError, api, blobUrl, fileStreamUrl, fileText, mintAppToken } from '../lib/api';
 import { bytesLabel } from '../lib/format';
 import { isHtmlFile, isImageFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { useSelection } from '../state';
@@ -56,6 +56,12 @@ export default function ArtifactBody({ artifactId }: { artifactId: string }) {
  * url is `artifact.url`; `draft` is the local text field, resynced whenever the
  * shared url changes (yours follows the group when someone else navigates).
  *
+ * Mini apps (docs/design/MINI_APPS.md): when the artifact is an app, opening it
+ * mints a 5-minute identity token first and appends it to the url the *frame*
+ * loads. The shared url — the thing the URL bar shows and the PATCH broadcasts —
+ * never carries a token; each viewer appends their own at load time, and a
+ * reload mints a fresh one.
+ *
  * Web limits (documented divergence from the native macOS viewer): (1) many
  * sites refuse framing via X-Frame-Options / CSP frame-ancestors — we can't read
  * cross-origin frame state, so a load that never paints is surfaced as a
@@ -69,8 +75,10 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
   const [maybeBlocked, setMaybeBlocked] = useState(false);
   // Bumped by Go/Enter on the url we're already showing: nothing changes
   // server-side, but the iframe key does, so the page reloads (and any in-page
-  // navigation the iframe did on its own is reset back to the shared url).
+  // navigation the iframe did on its own is reset back to the shared url). For
+  // an app that also re-mints — a reload is a fresh token.
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [frame, setFrame] = useState<FrameState>({ kind: 'idle' });
 
   // Follow the shared url: when it changes (remote navigation or our own echo)
   // — or when we force a reload — resync the field and reset the load state so
@@ -83,6 +91,20 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
     const t = setTimeout(() => setMaybeBlocked(true), 4000);
     return () => clearTimeout(t);
   }, [url, reloadNonce]);
+
+  // Resolve what the iframe should load — the decision itself is `planFrame`.
+  useEffect(() => {
+    const plan = planFrame(url, artifact.isApp, framedAppsBlocked());
+    if (plan.kind !== 'mint') { setFrame(plan); return; }
+    let alive = true;
+    setFrame({ kind: 'minting' });
+    void mintAppToken(artifact.id)
+      .then(({ token }) => { if (alive) setFrame({ kind: 'ready', src: withAppToken(url, token) }); })
+      // The mint failed, so nothing is loaded: the tunnel is never asked for a
+      // page we already know the guard would refuse.
+      .catch((e: unknown) => { if (alive) setFrame({ kind: 'error', message: mintErrorMessage(e) }); });
+    return () => { alive = false; };
+  }, [url, reloadNonce, artifact.id, artifact.isApp]);
 
   const go = async (raw: string) => {
     const next = normalizeUrl(raw);
@@ -100,9 +122,38 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
     }
   };
 
+  /** Open in a real tab. For an app that means a fresh token, minted on the
+   * click: the window is opened synchronously so the gesture still counts, then
+   * pointed at the tokened url once the mint returns. */
+  const openExternally = () => {
+    if (!url) return;
+    if (!artifact.isApp) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
+    const w = window.open('about:blank', '_blank');
+    if (w) { try { w.opener = null; } catch { /* cross-origin about:blank; harmless */ } }
+    void mintAppToken(artifact.id)
+      .then(({ token }) => {
+        const href = withAppToken(url, token);
+        if (w) w.location.replace(href);
+        else window.open(href, '_blank', 'noopener,noreferrer'); // popup blocked: try once more
+      })
+      .catch((e: unknown) => {
+        w?.close();
+        setFrame({ kind: 'error', message: mintErrorMessage(e) });
+      });
+  };
+
   return (
     <>
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-hairline px-2">
+        {artifact.isApp && (
+          <span
+            data-testid="link-artifact-app-badge"
+            className="shrink-0 rounded bg-daypill px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted uppercase"
+            title="A Flow app — only channel members can open it"
+          >
+            app
+          </span>
+        )}
         <input
           data-testid="link-artifact-url"
           className="min-w-0 flex-1 rounded border border-hairline2 bg-white px-2 py-0.5 font-mono text-xs"
@@ -123,7 +174,19 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
         >
           Go
         </button>
-        {url && (
+        {/* A plain link stays a real anchor, so cmd-click and copy-link-address
+            keep working. An app can't: its url is only useful with a token
+            minted on the click, so that one has to be a button. */}
+        {url && (artifact.isApp ? (
+          <button
+            data-testid="link-artifact-open"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-faint hover:bg-daypill hover:text-ink"
+            title="Open in new tab"
+            onClick={openExternally}
+          >
+            ↗
+          </button>
+        ) : (
           <a
             data-testid="link-artifact-open"
             href={url}
@@ -134,25 +197,31 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
           >
             ↗
           </a>
-        )}
+        ))}
       </div>
       <div className="relative min-h-0 flex-1 bg-white">
-        {url ? (
+        {frame.kind === 'ready' ? (
           <iframe
-            key={`${url}#${reloadNonce}`}
+            key={`${frame.src}#${reloadNonce}`}
             data-testid={`artifact-link-${artifact.name}`}
             title={artifact.name}
-            src={url}
+            src={frame.src}
             onLoad={() => { setLoaded(true); setMaybeBlocked(false); }}
             // Permissive: this is cross-origin content in its own origin, so it
             // can't reach our DOM/token — let it behave like a normal browser tab.
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
             className="h-full w-full"
           />
+        ) : frame.kind === 'minting' ? (
+          <Centered>Opening app…</Centered>
+        ) : frame.kind === 'needs-new-tab' ? (
+          <AppNeedsNewTab onOpen={openExternally} />
+        ) : frame.kind === 'error' ? (
+          <AppError message={frame.message} onRetry={() => setReloadNonce((n) => n + 1)} />
         ) : (
           <Centered>No URL</Centered>
         )}
-        {maybeBlocked && !loaded && (
+        {frame.kind === 'ready' && maybeBlocked && !loaded && (
           <div
             data-testid="link-artifact-blocked"
             className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/95 p-6 text-center"
@@ -161,14 +230,12 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
               This page is taking a while — some sites don’t allow being embedded.
             </p>
             <div className="flex items-center gap-2">
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
                 className="rounded-[10px] border border-hairline bg-white px-4 py-2 text-sm font-medium hover:border-hairline2"
+                onClick={openExternally}
               >
                 Open in new tab ↗
-              </a>
+              </button>
               <button
                 className="rounded-[10px] px-3 py-2 text-sm text-muted hover:text-ink"
                 onClick={() => setMaybeBlocked(false)}
@@ -180,6 +247,120 @@ function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
         )}
       </div>
     </>
+  );
+}
+
+/** What the mini-browser's viewport is showing. Only `ready` puts a request on
+ * the wire, so a failed mint never reaches the app's tunnel. */
+type FrameState =
+  | { kind: 'idle' }
+  | { kind: 'minting' }
+  | { kind: 'ready'; src: string }
+  | { kind: 'needs-new-tab' }
+  | { kind: 'error'; message: string };
+
+/**
+ * What to do when the pane opens a link — the whole mint-before-open decision,
+ * kept pure so it is checkable without a DOM.
+ *
+ * A plain link artifact frames its url exactly as before: no mint, no token,
+ * nothing new on the wire. An app has to mint first (`mint`, which the caller
+ * turns into `ready` or `error`), except on a browser that won't hold the
+ * guard's cookie in a frame, where framing it at all would only render the
+ * guard's 401 — see `framedAppsBlocked`.
+ */
+export function planFrame(
+  url: string,
+  isApp: boolean,
+  blocked: boolean,
+): { kind: 'idle' } | { kind: 'ready'; src: string } | { kind: 'mint' } | { kind: 'needs-new-tab' } {
+  if (!url) return { kind: 'idle' };
+  if (!isApp) return { kind: 'ready', src: url };
+  if (blocked) return { kind: 'needs-new-tab' };
+  return { kind: 'mint' };
+}
+
+/**
+ * Append a minted identity token to an app's url. `searchParams` rather than
+ * string concatenation so an app url that already carries a query or a hash
+ * survives intact — the guard reads `flow_token` out of the query and 302s to
+ * the url without it.
+ */
+export function withAppToken(url: string, token: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.set('flow_token', token);
+    return u.toString();
+  } catch {
+    // Not parseable (shouldn't happen — the server normalizes link urls), but a
+    // token that can't be attached means an app that can't open.
+    return `${url}${url.includes('?') ? '&' : '?'}flow_token=${encodeURIComponent(token)}`;
+  }
+}
+
+/**
+ * True when this browser will refuse the guard's session cookie in a frame, so
+ * an app can only be opened in a real tab.
+ *
+ * Measured (issue #371, Safari 26.4, real tunnel): WebKit blocks third-party
+ * cookies unconditionally — it neither stores the guard's `SameSite=None`
+ * cookie set in a frame *nor sends* one already established first-party. The
+ * guard's 302 to the clean url drops the token, so the very next request is
+ * unauthenticated and the frame lands on the guard's 401. Re-minting per load
+ * doesn't help: it is that same request, with a fresh token, every time.
+ * Top-level the identical url works, which is what this routes people to.
+ *
+ * `navigator.vendor` is the narrow WebKit signal (Safari, and every browser on
+ * iOS). It only picks which affordance to show — the new-tab path exists in
+ * every browser — so being wrong costs a click, not access.
+ */
+export function framedAppsBlocked(vendor: string = navigator.vendor): boolean {
+  return vendor === 'Apple Computer, Inc.';
+}
+
+/** ApiError carries the server's message; anything else is a network failure. */
+export function mintErrorMessage(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.status === 403 || e.status === 404) return 'You no longer have access to this app.';
+    return e.message;
+  }
+  return 'Couldn’t reach Flow to open this app.';
+}
+
+function AppNeedsNewTab({ onOpen }: { onOpen: () => void }) {
+  return (
+    <div
+      data-testid="link-artifact-app-new-tab"
+      className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"
+    >
+      <p className="max-w-sm text-sm text-muted">
+        Safari blocks the cookies this app needs when it’s embedded. Open it in a tab and you’ll be
+        signed in automatically.
+      </p>
+      <button
+        className="rounded-[10px] border border-hairline bg-white px-4 py-2 text-sm font-medium hover:border-hairline2"
+        onClick={onOpen}
+      >
+        Open app in new tab ↗
+      </button>
+    </div>
+  );
+}
+
+function AppError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      data-testid="link-artifact-app-error"
+      className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"
+    >
+      <p className="max-w-sm text-sm text-muted">{message}</p>
+      <button
+        className="rounded-[10px] border border-hairline bg-white px-4 py-2 text-sm font-medium hover:border-hairline2"
+        onClick={onRetry}
+      >
+        Try again
+      </button>
+    </div>
   );
 }
 

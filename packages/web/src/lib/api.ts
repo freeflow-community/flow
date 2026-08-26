@@ -1,5 +1,5 @@
 // REST client: same-origin (Vite proxy in dev, Fastify static in prod).
-import type { FileDTO, PresignedUploadDTO, WorkspaceDTO } from '@flow/shared';
+import type { AppTokenDTO, FileDTO, PresignedUploadDTO, WorkspaceDTO } from '@flow/shared';
 import { prepareImageForUpload } from './imagePrep';
 
 export class ApiError extends Error {
@@ -42,6 +42,15 @@ export async function api<T>(
     throw new ApiError(res.status, err?.code ?? `http_${res.status}`, err?.message ?? `HTTP ${res.status}`);
   }
   return json as T;
+}
+
+/** Mini apps (docs/design/MINI_APPS.md): mint a 5-minute, single-use identity
+ * token for the signed-in member against an `isApp` link artifact. The token is
+ * appended to the app's url at load time and never stored — the artifact's
+ * shared url stays clean, and a reload mints a fresh one. Throws ApiError when
+ * the caller is no longer a member or the artifact is gone. */
+export function mintAppToken(artifactId: string): Promise<AppTokenDTO> {
+  return api('POST', `/v1/artifacts/${artifactId}/app-token`);
 }
 
 /** Streaming URL for in-place playback (<video src>): a long-TTL presigned R2
