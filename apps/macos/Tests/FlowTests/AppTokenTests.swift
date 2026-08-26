@@ -45,4 +45,36 @@ final class AppTokenTests: XCTestCase {
         XCTAssertNil(withAppToken("app.example.com", token: "tok"))
         XCTAssertNil(withAppToken("", token: "tok"))
     }
+
+    // A server predating mini apps sends artifacts with no `isApp` key at all.
+    // That must still decode — a non-optional Bool would fail the whole
+    // payload, emptying the artifact list rather than losing one flag.
+    func testArtifactsDecodeWithoutTheIsAppKey() throws {
+        let json = """
+        {"artifacts": [{
+          "id": "a1", "workspaceId": "w1", "channelId": "c1", "kind": "link",
+          "url": "https://example.com/", "name": "Docs", "ownsFile": false,
+          "createdAt": "2026-08-26T00:00:00.000Z",
+          "updatedAt": "2026-08-26T00:00:00.000Z"
+        }]}
+        """
+        let r = try JSONDecoder().decode(ArtifactsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(r.artifacts.count, 1)
+        XCTAssertNil(r.artifacts[0].isApp)
+        XCTAssertNotEqual(r.artifacts[0].isApp, true) // the use-site test
+    }
+
+    func testArtifactsDecodeWithIsAppTrue() throws {
+        let json = """
+        {"artifacts": [{
+          "id": "a1", "workspaceId": "w1", "channelId": "c1", "kind": "link",
+          "url": "https://example.com/", "name": "App", "ownsFile": false,
+          "isApp": true,
+          "createdAt": "2026-08-26T00:00:00.000Z",
+          "updatedAt": "2026-08-26T00:00:00.000Z"
+        }]}
+        """
+        let r = try JSONDecoder().decode(ArtifactsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(r.artifacts[0].isApp, true)
+    }
 }

@@ -456,7 +456,7 @@ private struct ArtifactLinkPane: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                if artifact.isApp {
+                if artifact.isApp == true {
                     Text("APP")
                         .font(.system(size: 10, weight: .semibold))
                         .tracking(0.5)
@@ -479,7 +479,7 @@ private struct ArtifactLinkPane: View {
                     Button {
                         // An app's url is useless without a token, so this
                         // button mints one first; a plain link opens as before.
-                        if artifact.isApp { openApp() } else { openURL(u) }
+                        if artifact.isApp == true { openApp() } else { openURL(u) }
                     } label: {
                         Image(systemName: "safari")
                     }
@@ -491,7 +491,7 @@ private struct ArtifactLinkPane: View {
             .padding(.horizontal, 12)
             .frame(height: 44)
             Rectangle().fill(MC.hairline).frame(height: 1)
-            if artifact.isApp {
+            if artifact.isApp == true {
                 AppHandoffPane(minting: minting, open: openApp)
             } else {
                 CoBrowserWebView(url: url, reloadToken: reloadToken, onNavigate: broadcast)

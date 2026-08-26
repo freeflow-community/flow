@@ -545,7 +545,10 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     /// Flow app — the server sets it whenever the artifact carries an app
     /// secret. Opening one mints a short-lived identity token first, so the
     /// app's guard lets the viewer in already signed in.
-    let isApp: Bool
+    /// Optional so a client pointed at a server predating the field decodes —
+    /// a non-optional `Bool` fails the whole artifacts payload, not just this
+    /// key. Test with `isApp == true`.
+    let isApp: Bool?
     let createdAt: String
     let updatedAt: String
     let file: FileAttachment? // null for link artifacts
