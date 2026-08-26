@@ -595,7 +595,7 @@ struct SidebarView: View {
             HStack(spacing: 9) {
                 if channel.kind == "dm" {
                     // self-DM (no other member): online by definition
-                    presenceDot(online: otherId.map { app.presence[$0] == true } ?? true)
+                    presenceDot(online: otherId.map { app.isOnline($0, in: win.selectedWorkspaceId) } ?? true)
                         .frame(width: 14)
                 } else {
                     Image(systemName: "person.2")
@@ -698,7 +698,7 @@ struct SidebarView: View {
     /// An agent with no DM yet (#361) — clicking creates one. Same shape as a
     /// DM row minus the unread badge, which needs a channel to count.
     private func agentRow(_ member: MemberInfo) -> some View {
-        let online = app.presence[member.userId] == true
+        let online = app.isOnline(member.userId, in: win.selectedWorkspaceId)
         return Button {
             openDm(with: member.userId)
         } label: {
@@ -737,7 +737,7 @@ struct SidebarView: View {
             openDm(with: member.userId)
         } label: {
             HStack(spacing: 9) {
-                presenceDot(online: app.presence[member.userId] == true)
+                presenceDot(online: app.isOnline(member.userId, in: win.selectedWorkspaceId))
                 Text(member.displayName)
                     .flowFont(size: 14)
                     .foregroundStyle(.white.opacity(0.82))
@@ -769,7 +769,7 @@ struct SidebarView: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.member.\(member.displayName)")
-        .accessibilityValue(app.presence[member.userId] == true ? "online" : "offline")
+        .accessibilityValue(app.isOnline(member.userId, in: win.selectedWorkspaceId) ? "online" : "offline")
         .contextMenu {
             Button("View Profile") { profileUserId = member.userId }
         }

@@ -31,7 +31,7 @@ const msg = await import('../src/services/messages.js');
 const nt = await import('../src/services/notifications.js');
 const rx = await import('../src/services/reactions.js');
 const us = await import('../src/services/users.js');
-const { online } = await import('../src/presence.js');
+const { registerConnection, unregisterConnection } = await import('../src/presence.js');
 const { and, desc, eq } = await import('drizzle-orm');
 
 const { channelMembers, notifications, users } = schema;
@@ -96,7 +96,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  online.delete(carolId);
+  unregisterConnection('carol-conn');
   await closeDb();
 });
 
@@ -115,13 +115,24 @@ describe('mention subkind', () => {
   });
 
   it('records <!here> as here, online members only', async () => {
-    online.set(carolId, 1);
+    // presence is per (user, workspace) (#364) — carol is connected *here*
+    registerConnection('carol-conn', carolId, [workspaceId]);
     try {
       const m = await msg.sendMessage(channelId, aliceId, randomUUID(), '<!here> anyone around?', undefined, undefined, undefined);
       expect((await latestNotification(carolId, m.id))?.subkind).toBe('here');
       expect(await latestNotification(bobId, m.id)).toBeUndefined(); // offline: no row
     } finally {
-      online.delete(carolId);
+      unregisterConnection('carol-conn');
+    }
+  });
+
+  it('<!here> ignores a member connected only to another workspace (#364)', async () => {
+    registerConnection('carol-elsewhere', carolId, ['some-other-workspace']);
+    try {
+      const m = await msg.sendMessage(channelId, aliceId, randomUUID(), '<!here> anyone around?', undefined, undefined, undefined);
+      expect(await latestNotification(carolId, m.id)).toBeUndefined();
+    } finally {
+      unregisterConnection('carol-elsewhere');
     }
   });
 

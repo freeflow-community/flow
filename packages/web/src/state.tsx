@@ -81,7 +81,10 @@ export interface LiveState {
   /** Socket down *or* a post-connect refetch still running (#234) — what the
    * reconnect bar reads. Connected alone isn't caught up. */
   syncing: boolean;
-  presence: Record<string, boolean>;
+  /** Is this user online *in the selected workspace* (#364)? Presence is per
+   * (user, workspace): an agent connected to another workspace is not online
+   * here, and its dot must stay grey. */
+  isOnline(userId: string): boolean;
   /** typingKey(channelId, threadRootId) -> userId -> ts(ms). Keyed by composer,
    * not by channel, so a thread's indicator never shows in the main view. */
   typing: Record<string, Record<string, number>>;

@@ -144,7 +144,7 @@ struct InviteToChannelSheet: View {
                 .font(.system(size: 15))
                 .foregroundStyle(MC.ink)
                 .lineLimit(1)
-            if app.presence[person.userId] == true {
+            if app.isOnline(person.userId, in: channel.workspaceId) {
                 Circle().fill(MC.online).frame(width: 8, height: 8)
             }
             Spacer(minLength: 0)

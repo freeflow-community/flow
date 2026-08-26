@@ -529,7 +529,7 @@ struct SidebarDrawer: View {
             HStack(spacing: 9) {
                 if channel.kind == "dm" {
                     // self-DM (no other member): online by definition
-                    presenceDot(online: otherId.map { app.presence[$0] == true } ?? true)
+                    presenceDot(online: otherId.map { app.isOnline($0, in: app.selectedWorkspaceId) } ?? true)
                         .frame(width: 18)
                 } else {
                     Image(systemName: "person.2")
@@ -572,7 +572,7 @@ struct SidebarDrawer: View {
     /// An agent with no DM yet (#361) — tapping creates one and opens it. Same
     /// shape as a DM row minus the unread badge, which needs a channel to count.
     private func agentRow(_ member: WorkspaceRosterEntry) -> some View {
-        let online = app.presence[member.userId] == true
+        let online = app.isOnline(member.userId, in: app.selectedWorkspaceId)
         let status = usersById[member.userId]
         return Button {
             guard let wsId = app.selectedWorkspaceId else { return }

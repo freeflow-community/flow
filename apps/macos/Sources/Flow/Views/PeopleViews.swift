@@ -32,7 +32,7 @@ struct NewDMSheet: View {
                 )) {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(app.presence[member.userId] == true ? .green : Color.gray.opacity(0.5))
+                            .fill(app.isOnline(member.userId, in: workspaceId) ? .green : Color.gray.opacity(0.5))
                             .frame(width: 8, height: 8)
                         Text(member.displayName + (member.isAgent == true ? " 🤖" : ""))
                     }

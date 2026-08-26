@@ -194,6 +194,9 @@ export class AgentBridge {
     this.socket = new FlowSocket({
       serverUrl: this.cfg.serverUrl,
       token: this.cfg.agentToken,
+      // one process, one workspace (#357) — so tell the server, or it lights
+      // our presence dot in every workspace we belong to (#364)
+      workspaces: [this.workspace.id],
       onEvent: (ev) => this.handleEvent(ev),
       log: (m) => this.log(m),
     });
