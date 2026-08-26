@@ -14,6 +14,8 @@ struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable
     var id: String { userId }
 }
 
+extension MemberInfo: SidebarAgentMemberInfo {}
+
 /// Design 3a column 2: violet gradient channel/DM list with the profile footer.
 struct SidebarView: View {
     @EnvironmentObject private var app: AppState
@@ -37,6 +39,8 @@ struct SidebarView: View {
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
     @State private var ensuredSelfDmWs: String?
+    /// Agents section collapsed? Remembered per device, like the web sidebar's.
+    @AppStorage("flow.sidebarAgentsCollapsed") private var agentsCollapsed = false
 
     private var currentWorkspace: Workspace? {
         workspaces.value.first { $0.id == win.selectedWorkspaceId }
@@ -87,6 +91,15 @@ struct SidebarView: View {
         )
     }
 
+    /// Agents (#361) and the DMs left over once their 1:1s move up with them.
+    private var agentSplit: (agents: [AgentSection.Entry<MemberInfo>], rest: [Channel]) {
+        AgentSection.split(
+            dms: channels.value.filter { $0.isMember && $0.isDM },
+            members: members.value,
+            currentUserId: app.currentUser?.id
+        )
+    }
+
     private var dmChannels: [Channel] {
         // Direct messages sort alphabetically by display title, case-insensitive
         // (ui_nits — matches web). The channels query orders by `name`, which is
@@ -98,8 +111,7 @@ struct SidebarView: View {
         func isSelf(_ c: Channel) -> Bool {
             c.kind == "dm" && (c.memberIds ?? []).allSatisfy { $0 == me }
         }
-        return channels.value
-            .filter { $0.isMember && $0.isDM }
+        return agentSplit.rest
             .sorted {
                 if isSelf($0) != isSelf($1) { return !isSelf($0) }
                 return $0.displayTitle(userNames: names, currentUserId: me)
@@ -139,6 +151,35 @@ struct SidebarView: View {
                 ForEach(joinedChannels, id: \.channel.id) { row in
                     channelWithArtifacts(row.channel) {
                         channelRow(row.channel, isNested: row.isNested)
+                    }
+                }
+
+                // Agents (#361): one row per workspace agent, between Channels
+                // and Direct messages, whether or not a DM exists yet. An agent
+                // with a DM brings it up here, so it is never listed twice.
+                let agents = agentSplit.agents
+                if !agents.isEmpty {
+                    sectionHeader("Agents", collapsed: agentsCollapsed) {
+                        agentsCollapsed.toggle()
+                    } action: {
+                        EmptyView()
+                    }
+                    if !agentsCollapsed {
+                        ForEach(agents) { entry in
+                            if let dm = entry.channel {
+                                // The agent's own DM, rendered as the agent: same
+                                // row as any DM, so unread badges, the
+                                // working-here spinner and sub-channels come too.
+                                channelWithArtifacts(dm) {
+                                    dmRow(dm, label: entry.member.displayName)
+                                }
+                                ForEach(dmChildren[dm.id] ?? []) { child in
+                                    channelWithArtifacts(child) { channelRow(child, isNested: true) }
+                                }
+                            } else {
+                                agentRow(entry.member)
+                            }
+                        }
                     }
                 }
 
@@ -371,12 +412,37 @@ struct SidebarView: View {
         .accessibilityIdentifier("sidebar.inviteAgent")
     }
 
-    private func sectionHeader(_ label: String, @ViewBuilder action: () -> some View) -> some View {
+    /// A section title, optionally a collapse toggle (#361): pass `collapsed`
+    /// and `onToggle` and the label becomes a button with a disclosure chevron.
+    private func sectionHeader(
+        _ label: String,
+        collapsed: Bool? = nil,
+        onToggle: (() -> Void)? = nil,
+        @ViewBuilder action: () -> some View
+    ) -> some View {
         HStack {
-            Text(label.uppercased())
-                .flowFont(size: 11, weight: .semibold)
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.55))
+            if let collapsed, let onToggle {
+                Button(action: onToggle) {
+                    HStack(spacing: 3) {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                            .flowFont(size: 8, weight: .semibold)
+                        Text(label.uppercased())
+                            .flowFont(size: 11, weight: .semibold)
+                            .tracking(0.7)
+                    }
+                    .foregroundStyle(.white.opacity(0.55))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(collapsed ? "Show \(label)" : "Hide \(label)")
+                .accessibilityIdentifier("sidebar.section.\(label.lowercased())")
+                .accessibilityValue(collapsed ? "collapsed" : "expanded")
+            } else {
+                Text(label.uppercased())
+                    .flowFont(size: 11, weight: .semibold)
+                    .tracking(0.7)
+                    .foregroundStyle(.white.opacity(0.55))
+            }
             Spacer()
             action()
         }
@@ -510,8 +576,11 @@ struct SidebarView: View {
         .contextMenu { channelMenu(channel) }
     }
 
-    private func dmRow(_ channel: Channel) -> some View {
-        let title = channel.displayTitle(
+    /// `label` overrides the resolved DM title — the Agents section (#361)
+    /// passes the agent's plain name, since a 🤖 badge under a header that
+    /// already says AGENTS is noise.
+    private func dmRow(_ channel: Channel, label: String? = nil) -> some View {
+        let title = label ?? channel.displayTitle(
             userNames: userNames.value, currentUserId: app.currentUser?.id
         )
         let active = AppState.channelRowHighlighted(
@@ -624,6 +693,43 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
+    }
+
+    /// An agent with no DM yet (#361) — clicking creates one. Same shape as a
+    /// DM row minus the unread badge, which needs a channel to count.
+    private func agentRow(_ member: MemberInfo) -> some View {
+        let online = app.presence[member.userId] == true
+        return Button {
+            openDm(with: member.userId)
+        } label: {
+            HStack(spacing: 9) {
+                presenceDot(online: online)
+                    .frame(width: 14)
+                Text(member.displayName)
+                    .flowFont(size: 14)
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                if let emoji = member.statusEmoji, !emoji.isEmpty {
+                    Text(emoji)
+                        .flowFont(size: 14)
+                        .help(member.statusText ?? "")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Start a direct message")
+        .accessibilityElement(children: .combine)
+        // Same id shape as a real DM row, so QA targets an agent by name
+        // whether or not the conversation exists yet.
+        .accessibilityIdentifier("sidebar.dm.\(member.displayName)")
+        .accessibilityValue(online ? "online" : "offline")
+        .contextMenu {
+            Button("View Profile") { profileUserId = member.userId }
+        }
     }
 
     private func memberRow(_ member: MemberInfo) -> some View {
