@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ChannelDTO } from '@flow/shared';
-import { ActivitySpinner, nearestScrollDelta, nestChannels } from './Sidebar';
+import type { ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
+import { ActivitySpinner, nearestScrollDelta, nestChannels, splitAgents } from './Sidebar';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
 // child whose parent isn't in the list must still be rendered, or you lose a
@@ -122,5 +122,75 @@ describe('nearestScrollDelta', () => {
   it('aligns a row taller than the viewport to its top', () => {
     // Bottom-aligning it would push the start of the row off-screen.
     expect(nearestScrollDelta(40, 500, VIEW)).toBe(40);
+  });
+});
+
+
+// The Agents section (#361): agents are pulled out of Direct messages into
+// their own list, DM and all, so nobody is listed twice.
+const ME = 'me';
+const member = (userId: string, displayName: string, isAgent: boolean): WorkspaceMemberDTO => ({
+  userId,
+  displayName,
+  email: `${userId}@example.com`,
+  avatarUrl: null,
+  statusEmoji: '',
+  statusText: '',
+  isAgent,
+  isBot: false,
+  sponsorId: null,
+  role: 'member',
+  joinedAt: '2026-08-25T00:00:00Z',
+});
+const dm = (id: string, memberIds: string[], kind: ChannelDTO['kind'] = 'dm'): ChannelDTO => ({
+  ...chan(id),
+  name: null,
+  kind,
+  memberIds,
+});
+
+describe('splitAgents', () => {
+  const prism = member('a1', 'Prism', true);
+  const builder = member('a2', 'builder', true);
+  const scott = member('u1', 'Scott', false);
+
+  it('lists an agent that has no DM yet', () => {
+    const { agents, rest } = splitAgents([], [prism, scott], ME);
+    expect(agents.map((a) => a.member.userId)).toEqual(['a1']);
+    expect(agents[0]!.channel).toBeUndefined();
+    expect(rest).toEqual([]);
+  });
+
+  it('moves an agent DM out of the DM list and onto the agent row', () => {
+    const agentDm = dm('d1', [ME, 'a1']);
+    const humanDm = dm('d2', [ME, 'u1']);
+    const { agents, rest } = splitAgents([agentDm, humanDm], [prism, scott], ME);
+    expect(agents[0]!.channel?.id).toBe('d1'); // unread badges ride along with it
+    expect(rest.map((c) => c.id)).toEqual(['d2']);
+  });
+
+  it('sorts agents alphabetically, ignoring case', () => {
+    const { agents } = splitAgents([], [prism, builder], ME);
+    expect(agents.map((a) => a.member.displayName)).toEqual(['builder', 'Prism']);
+  });
+
+  it('leaves a group DM alone even when an agent is in it', () => {
+    // Several people talking is a conversation, not a way to reach the agent.
+    const group = dm('g1', [ME, 'a1', 'u1'], 'group_dm');
+    const { agents, rest } = splitAgents([group], [prism, scott], ME);
+    expect(rest.map((c) => c.id)).toEqual(['g1']);
+    expect(agents[0]!.channel).toBeUndefined();
+  });
+
+  it('leaves the self-DM under Direct messages', () => {
+    const self = dm('s1', [ME]);
+    const { rest } = splitAgents([self], [member(ME, 'Me', true), prism], ME);
+    expect(rest.map((c) => c.id)).toEqual(['s1']);
+  });
+
+  it('finds no agents in a workspace of humans — the section hides itself', () => {
+    const { agents, rest } = splitAgents([dm('d2', [ME, 'u1'])], [scott], ME);
+    expect(agents).toEqual([]);
+    expect(rest).toHaveLength(1);
   });
 });

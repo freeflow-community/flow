@@ -143,8 +143,6 @@ This file keeps two things:
   channel (web + macOS offer "Add to channel" — matters most for agents, which
   never see mentions in channels they haven't joined). iOS has its own composer
   (not the shared macOS one), so the CTA needs porting there.
-- macOS: sidebar doesn't list DM-less agents under Direct Messages (web shows
-  virtual rows with presence + 🤖 that create the DM on click).
 - Web composer: browser-native undo degrades after programmatic splices
   (autocomplete/suggestion inserts) — contenteditable limitation; macOS undo is clean.
 - macOS: pasting a non-image file URL inserts its path as text; web handles
@@ -187,15 +185,15 @@ This file keeps two things:
   reconciling it with `.defaultScrollAnchor(.bottom)`, which owns the scroll
   position today. The shared `MessageScrollMemory` store is still there.
 - iOS: the new channel drawer (2026-07-23) omits several sidebar affordances the
-  web + macOS sidebars carry — the virtual agent rows under Direct Messages
-  (start a DM with a workspace agent that has no existing 1:1), the workspace
-  color picker, and the Manage Users / Manage Apps workspace-menu items. Channel
-  context actions (mute/leave/archive) are also not yet wired on iOS. The
-  drawer's structure makes these straightforward ports; none are backed
-  on-device yet. (The "new DM" composer was closed 2026-08-16, #257 — sidebar
-  "+" and a profile-card Message button. "Invite People" was closed 2026-08-18,
-  #283 — which also brought #85's join-link management to iOS. "Invite to
-  channel" was closed 2026-08-21 — ⋯ menu item + drawer long-press.)
+  web + macOS sidebars carry — the workspace color picker and the Manage Users /
+  Manage Apps workspace-menu items. Channel context actions
+  (mute/leave/archive) are also not yet wired on iOS. The drawer's structure
+  makes these straightforward ports; none are backed on-device yet. (The "new
+  DM" composer was closed 2026-08-16, #257 — sidebar "+" and a profile-card
+  Message button. "Invite People" was closed 2026-08-18, #283 — which also
+  brought #85's join-link management to iOS. "Invite to channel" was closed
+  2026-08-21 — ⋯ menu item + drawer long-press. Virtual agent rows were closed
+  2026-08-25, #361 — the Agents section carries them on all three clients.)
 - macOS + iOS: message editing still uses an inline/dedicated edit field — web
   moved editing into the prompt editor (↑ and ✏️ load the body into the composer,
   Enter saves, Esc restores the draft; 2026-07-23 ui_nits). Both clients already

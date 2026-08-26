@@ -104,6 +104,45 @@ export function dmTitle(c: ChannelDTO, names: Record<string, string>, me: string
   return others.map((id) => names[id] ?? 'Unknown').sort().join(', ');
 }
 
+/** Agents section: collapsed or not, remembered per device (like the width). */
+const AGENTS_COLLAPSED_KEY = 'flow.sidebarAgentsCollapsed';
+
+export type AgentEntry = { member: WorkspaceMemberDTO; channel?: ChannelDTO };
+
+/**
+ * The Agents section (#361): every agent in the workspace gets a row between
+ * Channels and Direct messages, whether or not a DM with it exists yet. The
+ * agent's 1:1 DM moves up here with it — an agent is listed once, never twice.
+ *
+ * A *group* DM that happens to include an agent stays under Direct messages:
+ * it's a conversation with several people, not a way to reach the agent. So is
+ * the self-DM, even if you are yourself an agent.
+ */
+export function splitAgents(
+  dms: ChannelDTO[],
+  members: WorkspaceMemberDTO[],
+  me: string,
+): { agents: AgentEntry[]; rest: ChannelDTO[] } {
+  const agentIds = new Set(members.filter((m) => m.isAgent && m.userId !== me).map((m) => m.userId));
+  const dmWith = new Map<string, ChannelDTO>();
+  const rest: ChannelDTO[] = [];
+  for (const c of dms) {
+    const others = (c.memberIds ?? []).filter((id) => id !== me);
+    const only = others.length === 1 ? others[0] : undefined;
+    const agentId = c.kind === 'dm' && only && agentIds.has(only) ? only : null;
+    // Duplicate 1:1 rows shouldn't exist (the server dedupes by member set),
+    // but if one ever does, the extra stays under Direct messages rather than
+    // vanishing.
+    if (agentId && !dmWith.has(agentId)) dmWith.set(agentId, c);
+    else rest.push(c);
+  }
+  const agents = members
+    .filter((m) => agentIds.has(m.userId))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }))
+    .map((member) => ({ member, channel: dmWith.get(member.userId) }));
+  return { agents, rest };
+}
+
 export default function Sidebar() {
   const auth = useAuth();
   const sel = useSelection();
@@ -130,6 +169,9 @@ export default function Sidebar() {
   const [showFeatures, setShowFeatures] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
   const [width, setWidth] = useState(storedWidth);
+  const [agentsCollapsed, setAgentsCollapsed] = useState(
+    () => localStorage.getItem(AGENTS_COLLAPSED_KEY) === '1',
+  );
   const dragRef = useRef<{ x: number; w: number } | null>(null);
   const wsMenuRef = useRef<HTMLDivElement>(null);
   // Inside the mobile drawer the sidebar fills whatever the rail leaves, so
@@ -227,32 +269,20 @@ export default function Sidebar() {
     else artifactsByChannel.set(a.channelId, [a]);
   }
   const browsable = all.filter((c) => !c.isMember && !c.isPrivate && c.kind === 'standard');
-  // Agents are always reachable under Direct Messages: workspace agents with
-  // no existing 1:1 DM get a virtual row; clicking creates/opens the DM.
-  const dmPartnerIds = new Set(dms.flatMap((c) => (c.kind === 'dm' ? c.memberIds ?? [] : [])));
-  const agentRows = Object.values(memberMap).filter((m) => m.isAgent && !dmPartnerIds.has(m.userId));
-  // The Direct messages list is ONE alphabetically-sorted list (ui_nits) that
-  // interleaves real DM channels with virtual agent rows (agents with no
-  // existing 1:1 DM). Sorting the two lists separately left agent rows stranded
-  // at the bottom, out of order — so merge them, then sort by display title.
-  // The self-DM ("<you> (you)") is always pinned last: it's a personal
-  // scratchpad, not a conversation, so it sinks below everyone else.
-  type DmItem =
-    | { kind: 'channel'; title: string; self: boolean; channel: ChannelDTO }
-    | { kind: 'agent'; title: string; self: false; member: WorkspaceMemberDTO };
-  const dmItems: DmItem[] = [
-    ...dms.map((c): DmItem => ({
-      kind: 'channel',
-      title: dmTitle(c, displayNames, auth.user.id),
-      self: isSelfDm(c),
-      channel: c,
-    })),
-    ...agentRows.map((m): DmItem => ({ kind: 'agent', title: m.displayName, self: false, member: m })),
-  ].sort((a, b) =>
-    a.self !== b.self
-      ? Number(a.self) - Number(b.self)
-      : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
-  );
+  // Agents live in their own section between Channels and Direct messages
+  // (#361) — every workspace agent, with or without an existing DM. The ones
+  // that have a DM take it with them, so nobody is listed twice.
+  const { agents, rest: dmList } = splitAgents(dms, Object.values(memberMap), auth.user.id);
+  // Direct messages is ONE alphabetically-sorted list (ui_nits). The self-DM
+  // ("<you> (you)") is always pinned last: it's a personal scratchpad, not a
+  // conversation, so it sinks below everyone else.
+  const dmItems = dmList
+    .map((c) => ({ title: dmTitle(c, displayNames, auth.user.id), self: isSelfDm(c), channel: c }))
+    .sort((a, b) =>
+      a.self !== b.self
+        ? Number(a.self) - Number(b.self)
+        : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
+    );
 
   return (
     <aside
@@ -384,6 +414,64 @@ export default function Sidebar() {
           </div>
         ))}
 
+        {/* Agents (#361): one row per workspace agent, above Direct messages.
+            Collapsible, and hidden entirely in a workspace with no agents. */}
+        {agents.length > 0 && (
+          <>
+            <SectionHeader
+              label="Agents"
+              collapsed={agentsCollapsed}
+              onToggle={() => {
+                const next = !agentsCollapsed;
+                setAgentsCollapsed(next);
+                localStorage.setItem(AGENTS_COLLAPSED_KEY, next ? '1' : '0');
+              }}
+            />
+            {!agentsCollapsed &&
+              agents.map(({ member: a, channel: c }) =>
+                c ? (
+                  // The agent's DM, rendered as the agent: same row as any DM,
+                  // so unread badges, the working-here spinner and its
+                  // sub-channels all come along.
+                  <div key={c.id}>
+                    <ChannelRow
+                      channel={c}
+                      testid={`sidebar-agent-${a.displayName}`}
+                      label={a.displayName}
+                      statusEmoji={a.statusEmoji}
+                      statusTitle={a.statusText}
+                      leading={<PresenceDot online={!!live.presence[a.userId]} />}
+                      onMenu={() => setMenuChannel(c)}
+                    />
+                    {(artifactsByChannel.get(c.id) ?? []).map((x) => (
+                      <ArtifactRow key={x.id} artifact={x} />
+                    ))}
+                    {(dmChildren.get(c.id) ?? []).map((k) => (
+                      <div key={k.id}>
+                        <ChannelRow channel={k} label={k.name ?? ''} nested onMenu={() => setMenuChannel(k)} />
+                        {(artifactsByChannel.get(k.id) ?? []).map((x) => (
+                          <ArtifactRow key={x.id} artifact={x} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  // No DM yet — a virtual row; clicking creates one.
+                  <button
+                    key={`agent-${a.userId}`}
+                    data-testid={`sidebar-agent-${a.displayName}`}
+                    title="Start a direct message"
+                    className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
+                    onClick={() => void openDm(a.userId)}
+                  >
+                    <PresenceDot online={!!live.presence[a.userId]} />
+                    <span className="truncate">{a.displayName}</span>
+                  </button>
+                ),
+              )}
+          </>
+        )}
+
         <SectionHeader
           label="Direct messages"
           action={{
@@ -394,23 +482,6 @@ export default function Sidebar() {
           }}
         />
         {dmItems.map((item) => {
-          if (item.kind === 'agent') {
-            const a = item.member;
-            return (
-              <button
-                key={`agent-${a.userId}`}
-                data-testid={`sidebar-agent-${a.displayName}`}
-                title="Start a direct message"
-                className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
-                onClick={() => void openDm(a.userId)}
-              >
-                <PresenceDot online={!!live.presence[a.userId]} />
-                <span className="truncate">
-                  {a.displayName} <span title="AI agent">🤖</span>
-                </span>
-              </button>
-            );
-          }
           const c = item.channel;
           const title = dmTitle(c, names, auth.user.id);
           const otherId = (c.memberIds ?? []).find((id) => id !== auth.user.id);
@@ -670,13 +741,30 @@ function PresenceDot({ online }: { online: boolean }) {
 function SectionHeader({
   label,
   action,
+  collapsed,
+  onToggle,
 }: {
   label: string;
   action?: { label: string; testid: string; title: string; onClick: () => void };
+  /** Collapsible section (#361): the label becomes a toggle with a caret. */
+  collapsed?: boolean;
+  onToggle?: () => void;
 }) {
   return (
     <div className="mt-4 mb-1 flex items-center justify-between px-2 first:mt-1">
-      <span className="text-[11px] font-semibold tracking-[.06em] text-white/55 uppercase">{label}</span>
+      {onToggle ? (
+        <button
+          data-testid={`sidebar-section-${label.toLowerCase()}`}
+          aria-expanded={!collapsed}
+          className="flex items-center gap-1 rounded text-[11px] font-semibold tracking-[.06em] text-white/55 uppercase hover:text-white/80"
+          onClick={onToggle}
+        >
+          <span className="text-[9px]" aria-hidden>{collapsed ? '▸' : '▾'}</span>
+          {label}
+        </button>
+      ) : (
+        <span className="text-[11px] font-semibold tracking-[.06em] text-white/55 uppercase">{label}</span>
+      )}
       {action && (
         <button
           data-testid={action.testid}
