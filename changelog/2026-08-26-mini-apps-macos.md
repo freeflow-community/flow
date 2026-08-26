@@ -13,6 +13,16 @@
   in the pane with Try again, and never asks the app's tunnel for a page. An
   `APP` badge marks the artifact as an app in the URL bar.
 - `[macos]` Open-in-browser mints a fresh token too — the panel's is spent.
+- `[macos]` An app mints once per *open*, not once per url: after the guard's
+  302 its session cookie carries identity, so following the shared url around
+  the app costs no second token and doesn't reload it out from under whoever is
+  using it.
+- `[macos]` The panel's own load — including wherever a redirect lands it — is
+  no longer co-browsed as if a member had navigated. Measured against the real
+  guard, that echo re-pointed the artifact and minted a second token 25ms after
+  the first, cancelling the app's in-flight subresources. It also stops a
+  pre-existing plain-link echo where the server's trailing-slash normalisation
+  re-pointed the artifact for no reason.
 
 ## Feature
 
