@@ -320,29 +320,76 @@ private struct SandboxedHTMLView: NSViewRepresentable {
 /// follow in-page clicks. Any navigation — typing a URL or clicking a link —
 /// PATCHes the artifact, so the server re-points it and every member's viewer
 /// follows (co-browse). Remote changes to `artifact.url` load here in turn.
+///
+/// Mini apps (docs/design/MINI_APPS.md): when the artifact is an app, opening it
+/// mints a five-minute identity token first and loads `url + ?flow_token=…`, so
+/// the app's guard knows which member is looking. Only the *web view* ever sees
+/// the token: the URL bar and the co-browsed shared url stay clean, and each
+/// viewer mints their own. A reload re-mints, and a failed mint loads nothing at
+/// all — see `MiniApp` for the decision and why a top-level web view can do this
+/// when the web client's iframe cannot.
 struct LinkArtifactView: View {
     let artifact: Artifact
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
     @State private var draft: String = ""
     /// Bumped when the URL bar is submitted with the url we're already showing:
-    /// nothing changes server-side, so this is what makes it a reload.
+    /// nothing changes server-side, so this is what makes it a reload. For an
+    /// app it also re-mints — a reload is a fresh token.
     @State private var reloadToken: Int = 0
+    /// What the pane is showing. A plain link goes straight to `.loaded(url)`
+    /// and stays there, so its behaviour is bit-for-bit what it was.
+    @State private var frame: FrameState = .idle
+    /// The open whose guard session cookie the web view is holding. While this
+    /// matches, following the shared url around the app needs no second token —
+    /// see `MiniApp.plan(url:isApp:hasAppSession:)` for why that matters.
+    @State private var appSession: AppOpen?
 
     private var url: String { artifact.url ?? "" }
+
+    /// Re-resolve whenever any input to the decision changes. Reload is in here
+    /// so that submitting the current url re-mints rather than no-ops.
+    private struct LoadKey: Equatable {
+        let artifactId: String
+        let url: String
+        let isApp: Bool
+        let reload: Int
+    }
+
+    private var loadKey: LoadKey {
+        LoadKey(artifactId: artifact.id, url: url, isApp: artifact.isApp == true, reload: reloadToken)
+    }
+
+    /// One open of one app. A different artifact, or a reload, is a new open and
+    /// mints again; a url change within the same open does not.
+    private struct AppOpen: Equatable {
+        let artifactId: String
+        let reload: Int
+    }
+
+    private var currentOpen: AppOpen { AppOpen(artifactId: artifact.id, reload: reloadToken) }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
+                if artifact.isApp == true {
+                    // Says why this artifact behaves differently from a pinned link.
+                    Text("APP")
+                        .flowFont(size: 9, weight: .semibold)
+                        .foregroundStyle(MC.inkSoft)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(MC.daypill, in: RoundedRectangle(cornerRadius: 4))
+                        .help("A Flow app — only channel members can open it")
+                        .accessibilityIdentifier("artifact.link.appBadge")
+                }
                 TextField("Address", text: $draft)
                     .textFieldStyle(.roundedBorder)
                     .flowFont(size: 12, design: .monospaced)
                     .onSubmit { navigate(to: draft) }
                     .accessibilityIdentifier("artifact.link.urlField")
-                if let u = URL(string: url) {
-                    Button {
-                        NSWorkspace.shared.open(u)
-                    } label: {
+                if URL(string: url) != nil {
+                    Button { openExternally() } label: {
                         Image(systemName: "arrow.up.right.square")
                     }
                     .buttonStyle(.borderless)
@@ -353,17 +400,93 @@ struct LinkArtifactView: View {
             .padding(.horizontal, 12)
             .frame(height: 38)
             Rectangle().fill(MC.hairline).frame(height: 1)
-            CoBrowserWebView(url: url, reloadToken: reloadToken) { navigated in
-                // A navigation inside the web view (link click or form) — broadcast
-                // it so everyone follows. Typing in the bar goes through navigate().
-                broadcast(navigated)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear { draft = url }
         // Follow the shared url when it changes remotely (or via our own echo).
         .onChange(of: url) { _, now in draft = now }
+        // Cancelled and re-run on every change of `loadKey`, so an in-flight mint
+        // for a url we've navigated away from can never land on the web view.
+        .task(id: loadKey) { await resolveFrame() }
         .accessibilityIdentifier("artifact.link.\(artifact.name)")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch frame {
+        case .idle:
+            LinkPanePlaceholder(text: "No URL")
+        case .minting:
+            LinkPanePlaceholder(text: "Opening app…", showsProgress: true)
+                .accessibilityIdentifier("artifact.link.minting")
+        case let .failed(message):
+            AppMintErrorPane(message: message) { reloadToken += 1 }
+        case let .loaded(src):
+            CoBrowserWebView(url: src, reloadToken: reloadToken) { navigated in
+                // A navigation inside the web view (link click or form) — broadcast
+                // it so everyone follows. Typing in the bar goes through navigate().
+                broadcast(navigated)
+            }
+        }
+    }
+
+    /// Decide what the web view loads, minting first when this is an app.
+    ///
+    /// The mint is what gates the load: until it returns, and if it fails, no
+    /// request is made to the app's tunnel at all — asking for a page the guard
+    /// would answer with its 401 helps nobody and leaks the open attempt.
+    private func resolveFrame() async {
+        let open = currentOpen
+        switch MiniApp.plan(url: url, isApp: artifact.isApp == true, hasAppSession: appSession == open) {
+        case .idle:
+            appSession = nil
+            frame = .idle
+        case let .load(plain):
+            // Either a plain link, or a co-browse hop inside an app we are
+            // already signed in to. Note the web view is *not* torn down here —
+            // `.loaded` to `.loaded` keeps it, so a hop doesn't flash.
+            frame = .loaded(plain)
+        case .mint:
+            frame = .minting
+            do {
+                let minted = try await app.engine.mintAppToken(artifactId: artifact.id)
+                guard !Task.isCancelled else { return }
+                guard let tokened = withAppToken(url, token: minted.token) else {
+                    // No token could be attached, so there is no url the guard
+                    // would accept. Say so rather than loading the bare app url
+                    // and rendering its 401.
+                    frame = .failed("This app's address can't be opened.")
+                    return
+                }
+                appSession = open
+                frame = .loaded(tokened.absoluteString)
+            } catch {
+                guard !Task.isCancelled else { return }
+                appSession = nil
+                frame = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Hand the page to the default browser. An app's url is useless on its own,
+    /// so that one mints a token first — a fresh one, since the panel's is
+    /// already burned.
+    private func openExternally() {
+        guard let plain = URL(string: url) else { return }
+        guard artifact.isApp == true else { NSWorkspace.shared.open(plain); return }
+        Task {
+            do {
+                let minted = try await app.engine.mintAppToken(artifactId: artifact.id)
+                guard let tokened = withAppToken(url, token: minted.token) else {
+                    app.showError("Couldn't open the app: its address can't carry a token.")
+                    return
+                }
+                NSWorkspace.shared.open(tokened)
+            } catch {
+                app.showError("Couldn't open the app: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// Normalize a URL-bar entry (add a scheme to a bare host) and broadcast it.
@@ -380,6 +503,11 @@ struct LinkArtifactView: View {
     }
 
     private func broadcast(_ next: String) {
+        // A minted token belongs to one viewer and is burned on first use, so it
+        // must never become the shared url. It reaches here when the guard
+        // rejects a token: that answers 401 without redirecting, so the web view
+        // commits the url with `?flow_token=…` still on it.
+        guard !MiniApp.carriesToken(next) else { return }
         guard next != url else { return }
         Task {
             do {
@@ -389,6 +517,60 @@ struct LinkArtifactView: View {
                 app.showError("Couldn't change the page: \(error.localizedDescription)")
             }
         }
+    }
+}
+
+/// What the mini-browser's viewport is showing. Only `.loaded` puts a request on
+/// the wire, so a failed mint never reaches an app's tunnel.
+private enum FrameState: Equatable {
+    case idle
+    case minting
+    case loaded(String)
+    case failed(String)
+}
+
+/// The empty/among-states pane: same centred, muted treatment the panel uses for
+/// anything that isn't content yet.
+private struct LinkPanePlaceholder: View {
+    let text: String
+    var showsProgress: Bool = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if showsProgress { ProgressView().controlSize(.small) }
+            Text(text)
+                .flowFont(size: 12)
+                .foregroundStyle(MC.muted)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white)
+    }
+}
+
+/// A mint that failed — the member is no longer in the channel, the artifact is
+/// gone, or the server is unreachable. Nothing was loaded, so the pane says what
+/// happened and offers the retry rather than showing a broken page.
+private struct AppMintErrorPane: View {
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text("Couldn't open this app")
+                .flowFont(size: 13, weight: .semibold)
+                .foregroundStyle(MC.ink)
+            Text(message)
+                .flowFont(size: 12)
+                .foregroundStyle(MC.inkSoft)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+            Button("Try again", action: onRetry)
+                .accessibilityIdentifier("artifact.link.appRetry")
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white)
+        .accessibilityIdentifier("artifact.link.appError")
     }
 }
 
@@ -409,8 +591,7 @@ private struct CoBrowserWebView: NSViewRepresentable {
         context.coordinator.webView = view
         context.coordinator.lastReloadToken = reloadToken
         if let u = URL(string: url) {
-            context.coordinator.lastLoaded = url
-            view.load(URLRequest(url: u))
+            context.coordinator.request(url, on: view, u)
         }
         return view
     }
@@ -420,16 +601,19 @@ private struct CoBrowserWebView: NSViewRepresentable {
         guard let u = URL(string: url) else { return }
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
-            context.coordinator.lastLoaded = url
-            view.load(URLRequest(url: u))
+            context.coordinator.request(url, on: view, u)
             return
         }
-        // Load only genuine remote changes: skip when the view already shows this
-        // url or we just loaded/committed it (prevents feedback loops).
+        // Load only genuine remote changes: skip when we already asked for this
+        // url, when the view already shows it, or when we just committed it
+        // (prevents feedback loops). The "already asked for it" arm is what keeps
+        // an app's tokened url from being re-requested after the guard redirects
+        // away from it — the token is burned, so a second request would 401.
         let current = view.url?.absoluteString
-        if current != url && context.coordinator.lastLoaded != url {
-            context.coordinator.lastLoaded = url
-            view.load(URLRequest(url: u))
+        if context.coordinator.lastRequested != url,
+           current != url,
+           context.coordinator.lastLoaded != url {
+            context.coordinator.request(url, on: view, u)
         }
     }
 
@@ -437,15 +621,37 @@ private struct CoBrowserWebView: NSViewRepresentable {
         var onNavigate: (String) -> Void
         weak var webView: WKWebView?
         var lastLoaded: String?
+        /// The last url we *asked* the web view to load, which is not always what
+        /// it settles on: an app's load is a tokened url the guard immediately
+        /// redirects away from.
+        var lastRequested: String?
         var lastReloadToken = 0
+
+        /// The navigation `load` handed back for our own request, so we can
+        /// still recognise it after a redirect has changed the url out from
+        /// under it. An app's open is exactly that: we ask for the tokened url
+        /// and the guard 302s us to the clean one.
+        var ownNavigation: WKNavigation?
+
+        func request(_ raw: String, on view: WKWebView, _ resolved: URL) {
+            lastRequested = raw
+            lastLoaded = raw
+            ownNavigation = view.load(URLRequest(url: resolved))
+        }
 
         init(onNavigate: @escaping (String) -> Void) { self.onNavigate = onNavigate }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             guard let s = webView.url?.absoluteString else { return }
-            // Ignore the programmatic load we issued for the current shared url;
-            // report only user-driven navigations (link clicks, form submits).
-            if s == lastLoaded { return }
+            let isOwnLoad = navigation != nil && navigation === ownNavigation
+            if isOwnLoad { ownNavigation = nil }
+            guard MiniApp.isMemberNavigation(committed: s, isOwnLoad: isOwnLoad, lastLoaded: lastLoaded)
+            else {
+                // Still remember where our own load landed, so a later update
+                // carrying that url doesn't re-request it.
+                lastLoaded = s
+                return
+            }
             lastLoaded = s
             onNavigate(s)
         }
