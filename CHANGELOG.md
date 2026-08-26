@@ -13,14 +13,6 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- Mini apps (`docs/design/MINI_APPS.md`) mint-before-open landed on **web**
-  (#371) and **macOS** (#372); **iOS** (external open) still opens an `isApp`
-  artifact with no token and lands on the guard's 401. Build-order step 3, one
-  small PR for the remaining surface.
-- Mini apps (`docs/design/MINI_APPS.md`) mint-before-open is on **web** (#371)
-  and **iOS** (#373); **macOS** (artifact-panel webview) still opens an `isApp`
-  artifact with no token and lands on the guard's 401. Build-order step 3, one
-  small PR left (#372).
 - Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
   measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
   frame nor sends one already established first-party, and the guard's 302 to
@@ -28,23 +20,19 @@ This file keeps two things:
   routes Safari to a new tab, which works. Closing the gap needs a guard-side
   change (bridge): keep the session in a url the guard controls, or have the 401
   page call `requestStorageAccess()`.
-  **macOS is not affected** — #372 re-ran the spike against the panel's own
-  `WKWebView` and it passes: the app loads as a *top-level* document, so the
-  guard's cookie is first-party and ITP has nothing to block (document,
-  subresource and XHR all authenticated). The limitation is framing, not WebKit.
-  iOS should measure its own web view the same way rather than assume either
-  result.
-  page call `requestStorageAccess()`. **iOS measured its own webview (#373) and
-  is not affected**: a top-level load is first-party to the guard, so both
-  mobile Safari and Flow's in-app `WKWebView` store and replay the cookie
-  across the 302 and the app loads authenticated. The block is iframe-specific,
-  not WebKit-wide — macOS should measure rather than assume.
-- An `isApp` artifact cannot be framed in the **co-browser** on any client
-  without a fix: the guard's 302 to the clean url reads as a user navigation,
-  so the client PATCHes the shared artifact and re-points it for every member
-  (seen on iOS in #373). Web and iOS both open apps out-of-frame today, so
-  nothing is broken — but "show the app inline" needs the broadcast suppressed
-  for `isApp` first.
+  **The native clients are not affected** — #372 (macOS panel `WKWebView`) and
+  #373 (iOS in-app `WKWebView` and mobile Safari) each re-ran the spike and both
+  pass: the app loads as a *top-level* document, so the guard's cookie is
+  first-party and ITP has nothing to block (document, subresource and XHR all
+  authenticated). The limitation is iframe-specific, not WebKit-wide.
+- Showing an `isApp` artifact **inline in the co-browser** needs the co-browse
+  broadcast suppressed for apps (backlog #380): the guard's 302 to the clean url
+  reads as a user navigation, so the client PATCHes the shared artifact and
+  re-points it for every member (seen on iOS in #373). macOS solved this for its
+  own panel in #372 — `MiniApp.carriesToken` never broadcasts a tokened url, and
+  the committed navigation is compared against the one `load` returned, which
+  tells a redirect apart from a click. Web and iOS open apps out-of-frame today,
+  so nothing is broken; #380 generalises the macOS fix.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a
