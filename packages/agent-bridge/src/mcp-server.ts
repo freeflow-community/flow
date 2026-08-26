@@ -32,17 +32,52 @@ const channelLabel = (c: { name: string | null; kind: string }): string =>
  * so an agent that forgets to clear it doesn't leave a channel spinning. */
 const MANUAL_INDICATOR_TTL_SECONDS = 300;
 
+/** Where a messaging tool call lands (#320).
+ *
+ * The ambient conversation — the channel, plus the thread when the agent was
+ * asked inside one — is inherited only by a call that names no channel of its
+ * own. Naming `channelId` means "post there, top-level", even when it is the
+ * very channel the ambient thread lives in: an agent conversing in a thread
+ * has to be able to reach the channel itself (dispatching another agent, say),
+ * and before this it could not. A thread is joined only by asking for it — a
+ * non-empty `threadRootId`. The empty string is an explicit "top-level", never
+ * a silent fall back to the ambient thread. */
+export function resolveMessageTarget(
+  args: { channelId?: unknown; threadRootId?: unknown },
+  ambient: { channelId: string; threadRootId: string | undefined },
+): { channelId: string; threadRootId: string | undefined } {
+  const channelId = typeof args.channelId === 'string' ? args.channelId.trim() : '';
+  const threadGiven = typeof args.threadRootId === 'string';
+  const threadRootId = threadGiven ? (args.threadRootId as string).trim() : '';
+  if (threadRootId) return { channelId: channelId || ambient.channelId, threadRootId };
+  if (threadGiven || channelId) return { channelId: channelId || ambient.channelId, threadRootId: undefined };
+  return { channelId: ambient.channelId, threadRootId: ambient.threadRootId };
+}
+
 const TOOLS = [
   {
     name: 'send_message',
     description:
-      'Send a message to a Flow channel or thread immediately. Defaults to the current conversation. Mention users as <@userId>.',
+      'Send a message to a Flow channel or thread immediately. With no channelId it replies in the current ' +
+      'conversation — inside the current thread, when you were asked in one. Passing channelId posts TOP-LEVEL in ' +
+      'that channel (this is how you reach a channel from inside a thread); add threadRootId to reply into a ' +
+      'specific thread instead. Mention users as <@userId>.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Message body (markdown).' },
-        channelId: { type: 'string', description: 'Target channel id (default: current conversation).' },
-        threadRootId: { type: 'string', description: 'Thread root message id (default: current thread, if any).' },
+        channelId: {
+          type: 'string',
+          description:
+            'Target channel id. Omit for the current conversation; naming one posts top-level there unless ' +
+            'threadRootId is also given.',
+        },
+        threadRootId: {
+          type: 'string',
+          description:
+            'Reply into this thread. Omitting it inherits the current thread only when channelId is omitted too; ' +
+            'pass an empty string to force top-level.',
+        },
       },
       required: ['text'],
     },
@@ -61,13 +96,25 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: 'Upload a local file and post it to a Flow channel (defaults to the current conversation).',
+    description:
+      'Upload a local file and post it to a Flow channel. Targeting works exactly like send_message: no channelId ' +
+      'posts in the current conversation (and current thread), naming a channelId posts top-level there.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Path to the file on disk.' },
-        channelId: { type: 'string', description: 'Target channel id (default: current conversation).' },
-        threadRootId: { type: 'string', description: 'Thread root message id (default: current thread, if any).' },
+        channelId: {
+          type: 'string',
+          description:
+            'Target channel id. Omit for the current conversation; naming one posts top-level there unless ' +
+            'threadRootId is also given.',
+        },
+        threadRootId: {
+          type: 'string',
+          description:
+            'Reply into this thread. Omitting it inherits the current thread only when channelId is omitted too; ' +
+            'pass an empty string to force top-level.',
+        },
         comment: { type: 'string', description: 'Optional message text to accompany the file.' },
       },
       required: ['path'],
@@ -197,15 +244,16 @@ const TOOLS = [
   {
     name: 'create_artifact',
     description:
-      'Create an artifact — a named file pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Provide the content inline, or a local file path, or the id of an already-uploaded file. Returns the artifact id (use it with update_artifact).',
+      'Create an artifact — a named object pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Two kinds: a FILE artifact (provide the content inline, or a local file path, or the id of an already-uploaded file) or a LINK artifact (provide a url — members get the live page, not a file). Returns the artifact id (use it with update_artifact).',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'Display name for the artifact (defaults to the file name).' },
+        name: { type: 'string', description: 'Display name for the artifact (defaults to the file name, or to a name derived from the url).' },
         content: { type: 'string', description: 'Inline file content to upload (use with name; mimeType recommended).' },
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML artifacts).' },
         path: { type: 'string', description: 'Path to a local file to upload instead of inline content.' },
         fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to pin as-is.' },
+        url: { type: 'string', description: 'http(s) URL to pin as a link artifact instead of a file. Mutually exclusive with content/path/fileId.' },
         channelId: { type: 'string', description: 'Channel to pin the artifact in (default: the current conversation).' },
       },
     },
@@ -213,7 +261,7 @@ const TOOLS = [
   {
     name: 'update_artifact',
     description:
-      'Update an existing artifact in place — rename it and/or replace its content. Everyone viewing it sees the new version. Provide new content inline, a local file path, or the id of an already-uploaded file to replace the backing file; and/or a new name.',
+      'Update an existing artifact in place — rename it and/or replace its content. Everyone viewing it sees the new version. For a file artifact provide new content inline, a local file path, or the id of an already-uploaded file; for a link artifact provide a new url; and/or a new name for either kind.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -223,8 +271,20 @@ const TOOLS = [
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML).' },
         path: { type: 'string', description: 'Path to a local file whose contents replace the artifact.' },
         fileId: { type: 'string', description: 'Id of an already-uploaded file to point the artifact at.' },
+        url: { type: 'string', description: 'New http(s) URL for a link artifact. Mutually exclusive with content/path/fileId; rejected on file artifacts.' },
       },
       required: ['artifactId'],
+    },
+  },
+  {
+    name: 'list_artifacts',
+    description:
+      'List the artifacts pinned in a channel (default: the current conversation) — id, kind (file or link), name, url or file info, and when each was last updated. Use the ids with update_artifact, or download_file with a file artifact’s fileId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channelId: { type: 'string', description: 'Channel whose artifacts to list (default: current conversation).' },
+      },
     },
   },
   {
@@ -367,8 +427,10 @@ export async function runMcpServer(): Promise<void> {
   }
 
   async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const channelId = (args.channelId as string | undefined) || defaultChannelId;
-    const threadRootId = (args.threadRootId as string | undefined) || defaultThreadRootId;
+    const { channelId, threadRootId } = resolveMessageTarget(args, {
+      channelId: defaultChannelId,
+      threadRootId: defaultThreadRootId,
+    });
     switch (name) {
       case 'send_message': {
         const msg = await api.sendMessage(channelId, String(args.text ?? ''), threadRootId);
@@ -542,22 +604,43 @@ export async function runMcpServer(): Promise<void> {
         if (!channelId) {
           return toolText('create_artifact needs a channelId (no conversation context to infer the channel)', true);
         }
+        const artifactName = (args.name as string | undefined) || undefined;
+        const url = (args.url as string | undefined) || undefined;
+        const hasFileSource = Boolean(args.fileId || args.path || typeof args.content === 'string');
+        if (url && hasFileSource) {
+          return toolText('create_artifact takes either url (link artifact) or one file source (content/path/fileId), not both', true);
+        }
+        if (url) {
+          if (!/^https?:\/\//i.test(url)) return toolText('url must be http(s)', true);
+          const created = await api.createArtifact(channelId, { url, name: artifactName });
+          return toolText(`link artifact "${created.name}" created (id ${created.id})`);
+        }
         // resolve a file id: pin an existing file, or upload path/content (owned)
-        const resolved = await resolveArtifactFile(args, (args.name as string | undefined) || undefined);
-        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, or fileId`, true);
-        const created = await api.createArtifact(channelId, resolved.fileId, resolved.label, resolved.ownsFile);
+        const resolved = await resolveArtifactFile(args, artifactName);
+        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, fileId, or url`, true);
+        const created = await api.createArtifact(channelId, {
+          fileId: resolved.fileId,
+          name: resolved.label,
+          ownsFile: resolved.ownsFile,
+        });
         return toolText(`artifact "${created.name}" created (id ${created.id})`);
       }
       case 'update_artifact': {
         const artifactId = (args.artifactId as string | undefined) || '';
         if (!artifactId) return toolText('update_artifact needs an artifactId', true);
         const name = (args.name as string | undefined) || undefined;
+        const url = (args.url as string | undefined) || undefined;
         const hasNewContent = args.fileId || args.path || typeof args.content === 'string';
-        if (!name && !hasNewContent) {
-          return toolText('update_artifact needs a name and/or new content (content, path, or fileId)', true);
+        if (url && hasNewContent) {
+          return toolText('update_artifact takes either url (link artifact) or new file content, not both', true);
         }
-        const patch: { name?: string; fileId?: string; ownsFile?: boolean } = {};
+        if (url && !/^https?:\/\//i.test(url)) return toolText('url must be http(s)', true);
+        if (!name && !hasNewContent && !url) {
+          return toolText('update_artifact needs a name, a url (link artifacts), and/or new content (content, path, or fileId)', true);
+        }
+        const patch: { name?: string; fileId?: string; ownsFile?: boolean; url?: string } = {};
         if (name) patch.name = name;
+        if (url) patch.url = url;
         if (hasNewContent) {
           const resolved = await resolveArtifactFile(args, name);
           if ('error' in resolved) return toolText('update_artifact could not read the new content', true);
@@ -566,6 +649,20 @@ export async function runMcpServer(): Promise<void> {
         }
         const updated = await api.updateArtifact(artifactId, patch);
         return toolText(`artifact "${updated.name}" updated`);
+      }
+      case 'list_artifacts': {
+        if (!channelId) {
+          return toolText('list_artifacts needs a channelId (no conversation context to infer the channel)', true);
+        }
+        const all = await api.listArtifacts(workspaceId);
+        const rows = all.filter((a) => a.channelId === channelId);
+        if (rows.length === 0) return toolText('no artifacts in this channel');
+        const lines = rows.map((a) =>
+          a.kind === 'link'
+            ? `[link] "${a.name}" (id ${a.id}) → ${a.url} — updated ${a.updatedAt}`
+            : `[file] "${a.name}" (id ${a.id}) — fileId ${a.fileId}${a.file ? `, ${a.file.mimeType}, ${a.file.sizeBytes} bytes` : ''} — updated ${a.updatedAt}`,
+        );
+        return toolText(lines.join('\n'));
       }
       case 'read_messages': {
         const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);

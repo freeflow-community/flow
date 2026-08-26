@@ -9,6 +9,12 @@ const DISMISS_KEY = 'flow.appCtaDismissed';
 /** Server route that 302s to the notarized macOS DMG in blob storage. */
 export const MAC_DOWNLOAD_URL = '/download/mac';
 
+/** True on iPhone/iPad — where "the app" is the iOS app, not the desktop one.
+ * iPadOS 13+ reports a Mac user agent, hence the touch-point check. */
+export const isIOSDevice =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.userAgent.includes('Mac') && navigator.maxTouchPoints > 1);
+
 // Setting `location.href` to a `flow://` URL never throws or rejects when no
 // app is registered for the scheme, so we can't catch the "not installed"
 // case directly. Heuristic: when the app *does* open, the browser backgrounds
@@ -71,11 +77,11 @@ export function OpenInAppButton() {
         className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
         onClick={() => { setNoApp(false); void openInApp(() => setNoApp(true)).catch(() => setNoApp(true)); }}
       >
-        Open the desktop app ↗
+        {isIOSDevice ? 'Open the Flow app ↗' : 'Open the desktop app ↗'}
       </button>
       {noApp && (
         <p className="text-xs text-muted">
-          App didn&apos;t open? <DownloadLink />
+          App didn&apos;t open? {isIOSDevice ? 'Make sure Flow is installed.' : <DownloadLink />}
         </p>
       )}
     </div>
@@ -92,9 +98,9 @@ export function OpenInAppBanner() {
       data-testid="open-in-app-banner"
       className="flex shrink-0 items-center justify-center gap-3 border-b border-hairline bg-white px-4 py-1.5 text-sm"
     >
-      <span className="text-muted">Flow works best in the desktop app.</span>
+      <span className="text-muted">Flow works best in the {isIOSDevice ? 'Flow' : 'desktop'} app.</span>
       {noApp ? (
-        <DownloadLink />
+        isIOSDevice ? <span className="text-muted">Is it installed?</span> : <DownloadLink />
       ) : (
         <button
           data-testid="open-in-app-banner-open"

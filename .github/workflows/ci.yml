@@ -1,0 +1,92 @@
+# Build and test every pull request. This is the gate the repo did not have:
+# commit 9d207f1 moved `skills/` → `.claude/skills/` without updating
+# `packages/web/scripts/copy-skill.mjs`, which runs on web's `prebuild`, so
+# `pnpm build` for web died on a clean checkout of main and nobody noticed
+# until it had landed. Merging to main deploys server + web (see BUILD.md), so
+# the next merge would have taken the web deploy down.
+#
+# What that history dictates about this file:
+#   - `pnpm -r build` is the point, not just `pnpm test`. The bug was a build
+#     failure and every test in the repo passed while it was on main.
+#   - @flow/shared is built first: it emits the .d.ts that web and server
+#     typecheck against. `pnpm -r` orders topologically anyway, but the
+#     dependency is load-bearing enough to be stated rather than inherited.
+#
+# Not enforcing: this workflow reports, it does not block. Requiring it is a
+# branch-protection setting (repo admin), not something a workflow can grant
+# itself. See #177.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  # Also on main itself, so "is main green?" has an answer that isn't "the last
+  # PR passed before it merged". Doesn't collide with publish-bridge.yml or
+  # deploy-landing.yml — separate workflows, separate jobs, no shared state.
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push supersedes the run for the old commit on a PR. Not on main, where
+# every commit's result is worth having.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # 13 of the 21 server test files are database-backed. They are
+    # self-sufficient — each one points DATABASE_URL at its own scratch
+    # database (flow_agents_test, flow_files_test, …), creates it if missing,
+    # and runs the migrations in beforeAll — but they all expect the dev
+    # cluster's credentials on port 5442 (packages/infra/docker-compose.yml).
+    # Reproducing that exactly is what lets `pnpm test` run unmodified and
+    # unnarrowed here. NATS is deliberately absent: publishEvent is a no-op
+    # without a bus, which the tests rely on.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: flow
+          POSTGRES_PASSWORD: flow_dev
+          POSTGRES_DB: flow
+        ports:
+          - 5442:5432
+        options: >-
+          --health-cmd "pg_isready -U flow -d flow"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No version here on purpose — it comes from package.json's
+      # `packageManager` field (pnpm@10.33.0), so the pin lives with the repo
+      # and a bump there moves CI with it.
+      - uses: pnpm/action-setup@v4
+
+      # node 24: engines says ">=22", and it is what publish-bridge.yml and
+      # deploy-landing.yml already run. Railpack picks the runtime for the
+      # Railway deploy, so there is no production version to match beyond that.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build @flow/shared
+        run: pnpm --filter @flow/shared build
+
+      # Typechecks everything that ships, and runs web's prebuild — the step
+      # that caught fire above.
+      - name: Build all packages
+        run: pnpm -r build
+
+      - name: Test
+        run: pnpm test

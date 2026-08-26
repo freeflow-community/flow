@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
-import { api, getToken, setToken } from './lib/api';
+import { api, blobUrl, getToken, setToken } from './lib/api';
 import { clearJoinToken, parseJoinPath, readJoinToken, stashJoinToken } from './lib/joinLink';
 import { createThreadMemory } from './lib/threadMemory';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
@@ -67,6 +67,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [channelId, setChannelId] = useState<string | null>(null);
   const [artifactId, setArtifactId] = useState<string | null>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
@@ -94,6 +95,12 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Warm the blob cache with our own avatar so the first message we send
+  // this session doesn't flash the placeholder while it loads.
+  useEffect(() => {
+    if (user?.avatarUrl) void blobUrl(user.avatarUrl).catch(() => {});
+  }, [user?.avatarUrl]);
 
   // Accept a stashed emailed invite as soon as we have a signed-in user
   // (fresh registration or existing account alike), then land in that
@@ -172,10 +179,10 @@ export default function App() {
 
   // The native apps' Google button lands here (phase16 §9): sign in, mint a
   // one-time code, bounce back to flow://signin. Deliberately checked before
-  // the signed-in branch — arriving with a live web session just skips ahead
-  // to the handoff rather than dropping into the workspace.
+  // the signed-in branch — arriving with a live web session offers that
+  // account for the handoff rather than dropping into the workspace.
   if (nativeHandoff) {
-    return <NativeSignIn signedIn={!!user} />;
+    return <NativeSignIn user={user} />;
   }
 
   // A join link owns the screen until it's joined, declined, or found dead —
@@ -218,6 +225,7 @@ export default function App() {
           workspaceId,
           channelId,
           artifactId,
+          filesOpen,
           threadRootId,
           editingMessageId,
           focusMessageId,
@@ -229,6 +237,7 @@ export default function App() {
             threadMemory.clear();
             setChannelId(null);
             setArtifactId(null);
+            setFilesOpen(false);
             setThreadRootId(null);
             setEditingMessageId(null);
             setFocusMessageId(null);
@@ -244,6 +253,8 @@ export default function App() {
             else threadMemory.remember(channelId, threadRootId);
             setChannelId(id);
             setArtifactId(null);
+            // Files are per-channel: the tab doesn't follow you to the next one.
+            setFilesOpen(false);
             setThreadRootId(threadMemory.recall(id));
             setEditingMessageId(null);
             setFocusMessageId(null);
@@ -252,6 +263,7 @@ export default function App() {
           // any) stays open — they're tabs in the same panel (phase 13).
           selectArtifact: (id) => {
             setArtifactId(id);
+            if (id) setFilesOpen(false);
             setEditingMessageId(null);
             setFocusMessageId(null);
             // select the artifact's channel so the conversation shows behind it
@@ -271,20 +283,33 @@ export default function App() {
           openThread: (id) => {
             setThreadRootId(id);
             threadMemory.remember(channelId, id);
-            if (id) setArtifactId(null);
+            if (id) {
+              setArtifactId(null);
+              setFilesOpen(false);
+            }
+          },
+          // The Files tab (#347) takes the panel the way an artifact tab does.
+          openFiles: (open) => {
+            setFilesOpen(open);
+            if (open) setArtifactId(null);
           },
           // Switch the side panel to the Thread tab (thread stays open).
-          showThread: () => setArtifactId(null),
+          showThread: () => {
+            setArtifactId(null);
+            setFilesOpen(false);
+          },
           // Close the whole side panel.
           closeSidePanel: () => {
             setThreadRootId(null);
             threadMemory.remember(channelId, null);
             setArtifactId(null);
+            setFilesOpen(false);
           },
           setEditingMessage: setEditingMessageId,
           jumpToMessage: (toChannelId, messageId, toThreadRootId) => {
             threadMemory.remember(channelId, threadRootId);
             setArtifactId(null);
+            setFilesOpen(false);
             setChannelId(toChannelId);
             // An explicit jump decides what's open in the target channel — a
             // top-level target closes whatever thread it had parked.

@@ -47,14 +47,20 @@ struct MarkdownTableView: View {
         .accessibilityIdentifier("msg.table")
     }
 
+    /// Cell text size, shared with the hand-cursor re-layout below.
+    fileprivate static let fontSize: CGFloat = 13
+
     private func cell(_ text: String, column: Int, isHeader: Bool) -> some View {
-        Text(MentionRendering.attributed(
+        let attributed = MentionRendering.attributed(
             text, names: userNames, currentUserId: currentUserId, scale: textZoom
-        ))
-            .flowFont(size: 13, weight: isHeader ? .semibold : .regular)
+        )
+        return Text(attributed)
+            .flowFont(size: Self.fontSize, weight: isHeader ? .semibold : .regular)
             .foregroundStyle(MC.ink)
             .multilineTextAlignment(textAlignment(column))
             .fixedSize(horizontal: false, vertical: true) // wrap, never truncate
+            // Before the padding, so the rects share the text's coordinates.
+            .cellLinkCursor(attributed)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             // Fill the whole column so adjacent borders meet as one grid.
@@ -87,6 +93,21 @@ struct MarkdownTableView: View {
         case .right: .trailing
         case .left, nil: .leading
         }
+    }
+}
+
+private extension View {
+    /// Hand cursor over a link inside a table cell (#276). Cells are ordinary
+    /// body text run through the same renderer, so they can hold links, but
+    /// this view is shared with iOS and `linkCursor` is AppKit — hence the
+    /// shim. No-op on iOS, which has no pointer to change.
+    @ViewBuilder
+    func cellLinkCursor(_ attributed: AttributedString) -> some View {
+        #if os(macOS)
+        linkCursor(attributed, size: MarkdownTableView.fontSize)
+        #else
+        self
+        #endif
     }
 }
 

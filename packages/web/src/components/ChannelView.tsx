@@ -1,30 +1,47 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
-import { useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, flattenMessages } from '../hooks';
+import { useHuddle } from '../huddle';
+import { useArtifacts, useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import ChannelMembersPopover, { type MemberRow } from './ChannelMembersPopover';
-import MessageList from './MessageList';
+import ChannelOverflowMenu from './ChannelOverflowMenu';
+import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
-import { EditChannelModal, UserCard } from './modals';
+import { ChannelOptionsModal, Modal, UserCard } from './modals';
+import { renderBody } from '../lib/format';
+import { useSyncBar } from '../lib/syncBar';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
   const sel = useSelection();
   const live = useLive();
+  const huddle = useHuddle();
   const channels = useChannels(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
   const displayNames = useDisplayNameMap(sel.workspaceId); // agent names carry the 🤖 badge
   const messagesQ = useMessages(channelId);
+  const pins = usePinnedMessages(channelId);
   const markRead = useMarkRead();
   const lastReadRef = useRef<string | null>(null);
   const [cardUserId, setCardUserId] = useState<string | null>(null);
   const [editChannel, setEditChannel] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pinsOpen, setPinsOpen] = useState(false);
+  // Reconnect bar (#234) — delayed and floored so short drops don't flash.
+  const showSyncBar = useSyncBar(live.syncing);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
+  // This channel's artifacts, for the "⋯" menu's Artifacts section (#188).
+  const artifacts = useArtifacts(sel.workspaceId);
+  const channelArtifacts = useMemo(
+    () => (artifacts.data ?? []).filter((a) => a.channelId === channelId),
+    [artifacts.data, channelId],
+  );
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
 
   // Mark read whenever the newest visible message changes — but only while
@@ -101,6 +118,13 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   // Switching channels shouldn't leave the previous channel's roster hanging open.
   useEffect(() => setMembersOpen(false), [channelId]);
 
+  // Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
+  // not while archived. "Join Huddle" doubles as start — there's no separate
+  // ring/start action (CONTEXT.md: Huddle).
+  const huddleParticipants = channel?.huddleParticipants ?? [];
+  const inThisHuddle = huddle.channelId === channelId;
+  const huddleEligible = channel?.kind === 'standard' && !channel?.archivedAt;
+
   // Main-composer typing only — thread typing shows in its own panel. An agent
   // at work "thinks" rather than "types" (ui_nits), so carry the isAgent flag.
   const typers = Object.entries(live.typing[typingKey(channelId)] ?? {})
@@ -127,10 +151,39 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           >
             {channel?.kind === 'standard' ? <><span className="text-muted"># </span>{title}</> : title}
           </h2>
-          {channel?.topic && <p className="truncate text-xs text-muted">{channel.topic}</p>}
+          {/* #194: the topic runs through the same inline renderer as a message
+              body, so a URL in it is a real link (new tab) instead of grey text. */}
+          {channel?.topic && (
+            <p data-testid="channel-topic" className="truncate text-xs text-muted">
+              {renderBody(channel.topic, names, auth.user.id)}
+            </p>
+          )}
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">
+          {huddleEligible && (
+            <button
+              type="button"
+              data-testid={inThisHuddle ? 'huddle-leave' : 'huddle-join'}
+              title={inThisHuddle ? 'Leave huddle' : 'Join huddle'}
+              disabled={huddle.connecting}
+              className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold max-md:hidden ${
+                inThisHuddle
+                  ? 'bg-accent/15 text-accent-soft hover:bg-accent/25'
+                  : 'text-muted hover:bg-daypill/60 hover:text-ink'
+              }`}
+              onClick={() => {
+                if (inThisHuddle) void huddle.leave();
+                else if (channel) void huddle.join(channelId, channel.workspaceId).catch(() => {});
+              }}
+            >
+              🎙 {inThisHuddle ? 'Leave Huddle' : 'Join Huddle'}
+              {/* ambient indicator: a huddle live but not yet joined shows who's in it */}
+              {!inThisHuddle && huddleParticipants.length > 0 && (
+                <span className="rounded-full bg-accent/15 px-1.5 text-accent-soft">{huddleParticipants.length}</span>
+              )}
+            </button>
+          )}
           {/* member stack — opens the roster; dropped on mobile so the title gets the room */}
           <button
             data-testid="channel-members-trigger"
@@ -160,6 +213,19 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             {/* nothing to stack yet (fetch in flight) — keep a clickable target */}
             {shown.length === 0 && <span className="text-sm text-muted">👥</span>}
           </button>
+          {/* #188: pins, artifacts and channel options share one "⋯" menu */}
+          <button
+            type="button"
+            data-testid="channel-menu-trigger"
+            data-overflow-trigger
+            title="Channel menu"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="rounded-lg px-1.5 py-1 text-[17px] leading-none text-muted hover:bg-daypill/60 hover:text-ink"
+            onClick={() => { setMenuOpen((v) => !v); setMembersOpen(false); }}
+          >
+            ⋯
+          </button>
           {membersOpen && (
             <ChannelMembersPopover
               rows={memberRows}
@@ -168,8 +234,31 @@ export default function ChannelView({ channelId }: { channelId: string }) {
               onSelect={(id) => { setMembersOpen(false); setCardUserId(id); }}
             />
           )}
+          {menuOpen && (
+            <ChannelOverflowMenu
+              artifacts={channelArtifacts}
+              pinCount={pins.data?.length ?? 0}
+              showOptions={channel?.kind === 'standard'}
+              onOpenFiles={() => sel.openFiles(true)}
+              onOpenPins={() => setPinsOpen(true)}
+              onOpenArtifact={(id) => sel.selectArtifact(id)}
+              onOpenOptions={() => setEditChannel(true)}
+              onClose={() => setMenuOpen(false)}
+            />
+          )}
         </div>
       </header>
+
+      {showSyncBar && (
+        <div
+          className="mc-sync-bar shrink-0"
+          data-testid="sync-bar"
+          role="status"
+          aria-label="Reconnecting"
+        >
+          <span />
+        </div>
+      )}
 
       {/* key: fresh list per channel so the mount effect re-runs — it restores
           this channel's remembered scroll position (or lands at the bottom when
@@ -183,6 +272,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         hasMore={messagesQ.hasNextPage ?? false}
         onLoadOlder={() => void messagesQ.fetchNextPage()}
         showThreadAffordances
+        unreadThreadRootIds={channel?.unreadThreadRootIds ?? []}
         focusMessageId={focusId}
         onFocused={() => sel.clearFocusMessage()}
       />
@@ -208,7 +298,79 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       )}
 
       {cardUserId && <UserCard userId={cardUserId} onClose={() => setCardUserId(null)} />}
-      {editChannel && channel && <EditChannelModal channel={channel} onClose={() => setEditChannel(false)} />}
+      {editChannel && channel && <ChannelOptionsModal channel={channel} onClose={() => setEditChannel(false)} />}
+      {pinsOpen && (
+        <PinnedMessagesModal
+          messages={pins.data ?? []}
+          names={names}
+          loading={pins.isLoading}
+          onClose={() => setPinsOpen(false)}
+        />
+      )}
     </section>
+  );
+}
+
+export function PinnedMessagesModal({
+  messages,
+  names,
+  loading,
+  onClose,
+}: {
+  messages: MessageDTO[];
+  names: Record<string, string>;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  const sel = useSelection();
+  const togglePin = useTogglePin();
+
+  return (
+    <Modal onClose={onClose} testid="pinned-messages-modal">
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <h3 className="font-bold">Pinned messages</h3>
+        <button className="rounded px-2 text-faint hover:bg-daypill hover:text-ink" onClick={onClose}>×</button>
+      </div>
+      {loading ? (
+        <p className="py-6 text-center text-sm text-muted">Loading…</p>
+      ) : messages.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted">No pinned messages in this channel.</p>
+      ) : (
+        <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+          {messages.map((message) => (
+            <div key={message.id} className="flex items-start gap-2 rounded-xl border border-hairline p-2 hover:border-hairline2">
+              <button
+                type="button"
+                className="min-w-0 flex-1 cursor-pointer text-left"
+                onClick={() => {
+                  sel.jumpToMessage(message.channelId, message.id, message.threadRootId);
+                  onClose();
+                }}
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="truncate text-xs font-bold">{names[message.userId] ?? 'Unknown'}</span>
+                  <span className="shrink-0 text-[11px] text-faint">
+                    {message.pinnedAt ? new Date(message.pinnedAt).toLocaleString() : ''}
+                  </span>
+                </div>
+                <p className="mt-0.5 line-clamp-3 text-sm text-ink-soft">
+                  {message.body.trim() || message.files[0]?.name || 'Message'}
+                </p>
+                {message.threadRootId && <span className="text-[11px] text-accent-soft">Reply in thread</span>}
+              </button>
+              <button
+                type="button"
+                data-testid={`unpin-from-list-${message.id}`}
+                title="Unpin message"
+                className="shrink-0 rounded-md p-1 text-accent-soft hover:bg-daypill"
+                onClick={() => togglePin.mutate(message)}
+              >
+                <PinIcon filled />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }

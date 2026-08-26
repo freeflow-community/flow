@@ -1,26 +1,30 @@
 import SwiftUI
 
-// Tabbed side panel (phase 13): the right-hand pane that hosts the open Thread
-// and the active channel's artifacts as switchable tabs. It owns the tab strip,
+// Tabbed side panel (phase 13): the right-hand pane that hosts the open Thread,
+// the active channel's artifacts and its Files list (#347) as switchable tabs. It owns the tab strip,
 // the panel close, and the leading-edge shadow, and shows the active tab's body
 // (ThreadPanelView embedded, or ArtifactPanelView). Threads and artifacts
 // coexist; the tab strip picks which one shows. Mirrors the web SidePanel.
 struct SidePanelView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     private var channelArtifacts: [Artifact] {
-        guard let ch = app.selectedChannelId else { return [] }
-        return app.artifacts(inChannel: ch)
+        guard let ch = win.selectedChannelId else { return [] }
+        return win.artifacts(inChannel: ch)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             tabStrip
             Divider()
-            if let artifactId = app.selectedArtifactId {
+            if win.filesOpen, let channelId = win.selectedChannelId {
+                FilesPanelView(channelId: channelId)
+                    .id(channelId)
+            } else if let artifactId = win.selectedArtifactId {
                 ArtifactPanelView(artifactId: artifactId)
                     .id(artifactId)
-            } else if let rootId = app.openThreadRootId {
+            } else if let rootId = win.openThreadRootId {
                 ThreadPanelView(rootId: rootId, embedded: true)
                     .id(rootId)
             }
@@ -38,22 +42,32 @@ struct SidePanelView: View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
-                    if app.openThreadRootId != nil {
+                    if win.openThreadRootId != nil {
                         PanelTab(
                             icon: "💬",
                             label: "Thread",
-                            active: app.selectedArtifactId == nil,
-                            onSelect: { app.showThread() },
-                            onClose: { app.openThread(nil) },
+                            active: win.selectedArtifactId == nil && !win.filesOpen,
+                            onSelect: { win.showThread() },
+                            onClose: { win.openThread(nil) },
                             accessibilityId: "side.tab.thread"
+                        )
+                    }
+                    if win.filesOpen {
+                        PanelTab(
+                            icon: "📎",
+                            label: "Files",
+                            active: true,
+                            onSelect: { win.openFiles(true) },
+                            onClose: { win.openFiles(false) },
+                            accessibilityId: "side.tab.files"
                         )
                     }
                     ForEach(channelArtifacts) { artifact in
                         PanelTab(
                             icon: artifact.glyph,
                             label: artifact.name,
-                            active: app.selectedArtifactId == artifact.id,
-                            onSelect: { app.selectArtifact(artifact.id) },
+                            active: !win.filesOpen && win.selectedArtifactId == artifact.id,
+                            onSelect: { win.selectArtifact(artifact.id) },
                             onClose: nil,
                             accessibilityId: "side.tab.artifact.\(artifact.name)"
                         )
@@ -62,7 +76,7 @@ struct SidePanelView: View {
                 .padding(.horizontal, 8)
             }
             Button {
-                app.closeSidePanel()
+                win.closeSidePanel()
             } label: {
                 Image(systemName: "xmark")
             }
@@ -105,7 +119,7 @@ private struct PanelTab: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(MC.faint)
-                .help("Close thread")
+                .help("Close tab")
             }
         }
         .frame(maxWidth: 180)

@@ -132,12 +132,13 @@ struct ImageLightboxView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
     @State private var shareItem: ShareFile?
+    @State private var zoomed = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-                Group {
+                ZoomableImageView(contentId: file.id, isZoomed: $zoomed) {
                     if file.mimeType == "image/gif" {
                         AnimatedAuthImage(path: "/v1/files/\(file.id)")
                     } else {
@@ -147,6 +148,7 @@ struct ImageLightboxView: View {
                         .scaledToFit()
                     }
                 }
+                .accessibilityIdentifier("lightbox.image")
             }
             .navigationTitle(file.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -193,13 +195,15 @@ struct ImageLightboxView: View {
     }
 }
 
-private struct ShareFile: Identifiable {
+/// Internal, not private: the channel Files screen (#348) shares this rather
+/// than growing a third copy of the same two types.
+struct ShareFile: Identifiable {
     let url: URL
     var id: String { url.path }
 }
 
 /// System share sheet wrapper.
-private struct ActivityView: UIViewControllerRepresentable {
+struct ActivityView: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {

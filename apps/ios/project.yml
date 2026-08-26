@@ -8,6 +8,9 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift.git
     from: 7.0.0
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift.git
+    from: 2.0.0
 targets:
   Flow:
     type: application
@@ -25,6 +28,7 @@ targets:
       - path: ../macos/Sources/Flow/Database
       - path: ../macos/Sources/Flow/Sync
       - path: ../macos/Sources/Flow/App/AppState.swift
+      - path: ../macos/Sources/Flow/App/WindowState.swift
       - path: ../macos/Sources/Flow/Support
         # Updater.swift is Sparkle (macOS-only auto-update); iOS ships through
         # the App Store and has no Sparkle dependency, so compiling it here
@@ -32,6 +36,36 @@ targets:
         excludes: [Banners.swift, Updater.swift]
     dependencies:
       - package: GRDB
+      # Voice huddle (Phase 1). XcodeGen/SPM auto-embeds its XCFrameworks —
+      # unlike the macOS SwiftPM executable, no make-app.sh-style manual
+      # embedding/signing needed here.
+      - package: LiveKit
+      # Embeds FlowShare.appex in the app's PlugIns folder. A share extension
+      # is only installed as part of its host app.
+      - target: FlowShare
+    # Ship the user-facing release notes inside the app, so the "What's new"
+    # screen shows exactly the notes of the installed build and needs no
+    # network — the same two steps tools/make-app.sh runs for macOS.
+    # FEATURES.md is generated from changelog/ and gitignored, so it can't be
+    # listed as a source file; this phase builds it and copies it in.
+    postBuildScripts:
+      - name: Bundle FEATURES.md
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          ROOT="$SRCROOT/../.."
+          NODE="$(command -v node || true)"
+          if [ -z "$NODE" ]; then
+            for candidate in /opt/homebrew/bin/node /usr/local/bin/node; do
+              if [ -x "$candidate" ]; then NODE="$candidate"; break; fi
+            done
+          fi
+          if [ -z "$NODE" ]; then
+            echo "error: node not found. The What's new screen needs FEATURES.md, which scripts/build-features.mjs generates. Install Node or put it on PATH."
+            exit 1
+          fi
+          "$NODE" "$ROOT/scripts/build-features.mjs"
+          cp "$ROOT/FEATURES.md" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/FEATURES.md"
     # Sign in with Apple. XcodeGen writes the entitlements file; the App ID's
     # capability must also be enabled in the developer portal (automatic
     # signing handles this when archiving in Xcode).
@@ -39,6 +73,12 @@ targets:
       path: Sources/Flow.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # Shared with the share extension. The group is the app's own id, so
+        # tokens already written by the app are inside it and no migration is
+        # needed (issue #214, failure mode 1).
+        keychain-access-groups: [$(AppIdentifierPrefix)im.freeflow.app]
+        # Carries the last-used channel between the app and the extension.
+        com.apple.security.application-groups: [group.im.freeflow.app]
     info:
       path: Sources/Generated-Info.plist
       properties:
@@ -47,7 +87,7 @@ targets:
         # Version + build come from the MARKETING_VERSION / CURRENT_PROJECT_VERSION
         # build settings below. Without these, XcodeGen writes literal "1.0"/"1"
         # into the plist, which override the settings and pin every archive to
-        # 1.0 (1) — bump CURRENT_PROJECT_VERSION per TestFlight upload.
+        # 1.0 (1).
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
@@ -60,6 +100,12 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSCameraUsageDescription: Take a photo to share in the conversation.
+        # Voice huddle (Phase 1).
+        NSMicrophoneUsageDescription: Flow needs microphone access to let you talk in a voice huddle.
+        # An ambient huddle has to survive backgrounding/lock-screen, not just
+        # in-app navigation (decision log 2026-08-20), or it fails the "feels
+        # like a real call" bar the moment you switch apps.
+        UIBackgroundModes: [audio]
         ITSAppUsesNonExemptEncryption: false
         # Allow cleartext HTTP only to loopback/.local (dev server); prod
         # (app.freeflow.im) stays HTTPS-enforced under ATS.
@@ -70,7 +116,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app
         DEVELOPMENT_TEAM: RP5QYMYA4Z # App Store signing team (clean 2026-07 account)
         MARKETING_VERSION: "2.0"
-        CURRENT_PROJECT_VERSION: "5"
+        # Fallback only. Releases derive the build number from the commit
+        # count and pass it to xcodebuild, which outranks this — see
+        # apps/ios/tools/release-ios.sh. Do not bump this per upload.
+        CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -78,6 +127,93 @@ targets:
         # Capabilities, or via DEVELOPMENT_TEAM). Simulator CLI builds pass
         # CODE_SIGNING_ALLOWED=NO on the xcodebuild invocation instead, so the
         # committed project stays device-ready by default.
+
+  # Share extension (issue #214). Its own process, its own bundle and its own
+  # App ID — hence the duplicated entitlements and the FlowServerURL below.
+  FlowShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    # Only the layers a one-shot POST needs. No SyncEngine, no GRDB cache, no
+    # socket: this process exists for a few seconds and has a ~120 MB ceiling.
+    sources:
+      - path: ShareExtension
+      - path: ../macos/Sources/Flow/Models
+      - path: ../macos/Sources/Flow/Networking/APIClient.swift
+      - path: ../macos/Sources/Flow/Support/Server.swift
+      - path: ../macos/Sources/Flow/Support/Profile.swift
+      - path: ../macos/Sources/Flow/Support/Keychain.swift
+      - path: ../macos/Sources/Flow/Support/ImagePrep.swift
+      - path: ../macos/Sources/Flow/Support/ISO8601.swift
+      - path: ../macos/Sources/Flow/Support/UUIDv7.swift
+      - path: ../macos/Sources/Flow/Support/AgentStatus.swift
+    dependencies:
+      # Models.swift declares GRDB record conformances. The extension never
+      # opens a database; it links the library for the type conformances only.
+      - package: GRDB
+    # Failure mode 2 is invisible at runtime — a missing FlowServerURL just
+    # makes the extension talk to localhost and look signed out. Catch it where
+    # it cannot be missed instead: the build.
+    postBuildScripts:
+      - name: Assert FlowServerURL is stamped
+        basedOnDependencyAnalysis: false
+        # Declared so this phase is ordered *after* the Info.plist is written.
+        # Without it the check can run against a plist that doesn't exist yet
+        # and pass by accident.
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          set -euo pipefail
+          PLIST="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          if ! /usr/libexec/PlistBuddy -c 'Print :FlowServerURL' "$PLIST" >/dev/null 2>&1; then
+            echo "error: FlowServerURL is missing from $PRODUCT_NAME's Info.plist. Bundle.main in an extension is the extension's own bundle, so without this key Server.baseURL falls back to 127.0.0.1:8787 and Server.storageSuffix changes the Keychain account name — the extension silently reads no token. Add it to the target's info: properties in apps/ios/project.yml."
+            exit 1
+          fi
+    entitlements:
+      path: ShareExtension/FlowShare.entitlements
+      properties:
+        # Same group as the app: this is what lets the extension read the
+        # session token the app wrote (issue #214, failure mode 1).
+        keychain-access-groups: [$(AppIdentifierPrefix)im.freeflow.app]
+        com.apple.security.application-groups: [group.im.freeflow.app]
+    info:
+      path: ShareExtension/Generated-Info.plist
+      properties:
+        CFBundleDisplayName: Flow
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Bundle.main in an extension is the *extension's* bundle, so the app's
+        # copy of this key is invisible here. Without it Server.baseURL falls
+        # back to 127.0.0.1:8787 and, worse, Server.storageSuffix changes — so
+        # the Keychain account name changes and the token is not found even
+        # with the access group right (issue #214, failure mode 2).
+        FlowServerURL: https://app.freeflow.im
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            # Movie and File open the sheet for videos and documents (issue
+            # #219). File is the catch-all — a PDF, a .docx or a .zip only
+            # matches this key — and it also matches images and movies, so the
+            # loader's precedence rule, not the activation rule, decides what
+            # gets posted.
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsImageWithMaxCount: 1
+              NSExtensionActivationSupportsMovieWithMaxCount: 1
+              NSExtensionActivationSupportsFileWithMaxCount: 1
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.share
+        DEVELOPMENT_TEAM: RP5QYMYA4Z
+        MARKETING_VERSION: "2.0"
+        # Fallback only. Releases derive the build number from the commit
+        # count and pass it to xcodebuild, which outranks this — see
+        # apps/ios/tools/release-ios.sh. Do not bump this per upload.
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
 
   # XCUITest target: taps happen inside the simulator, so iOS UI checks don't
   # need the operator's desktop the way the macOS AX harness does. Runs against

@@ -18,7 +18,16 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var timezone: String?
     var statusEmoji: String? // "" / nil = no status
     var statusText: String?
+    // Expanded profile (#220). Optional so a client pointed at a server
+    // predating the fields still decodes. `website` is always an absolute
+    // http(s) URL — the server rejects every other scheme — and `bio` is plain
+    // text with significant newlines, never markdown.
+    var website: String?
+    var bio: String?
     var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
+    // App/integration bot. Like `isAgent` it means "not a person", which is
+    // what the sole-human check behind Delete workspace turns on (#340).
+    var isBot: Bool?
     var sponsorId: String? // agents only: the human member who sponsored them
     var createdAt: String?
 
@@ -27,6 +36,9 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var displayNameWithBadge: String {
         isAgent == true ? "\(displayName) 🤖" : displayName
     }
+
+    /// A person, as opposed to an agent or an app bot (#340).
+    var isHuman: Bool { isAgent != true && isBot != true }
 }
 
 struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
@@ -39,14 +51,23 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
     var createdAt: String
     var role: String?
     var sidebarColor: String? // preset id (see SidebarPalette); nil = default
+    /// Workspace avatar (#336): a `/v1/avatars/<key>` path, or nil for the
+    /// color/initial mark every workspace drew before.
+    var avatarUrl: String?
+    /// Unread messages across the channels I'm in here (#345) — the rail badge.
+    /// Only `/v1/me/workspaces` computes it; nil on a row that arrived any
+    /// other way means "unknown", which is why the cached value is kept rather
+    /// than overwritten (see `saveWorkspacePreservingRole`).
+    var unreadCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, slug, name, createdBy, createdAt, role, sidebarColor
+        case id, slug, name, createdBy, createdAt, role, sidebarColor, avatarUrl, unreadCount
     }
 
     init(
         id: String, slug: String, name: String, createdBy: String, createdAt: String,
-        role: String? = nil, sidebarColor: String? = nil
+        role: String? = nil, sidebarColor: String? = nil, avatarUrl: String? = nil,
+        unreadCount: Int? = nil
     ) {
         self.id = id
         self.slug = slug
@@ -55,6 +76,8 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         self.createdAt = createdAt
         self.role = role
         self.sidebarColor = sidebarColor
+        self.avatarUrl = avatarUrl
+        self.unreadCount = unreadCount
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +89,8 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         createdAt = try c.decode(String.self, forKey: .createdAt)
         role = try c.decodeIfPresent(String.self, forKey: .role)
         sidebarColor = try c.decodeIfPresent(String.self, forKey: .sidebarColor)
+        avatarUrl = try c.decodeIfPresent(String.self, forKey: .avatarUrl)
+        unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount)
     }
 }
 
@@ -102,6 +127,22 @@ struct Unfurl: Codable, Sendable, Equatable, Identifiable {
         var alt: String?
     }
 
+    struct Media: Codable, Sendable, Equatable {
+        var provider: String?
+        var durationSec: Int?
+    }
+
+    /// Present when the link is a video Flow can play. `playerUrl` is built by
+    /// the server from `videoId` — the provider's own oEmbed markup never
+    /// reaches a client — and is only loaded once the viewer taps play.
+    struct Embed: Codable, Sendable, Equatable {
+        var provider: String
+        var videoId: String
+        var playerUrl: String
+        var width: Int?
+        var height: Int?
+    }
+
     var url: String
     var urlHash: String
     var canonicalUrl: String?
@@ -115,8 +156,19 @@ struct Unfurl: Codable, Sendable, Equatable, Identifiable {
     var author: String?
     var publishedAt: String?
     var image: Image?
+    var media: Media?
+    var embed: Embed?
 
     var id: String { urlHash }
+
+    /// Runtime as `m:ss` (or `h:mm:ss`), when the server knew it.
+    var durationLabel: String? {
+        guard let seconds = media?.durationSec, seconds > 0 else { return nil }
+        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%d:%02d", m, s)
+    }
 
     /// The page this card points at — canonical when the server resolved one.
     var target: String { canonicalUrl ?? url }
@@ -265,6 +317,10 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// Unread *notifications* raised in this channel — the number the sidebar
     /// badge shows. Mentions, thread replies, reactions; every message in a DM.
     var unreadNotifications: Int
+    /// Thread roots here holding an unread notification for me (#270) — the
+    /// root's "N replies" chip draws a dot, so a reply that needs you is
+    /// visible in the transcript and not only in the sidebar badge.
+    var unreadThreadRootIds: [String]?
     var notifyLevel: Int // 0=mute 1=mentions 2=all
     /// Parent channel (#118) — set at creation, one level deep. The sidebar
     /// draws this channel indented under it. nil for a top-level channel.
@@ -284,13 +340,14 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
         case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
-        case notifyLevel, parentId, memberIds
+        case unreadThreadRootIds, notifyLevel, parentId, memberIds
     }
 
     init(
         id: String, workspaceId: String, name: String?, kind: String = "standard", topic: String?,
         isPrivate: Bool, createdBy: String, createdAt: String, archivedAt: String?,
         isMember: Bool, lastReadMsgId: String?, unreadCount: Int, unreadNotifications: Int = 0,
+        unreadThreadRootIds: [String]? = nil,
         notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil
     ) {
         self.id = id
@@ -306,6 +363,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.lastReadMsgId = lastReadMsgId
         self.unreadCount = unreadCount
         self.unreadNotifications = unreadNotifications
+        self.unreadThreadRootIds = unreadThreadRootIds
         self.notifyLevel = notifyLevel
         self.parentId = parentId
         self.memberIds = memberIds
@@ -326,6 +384,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         lastReadMsgId = try c.decodeIfPresent(String.self, forKey: .lastReadMsgId)
         unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         unreadNotifications = try c.decodeIfPresent(Int.self, forKey: .unreadNotifications) ?? 0
+        unreadThreadRootIds = try c.decodeIfPresent([String].self, forKey: .unreadThreadRootIds)
         notifyLevel = try c.decodeIfPresent(Int.self, forKey: .notifyLevel) ?? 1
         parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
         memberIds = try c.decodeIfPresent([String].self, forKey: .memberIds)
@@ -378,6 +437,9 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     var createdAt: String
     var editedAt: String?
     var deletedAt: String?
+    /// Channel-wide pin metadata. Nil means the message is not pinned.
+    var pinnedAt: String?
+    var pinnedBy: String?
     var replyCount: Int
     var lastReplyAt: String?
     /// First (up to) 4 distinct reply authors in thread order (reply-avatar stack).
@@ -400,14 +462,15 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
 
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
-        case createdAt, editedAt, deletedAt, replyCount, lastReplyAt
+        case createdAt, editedAt, deletedAt, pinnedAt, pinnedBy, replyCount, lastReplyAt
         case replyParticipantUserIds, reactions, files, unfurls, systemKind, pending, failed
     }
 
     init(
         id: String, channelId: String, userId: String, threadRootId: String?,
         clientMsgId: String, body: String, createdAt: String, editedAt: String?,
-        deletedAt: String?, replyCount: Int, lastReplyAt: String?,
+        deletedAt: String?, pinnedAt: String? = nil, pinnedBy: String? = nil,
+        replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
         unfurls: [Unfurl] = [], systemKind: String? = nil, pending: Bool, failed: Bool = false
@@ -421,6 +484,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.createdAt = createdAt
         self.editedAt = editedAt
         self.deletedAt = deletedAt
+        self.pinnedAt = pinnedAt
+        self.pinnedBy = pinnedBy
         self.replyCount = replyCount
         self.lastReplyAt = lastReplyAt
         self.replyParticipantUserIds = replyParticipantUserIds
@@ -443,6 +508,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         createdAt = try c.decode(String.self, forKey: .createdAt)
         editedAt = try c.decodeIfPresent(String.self, forKey: .editedAt)
         deletedAt = try c.decodeIfPresent(String.self, forKey: .deletedAt)
+        pinnedAt = try c.decodeIfPresent(String.self, forKey: .pinnedAt)
+        pinnedBy = try c.decodeIfPresent(String.self, forKey: .pinnedBy)
         replyCount = try c.decodeIfPresent(Int.self, forKey: .replyCount) ?? 0
         lastReplyAt = try c.decodeIfPresent(String.self, forKey: .lastReplyAt)
         replyParticipantUserIds = try c.decodeIfPresent([String].self, forKey: .replyParticipantUserIds) ?? []
@@ -538,6 +605,8 @@ struct MemberDTO: Decodable, Sendable {
     let statusEmoji: String?
     let statusText: String?
     let isAgent: Bool?
+    /// Optional so a client pointed at a server predating the field decodes.
+    let isBot: Bool?
     let role: String
     let joinedAt: String?
 }
@@ -550,8 +619,16 @@ struct ChannelsResponse: Decodable, Sendable {
     /// on disk, and a spinner must never survive a relaunch — it's a claim
     /// about what an agent is doing this second.
     let busyChannelIds: Set<String>
+    /// channelId -> live voice-huddle roster (Phase 1). Same reasoning as
+    /// busyChannelIds — LiveKit is the source of truth, not this cache
+    /// (decision log 2026-08-20), so it must never survive a relaunch either.
+    let huddleRosters: [String: [HuddleParticipant]]
 
-    private struct IndicatorRow: Decodable { let id: String; let indicator: String? }
+    private struct IndicatorRow: Decodable {
+        let id: String
+        let indicator: String?
+        let huddleParticipants: [HuddleParticipant]?
+    }
     private enum CodingKeys: String, CodingKey { case channels }
 
     init(from decoder: Decoder) throws {
@@ -559,6 +636,11 @@ struct ChannelsResponse: Decodable, Sendable {
         channels = try c.decode([Channel].self, forKey: .channels)
         let rows = try c.decode([IndicatorRow].self, forKey: .channels)
         busyChannelIds = Set(rows.filter { $0.indicator != nil }.map(\.id))
+        var rosters: [String: [HuddleParticipant]] = [:]
+        for row in rows where !(row.huddleParticipants ?? []).isEmpty {
+            rosters[row.id] = row.huddleParticipants
+        }
+        huddleRosters = rosters
     }
 }
 
@@ -567,6 +649,27 @@ struct ChannelsResponse: Decodable, Sendable {
 struct ChannelIndicatorData: Decodable, Sendable {
     let channelId: String
     let state: String?
+}
+
+/// One participant in a channel's live voice huddle (Phase 1: audio-only).
+struct HuddleParticipant: Codable, Sendable, Equatable {
+    let userId: String
+    let joinedAt: String
+}
+
+/// `huddle.updated` payload: the channel's aggregate roster after a change —
+/// like ChannelIndicatorData, not one joiner/leaver. Empty means the huddle
+/// ended.
+struct HuddleUpdatedData: Decodable, Sendable {
+    let channelId: String
+    let participants: [HuddleParticipant]
+}
+
+/// POST /v1/channels/:id/huddle/join response: a LiveKit access token scoped
+/// to that channel's room, and the server URL to connect to.
+struct HuddleJoinResponse: Decodable, Sendable {
+    let token: String
+    let url: String
 }
 struct MembersResponse: Decodable, Sendable { let members: [MemberDTO] }
 struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
@@ -580,6 +683,9 @@ struct MentionMiss: Identifiable, Hashable, Sendable {
 struct MessagesResponse: Decodable, Sendable {
     let messages: [Message] // newest first
     let hasMore: Bool
+}
+struct PinnedMessagesResponse: Decodable, Sendable {
+    let messages: [Message]
 }
 struct ThreadResponse: Decodable, Sendable {
     let root: Message
@@ -633,6 +739,26 @@ struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
     var actorUserId: String { actorId ?? message.userId }
     /// Whether this notification may raise an OS banner.
     var alerts: Bool { suppressAlert != true }
+
+    /// Activity-row title (#267). `channelName` names where it happened —
+    /// omitted on DM rows, which already say so, and when the channel isn't
+    /// known locally. Shared by the macOS and iOS feeds so they read alike.
+    func headline(sender: String, channelName: String?) -> String {
+        let suffix = channelName.map { " in #\($0)" } ?? ""
+        switch kind {
+        case 1: return "\(sender) sent you a direct message"
+        case 2: return "\(sender) replied in a thread\(suffix)"
+        case 3: return "\(sender) posted\(suffix)"
+        case 4: return "\(sender) reacted \(reactionEmoji ?? "") to your message\(suffix)"
+            .replacingOccurrences(of: "  ", with: " ")
+        case 5:
+            // #303. The channel is the point here, so name it or say nothing —
+            // "added you in #x" would read as the wrong preposition.
+            return channelName.map { "\(sender) added you to #\($0)" }
+                ?? "\(sender) added you to a channel"
+        default: return "\(sender) mentioned you\(suffix)"
+        }
+    }
 }
 
 /// `notification.read` payload (issue #63): rows this user just read, in this
@@ -660,6 +786,18 @@ struct RegisterBody: Encodable, Sendable {
     // Dev-only skip of email verification (server honors it only on the local
     // email driver). Production registration happens on the web, which verifies.
     let autoVerify = true
+}
+/// POST /v1/auth/register on production servers: email-first, address only.
+/// Name and password are set by whoever clicks the emailed link.
+struct EmailRegisterBody: Encodable, Sendable {
+    let email: String
+}
+/// Its response — no session yet, just confirmation the email went out. The
+/// server answers the same whether or not the address already has an account
+/// (no enumeration).
+struct RegisterPendingResponse: Decodable, Sendable {
+    let requiresVerification: Bool
+    let email: String
 }
 struct LoginBody: Encodable, Sendable {
     let email: String
@@ -731,17 +869,24 @@ struct PatchMeBody: Encodable, Sendable {
     /// Phase 10: DND-family statuses pause alerts. Omitted = server keeps the
     /// current value, so senders that support the flag must always send it.
     let statusSuppressAlerts: Bool?
+    /// #220: "" clears either field. The server rejects a `website` that is not
+    /// an absolute http(s) URL, so the sheets check before they send.
+    let website: String?
+    let bio: String?
 
     init(
         displayName: String? = nil, timezone: String? = nil,
         statusEmoji: String? = nil, statusText: String? = nil,
-        statusSuppressAlerts: Bool? = nil
+        statusSuppressAlerts: Bool? = nil,
+        website: String? = nil, bio: String? = nil
     ) {
         self.displayName = displayName
         self.timezone = timezone
         self.statusEmoji = statusEmoji
         self.statusText = statusText
         self.statusSuppressAlerts = statusSuppressAlerts
+        self.website = website
+        self.bio = bio
     }
 }
 /// POST /v1/me/notifications/read — a cursor (`upToId`, opening the Activity
@@ -811,6 +956,7 @@ enum EventPayload: Sendable {
     case typing(TypingData)
     case presence(PresenceData)
     case channelIndicator(ChannelIndicatorData)
+    case huddleUpdated(HuddleUpdatedData)
     case channel(Channel)
     case channelUpdated(Channel)
     case channelArchived(Channel)
@@ -821,6 +967,7 @@ enum EventPayload: Sendable {
     case notificationRead(NotificationReadData)
     case userUpdated(User)
     case workspaceUpdated(Workspace)
+    case workspaceJoined
     case artifact(Artifact, change: ArtifactChange)
     case unknown
 }
@@ -854,6 +1001,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .presence(try c.decode(PresenceData.self, forKey: .data))
         case "channel.indicator":
             payload = .channelIndicator(try c.decode(ChannelIndicatorData.self, forKey: .data))
+        case "huddle.updated":
+            payload = .huddleUpdated(try c.decode(HuddleUpdatedData.self, forKey: .data))
         case "channel.created":
             payload = .channel(try c.decode(Channel.self, forKey: .data))
         case "channel.updated":
@@ -876,6 +1025,10 @@ struct EventDTO: Decodable, Sendable {
             payload = .userUpdated(try c.decode(User.self, forKey: .data))
         case "workspace.updated":
             payload = .workspaceUpdated(try c.decode(Workspace.self, forKey: .data))
+        case "workspace.joined":
+            // this user joined a workspace in another session; the envelope's
+            // workspaceId is all we need
+            payload = .workspaceJoined
         case "artifact.created":
             payload = .artifact(try c.decode(Artifact.self, forKey: .data), change: .created)
         case "artifact.updated":

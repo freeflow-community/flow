@@ -104,6 +104,107 @@ final class MarkdownBlocksTests: XCTestCase {
         )
     }
 
+    // MARK: - ATX headings
+    //
+    // The web client is the specification here (packages/web/src/lib/format.tsx
+    // `HEADING_RE`, pinned by format.test.tsx:67-71 and 114-119). These mirror
+    // those cases so the two grammars can't drift apart silently.
+
+    func testHeadingLevelsOneThroughSix() {
+        for level in 1...6 {
+            let hashes = String(repeating: "#", count: level)
+            XCTAssertEqual(
+                MarkdownBlocks.segments("\(hashes) Title"),
+                [.heading(level: level, text: "Title")],
+                "\(level) hashes should be an h\(level)"
+            )
+        }
+    }
+
+    func testSevenHashesIsNotAHeading() {
+        // Web: html('####### too many') === '####### too many'.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("####### too many"),
+            [.paragraph("####### too many")]
+        )
+    }
+
+    func testHashesWithoutFollowingSpaceAreNotAHeading() {
+        XCTAssertEqual(MarkdownBlocks.segments("#hashtag"), [.paragraph("#hashtag")])
+        XCTAssertEqual(MarkdownBlocks.segments("###C++"), [.paragraph("###C++")])
+        XCTAssertEqual(MarkdownBlocks.segments("#"), [.paragraph("#")])
+    }
+
+    func testHeadingKeepsInlineMarkupForTheInlinePass() {
+        // Web renders heading content through renderBody, so the markers must
+        // survive the block parse — `MentionRendering.attributed` handles them.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("# Big **title** <@01234567-89ab-cdef-0123-456789abcdef>"),
+            [.heading(level: 1, text: "Big **title** <@01234567-89ab-cdef-0123-456789abcdef>")]
+        )
+    }
+
+    func testHeadingDropsAllWhitespaceAfterTheHashes() {
+        // `\s+` is greedy on web, so content never keeps leading spaces.
+        XCTAssertEqual(MarkdownBlocks.segments("##   spaced"), [.heading(level: 2, text: "spaced")])
+        XCTAssertEqual(MarkdownBlocks.segments("##\tTabbed"), [.heading(level: 2, text: "Tabbed")])
+        XCTAssertEqual(MarkdownBlocks.segments("# "), [.heading(level: 1, text: "")])
+    }
+
+    func testHeadingSplitsSurroundingProseIntoSeparateParagraphs() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("intro line\n## Section\nbody line\nmore body"),
+            [
+                .paragraph("intro line"),
+                .heading(level: 2, text: "Section"),
+                .paragraph("body line\nmore body"),
+            ]
+        )
+    }
+
+    func testConsecutiveHeadingsAreSeparateSegments() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("# One\n## Two"),
+            [.heading(level: 1, text: "One"), .heading(level: 2, text: "Two")]
+        )
+    }
+
+    func testHeadingInsideFencedCodeIsNotParsed() {
+        // Web: format.test.tsx:114-119 — '# not a heading' stays literal.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("```\n# not a heading\n```"),
+            [.code("# not a heading")]
+        )
+    }
+
+    func testHeadingInsideQuoteStaysQuoteContent() {
+        // Web checks the quote branch before the heading branch, so a "> #"
+        // line is a quote whose text happens to start with a hash.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("> # quoted"),
+            [.quote("# quoted")]
+        )
+    }
+
+    func testHeadingBeatsTableStartOnTheSameLine() {
+        // Web tests HEADING_RE before isTableStart; a heading line carrying a
+        // pipe is still a heading, and the separator below it is then prose.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("# a | b\n| - | - |"),
+            [.heading(level: 1, text: "a | b"), .paragraph("| - | - |")]
+        )
+    }
+
+    func testHeadingRecognisedAfterATable() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("| a |\n| - |\n| 1 |\n## After"),
+            [
+                .table(header: ["a"], align: [nil], rows: [["1"]]),
+                .heading(level: 2, text: "After"),
+            ]
+        )
+    }
+
     // MARK: - GFM pipe tables
 
     func testTableParsesHeaderAlignAndRows() {
@@ -161,6 +262,154 @@ final class MarkdownBlocksTests: XCTestCase {
             MarkdownBlocks.segments("| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |"),
             [.table(header: ["a", "b"], align: [nil, nil], rows: [["1"], ["1", "2", "3"]])]
         )
+    }
+
+    // MARK: - Lists and horizontal rules
+    //
+    // Mirrors packages/web/src/lib/format.test.tsx:73-84 and 108-119.
+
+    func testBulletListFromDashStarAndPlus() {
+        // Web: "-", "*" and "+" are one list, not three.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("- one\n* two\n+ three"),
+            [.ulist(items: ["one", "two", "three"])]
+        )
+    }
+
+    func testNumberedListPreservesItsStartIndex() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("3. third\n4. fourth"),
+            [.olist(start: 3, items: ["third", "fourth"])]
+        )
+    }
+
+    func testListMarkersNeedFollowingWhitespace() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("-nope\n1.nope"),
+            [.paragraph("-nope\n1.nope")]
+        )
+    }
+
+    func testListsSplitSurroundingProse() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("before\n- one\n- two\nafter"),
+            [.paragraph("before"), .ulist(items: ["one", "two"]), .paragraph("after")]
+        )
+    }
+
+    func testIndentedListItemsJoinTheSameList() {
+        // Nesting is out of scope (web doesn't do it either): an indented item
+        // is just another item, with its marker and indent stripped.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("- one\n  - two"),
+            [.ulist(items: ["one", "two"])]
+        )
+    }
+
+    func testBulletAndNumberedRunsAreSeparateSegments() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("- a\n1. b"),
+            [.ulist(items: ["a"]), .olist(start: 1, items: ["b"])]
+        )
+    }
+
+    func testHorizontalRuleFromDashesStarsAndUnderscores() {
+        for body in ["---", "***", "___", "----- "] {
+            XCTAssertEqual(MarkdownBlocks.segments(body), [.hr], "body: \(body)")
+        }
+    }
+
+    func testTwoDashesAreNotARule() {
+        XCTAssertEqual(MarkdownBlocks.segments("--"), [.paragraph("--")])
+    }
+
+    func testPipeLineFollowedByDashesIsARuleNotATable() {
+        // format.test.tsx:108-112 — the separator carries no pipe, so "a | b"
+        // stays prose and the dashes are a rule.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("a | b\n---"),
+            [.paragraph("a | b"), .hr]
+        )
+    }
+
+    func testTableSeparatorIsStillATableNotARule() {
+        // The mirror image: with a pipe in it, the dashes are a separator.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("a | b\n--- | ---"),
+            [.table(header: ["a", "b"], align: [nil, nil], rows: [])]
+        )
+    }
+
+    func testRuleSeparatesTwoParagraphs() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("above\n---\nbelow"),
+            [.paragraph("above"), .hr, .paragraph("below")]
+        )
+    }
+
+    func testListsAndRulesInsideFencedCodeAreNotParsed() {
+        // format.test.tsx:114-119 — a marker inside a fence stays code.
+        XCTAssertEqual(
+            MarkdownBlocks.segments("```\n- not a list\n1. not a list\n---\n```"),
+            [.code("- not a list\n1. not a list\n---")]
+        )
+    }
+
+    func testListMarkerInsideQuoteStaysQuoteContent() {
+        XCTAssertEqual(
+            MarkdownBlocks.segments("> - not a list"),
+            [.quote("- not a list")]
+        )
+    }
+
+    func testMixedBlockRunKeepsWebsOrdering() {
+        let body = "intro\n# Title\n- one\n- two\n1. first\n2. second\n---\noutro"
+        XCTAssertEqual(MarkdownBlocks.segments(body), [
+            .paragraph("intro"),
+            .heading(level: 1, text: "Title"),
+            .ulist(items: ["one", "two"]),
+            .olist(start: 1, items: ["first", "second"]),
+            .hr,
+            .paragraph("outro"),
+        ])
+    }
+
+    // MARK: - Mermaid fences (#229)
+
+    func testFenceLanguageReadsTheInfoString() {
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```mermaid"), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```Mermaid  "), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```mermaid theme=forest"), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("  ```mermaid"), "mermaid")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```swift"), "swift")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("```"), "")
+        XCTAssertEqual(MarkdownBlocks.fenceLanguage("not a fence"), "")
+    }
+
+    func testMermaidFenceBecomesItsOwnSegment() {
+        let source = "flowchart LR\n  A[Client] --> B[Bridge]"
+        XCTAssertEqual(
+            MarkdownBlocks.segments("```mermaid\n" + source + "\n```"),
+            [.mermaid(source)]
+        )
+    }
+
+    func testOnlyMermaidFencesBecomeDiagrams() {
+        XCTAssertEqual(MarkdownBlocks.segments("```\nplain\n```"), [.code("plain")])
+        XCTAssertEqual(MarkdownBlocks.segments("```swift\nlet x = 1\n```"), [.code("let x = 1")])
+        // Nothing to draw — stays a code block, as on web.
+        XCTAssertEqual(MarkdownBlocks.segments("```mermaid\n\n```"), [.code("")])
+    }
+
+    func testMermaidFenceDoesNotDisturbNeighbouringBlocks() {
+        let segs = MarkdownBlocks.segments("# T\n```mermaid\npie\n```\n- a")
+        XCTAssertEqual(segs, [.heading(level: 1, text: "T"), .mermaid("pie"), .ulist(items: ["a"])])
+    }
+
+    func testMermaidFenceIsStillCodeForOutgoingTransforms() {
+        // The composer must not expand :smile: or @Name inside a diagram.
+        let body = "```mermaid\nflowchart LR\n  A[:smile:] --> B\n```"
+        XCTAssertEqual(MarkdownBlocks.mapNonCode(body) { _ in "REPLACED" }, body)
     }
 
     // MARK: - UTF-16 ranges (composer attribute pass)

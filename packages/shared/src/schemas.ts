@@ -269,6 +269,13 @@ export const ListMessagesQuery = z.object({
 });
 export type ListMessagesQuery = z.infer<typeof ListMessagesQuery>;
 
+export const ListChannelFilesQuery = z.object({
+  sort: z.enum(['newest', 'oldest', 'name', 'size']).default('newest'),
+  before: z.string().optional(), // opaque cursor from the previous page
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
+export type ListChannelFilesQuery = z.infer<typeof ListChannelFilesQuery>;
+
 export const ListThreadQuery = z.object({
   after: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -276,12 +283,48 @@ export const ListThreadQuery = z.object({
 export type ListThreadQuery = z.infer<typeof ListThreadQuery>;
 
 // ---- reactions -------------------------------------------------
-/** A single RGI emoji (incl. ZWJ sequences, skin tones, keycaps). Unicode only — no shortcodes. */
+/** Bare custom-emoji shortcode, no colons (#175). Lowercase so `:Tada:` and
+ * `:tada:` can't be two different reactions on the same message. */
+export const CUSTOM_EMOJI_CODE_RE = /^[a-z0-9][a-z0-9_-]{0,30}[a-z0-9]$/;
+
+/** `:shortcode:` as it appears in a reaction row and on the wire. */
+export const CUSTOM_EMOJI_RE = /^:[a-z0-9][a-z0-9_-]{0,30}[a-z0-9]:$/;
+
+export function isCustomEmoji(s: string): boolean {
+  return CUSTOM_EMOJI_RE.test(s);
+}
+
+/** Strips the colons from a `:shortcode:`; returns null for anything else. */
+export function customEmojiCode(s: string): string | null {
+  return isCustomEmoji(s) ? s.slice(1, -1) : null;
+}
+
+/**
+ * A reaction identifier: either a single RGI emoji (incl. ZWJ sequences, skin
+ * tones, keycaps) or a workspace custom emoji as `:shortcode:` (#175).
+ *
+ * This is a URL path segment on the reaction routes, which is why the shortcode
+ * charset is deliberately narrow — `[a-z0-9_-]` needs no escaping, so it
+ * survives the round-trip through the path with or without percent-encoding.
+ * Shape only: that a custom shortcode actually *exists* in the workspace is
+ * checked when the reaction is added (see services/reactions.ts).
+ */
 export const EmojiParam = z
   .string()
   .min(1)
-  .max(32)
-  .refine((s) => /^\p{RGI_Emoji}$/v.test(s), 'must be a single unicode emoji');
+  .max(34) // ':' + 32 + ':'
+  .refine((s) => /^\p{RGI_Emoji}$/v.test(s) || CUSTOM_EMOJI_RE.test(s), 'must be a single unicode emoji or a :shortcode:');
+
+/** POST /v1/workspaces/:id/emoji — register an already-uploaded image. */
+export const CreateWorkspaceEmojiBody = z.object({
+  shortcode: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .refine((s) => CUSTOM_EMOJI_CODE_RE.test(s), 'letters, digits, - and _ only; 2–32 characters'),
+  fileId: z.string().uuid(),
+});
+export type CreateWorkspaceEmojiBody = z.infer<typeof CreateWorkspaceEmojiBody>;
 
 // ---- notifications ---------------------------------------------
 /**
@@ -319,12 +362,48 @@ export const NotificationPrefsBody = z.object({
   groupMention: z.boolean().optional(),
   threadReply: z.boolean().optional(),
   reaction: z.boolean().optional(),
+  channelInvite: z.boolean().optional(),
   persistentBanners: z.boolean().optional(),
 });
+
+/** #220: the only schemes a profile website may use.
+ *
+ * A profile website is rendered as a clickable link by every client, so an
+ * arbitrary string here is stored XSS: `javascript:` and `data:` URLs run in
+ * the viewer's page, not the author's. The allowlist lives on the write path
+ * (below) so nothing unsafe is ever stored; clients re-check at render only as
+ * defence in depth for rows written before this rule. */
+export const PROFILE_WEBSITE_MAX = 200;
+export const PROFILE_BIO_MAX = 500;
+
+/** Absolute http(s) URL: a literal `http://` or `https://` prefix, a non-empty
+ * host, and no whitespace anywhere.
+ *
+ * A regex rather than `new URL()` because this package compiles with `lib:
+ * ES2024` and no DOM or node types, so `URL` is not in scope. Requiring the
+ * string to *start* with the scheme is the property that matters: no amount of
+ * trailing junk can turn `https://…` back into `javascript:…`, and leading
+ * whitespace or control characters — which a browser would strip before
+ * parsing an href — fail the match instead of being normalised away. */
+const PROFILE_WEBSITE_RE = /^https?:\/\/[^\s/?#]+[^\s]*$/i;
+
+/** True only for an absolute `http:` or `https:` URL. Everything else — other
+ * schemes, relative paths, bare hostnames — is false. */
+export function isProfileWebsiteUrl(s: string): boolean {
+  return PROFILE_WEBSITE_RE.test(s);
+}
 
 export const PatchMeBody = z
   .object({
     displayName: z.string().min(1).max(80).optional(),
+    // #220: '' clears the link; anything else must be an absolute http(s) URL.
+    website: z
+      .string()
+      .max(PROFILE_WEBSITE_MAX)
+      .refine((s) => s === '' || isProfileWebsiteUrl(s), 'must start with http:// or https://')
+      .optional(),
+    // #220: plain text, newlines preserved. '' clears it.
+    bio: z.string().max(PROFILE_BIO_MAX).optional(),
     timezone: z
       .string()
       .max(64)
@@ -355,6 +434,8 @@ export const PatchMeBody = z
   .refine(
     (b) =>
       b.displayName !== undefined ||
+      b.website !== undefined ||
+      b.bio !== undefined ||
       b.timezone !== undefined ||
       b.statusEmoji !== undefined ||
       b.statusText !== undefined ||

@@ -27,7 +27,18 @@ final class DBObserved<Value: Equatable & Sendable>: ObservableObject {
         _ fetch: @escaping @Sendable (Database) throws -> Value
     ) {
         task?.cancel()
-        if let reset { value = reset }
+        // Synchronous first fetch: the async observation below delivers its
+        // first value only after a hop to a database queue and back, and the
+        // frames in between render whatever `value` holds — which was `reset`,
+        // i.e. an empty transcript, even for a fully cached channel. Reading
+        // the initial value here means the first frame after a channel switch
+        // already shows the cache; `reset` is only the fallback when the read
+        // itself fails.
+        if let initial = try? db.reader.read(fetch) {
+            value = initial
+        } else if let reset {
+            value = reset
+        }
         let observation = ValueObservation.tracking(fetch).removeDuplicates()
         let reader = db.reader
         task = Task { [weak self] in

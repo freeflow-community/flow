@@ -6,17 +6,19 @@ import type {
   ChannelDTO,
   ChannelIndicatorData,
   Event,
+  HuddleUpdatedData,
   MessageDTO,
   NotificationDTO,
   TypingData,
   PresenceData,
 } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
-import { applyIndicator } from '../lib/channelCache';
+import { applyHuddle, applyIndicator } from '../lib/channelCache';
 import { api, getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
+import { HuddleProvider } from '../huddle';
 import { useNameMap, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
@@ -24,13 +26,18 @@ import AdminView from './AdminView';
 import ActivityView from './ActivityView';
 import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
+import HuddleMiniBar from './HuddleMiniBar';
 import { MobileMenuButton } from './MobileMenuButton';
+import { AuthImg } from './Avatar';
+import { RailUnreadBadge } from './RailUnreadBadge';
 
 export default function Main() {
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
   const [status, setStatus] = useState<SocketStatus>('connecting');
+  // Post-connect refetches in flight (#234) — see the socket effect below.
+  const [catchUpCount, setCatchUpCount] = useState(0);
   const [presence, setPresence] = useState<Record<string, boolean>>({});
   const [typing, setTyping] = useState<Record<string, Record<string, number>>>({});
   const [notificationUnread, setNotificationUnread] = useState(0);
@@ -104,8 +111,12 @@ export default function Main() {
       onStatus: (s) => {
         setStatus(s);
         if (s === 'connected') {
-          // reconnect backfill = refetch everything (online-only client)
-          void qc.invalidateQueries();
+          // reconnect backfill = refetch everything (online-only client).
+          // The refetch is what the reconnect bar waits on (#234): the socket
+          // says hello long before the screen stops being stale. Counted, not
+          // flagged, so a second reconnect mid-refetch can't clear the first.
+          setCatchUpCount((n) => n + 1);
+          void qc.invalidateQueries().finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
         }
       },
       onEvent: (event: Event) => handleEvent(event),
@@ -139,9 +150,12 @@ export default function Main() {
         if (msg.threadRootId === null && cur.threadRootId === msg.id) cur.openThread(null);
         void qc.invalidateQueries({ queryKey: ['messages', msg.channelId] });
         if (msg.threadRootId) void qc.invalidateQueries({ queryKey: ['thread', msg.threadRootId] });
+        void qc.invalidateQueries({ queryKey: ['pins', msg.channelId] });
+        void qc.invalidateQueries({ queryKey: ['channelFiles', msg.channelId] });
         void qc.invalidateQueries({ queryKey: ['notifications'] });
         void refreshNotificationBadge();
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
         break;
       }
       case 'message.created':
@@ -158,6 +172,16 @@ export default function Main() {
         }
         const insert = event.type === 'message.created' || event.type === 'thread.reply';
         applyMessageEvent(qc, msg, insert);
+        // Pin/unpin and delete events are full message updates; keep the
+        // channel's independently fetched pinned-message list in sync too.
+        void qc.invalidateQueries({ queryKey: ['pins', msg.channelId] });
+        // The Files panel (#347) is built from message attachments, so a new
+        // upload — or the deletion that takes one out of the list — has to
+        // reach an open panel. Only messages that carry files can move it.
+        // (a tombstone carries no files, so deletions can't be gated on them)
+        if (msg.files.length > 0 || event.type === 'message.deleted') {
+          void qc.invalidateQueries({ queryKey: ['channelFiles', msg.channelId] });
+        }
         // Sidebar unread counts/ordering still come from the channels query.
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         break;
@@ -201,6 +225,15 @@ export default function Main() {
         );
         break;
       }
+      case 'huddle.updated': {
+        // Same reasoning as channel.indicator: patch, don't invalidate — the
+        // roster is transient and should update the instant the event lands.
+        const d = event.data as HuddleUpdatedData;
+        qc.setQueryData<{ channels: ChannelDTO[] }>(['channels', event.workspaceId], (old) =>
+          old ? { channels: applyHuddle(old.channels, d) } : old,
+        );
+        break;
+      }
       case 'presence': {
         const p = event.data as PresenceData;
         setPresence((prev) => ({ ...prev, [p.userId]: p.status === 'online' }));
@@ -210,11 +243,28 @@ export default function Main() {
       case 'channel.updated':
       case 'channel.archived':
       case 'member.joined':
-      case 'member.left':
+      case 'member.left': {
+        // Our own workspace-level departure (#340) — left from another client,
+        // or removed by an admin. Drop the workspace before refetching, so no
+        // render sees a selection pointing at one we can no longer read, and
+        // *remove* its caches rather than invalidating them: an invalidate
+        // refetches, and every one of those refetches is now a 404.
+        const left = event.data as { userId?: string } | undefined;
+        if (event.type === 'member.left' && !event.channelId && left?.userId === auth.user.id) {
+          if (cur.workspaceId === event.workspaceId) cur.selectWorkspace(null);
+          const gone = qc.getQueryData<{ channels: ChannelDTO[] }>(['channels', event.workspaceId]);
+          for (const c of gone?.channels ?? []) qc.removeQueries({ queryKey: ['channelMembers', c.id] });
+          qc.removeQueries({ queryKey: ['channels', event.workspaceId] });
+          qc.removeQueries({ queryKey: ['members', event.workspaceId] });
+          qc.removeQueries({ queryKey: ['artifacts', event.workspaceId] });
+          void qc.invalidateQueries({ queryKey: ['workspaces'] });
+          break;
+        }
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
         void qc.invalidateQueries({ queryKey: ['members', event.workspaceId] });
         void qc.invalidateQueries({ queryKey: ['channelMembers'] });
         break;
+      }
       case 'member.updated':
         // Role change (admin panel): refresh the roster, and the workspace list
         // so the affected member's own menu gating (owner/admin) re-derives.
@@ -225,8 +275,15 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['members'] });
         void qc.invalidateQueries({ queryKey: ['me'] });
         break;
+      case 'workspace.joined':
+        // this user joined a workspace in another session/tab — refresh the list
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
+        break;
       case 'workspace.updated':
         void qc.invalidateQueries({ queryKey: ['workspaces'] });
+        // Custom emoji (#175) ride this event rather than a new type, so a
+        // freshly added emoji renders in other sessions without a reload.
+        void qc.invalidateQueries({ queryKey: ['emoji', event.workspaceId] });
         break;
       case 'artifact.created':
       case 'artifact.updated':
@@ -267,6 +324,8 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['notifications'] });
         // the sidebar badge is this channel's unread-notification count
         void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
+        // …and the rail badge (#345) counts these same rows per workspace.
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
         // "Looking at it" means the row is actually on screen: this channel,
         // tab visible, and — when the message lives in a thread (a reply, a
         // mention in a reply, a reaction on your reply) — that thread open.
@@ -299,6 +358,8 @@ export default function Main() {
         void refreshNotificationBadge();
         // rows can span workspaces (Activity feed) — refresh every channel list
         void qc.invalidateQueries({ queryKey: ['channels'] });
+        // …and the rail badges, which another session's reading also moves.
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
         break;
       }
       default:
@@ -317,6 +378,7 @@ export default function Main() {
       n.kind === 1 ? `${sender} (DM)`
       : n.kind === 2 ? `${sender} replied in a thread`
       : n.kind === 4 ? `${sender} reacted ${n.reactionEmoji ?? ''}`.trim()
+      : n.kind === 5 ? `${sender} added you to a channel`
       : `${sender} mentioned you`;
     try {
       const banner = new Notification(title, {
@@ -345,6 +407,7 @@ export default function Main() {
   const live = useMemo(
     () => ({
       status,
+      syncing: status !== 'connected' || catchUpCount > 0,
       presence,
       typing,
       notificationUnread,
@@ -352,7 +415,7 @@ export default function Main() {
       sendTyping: (channelId: string, threadRootId?: string) =>
         socketRef.current?.sendTyping(channelId, threadRootId),
     }),
-    [status, presence, typing, notificationUnread],
+    [status, catchUpCount, presence, typing, notificationUnread],
   );
 
   const mobileNav = useMemo(
@@ -368,8 +431,10 @@ export default function Main() {
   return (
     <LiveContext.Provider value={live}>
      <MobileNavContext.Provider value={mobileNav}>
+      <HuddleProvider>
       <div className="flex h-full flex-col bg-base text-ink">
         <OpenInAppBanner />
+        <HuddleMiniBar />
         <div className="relative flex min-h-0 flex-1">
           {/* Rail + sidebar. Desktop: inline flex columns. Mobile (<md): a
               fixed slide-in drawer over the content, toggled by the header
@@ -400,7 +465,7 @@ export default function Main() {
               <>
                 <ChannelView key={sel.channelId} channelId={sel.channelId} />
                 {/* tabbed side panel: Thread + the channel's artifacts (phase 13) */}
-                {(sel.threadRootId || sel.artifactId) && <SidePanel />}
+                {(sel.threadRootId || sel.artifactId || sel.filesOpen) && <SidePanel />}
               </>
             ) : (
               <div className="flex min-w-0 flex-1 flex-col">
@@ -415,6 +480,7 @@ export default function Main() {
           </div>
         </div>
       </div>
+      </HuddleProvider>
      </MobileNavContext.Provider>
     </LiveContext.Provider>
   );
@@ -425,27 +491,47 @@ function WorkspaceRail() {
   const sel = useSelection();
   const workspaces = useWorkspaces();
   const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
+  const railBg = sidebarColor(activeWs?.sidebarColor).rail;
   return (
     <nav
       className="flex w-16 shrink-0 flex-col items-center gap-3.5 py-4"
-      style={{ background: sidebarColor(activeWs?.sidebarColor).rail }}
+      style={{ background: railBg }}
     >
       {(workspaces.data ?? []).map((w) => {
         const active = w.id === sel.workspaceId;
+        // Unread across this workspace's channels (#345). Rides the workspace
+        // list, so it's live for every workspace — including the ones not on
+        // screen, which is the whole point of the badge.
+        const unread = w.unreadCount ?? 0;
+        // With an avatar (#336) the image *is* the mark, so "active" can't be
+        // the white fill any more — a white ring plus full opacity says it.
         return (
-          <button
-            key={w.id}
-            data-testid={`rail-workspace-${w.slug}`}
-            title={w.name}
-            className={`flex h-10 w-10 items-center justify-center rounded-xl ${
-              active
-                ? 'bg-white text-[17px] font-extrabold text-accent'
-                : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
-            }`}
-            onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
-          >
-            {w.name.slice(0, 1).toUpperCase()}
-          </button>
+          // The badge overhangs the icon's corner, so it can't live inside the
+          // button — that one clips its children (overflow-hidden, for round
+          // avatars). The wrapper is what it's positioned against.
+          <div key={w.id} className="relative">
+            <button
+              data-testid={`rail-workspace-${w.slug}`}
+              title={unread > 0 ? `${w.name} — ${unread} unread` : w.name}
+              className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ${
+                w.avatarUrl
+                  ? active
+                    ? 'ring-2 ring-white'
+                    : 'opacity-70 hover:opacity-100'
+                  : active
+                    ? 'bg-white text-[17px] font-extrabold text-accent'
+                    : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
+              }`}
+              onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
+            >
+              {w.avatarUrl ? (
+                <AuthImg path={w.avatarUrl} alt={w.name} className="h-10 w-10 object-cover" />
+              ) : (
+                w.name.slice(0, 1).toUpperCase()
+              )}
+            </button>
+            <RailUnreadBadge count={unread} ringColor={railBg} testId={`rail-unread-${w.slug}`} />
+          </div>
         );
       })}
       <button

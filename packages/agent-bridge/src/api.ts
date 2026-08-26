@@ -207,20 +207,31 @@ export class FlowApi {
   /** Phase 13: pin `fileId` as a shared artifact in a channel. The caller must
    * be a member of the channel and able to read the file. `ownsFile` marks an
    * artifact whose file was uploaded for it (agent-generated). */
-  createArtifact(channelId: string, fileId: string, name?: string, ownsFile?: boolean): Promise<ArtifactDTO> {
+  createArtifact(
+    channelId: string,
+    opts: { fileId?: string | undefined; url?: string | undefined; name?: string | undefined; ownsFile?: boolean | undefined },
+  ): Promise<ArtifactDTO> {
     return this.req('POST', '/v1/artifacts', {
       channelId,
-      fileId,
-      ...(name ? { name } : {}),
-      ...(ownsFile ? { ownsFile } : {}),
+      ...(opts.fileId ? { fileId: opts.fileId } : {}),
+      ...(opts.url ? { url: opts.url } : {}),
+      ...(opts.name ? { name: opts.name } : {}),
+      ...(opts.ownsFile ? { ownsFile: opts.ownsFile } : {}),
     });
   }
 
   /** Phase 13: rename and/or re-point an artifact at a new file (the "update"
    * path). At least one of name/fileId must be provided. */
+  /** The caller's visible artifacts in the workspace (channels they are a member
+   * of), newest first. Callers filter by channelId. */
+  async listArtifacts(workspaceId: string): Promise<ArtifactDTO[]> {
+    const r = await this.req<{ artifacts: ArtifactDTO[] }>('GET', `/v1/workspaces/${workspaceId}/artifacts`);
+    return r.artifacts;
+  }
+
   updateArtifact(
     artifactId: string,
-    patch: { name?: string; fileId?: string; ownsFile?: boolean },
+    patch: { name?: string; fileId?: string; ownsFile?: boolean; url?: string },
   ): Promise<ArtifactDTO> {
     return this.req('PATCH', `/v1/artifacts/${artifactId}`, patch);
   }

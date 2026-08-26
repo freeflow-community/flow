@@ -18,6 +18,10 @@ struct AccountSheet: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
+    /// QA: `FLOW_DEBUG_OPEN_PROFILE=1` pushes My Profile as the sheet appears,
+    /// so a headless run can screenshot the form without tap automation. Same
+    /// family as the other FLOW_DEBUG_* hooks in `Platform/`.
+    @State private var pushProfile = false
 
     private var statusEmoji: String { app.currentUser?.statusEmoji ?? "" }
     private var statusText: String { app.currentUser?.statusText ?? "" }
@@ -84,6 +88,12 @@ struct AccountSheet: View {
                         Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                     .accessibilityIdentifier("account.signOut")
+                }
+            }
+            .navigationDestination(isPresented: $pushProfile) { MyProfileView() }
+            .onAppear {
+                if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_PROFILE"] == "1" {
+                    pushProfile = true
                 }
             }
             .listStyle(.insetGrouped)
@@ -154,14 +164,25 @@ struct MyProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var displayName = ""
     @State private var timezone = TimeZone.current.identifier
+    @State private var website = ""
+    @State private var bio = ""
     @State private var busy = false
     @State private var avatarBusy = false
     @State private var error: String?
     @State private var photoItem: PhotosPickerItem?
+    @State private var confirmDelete = false
+    @State private var deleteBusy = false
 
     private static let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
 
     private var trimmedName: String { displayName.trimmingCharacters(in: .whitespaces) }
+
+    /// #220: the server accepts an absolute http(s) URL only. Check before Save
+    /// so the sheet explains the rule rather than surfacing a server error.
+    private var trimmedWebsite: String { website.trimmingCharacters(in: .whitespaces) }
+    private var websiteInvalid: Bool {
+        !trimmedWebsite.isEmpty && safeWebsiteURL(trimmedWebsite) == nil
+    }
 
     var body: some View {
         // Read on the main actor here: PhotosPicker's label closure is Sendable,
@@ -206,31 +227,101 @@ struct MyProfileView: View {
                 .accessibilityIdentifier("profile.timezone")
             }
 
+            Section {
+                TextField("https://example.com", text: $website)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .accessibilityIdentifier("profile.website")
+                    .onChange(of: website) { _, new in
+                        if new.count > profileWebsiteMax { website = String(new.prefix(profileWebsiteMax)) }
+                    }
+            } header: {
+                Text("Website")
+            } footer: {
+                if websiteInvalid {
+                    Text("Must be a full link starting with http:// or https://")
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("profile.websiteError")
+                }
+            }
+
+            Section {
+                TextField("A sentence or two about you.", text: $bio, axis: .vertical)
+                    .lineLimit(3...6)
+                    .accessibilityIdentifier("profile.bio")
+                    .onChange(of: bio) { _, new in
+                        if new.count > profileBioMax { bio = String(new.prefix(profileBioMax)) }
+                    }
+            } header: {
+                Text("Bio")
+            } footer: {
+                Text("\(bio.count)/\(profileBioMax)")
+                    .foregroundStyle(bio.count >= profileBioMax ? .red : MC.inkSoft)
+                    .accessibilityIdentifier("profile.bioCount")
+            }
+
             Section("Email") {
                 Text(app.currentUser?.email ?? "")
                     .foregroundStyle(MC.inkSoft)
+            }
+
+            // App Store 5.1.1(v): account deletion must be reachable in-app.
+            Section {
+                Button(role: .destructive) {
+                    confirmDelete = true
+                } label: {
+                    Text(deleteBusy ? "Deleting Account…" : "Delete Account…")
+                }
+                .disabled(deleteBusy || busy)
+                .accessibilityIdentifier("profile.deleteAccount")
+            } footer: {
+                Text("Permanently deletes your account, removes you from every workspace, and frees your email address for future use. Your past messages remain, attributed to your name.")
             }
 
             if let error {
                 Section { Text(error).font(.callout).foregroundStyle(.red) }
             }
         }
+        .alert("Delete your account?", isPresented: $confirmDelete) {
+            Button("Delete Account", role: .destructive) { deleteAccount() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account. It cannot be undone.")
+        }
         .navigationTitle("My Profile")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Save") { save() }
-                    .disabled(busy || trimmedName.isEmpty)
+                    .disabled(busy || trimmedName.isEmpty || websiteInvalid)
                     .accessibilityIdentifier("profile.save")
             }
         }
         .onAppear {
             displayName = app.currentUser?.displayName ?? ""
             timezone = app.currentUser?.timezone ?? TimeZone.current.identifier
+            website = app.currentUser?.website ?? ""
+            bio = app.currentUser?.bio ?? ""
         }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             uploadAvatar(item)
+        }
+    }
+
+    /// On success the engine's teardown flips the app to signed-out, which
+    /// dismisses this whole sheet — no local navigation needed.
+    private func deleteAccount() {
+        deleteBusy = true
+        error = nil
+        Task {
+            defer { deleteBusy = false }
+            do {
+                try await app.engine.deleteAccount()
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 
@@ -240,7 +331,10 @@ struct MyProfileView: View {
         Task {
             defer { busy = false }
             do {
-                try await app.engine.updateProfile(displayName: trimmedName, timezone: timezone)
+                try await app.engine.updateProfile(
+                    displayName: trimmedName, timezone: timezone,
+                    website: trimmedWebsite, bio: bio
+                )
                 dismiss()
             } catch {
                 self.error = error.localizedDescription

@@ -2,6 +2,7 @@ import type {
   ArtifactDTO,
   ChannelDTO,
   ChannelIndicatorState,
+  HuddleParticipantDTO,
   MessageDTO,
   NotificationDTO,
   UserDTO,
@@ -21,6 +22,7 @@ export type EventType =
   | 'channel.updated' // rename / topic change (ui_nits item 5)
   | 'channel.archived'
   | 'channel.indicator' // per-channel subject: the activity spinner turned on/off (#137)
+  | 'huddle.updated' // per-channel subject: voice huddle roster changed (Phase 1)
   | 'member.joined'
   | 'member.left'
   | 'member.updated' // workspace role change (admin panel)
@@ -36,7 +38,7 @@ export type EventType =
   | 'artifact.deleted' // per-channel subject
   | 'user.updated' // meta subject of every workspace the user belongs to
   | 'workspace.updated' // meta subject; workspace-level changes (e.g. sidebar color)
-  | 'workspace.joined'; // per-user subject; consumed by the gateway, not forwarded to clients
+  | 'workspace.joined'; // per-user subject; gateway attaches the new workspace's subs, then forwards so other sessions refresh their workspace list
 
 export interface Event<T = unknown> {
   type: EventType;
@@ -63,6 +65,16 @@ export interface TypingData {
 export interface ChannelIndicatorData {
   channelId: string;
   state: ChannelIndicatorState | null;
+}
+
+/**
+ * A channel's live huddle roster after a change (Phase 1). Like
+ * ChannelIndicatorData, this is the aggregate, not one joiner/leaver — clients
+ * replace their whole roster with it. An empty array means the huddle ended.
+ */
+export interface HuddleUpdatedData {
+  channelId: string;
+  participants: HuddleParticipantDTO[];
 }
 
 export interface PresenceData {

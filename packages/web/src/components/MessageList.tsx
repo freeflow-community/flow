@@ -6,10 +6,12 @@ import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
-import { useSendMessage, useToggleReaction } from '../hooks';
+import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
 import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
 import { messageDeleteMode } from '../lib/messagePermissions';
 import { Avatar, AuthImg } from './Avatar';
+import { LightboxButton, LightboxShell } from './Lightbox';
+import { EmojiGlyph } from './CustomEmoji';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
 import { UnfurlCard } from './UnfurlCard';
@@ -21,6 +23,31 @@ import { UnfurlCard } from './UnfurlCard';
 const SCROLL_MEMORY_TTL = 5 * 60_000;
 const scrollMemory = new Map<string, { top: number; ts: number; pinned: boolean }>();
 
+/** How long an optimistic row keeps full strength before dimming. Most sends
+ * confirm well inside this window, so the row never visibly flickers. */
+const PENDING_DIM_DELAY_MS = 3000;
+
+/** True once a row has been pending longer than PENDING_DIM_DELAY_MS —
+ * only then does it dim to signal the send hasn't committed yet. Keyed off
+ * createdAt so a remount mid-wait doesn't restart the clock. */
+function usePendingSlow(pending: boolean, createdAt: string): boolean {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!pending) {
+      setSlow(false);
+      return;
+    }
+    const remaining = PENDING_DIM_DELAY_MS - (Date.now() - Date.parse(createdAt));
+    if (remaining <= 0) {
+      setSlow(true);
+      return;
+    }
+    const t = setTimeout(() => setSlow(true), remaining);
+    return () => clearTimeout(t);
+  }, [pending, createdAt]);
+  return slow;
+}
+
 export default function MessageList({
   messages,
   names,
@@ -28,6 +55,7 @@ export default function MessageList({
   hasMore,
   onLoadOlder,
   showThreadAffordances,
+  unreadThreadRootIds = [],
   scrollKey,
   focusMessageId = null,
   onFocused,
@@ -38,6 +66,10 @@ export default function MessageList({
   hasMore: boolean;
   onLoadOlder: () => void;
   showThreadAffordances: boolean;
+  /** Thread roots with an unread notification for me (#270) — their reply
+   * chips get a dot, so a reply that needs you is visible here and not only
+   * in the sidebar badge. */
+  unreadThreadRootIds?: string[];
   /** Enables per-view scroll-position memory (channels pass their id; threads omit it). */
   scrollKey?: string;
   /** Jump-to-message target (phase 12): scroll it into view + flash it once
@@ -181,7 +213,10 @@ export default function MessageList({
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={m.id}>
+            // Keyed on clientMsgId, not id: the optimistic row and its server
+            // echo share a clientMsgId but not an id, so keying on id
+            // remounts the row (and re-flashes its avatar) on reconcile.
+            <div key={m.clientMsgId || m.id}>
               {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
               {m.systemKind ? (
                 <SystemLine message={m} />
@@ -192,6 +227,7 @@ export default function MessageList({
                   membersById={membersById}
                   showHeader={showsHeader(messages, i)}
                   showThreadAffordances={showThreadAffordances}
+                  threadUnread={unreadThreadRootIds.includes(m.id)}
                 />
               )}
             </div>
@@ -287,6 +323,20 @@ function ExternalLinkIcon() {
   );
 }
 
+export function PinIcon({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[17px] w-[17px]">
+      <path
+        d="M8 3h8l-1.2 6.1 3.2 3.2V14h-5v6l-1 1-1-1v-6H6v-1.7l3.2-3.2L8 3Z"
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** "12m ago" style label for thread indicators. */
 function relTime(iso: string | null): string {
   if (!iso) return '';
@@ -305,17 +355,24 @@ function MessageRow({
   membersById,
   showHeader,
   showThreadAffordances,
+  threadUnread = false,
 }: {
   message: MessageDTO;
   names: Record<string, string>;
   membersById: Record<string, WorkspaceMemberDTO>;
   showHeader: boolean;
   showThreadAffordances: boolean;
+  /** This thread holds an unread notification for me (#270). */
+  threadUnread?: boolean;
 }) {
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
   const toggle = useToggleReaction();
+  const togglePin = useTogglePin();
+  // Shared query cache, so this is one fetch per workspace however many rows
+  // are mounted (#175).
+  const customEmoji = useWorkspaceEmojiMap(sel.workspaceId);
   const [showPicker, setShowPicker] = useState(false);
   // Clicking the sender's avatar opens their profile card (ui_nits).
   const [showCard, setShowCard] = useState(false);
@@ -330,8 +387,10 @@ function MessageRow({
   const deleteMode = messageDeleteMode(message, auth.user.id, membersById[auth.user.id]?.role);
   const sender = names[message.userId] ?? 'Unknown';
   const member = membersById[message.userId];
-  // Optimistic row awaiting the server echo: dimmed, actions suppressed.
+  // Optimistic row awaiting the server echo: actions suppressed. It renders
+  // at full strength and only dims if the commit is slow (>3s) or fails.
   const pending = (message as LocalMessage).pending === true;
+  const pendingSlow = usePendingSlow(pending, message.createdAt);
   // Optimistic row whose POST errored out: kept in place with Retry/discard.
   const failed = (message as LocalMessage).failed === true;
   const send = useSendMessage(message.channelId);
@@ -354,7 +413,10 @@ function MessageRow({
         await Promise.all([
           qc.invalidateQueries({ queryKey: ['messages', message.channelId] }),
           qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] }),
+          qc.invalidateQueries({ queryKey: ['pins', message.channelId] }),
+          qc.invalidateQueries({ queryKey: ['channelFiles', message.channelId] }),
           qc.invalidateQueries({ queryKey: ['notifications'] }),
+          qc.invalidateQueries({ queryKey: ['workspaces'] }),
         ]);
       }
       setConfirmDelete(false);
@@ -387,7 +449,7 @@ function MessageRow({
     <div
       data-testid={`message-${message.id}`}
       data-pending={pending || undefined}
-      className={`group relative flex gap-2.5 px-[22px] ${editing ? 'bg-accent/5' : 'hover:bg-daypill/40'} ${showHeader ? 'mt-3' : 'py-px'} ${pending ? 'opacity-55' : ''}`}
+      className={`group relative flex gap-2.5 px-[22px] ${editing ? 'bg-accent/5' : 'hover:bg-daypill/40'} ${showHeader ? 'mt-3' : 'py-px'} ${pendingSlow ? 'opacity-55' : ''}`}
     >
       <div className="w-[38px] shrink-0">
         {showHeader && (
@@ -427,6 +489,16 @@ function MessageRow({
           <p className="text-sm text-faint italic">This message was deleted</p>
         ) : (
           <>
+            {message.pinnedAt && (
+              <div
+                data-testid={`pinned-marker-${message.id}`}
+                className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold text-accent-soft"
+                title={`Pinned${message.pinnedBy ? ` by ${names[message.pinnedBy] ?? 'a channel member'}` : ''}`}
+              >
+                <PinIcon filled />
+                <span>Pinned</span>
+              </div>
+            )}
             {message.body.trim() && (
               <div className="text-sm leading-normal break-words whitespace-pre-wrap">
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
@@ -509,7 +581,7 @@ function MessageRow({
                       }`}
                       onClick={() => toggle.mutate({ message, emoji: r.emoji, mine: mineR })}
                     >
-                      {r.emoji}{' '}
+                      <EmojiGlyph emoji={r.emoji} customEmoji={customEmoji} />{' '}
                       <span className={`font-bold ${mineR ? 'text-accent-soft' : 'text-ink-soft'}`}>{r.count}</span>
                     </button>
                   );
@@ -522,9 +594,21 @@ function MessageRow({
         {showThreadAffordances && message.replyCount > 0 && (
           <button
             data-testid={`thread-open-${message.id}`}
-            className="mt-1 flex cursor-pointer items-center gap-2 rounded-[10px] border border-hairline bg-white py-[5px] pr-2.5 pl-1.5 text-xs hover:border-hairline2"
+            data-thread-unread={threadUnread ? 'true' : undefined}
+            className={`mt-1 flex cursor-pointer items-center gap-2 rounded-[10px] border bg-white py-[5px] pr-2.5 pl-1.5 text-xs ${
+              threadUnread ? 'border-unread/45 hover:border-unread' : 'border-hairline hover:border-hairline2'
+            }`}
             onClick={() => sel.openThread(message.id)}
           >
+            {/* A reply in here needs you (#270) — the sidebar badge says the
+                channel has something, this says which thread. */}
+            {threadUnread && (
+              <span
+                data-testid={`thread-unread-${message.id}`}
+                title="Unread reply"
+                className="size-[7px] shrink-0 rounded-full bg-unread"
+              />
+            )}
             {(message.replyParticipantUserIds ?? []).length > 0 && (
               <span className="flex -space-x-1.5" data-testid={`thread-participants-${message.id}`}>
                 {message.replyParticipantUserIds.map((id) => (
@@ -594,6 +678,16 @@ function MessageRow({
                   📋
                 </button>
               )}
+              <button
+                data-testid={`toggle-pin-${message.id}`}
+                className={`flex items-center rounded-md px-1.5 py-1 leading-none hover:bg-daypill ${
+                  message.pinnedAt ? 'text-accent-soft' : 'text-ink'
+                }`}
+                title={message.pinnedAt ? 'Unpin message' : 'Pin message'}
+                onClick={() => togglePin.mutate(message)}
+              >
+                <PinIcon filled={!!message.pinnedAt} />
+              </button>
               {message.files.length > 0 && (
                 <button
                   data-testid={`pin-artifact-${message.id}`}
@@ -617,17 +711,17 @@ function MessageRow({
             </>
           )}
           {deleteMode && (
-            <button
-              data-testid={`delete-message-${message.id}`}
-              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title={deleteMode === 'permanent' ? 'Permanently delete' : 'Delete'}
-              onClick={() => {
-                setDeleteError(null);
-                setConfirmDelete(true);
-              }}
-            >
-              🗑
-            </button>
+              <button
+                data-testid={`delete-message-${message.id}`}
+                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                title={deleteMode === 'permanent' ? 'Permanently delete' : 'Delete'}
+                onClick={() => {
+                  setDeleteError(null);
+                  setConfirmDelete(true);
+                }}
+              >
+                🗑
+              </button>
           )}
         </div>
       )}
@@ -665,6 +759,7 @@ function MessageRow({
       {showPicker && (
         <div className="absolute top-6 right-[22px] z-30">
           <EmojiPicker
+            workspaceId={sel.workspaceId}
             onPick={(emoji) => {
               setShowPicker(false);
               const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
@@ -885,46 +980,19 @@ function VideoLightbox({
   onClose: () => void;
   onDownload: () => Promise<void>;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
   return (
-    <div
-      data-testid="video-lightbox"
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75"
-      onMouseDown={onClose}
-    >
-      <div className="absolute top-4 right-5 flex gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
-        <button
-          data-testid="video-lightbox-download"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Download"
-          onClick={() => void onDownload()}
-        >
+    <LightboxShell
+      testId="video-lightbox"
+      onClose={onClose}
+      caption={file.name}
+      actions={
+        <LightboxButton testId="video-lightbox-download" title="Download" onClick={() => void onDownload()}>
           ⤓
-        </button>
-        <button
-          data-testid="video-lightbox-close"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Close"
-          onClick={onClose}
-        >
-          ✕
-        </button>
-      </div>
-      <video
-        src={url}
-        controls
-        autoPlay
-        className="max-h-[85vh] max-w-[88vw] rounded-lg bg-black"
-        onMouseDown={(e) => e.stopPropagation()}
-      />
-      <span className="mt-3 max-w-[80vw] truncate text-xs text-white/70" onMouseDown={(e) => e.stopPropagation()}>
-        {file.name}
-      </span>
-    </div>
+        </LightboxButton>
+      }
+    >
+      <video src={url} controls autoPlay className="max-h-[85vh] max-w-[88vw] rounded-lg bg-black" />
+    </LightboxShell>
   );
 }
 
@@ -1132,58 +1200,33 @@ function ImageLightbox({
   useEffect(() => {
     let alive = true;
     void blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); }).catch(() => {});
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      alive = false;
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [file.id, onClose]);
+    return () => { alive = false; };
+  }, [file.id]);
   return (
-    <div
-      data-testid="lightbox"
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75"
-      onMouseDown={onClose}
+    <LightboxShell
+      testId="lightbox"
+      onClose={onClose}
+      caption={file.name}
+      actions={
+        <>
+          <LightboxButton
+            testId="lightbox-open-external"
+            title="Open external"
+            onClick={() => { if (url) window.open(url, '_blank'); }}
+          >
+            ↗
+          </LightboxButton>
+          <LightboxButton testId="lightbox-download" title="Download" onClick={() => void onDownload()}>
+            ⤓
+          </LightboxButton>
+        </>
+      }
     >
-      <div className="absolute top-4 right-5 flex gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
-        <button
-          data-testid="lightbox-open-external"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Open external"
-          onClick={() => { if (url) window.open(url, '_blank'); }}
-        >
-          ↗
-        </button>
-        <button
-          data-testid="lightbox-download"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Download"
-          onClick={() => void onDownload()}
-        >
-          ⤓
-        </button>
-        <button
-          data-testid="lightbox-close"
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/30"
-          title="Close"
-          onClick={onClose}
-        >
-          ✕
-        </button>
-      </div>
       {url ? (
-        <img
-          src={url}
-          alt={file.name}
-          className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain"
-          onMouseDown={(e) => e.stopPropagation()}
-        />
+        <img src={url} alt={file.name} className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain" />
       ) : (
         <span className="text-sm text-white/70">Loading…</span>
       )}
-      <span className="mt-3 max-w-[80vw] truncate text-xs text-white/70" onMouseDown={(e) => e.stopPropagation()}>
-        {file.name}
-      </span>
-    </div>
+    </LightboxShell>
   );
 }

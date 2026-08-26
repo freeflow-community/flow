@@ -38,8 +38,13 @@ export const users = pgTable('users', {
   agentKeyHash: text('agent_key_hash'),
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
+  // #220: expanded profile. `website` is http/https-only (enforced in
+  // PatchMeBody, the only write path); `bio` is plain text, newlines kept.
+  website: text('website').notNull().default(''),
+  bio: text('bio').notNull().default(''),
   // Phase 10: per-user notification prefs ({dm, mention, groupMention,
-  // threadReply, persistentBanners} — absent key = default) and the
+  // threadReply, reaction, channelInvite, persistentBanners} — absent key =
+  // default) and the
   // status-driven "suppress all alerts" flag (DND-family statuses).
   notificationPrefs: jsonb('notification_prefs').$type<Record<string, boolean>>().notNull().default({}),
   statusSuppressAlerts: boolean('status_suppress_alerts').notNull().default(false),
@@ -116,6 +121,9 @@ export const workspaces = pgTable('workspaces', {
   slug: citext('slug').notNull().unique(),
   name: text('name').notNull(),
   sidebarColor: text('sidebar_color').notNull().default('violet'), // preset id (phase 3.5)
+  // #336: optional image mark, a `/v1/avatars/<key>` path like users.avatar_url;
+  // null = the color/initial mark clients have always drawn.
+  avatarUrl: text('avatar_url'),
   // Phase 11 §10: workspace switch, plus optional allowlist mode for regulated
   // deployments (null = allow all domains).
   unfurlEnabled: boolean('unfurl_enabled').notNull().default(true),
@@ -236,6 +244,17 @@ export const messages = pgTable(
   ],
 );
 
+export const messagePins = pgTable(
+  'message_pins',
+  {
+    messageId: uuid('message_id').primaryKey().references(() => messages.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    pinnedBy: uuid('pinned_by').references(() => users.id, { onDelete: 'set null' }),
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('message_pins_channel_idx').on(t.channelId, t.pinnedAt.desc())],
+);
+
 export const reactions = pgTable(
   'reactions',
   {
@@ -264,11 +283,31 @@ export const files = pgTable('files', {
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
 
+/** Custom emoji (#175): a workspace-scoped image usable as a reaction. The
+ * `shortcode` is stored bare; reaction rows store the `:shortcode:` form. The
+ * image is an ordinary `files` row, so uploads reuse the presign flow. */
+export const workspaceEmoji = pgTable(
+  'workspace_emoji',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    shortcode: text('shortcode').notNull(),
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('workspace_emoji_code_idx').on(t.workspaceId, t.shortcode)],
+);
+
 export const messageFiles = pgTable(
   'message_files',
   {
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
-    fileId: uuid('file_id').notNull().references(() => files.id),
+    // Cascade (migration 0031): workspace deletion reaches files down two FK
+    // paths at once (workspaces→files, workspaces→…→messages→message_files);
+    // without ON DELETE CASCADE here the files leg can fire first and trip
+    // this constraint mid-cascade (23503), 500ing the whole delete.
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
   },
   (t) => [primaryKey({ columns: [t.messageId, t.fileId] }), index('message_files_file_idx').on(t.fileId)],
 );
@@ -312,10 +351,12 @@ export const notifications = pgTable(
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
-    kind: smallint('kind').notNull(), // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction
+    // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction 5=channel invite
+    kind: smallint('kind').notNull(),
     // phase 10: for kind 0 — 'mention' | 'here' | 'channel'; NULL otherwise
     subkind: text('subkind'),
-    // issue #63: who caused it — message author (kinds 0-3) or reactor (kind 4).
+    // issue #63: who caused it — message author (kinds 0-3), reactor (kind 4)
+    // or the inviter (kind 5, #303).
     // Nullable only for rows written before the column existed.
     actorId: uuid('actor_id').references(() => users.id, { onDelete: 'cascade' }),
     reactionEmoji: text('reaction_emoji'), // kind 4 only

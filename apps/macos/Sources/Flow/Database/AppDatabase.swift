@@ -203,6 +203,50 @@ struct AppDatabase: Sendable {
                 t.add(column: "parentId", .text)
             }
         }
+        // Channel-wide message pins. These columns are server-authoritative
+        // cache fields; opening a channel backfills every pinned message.
+        migrator.registerMigration("v13") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "pinnedAt", .text)
+                t.add(column: "pinnedBy", .text)
+            }
+        }
+        // Expanded user profiles (#220): personal website link + free-text bio.
+        migrator.registerMigration("v14") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "website", .text)
+                t.add(column: "bio", .text)
+            }
+        }
+        // Which threads are waiting on you (#270). JSON array, same shape as
+        // memberIds; nil on a cached row until the next channel list arrives,
+        // which just means no dot yet — never a wrong one.
+        migrator.registerMigration("v15") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "unreadThreadRootIds", .text)
+            }
+        }
+        // Workspace avatar (#336): the optional image mark, nil until one is set.
+        migrator.registerMigration("v16") { db in
+            try db.alter(table: "workspace") { t in
+                t.add(column: "avatarUrl", .text)
+            }
+        }
+        // Sole-human check behind Delete workspace (#340): the roster has to be
+        // able to tell an app bot from a person, not just an agent from one.
+        migrator.registerMigration("v17") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "isBot", .boolean)
+            }
+        }
+        // Per-workspace unread total (#345), the sidebar rail badge. Nil on a
+        // cached row until the next workspace list arrives — no badge yet,
+        // never a wrong one.
+        migrator.registerMigration("v18") { db in
+            try db.alter(table: "workspace") { t in
+                t.add(column: "unreadCount", .integer)
+            }
+        }
         try migrator.migrate(writer)
     }
 

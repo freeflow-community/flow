@@ -1,5 +1,10 @@
 import Foundation
 import GRDB
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// Owns all GRDB writes and coordinates APIClient + SocketClient.
 /// SwiftUI never writes to the database; it calls engine methods and
@@ -11,11 +16,26 @@ actor SyncEngine {
     private weak var appState: AppState?
 
     private var currentUser: User?
-    private var activeWorkspaceId: String?
-    private var activeChannelId: String?
-    private var openThreadRootId: String?
     private var socketConsumer: Task<Void, Never>?
+    private var wakeObserver: Task<Void, Never>?
     private var typingLastSent: [String: Date] = [:]
+    /// The token the live socket was started with, so a resume can restart it
+    /// (#269) without going back to the Keychain — which an unsigned dev build
+    /// can't always read, and which would make the re-sync depend on storage
+    /// rather than on the session the engine is already holding.
+    private var sessionToken: String?
+    /// Channels whose history page has landed this session (#269). Membership
+    /// means "the server has been asked, and answered" — not "there are
+    /// messages" — so an empty channel is asked once, and a channel whose fetch
+    /// failed is asked again the next time its transcript appears.
+    private var historyLoaded: Set<String> = []
+    /// Channels with a history request in flight, so the selection-driven fetch
+    /// and a view's `ensureHistory` on the same open don't both ask (#269).
+    private var historyInFlight: Set<String> = []
+    /// Tries for a channel's history page before falling back to the cache —
+    /// 1s then 2s apart, so a transient failure costs a moment, not the
+    /// conversation (#269).
+    private static let historyAttempts = 3
 
     private static let currentUserIdKey = "currentUserId" + Profile.suffix
 
@@ -50,9 +70,8 @@ actor SyncEngine {
         socketConsumer?.cancel()
         socketConsumer = nil
         currentUser = nil
-        activeWorkspaceId = nil
-        activeChannelId = nil
-        openThreadRootId = nil
+        sessionToken = nil
+        historyLoaded.removeAll() // signing back in re-asks the server (#269)
         await appState?.sessionExpired()
     }
 
@@ -95,6 +114,18 @@ actor SyncEngine {
         )
         await api.setToken(resp.token)
         await didSignIn(user: resp.user, token: resp.token)
+    }
+
+    /// Email-first registration (production servers): asks the server to send
+    /// the signup email. No session results — the account is created by
+    /// whoever opens the emailed link, and the web-to-app handoff brings them
+    /// back here. The server never reveals whether the address already has an
+    /// account, so success just means "the request was accepted".
+    func requestSignup(email: String) async throws {
+        let _: RegisterPendingResponse = try await api.post(
+            "/v1/auth/register",
+            body: EmailRegisterBody(email: email)
+        )
     }
 
     func login(email: String, password: String) async throws {
@@ -150,6 +181,18 @@ actor SyncEngine {
 
     func logout() async {
         let _: OkResponse? = try? await api.post("/v1/auth/logout")
+        await tearDownSession()
+    }
+
+    /// Account deletion (App Store 5.1.1(v)): DELETE /v1/me, then the same
+    /// local teardown as sign-out. Throws if the server refuses — the account
+    /// is untouched and the session stays signed in.
+    func deleteAccount() async throws {
+        let _: OkResponse = try await api.delete("/v1/me")
+        await tearDownSession()
+    }
+
+    private func tearDownSession() async {
         Keychain.deleteToken()
         UserDefaults.standard.removeObject(forKey: Self.currentUserIdKey)
         await api.setToken(nil)
@@ -157,9 +200,8 @@ actor SyncEngine {
         socketConsumer?.cancel()
         socketConsumer = nil
         currentUser = nil
-        activeWorkspaceId = nil
-        activeChannelId = nil
-        openThreadRootId = nil
+        sessionToken = nil
+        historyLoaded.removeAll() // the cache goes with the session (#269)
         try? await db.writer.write { db in try AppDatabase.wipe(db) }
         await appState?.didSignOut()
     }
@@ -182,12 +224,36 @@ actor SyncEngine {
     // MARK: - Socket lifecycle
 
     private func startSocket(token: String) {
+        sessionToken = token
         socketConsumer?.cancel()
         socketConsumer = Task { [socket] in
             let stream = await socket.start(token: token)
             for await signal in stream {
                 if Task.isCancelled { break }
                 await self.handle(signal)
+            }
+        }
+        observeWake()
+    }
+
+    /// Waking from sleep (macOS) or returning to the foreground (iOS) is the
+    /// one moment we *know* unobserved time has passed, so it is the cheapest
+    /// place to catch a socket that died half-open while we weren't looking
+    /// (#271). The watchdog in `SocketClient` would find it within ~70s anyway;
+    /// this only makes it immediate, and must never be the sole mechanism —
+    /// Wi-Fi drops and VPN flaps come with no notification at all.
+    private func observeWake() {
+        guard wakeObserver == nil else { return }
+        #if canImport(AppKit)
+        let center = NSWorkspace.shared.notificationCenter
+        let name = NSWorkspace.didWakeNotification
+        #elseif canImport(UIKit)
+        let center = NotificationCenter.default
+        let name = UIApplication.willEnterForegroundNotification
+        #endif
+        wakeObserver = Task { [socket] in
+            for await _ in center.notifications(named: name).map({ _ in () }) {
+                await socket.wake()
             }
         }
     }
@@ -205,33 +271,49 @@ actor SyncEngine {
     }
 
     private func backfillAfterReconnect() async {
+        // The reconnect bar stays up for the whole catch-up, not just until the
+        // socket says hello (#234). `defer` so a cancelled backfill — sign-out
+        // mid-page — still clears it.
+        await appState?.beginCatchUp()
+        let state = appState
+        defer { Task { @MainActor in state?.endCatchUp() } }
         await refreshWorkspaces()
-        if let ws = activeWorkspaceId {
+        // Every workspace/channel/thread open in *some* window needs the gap
+        // filled — the windows are independent, so there can be several of each.
+        for ws in await appState?.openWorkspaceIds ?? [] {
             await refreshChannels(workspaceId: ws)
             await refreshMembers(workspaceId: ws)
             await refreshArtifacts(workspaceId: ws)
         }
-        if let ch = activeChannelId {
+        for ch in await appState?.openChannelIds ?? [] {
             await backfillChannel(ch)
         }
-        if let root = openThreadRootId {
+        for root in await appState?.openThreadRootIds ?? [] {
             await fetchThread(rootId: root)
         }
+        // Every reconciling fetch has had its turn (this also runs on the
+        // first connect after launch, which is where rows orphaned by a quit
+        // mid-send get their verdict).
+        await sweepStalePending()
         await refreshNotificationBadge()
     }
 
     /// Fills the gap between the server head and our newest local message by
     /// paging backwards (cursor `before`) until we overlap local history.
     private func backfillChannel(_ channelId: String) async {
-        let newestLocalId: String? = try? await db.reader.read { db in
-            try String.fetchOne(
-                db,
-                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 ORDER BY id DESC LIMIT 1",
-                arguments: [channelId]
-            )
-        }
+        // The same probe `catchUpRead` uses, and for the same reason it excludes
+        // thread replies: the pages being walked back are top-level only, so a
+        // newer reply standing in as the overlap mark ends the gap-fill before
+        // it has actually overlapped (#328).
+        let newestLocalId = await newestCachedMessageId(channelId: channelId)
         var before: String? = nil
         var pages = 0
+        // The first page (the newest messages) is stored as soon as it lands,
+        // so the transcript updates fast; the older pages accumulate into one
+        // write. Each write refetches and re-diffs the whole channel for every
+        // observing view, so a deep backfill used to mean up to five full
+        // list rebuilds — and five glue scrolls — where one is enough.
+        var olderPages: [Message] = []
         while pages < 5 {
             let query: [URLQueryItem] = [
                 URLQueryItem(name: "limit", value: "50"),
@@ -241,14 +323,17 @@ actor SyncEngine {
                 "/v1/channels/\(channelId)/messages", query: query
             ) else { break }
             pages += 1
-            await storeMessages(resp.messages)
             if before == nil {
+                await storeMessages(resp.messages)
                 await appState?.setHasMore(channelId: channelId, resp.hasMore)
+            } else {
+                olderPages.append(contentsOf: resp.messages)
             }
             guard resp.hasMore, let oldest = resp.messages.last?.id else { break }
             if let newest = newestLocalId, oldest <= newest { break }
             before = oldest
         }
+        await storeMessages(olderPages)
     }
 
     // MARK: - Workspaces
@@ -263,14 +348,18 @@ actor SyncEngine {
         }
     }
 
+    /// A window switched to this workspace: bring its data up to date. The
+    /// engine holds no "active" selection of its own any more — the windows
+    /// do, and `AppState` aggregates them for event scoping.
     func selectWorkspace(_ id: String?) async {
-        activeWorkspaceId = id
-        activeChannelId = nil
-        openThreadRootId = nil
         guard let id else { return }
         await refreshChannels(workspaceId: id)
         await refreshMembers(workspaceId: id)
         await refreshArtifacts(workspaceId: id)
+        // Reconcile the rail badges (#345) against the server at the same beat
+        // the channel counts are refreshed — the running totals are kept by
+        // local arithmetic between refreshes, and this is where they settle up.
+        await refreshWorkspaces()
         // The Activity badge counts this workspace only, so it changes meaning
         // the moment the workspace does.
         await refreshNotificationBadge()
@@ -338,13 +427,41 @@ actor SyncEngine {
         return ws
     }
 
+    /// Workspace avatar (#336): owner/admin only, server-enforced. The response
+    /// is the updated workspace; every other client hears the same thing on the
+    /// `workspace.updated` broadcast.
+    func uploadWorkspaceAvatar(workspaceId: String, fileURL: URL) async throws -> Workspace {
+        let data = try Data(contentsOf: fileURL)
+        let ws: Workspace = try await api.upload(
+            "/v1/workspaces/\(workspaceId)/avatar",
+            filename: fileURL.lastPathComponent,
+            mimeType: Self.mimeType(for: fileURL),
+            data: data
+        )
+        await saveWorkspacePreservingRole(ws)
+        return ws
+    }
+
+    /// Removes it — back to the color/initial mark.
+    func clearWorkspaceAvatar(workspaceId: String) async throws -> Workspace {
+        let ws: Workspace = try await api.delete("/v1/workspaces/\(workspaceId)/avatar")
+        await saveWorkspacePreservingRole(ws)
+        return ws
+    }
+
     /// Saves a workspace row, keeping the locally cached `role` when the
-    /// incoming DTO doesn't carry one (broadcast DTOs are role-less).
+    /// incoming DTO doesn't carry one (broadcast DTOs are role-less) — and the
+    /// cached `unreadCount` for the same reason (#345): only the workspace list
+    /// computes it, so an avatar change must not blank the badge.
     private func saveWorkspacePreservingRole(_ ws: Workspace) async {
         try? await db.writer.write { db in
             var toSave = ws
+            let cached = try Workspace.fetchOne(db, key: ws.id)
             if toSave.role == nil {
-                toSave.role = try Workspace.fetchOne(db, key: ws.id)?.role
+                toSave.role = cached?.role
+            }
+            if toSave.unreadCount == nil {
+                toSave.unreadCount = cached?.unreadCount
             }
             try toSave.save(db)
         }
@@ -367,7 +484,12 @@ actor SyncEngine {
                     timezone: existing?.timezone,
                     statusEmoji: m.statusEmoji,
                     statusText: m.statusText,
+                    // #220: the roster payload carries neither, so keep what the
+                    // profile fetch already cached rather than blanking it.
+                    website: existing?.website,
+                    bio: existing?.bio,
                     isAgent: m.isAgent ?? existing?.isAgent ?? false,
+                    isBot: m.isBot ?? existing?.isBot ?? false,
                     createdAt: existing?.createdAt
                 ).save(db)
                 try Member(workspaceId: workspaceId, userId: m.userId, role: m.role).save(db)
@@ -388,6 +510,11 @@ actor SyncEngine {
             try String.fetchAll(db, sql: "SELECT id FROM user WHERE isAgent = 1")
         }) ?? []
         await appState?.setAgentIds(Set(agents))
+        // Warm the image cache with our own avatar so the very first message
+        // we send this session doesn't flash the placeholder.
+        if let uid = currentUser?.id, let path = rows.first(where: { $0.0 == uid })?.1 {
+            Task.detached(priority: .utility) { _ = await ImageLoader.shared.image(path: path) }
+        }
     }
 
     // MARK: - Channels
@@ -400,6 +527,7 @@ actor SyncEngine {
         // this snapshot is also how a client that missed events while asleep
         // gets back in step.
         await appState?.setBusyChannelIds(resp.busyChannelIds)
+        await appState?.setHuddleRosters(resp.huddleRosters)
         try? await db.writer.write { db in
             let ids = channels.map(\.id)
             try Channel
@@ -440,29 +568,122 @@ actor SyncEngine {
         return ch
     }
 
+    /// A transcript for `channelId` is on screen — make sure it has one. The
+    /// selection-driven fetch below runs only when the *selection changes*
+    /// (`WindowState.selectChannel` returns early on the same id) and swallows
+    /// its own failures, so a channel could be shown with nothing behind it and
+    /// stay that way until the user switched away and back (#269). Views call
+    /// this whenever they appear; it costs nothing once a page has landed.
+    func ensureHistory(channelId: String) async {
+        guard !historyLoaded.contains(channelId) else { return }
+        await selectChannel(channelId)
+    }
+
     func selectChannel(_ channelId: String?) async {
-        activeChannelId = channelId
-        openThreadRootId = nil
         guard let channelId else { return }
-        do {
-            let resp: MessagesResponse = try await api.get(
+        // One page per open. Selecting a channel and showing its transcript
+        // both ask, in either order, so without this the loser of that race
+        // fetches the same page a second time. Claimed before the first await,
+        // because the actor lets the other caller in at every suspension point.
+        // The loser also skips the unread clear below — the winner is doing it
+        // for the same open.
+        guard !historyInFlight.contains(channelId) else { return }
+        historyInFlight.insert(channelId)
+        defer { historyInFlight.remove(channelId) }
+        // Opening the channel is the moment its Activity rows stop being
+        // unread — say so now, before the history page is even requested
+        // (#227). Left to the server it takes four sequential round trips
+        // (history GET → channel read → notification.read → badge refetch),
+        // which on a slow link reads as a stuck badge.
+        await clearNotificationsLocally(channelId: channelId)
+        // The clients render a loading transcript rather than bare background
+        // while this page is in flight (#191) — on a slow link it is the whole
+        // difference between "still arriving" and "the conversation is gone".
+        await appState?.setLoadingHistory(channelId: channelId, true)
+        var resp: MessagesResponse? = nil
+        // One request used to decide the whole transcript: a connection that
+        // failed — the usual one being the first request after a phone wakes up
+        // — left an empty channel that only a switch away and back could cure
+        // (#269). Try again briefly before settling for the cache.
+        for attempt in 0..<Self.historyAttempts {
+            if attempt > 0 { try? await Task.sleep(for: .seconds(attempt)) }
+            resp = try? await api.get(
                 "/v1/channels/\(channelId)/messages",
                 query: [URLQueryItem(name: "limit", value: "50")]
             )
-            await storeMessages(resp.messages)
-            await appState?.setHasMore(channelId: channelId, resp.hasMore)
-            if let newest = resp.messages.first?.id {
-                await markRead(channelId: channelId, lastReadMsgId: newest)
-            } else {
-                try? await db.writer.write { db in
-                    try db.execute(
-                        sql: "UPDATE channel SET unreadCount = 0 WHERE id = ?",
-                        arguments: [channelId]
-                    )
-                }
+            if resp != nil { break }
+        }
+        guard let resp else {
+            // Offline: render from cache — which is all there is going to be,
+            // so stop claiming the transcript is still on its way. The channel
+            // stays out of `historyLoaded`, so the next appearance retries
+            // rather than leaving an empty transcript for good (#269).
+            await appState?.setLoadingHistory(channelId: channelId, false)
+            return
+        }
+        historyLoaded.insert(channelId)
+        // Rows first, then drop the loading state: clearing it while the
+        // transcript is still empty would flash the very blank this avoids.
+        await storeMessages(resp.messages)
+        await appState?.setLoadingHistory(channelId: channelId, false)
+        await appState?.setHasMore(channelId: channelId, resp.hasMore)
+        // An empty page still has to tell the server (#227). Zeroing only the
+        // local count made the channel *look* read on this device while its
+        // notification rows stayed unread everywhere else — the cached newest
+        // id is the same fallback `catchUpRead` uses. With nothing cached
+        // either there is no cursor to send, so just clear the local pill.
+        let cursor = if let newest = resp.messages.first?.id {
+            newest
+        } else {
+            await newestCachedMessageId(channelId: channelId)
+        }
+        if let cursor {
+            await markRead(channelId: channelId, lastReadMsgId: cursor)
+        } else {
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE channel SET unreadCount = 0 WHERE id = ?",
+                    arguments: [channelId]
+                )
             }
-        } catch {
-            // Offline: render from cache.
+        }
+    }
+
+    /// Zero this channel's Activity rows in the local cache and on the badges.
+    /// The `notification.read` event that the read call triggers will overwrite
+    /// both with the server's numbers a moment later; this is only about not
+    /// making the user watch four round trips for something already true.
+    private func clearNotificationsLocally(channelId: String) async {
+        let cleared: (count: Int, workspaceId: String)? = try? await db.writer.write { db in
+            guard let ch = try Channel.fetchOne(db, key: channelId), ch.unreadNotifications > 0
+            else { return nil }
+            try db.execute(
+                sql: "UPDATE channel SET unreadNotifications = 0 WHERE id = ?",
+                arguments: [channelId]
+            )
+            // The rail badge (#345) is the per-workspace sum of these rows.
+            try db.execute(
+                sql: """
+                    UPDATE workspace SET unreadCount = MAX(0, unreadCount - ?)
+                    WHERE id = ? AND unreadCount IS NOT NULL
+                    """,
+                arguments: [ch.unreadNotifications, ch.workspaceId]
+            )
+            return (ch.unreadNotifications, ch.workspaceId)
+        }
+        guard let cleared else { return }
+        await appState?.notificationsCleared(count: cleared.count, workspaceId: cleared.workspaceId)
+    }
+
+    /// Newest top-level message this device has cached for a channel — the read
+    /// cursor to fall back on when the server hasn't just handed us one.
+    private func newestCachedMessageId(channelId: String) async -> String? {
+        try? await db.reader.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
+                arguments: [channelId]
+            )
         }
     }
 
@@ -502,19 +723,13 @@ actor SyncEngine {
         )
     }
 
+
     /// The app came back to the front with `channelId` on screen: everything
     /// that arrived while it was hidden has now genuinely been seen. Called from
     /// `AppState.setAppActive` — the arrival path deliberately skips backgrounded
     /// windows, so this is what closes the loop.
     func catchUpRead(channelId: String) async {
-        let newest: String? = try? await db.reader.read { db in
-            try String.fetchOne(
-                db,
-                sql: "SELECT id FROM message WHERE channelId = ? AND pending = 0 AND threadRootId IS NULL ORDER BY id DESC LIMIT 1",
-                arguments: [channelId]
-            )
-        }
-        guard let newest else { return }
+        guard let newest = await newestCachedMessageId(channelId: channelId) else { return }
         await markRead(channelId: channelId, lastReadMsgId: newest)
     }
 
@@ -598,13 +813,20 @@ actor SyncEngine {
             return true
         } catch {
             try? await db.writer.write { db in
+                // `AND pending = 1`: if the WS echo reconciled this send while
+                // the POST was timing out, the message is delivered — flagging
+                // it "Failed to send" would be a lie about a message everyone
+                // else can see.
                 try db.execute(
-                    sql: "UPDATE message SET pending = 0, failed = 1 WHERE clientMsgId = ?",
+                    sql: "UPDATE message SET pending = 0, failed = 1 WHERE clientMsgId = ? AND pending = 1",
                     arguments: [local.clientMsgId]
                 )
                 // A failed reply un-bumps the root rollup it optimistically
-                // incremented, so counts reflect only confirmed replies.
-                if let root = local.threadRootId { try Self.unbumpThreadRollup(db, rootId: root) }
+                // incremented, so counts reflect only confirmed replies — but
+                // only when the flag actually flipped, or a confirmed reply
+                // loses a count it earned.
+                guard db.changesCount > 0, let root = local.threadRootId else { return }
+                try Self.unbumpThreadRollup(db, rootId: root)
             }
             return false
         }
@@ -741,6 +963,66 @@ actor SyncEngine {
         }
     }
 
+    // MARK: - Pinned messages
+
+    /// Fetch every pin in the channel so older pinned messages become part of
+    /// the local cache even when normal history pagination has not reached them.
+    func loadPinnedMessages(channelId: String) async {
+        do {
+            let response: PinnedMessagesResponse = try await api.get("/v1/channels/\(channelId)/pins")
+            // The list is authoritative: clear stale offline-era pins before
+            // saving the current rows returned by the server.
+            try? await db.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE message SET pinnedAt = NULL, pinnedBy = NULL WHERE channelId = ?",
+                    arguments: [channelId]
+                )
+            }
+            await storeMessages(response.messages)
+        } catch {
+            await appState?.showError("Couldn't load pinned messages: \(error.localizedDescription)")
+        }
+    }
+
+    /// Channel Files panel (#347/#348): one page of the channel's shared files.
+    /// Browsing-only, so it never touches the GRDB cache — the panel is opened
+    /// on demand and the server list is the truth for it.
+    func channelFiles(
+        channelId: String, sort: ChannelFileSort, before: String?, limit: Int = 30
+    ) async throws -> ChannelFilePage {
+        var query = [
+            URLQueryItem(name: "sort", value: sort.rawValue),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if let before { query.append(URLQueryItem(name: "before", value: before)) }
+        return try await api.get("/v1/channels/\(channelId)/files", query: query)
+    }
+
+    /// Presigned in-place streaming URL for a file (server mints it after the
+    /// same access check as a download). nil when the storage driver can't
+    /// presign — callers must have a no-network fallback.
+    func streamURL(fileId: String) async -> URL? {
+        guard let response: StreamUrlResponse = try? await api.get("/v1/files/\(fileId)/url"),
+              let raw = response.url else { return nil }
+        return URL(string: raw)
+    }
+
+    /// Pin or unpin for the whole channel; the returned full message is the
+    /// immediate local update and the websocket echo converges other clients.
+    func togglePin(_ message: Message) async {
+        do {
+            let updated: Message
+            if message.pinnedAt == nil {
+                updated = try await api.put("/v1/messages/\(message.id)/pin")
+            } else {
+                updated = try await api.delete("/v1/messages/\(message.id)/pin")
+            }
+            _ = await applyServerMessage(updated)
+        } catch {
+            await appState?.showError("Couldn't update pin: \(error.localizedDescription)")
+        }
+    }
+
     private func setReactions(messageId: String, _ reactions: [ReactionAgg]) async {
         try? await db.writer.write { db in
             guard var m = try Message.fetchOne(db, key: messageId) else { return }
@@ -842,6 +1124,7 @@ actor SyncEngine {
         case "jpg", "jpeg": "image/jpeg"
         case "gif": "image/gif"
         case "webp": "image/webp"
+        case "heic", "heif": "image/heic"
         case "pdf": "application/pdf"
         case "txt", "md", "log": "text/plain"
         case "json": "application/json"
@@ -862,7 +1145,7 @@ actor SyncEngine {
         guard let resp: ArtifactsResponse = try? await api.get(
             "/v1/workspaces/\(workspaceId)/artifacts"
         ) else { return }
-        await appState?.setArtifacts(resp.artifacts)
+        await appState?.setArtifacts(resp.artifacts, workspaceId: workspaceId)
     }
 
     /// Pins a file as a shared artifact in a channel (idempotent per
@@ -944,23 +1227,84 @@ actor SyncEngine {
         )
     }
 
+    /// Delete a workspace (#340 follow-up). The sole owner's only way out: they
+    /// cannot leave a workspace with nobody to transfer it to. Local cleanup
+    /// and the landing choice are exactly `leaveWorkspace`'s — from the
+    /// client's side "this workspace is gone for me" is one fact.
+    @discardableResult
+    func deleteWorkspace(_ workspaceId: String) async throws -> String? {
+        let _: OkResponse = try await api.delete("/v1/workspaces/\(workspaceId)")
+        return await purgeLeftWorkspace(workspaceId)
+    }
+
+    /// Leave a workspace (#340). The server revokes every channel membership
+    /// there and publishes `member.left`; the local mirror is cleared here
+    /// rather than waiting for that round trip, so the switcher updates the
+    /// instant the call returns. Returns the workspace to land on — the first
+    /// one left, or nil for the chooser when this was the last.
+    @discardableResult
+    func leaveWorkspace(_ workspaceId: String) async throws -> String? {
+        let _: OkResponse = try await api.post("/v1/workspaces/\(workspaceId)/leave")
+        return await purgeLeftWorkspace(workspaceId)
+    }
+
+    /// Forget a workspace we are no longer in. Two callers: our own Leave
+    /// above, and the `member.left` that arrives when another client of ours
+    /// left it or an admin removed us — the local state has to end up the same
+    /// either way. Returns the workspace to land on (nil = the chooser).
+    @discardableResult
+    func purgeLeftWorkspace(_ workspaceId: String) async -> String? {
+        let channelIds = (try? await db.reader.read { db in
+            try String.fetchAll(db, sql: "SELECT id FROM channel WHERE workspaceId = ?", arguments: [workspaceId])
+        }) ?? []
+        try? await db.writer.write { db in
+            try db.execute(
+                sql: "DELETE FROM message WHERE channelId IN (SELECT id FROM channel WHERE workspaceId = ?)",
+                arguments: [workspaceId]
+            )
+            try db.execute(sql: "DELETE FROM channel WHERE workspaceId = ?", arguments: [workspaceId])
+            try db.execute(sql: "DELETE FROM member WHERE workspaceId = ?", arguments: [workspaceId])
+            try db.execute(sql: "DELETE FROM workspace WHERE id = ?", arguments: [workspaceId])
+        }
+        for id in channelIds { historyLoaded.remove(id) } // re-fetch if we ever rejoin (#269)
+        // Server truth, in case membership changed elsewhere while we were away.
+        await refreshWorkspaces()
+        let next = try? await db.reader.read { db in
+            try String.fetchOne(db, sql: "SELECT id FROM workspace ORDER BY name COLLATE NOCASE LIMIT 1")
+        }
+        return next ?? nil
+    }
+
     func leaveChannel(_ channelId: String) async throws {
         let _: OkResponse = try await api.post("/v1/channels/\(channelId)/leave")
         try? await db.writer.write { db in
             try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [channelId])
             try db.execute(sql: "DELETE FROM message WHERE channelId = ?", arguments: [channelId])
         }
-        if activeChannelId == channelId {
-            await appState?.channelBecameUnavailable(channelId)
-        }
+        // Unconditional: each window checks its own selection.
+        await appState?.channelBecameUnavailable(channelId)
+    }
+
+    // MARK: - Voice huddle (Phase 1)
+
+    /// Mints a LiveKit access token scoped to this channel's room. Idempotent
+    /// server-side — calling it while already an active participant re-mints
+    /// a fresh token rather than erroring (decision log 2026-08-20); this is
+    /// also the reconnect path.
+    func joinHuddle(channelId: String) async throws -> HuddleJoinResponse {
+        try await api.post("/v1/channels/\(channelId)/huddle/join")
+    }
+
+    /// Best-effort: the webhook safety net (participant_left) covers a
+    /// request that never lands.
+    func leaveHuddle(channelId: String) async {
+        let _: OkResponse? = try? await api.post("/v1/channels/\(channelId)/huddle/leave")
     }
 
     func archiveChannel(_ channelId: String) async throws {
         let ch: Channel = try await api.post("/v1/channels/\(channelId)/archive")
         try? await db.writer.write { db in try ch.save(db) }
-        if activeChannelId == channelId {
-            await appState?.channelBecameUnavailable(channelId)
-        }
+        await appState?.channelBecameUnavailable(channelId)
     }
 
     func setNotifyLevel(channelId: String, level: Int) async {
@@ -982,10 +1326,14 @@ actor SyncEngine {
 
     // MARK: - Profile (phase2.md §6)
 
-    func updateProfile(displayName: String?, timezone: String?) async throws {
+    func updateProfile(
+        displayName: String?, timezone: String?, website: String? = nil, bio: String? = nil
+    ) async throws {
         let me: User = try await api.patch(
             "/v1/me",
-            body: PatchMeBody(displayName: displayName, timezone: timezone)
+            body: PatchMeBody(
+                displayName: displayName, timezone: timezone, website: website, bio: bio
+            )
         )
         currentUser = me
         try? await db.writer.write { db in try me.save(db) }
@@ -1045,7 +1393,9 @@ actor SyncEngine {
             before.map { URLQueryItem(name: "before", value: $0) },
         ].compactMap(\.self)
         let resp: NotificationsResponse = try await api.get("/v1/me/notifications", query: query)
-        await appState?.setNotificationUnread(resp.unreadCount, total: resp.totalUnreadCount)
+        await appState?.setNotificationUnread(
+            resp.unreadCount, workspaceId: workspaceId, total: resp.totalUnreadCount
+        )
         return resp
     }
 
@@ -1069,16 +1419,32 @@ actor SyncEngine {
         await refreshNotificationBadge()
     }
 
-    /// Both badges in one call: the selected workspace's count and the total.
+    /// Both badges: every open workspace's count plus the total. Windows can
+    /// show different workspaces, so each open one gets its own scoped fetch;
+    /// with none open a single unscoped fetch still keeps the dock badge live.
     func refreshNotificationBadge() async {
-        var query = [URLQueryItem(name: "limit", value: "1")]
-        if let workspaceId = await appState?.selectedWorkspaceId {
-            query.append(URLQueryItem(name: "workspaceId", value: workspaceId))
+        let workspaceIds = await appState?.openWorkspaceIds ?? []
+        if workspaceIds.isEmpty {
+            guard let resp: NotificationsResponse = try? await api.get(
+                "/v1/me/notifications", query: [URLQueryItem(name: "limit", value: "1")]
+            ) else { return }
+            await appState?.setNotificationUnread(
+                resp.unreadCount, workspaceId: nil, total: resp.totalUnreadCount
+            )
+            return
         }
-        guard let resp: NotificationsResponse = try? await api.get(
-            "/v1/me/notifications", query: query
-        ) else { return }
-        await appState?.setNotificationUnread(resp.unreadCount, total: resp.totalUnreadCount)
+        for workspaceId in workspaceIds {
+            guard let resp: NotificationsResponse = try? await api.get(
+                "/v1/me/notifications",
+                query: [
+                    URLQueryItem(name: "limit", value: "1"),
+                    URLQueryItem(name: "workspaceId", value: workspaceId),
+                ]
+            ) else { continue }
+            await appState?.setNotificationUnread(
+                resp.unreadCount, workspaceId: workspaceId, total: resp.totalUnreadCount
+            )
+        }
     }
 
     func editMessage(id: String, body: String) async {
@@ -1145,18 +1511,82 @@ actor SyncEngine {
     // MARK: - Threads
 
     func openThread(rootId: String?) async {
-        openThreadRootId = rootId
         guard let rootId else { return }
         await fetchThread(rootId: rootId)
     }
 
+    /// Pages the *whole* thread in (cursor `after`, replies ascending). Two
+    /// things depend on that: the panel is built on "the thread loads whole"
+    /// — its jump-to-reply has no paging of its own — and this is the only
+    /// fallback that reconciles an optimistic reply whose ack was missed.
+    /// Dropping `hasMore` broke both past 100 replies, and the orphaned
+    /// pending row then spun forever (#328).
     private func fetchThread(rootId: String) async {
-        guard let resp: ThreadResponse = try? await api.get(
-            "/v1/messages/\(rootId)/thread",
-            query: [URLQueryItem(name: "limit", value: "100")]
-        ) else { return }
-        await storeMessages([resp.root] + resp.messages)
-        await markThreadRead(channelId: resp.root.channelId, rootId: rootId)
+        var after: String? = nil
+        var pages = 0
+        var channelId: String? = nil
+        var reachedTail = false
+        while pages < Self.threadMaxPages {
+            let query: [URLQueryItem] = [
+                URLQueryItem(name: "limit", value: "\(Self.threadPageSize)"),
+                after.map { URLQueryItem(name: "after", value: $0) },
+            ].compactMap(\.self)
+            guard let resp: ThreadResponse = try? await api.get(
+                "/v1/messages/\(rootId)/thread", query: query
+            ) else { break }
+            pages += 1
+            // The root only comes with the first page; later pages are replies.
+            await storeMessages(pages == 1 ? [resp.root] + resp.messages : resp.messages)
+            channelId = resp.root.channelId
+            guard resp.hasMore, let last = resp.messages.last?.id else {
+                reachedTail = true
+                break
+            }
+            after = last
+        }
+        // Nothing arrived: don't claim the thread was read.
+        guard let channelId else { return }
+        // Only once the tail is actually local is a still-pending reply here
+        // known to have missed its ack, rather than sitting on a page a
+        // dropped request never fetched.
+        if reachedTail { await sweepStalePending(threadRootId: rootId) }
+        await markThreadRead(channelId: channelId, rootId: rootId)
+    }
+
+    /// Thread paging: 100 replies a page, capped at 50 pages. The cap is a
+    /// runaway guard, not a product limit — a thread past 5 000 replies pages
+    /// no further, which costs the tail, not correctness of what is shown.
+    private static let threadPageSize = 100
+    private static let threadMaxPages = 50
+
+    /// A pending row older than this is not in flight any more: the POST that
+    /// owned it died with the app, the network, or a half-open socket.
+    private static let stalePendingAge: TimeInterval = 120
+
+    /// Flip orphaned optimistic rows to `failed`, so the user gets the Retry
+    /// affordance instead of a spinner that never stops (#328).
+    ///
+    /// Always runs *after* a fetch that could have reconciled them (reconnect
+    /// backfill, thread open), so a row the server actually has is already
+    /// gone by the time the sweep looks. And when the sweep is wrong anyway —
+    /// delivered, but in a channel this pass didn't fetch — it costs one
+    /// re-POST and no duplicate: retries reuse the `clientMsgId` the server is
+    /// idempotent on, and a server twin deletes the local row on arrival.
+    private func sweepStalePending(threadRootId: String? = nil) async {
+        let now = Date()
+        try? await db.writer.write { db in
+            let pending = try Message.filter(Column("pending") == true).fetchAll(db)
+            for m in pending {
+                if let root = threadRootId, m.threadRootId != root { continue }
+                guard let created = ISO8601.parse(m.createdAt),
+                      now.timeIntervalSince(created) > Self.stalePendingAge else { continue }
+                try db.execute(
+                    sql: "UPDATE message SET pending = 0, failed = 1 WHERE id = ?",
+                    arguments: [m.id]
+                )
+                if let root = m.threadRootId { try Self.unbumpThreadRollup(db, rootId: root) }
+            }
+        }
     }
 
     // MARK: - Typing
@@ -1228,6 +1658,9 @@ actor SyncEngine {
             await appState?.channelIndicatorReceived(
                 channelId: ind.channelId, busy: ind.state != nil)
 
+        case .huddleUpdated(let d):
+            await appState?.huddleUpdated(channelId: d.channelId, participants: d.participants)
+
         case .channel(let dto):
             // The broadcast DTO claims isMember from the creator's perspective;
             // only trust it if we created the channel.
@@ -1242,8 +1675,13 @@ actor SyncEngine {
                 }
             }
 
+        case .workspaceJoined:
+            // this user entered a workspace from another session (e.g. accepted
+            // an invite on the web) — pull the new row so the switcher shows it
+            await refreshWorkspaces()
+
         case .memberJoined(let mj):
-            if event.workspaceId == activeWorkspaceId {
+            if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                 await refreshMembers(workspaceId: event.workspaceId)
             }
             if mj.userId == currentUser?.id {
@@ -1256,9 +1694,17 @@ actor SyncEngine {
 
         case .memberLeft(let ml):
             if ml.channelId == nil {
+                if ml.userId == currentUser?.id {
+                    // We left this workspace — from another client of ours, or
+                    // an admin removed us (#340). Drop it locally and move
+                    // every window showing it somewhere it can still read.
+                    let next = await purgeLeftWorkspace(event.workspaceId)
+                    await appState?.workspaceBecameUnavailable(event.workspaceId, landOn: next)
+                    return
+                }
                 // Workspace-level departure (member removed / app deleted):
                 // refresh so the member and mention lists drop them.
-                if event.workspaceId == activeWorkspaceId {
+                if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                     await refreshMembers(workspaceId: event.workspaceId)
                 }
             }
@@ -1267,9 +1713,8 @@ actor SyncEngine {
                     try db.execute(sql: "DELETE FROM channel WHERE id = ?", arguments: [chId])
                     try db.execute(sql: "DELETE FROM message WHERE channelId = ?", arguments: [chId])
                 }
-                if activeChannelId == chId {
-                    await appState?.channelBecameUnavailable(chId)
-                }
+                historyLoaded.remove(chId) // its cache just went — re-fetch on re-entry (#269)
+                await appState?.channelBecameUnavailable(chId)
                 await refreshChannels(workspaceId: event.workspaceId)
             }
 
@@ -1287,9 +1732,7 @@ actor SyncEngine {
                 existing.archivedAt = ch.archivedAt
                 try existing.save(db)
             }
-            if activeChannelId == ch.id {
-                await appState?.channelBecameUnavailable(ch.id)
-            }
+            await appState?.channelBecameUnavailable(ch.id)
 
         case .reaction(let data, let added):
             await applyReactionEvent(data, added: added)
@@ -1304,20 +1747,39 @@ actor SyncEngine {
             // it as read swallowed DMs that landed while the app sat behind the
             // browser. Reading it here matters because a reaction moves no read
             // cursor, so nothing else would ever clear it.
-            let behindClosedThread =
-                n.message.threadRootId != nil && n.message.threadRootId != openThreadRootId
-            if !behindClosedThread, await appState?.isViewing(channelId: n.channelId) == true {
+            if await appState?.isViewingMessage(
+                channelId: n.channelId, threadRootId: n.message.threadRootId
+            ) == true {
                 await markNotificationRead(id: n.id)
                 return
             }
             await appState?.notificationReceived(n)
             // The sidebar badge is this channel's unread-notification count.
             let notifChannelId = n.channelId
+            // A reply needs you: also light the dot on that thread's chip
+            // (#270), so the transcript says *which* thread, not just that the
+            // channel has something. Read-modify-write — it's a JSON array.
+            let notifThreadRootId = n.message.threadRootId
+            let notifWorkspaceId = n.workspaceId
             try? await db.writer.write { db in
                 try db.execute(
                     sql: "UPDATE channel SET unreadNotifications = unreadNotifications + 1 WHERE id = ? AND isMember = 1",
                     arguments: [notifChannelId]
                 )
+                // The rail badge (#345) counts these same rows per workspace —
+                // move it in the same write. Nil = "not fetched yet", stays nil.
+                try db.execute(
+                    sql: "UPDATE workspace SET unreadCount = unreadCount + 1 WHERE id = ? AND unreadCount IS NOT NULL",
+                    arguments: [notifWorkspaceId]
+                )
+                guard let rootId = notifThreadRootId,
+                      var chan = try Channel.filter(key: notifChannelId).fetchOne(db),
+                      chan.isMember else { return }
+                var roots = chan.unreadThreadRootIds ?? []
+                guard !roots.contains(rootId) else { return }
+                roots.append(rootId)
+                chan.unreadThreadRootIds = roots
+                try chan.save(db)
             }
             // Banner unless the server's alert gate (per-user prefs + status
             // suppression, phase 10) says no — kind 3 activity rows are always
@@ -1337,6 +1799,7 @@ actor SyncEngine {
                 case 2: "\(senderName ?? "Someone") replied in a thread"
                 case 4: "\(senderName ?? "Someone") reacted \(n.reactionEmoji ?? "")"
                     .trimmingCharacters(in: .whitespaces)
+                case 5: "\(senderName ?? "Someone") added you to a channel"
                 default: "\(senderName ?? "Someone") mentioned you"
                 }
                 Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body, names: names))
@@ -1351,10 +1814,12 @@ actor SyncEngine {
             await refreshNotificationBadge()
             // The rows can span channels (and workspaces, from the Activity
             // feed), and the event carries ids rather than a per-channel
-            // breakdown — refetch the list rather than guess at the deltas.
-            if let workspaceId = activeWorkspaceId {
+            // breakdown — refetch the lists rather than guess at the deltas.
+            for workspaceId in await appState?.openWorkspaceIds ?? [] {
                 await refreshChannels(workspaceId: workspaceId)
             }
+            // …and the rail badges (#345), which count the same rows.
+            await refreshWorkspaces()
 
         case .workspaceUpdated(let ws):
             await saveWorkspacePreservingRole(ws)
@@ -1365,7 +1830,7 @@ actor SyncEngine {
             if change == .deleted {
                 await appState?.artifactBecameUnavailable(a.id)
             }
-            if event.workspaceId == activeWorkspaceId {
+            if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                 await refreshArtifacts(workspaceId: event.workspaceId)
                 // Auto-open an agent-created artifact for whoever is viewing its
                 // channel — the user who asked the agent to make it. Gated on
@@ -1476,11 +1941,16 @@ actor SyncEngine {
         guard !messages.isEmpty else { return }
         try? await db.writer.write { db in
             for m in messages {
+                // A local twin of a server row is optimistic by definition
+                // (`clientMsgId` is unique per channel server-side). `failed`
+                // as well as `pending`: the stale-pending sweep can flag a
+                // message the server did receive, and its twin arriving here
+                // is the proof — leaving it would show the send twice.
                 try Message
                     .filter(Column("channelId") == m.channelId)
                     .filter(Column("clientMsgId") == m.clientMsgId)
                     .filter(Column("id") != m.id)
-                    .filter(Column("pending") == true)
+                    .filter(Column("pending") == true || Column("failed") == true)
                     .deleteAll(db)
                 try m.save(db)
             }

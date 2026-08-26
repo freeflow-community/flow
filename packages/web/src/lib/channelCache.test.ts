@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { ChannelDTO } from '@flow/shared';
-import { applyIndicator } from './channelCache';
+import type { ChannelDTO, HuddleParticipantDTO } from '@flow/shared';
+import { applyHuddle, applyIndicator } from './channelCache';
 
-const chan = (id: string, indicator?: ChannelDTO['indicator']): ChannelDTO => ({
+const chan = (
+  id: string,
+  indicator?: ChannelDTO['indicator'],
+  huddleParticipants?: HuddleParticipantDTO[],
+): ChannelDTO => ({
   id,
   workspaceId: 'w1',
   name: id,
@@ -16,9 +20,11 @@ const chan = (id: string, indicator?: ChannelDTO['indicator']): ChannelDTO => ({
   lastReadMsgId: null,
   unreadCount: 0,
   unreadNotifications: 0,
+  unreadThreadRootIds: [],
   notifyLevel: 1,
   parentId: null,
   ...(indicator !== undefined ? { indicator } : {}),
+  ...(huddleParticipants !== undefined ? { huddleParticipants } : {}),
 });
 
 describe('applyIndicator', () => {
@@ -50,5 +56,42 @@ describe('applyIndicator', () => {
     const original = chan('a');
     applyIndicator([original], { channelId: 'a', state: 'busy' });
     expect(original.indicator ?? null).toBeNull();
+  });
+});
+
+describe('applyHuddle', () => {
+  const alice: HuddleParticipantDTO = { userId: 'alice', joinedAt: '2026-08-20T00:00:00Z' };
+  const bob: HuddleParticipantDTO = { userId: 'bob', joinedAt: '2026-08-20T00:01:00Z' };
+
+  it('sets the roster for the named channel only', () => {
+    const out = applyHuddle([chan('a'), chan('b')], { channelId: 'a', participants: [alice] });
+    expect(out[0]!.huddleParticipants).toEqual([alice]);
+    expect(out[1]!.huddleParticipants ?? []).toEqual([]);
+  });
+
+  it('replaces the whole roster, not just adds', () => {
+    const out = applyHuddle([chan('a', undefined, [alice])], { channelId: 'a', participants: [bob] });
+    expect(out[0]!.huddleParticipants).toEqual([bob]);
+  });
+
+  it('an empty roster means the huddle ended', () => {
+    const out = applyHuddle([chan('a', undefined, [alice, bob])], { channelId: 'a', participants: [] });
+    expect(out[0]!.huddleParticipants).toEqual([]);
+  });
+
+  it('keeps the same array when the channel is unknown', () => {
+    const list = [chan('a')];
+    expect(applyHuddle(list, { channelId: 'gone', participants: [alice] })).toBe(list);
+  });
+
+  it('keeps the same array when the roster already matches', () => {
+    const list = [chan('a', undefined, [alice])];
+    expect(applyHuddle(list, { channelId: 'a', participants: [alice] })).toBe(list);
+  });
+
+  it('does not mutate the channel it replaces', () => {
+    const original = chan('a');
+    applyHuddle([original], { channelId: 'a', participants: [alice] });
+    expect(original.huddleParticipants ?? []).toEqual([]);
   });
 });

@@ -36,6 +36,10 @@ export interface Selection {
    * visible. Threads and artifacts coexist (both can be open); this just picks
    * which tab shows. */
   artifactId: string | null;
+  /** Channel Files tab in the side panel (#347). It sits alongside the thread
+   * and artifact tabs on the same surface: true means the Files tab is the
+   * visible one. */
+  filesOpen: boolean;
   /** Message being edited inline (hover menu or composer ↑) — ui_nits item 4. */
   editingMessageId: string | null;
   /** Message to scroll to + flash after navigation (phase 12 Activity feed
@@ -53,10 +57,12 @@ export interface Selection {
   /** Open/activate an artifact tab (null just clears the active artifact — e.g.
    * when the shown artifact is deleted; the thread tab, if any, stays). */
   selectArtifact(id: string | null): void;
+  /** Open (or close) the channel Files tab in the side panel. */
+  openFiles(open: boolean): void;
   openThread(id: string | null): void;
   /** Make the Thread tab the visible one (thread stays open). */
   showThread(): void;
-  /** Close the whole side panel — clears the thread and the active artifact. */
+  /** Close the whole side panel — clears the thread, the active artifact and Files. */
   closeSidePanel(): void;
   setEditingMessage(id: string | null): void;
   /** Navigate to a specific message: selects its channel (and thread, if any)
@@ -72,6 +78,9 @@ export interface Selection {
 
 export interface LiveState {
   status: SocketStatus;
+  /** Socket down *or* a post-connect refetch still running (#234) — what the
+   * reconnect bar reads. Connected alone isn't caught up. */
+  syncing: boolean;
   presence: Record<string, boolean>;
   /** typingKey(channelId, threadRootId) -> userId -> ts(ms). Keyed by composer,
    * not by channel, so a thread's indicator never shows in the main view. */

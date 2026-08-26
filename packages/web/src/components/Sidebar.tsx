@@ -4,14 +4,25 @@ import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { fileGlyph } from '../lib/fileKind';
+import { workspaceExit } from '../lib/workspaceExit';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
-import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
+import {
+  ChannelMenu,
+  CreateChannelModal,
+  DeleteWorkspaceModal,
+  InviteModal,
+  LeaveWorkspaceModal,
+  NewDmModal,
+  WorkspaceColorModal,
+} from './modals';
 import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
+import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
 import { FeaturesModal } from './FeaturesModal';
 import StatusFooter from './StatusPicker';
+import { AuthImg } from './Avatar';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
 /**
@@ -49,6 +60,36 @@ export function nestChannels(list: ChannelDTO[]): { channel: ChannelDTO; nested:
   ]);
 }
 
+/**
+ * Minimal scroll (#319): how far the sidebar must move to bring a row into
+ * view, in scrollTop pixels. Zero when the row is already fully visible — that
+ * is what keeps clicking a channel in the sidebar from jumping the list.
+ *
+ * All three arguments are relative to the scroll viewport: `rowTop` is the
+ * row's top edge measured from the viewport's top edge (negative = above the
+ * fold). A row taller than the viewport aligns to its top rather than its
+ * bottom, so you see the start of it.
+ */
+export function nearestScrollDelta(rowTop: number, rowHeight: number, viewHeight: number): number {
+  if (rowTop < 0 || rowHeight > viewHeight) return rowTop;
+  const overshoot = rowTop + rowHeight - viewHeight;
+  return overshoot > 0 ? overshoot : 0;
+}
+
+/**
+ * Scroll a sidebar row into view within the sidebar's own scroller. Deliberately
+ * not `Element.scrollIntoView`, which also scrolls every scrollable ancestor —
+ * here only the channel list should move.
+ */
+function scrollRowIntoView(row: HTMLElement) {
+  const view = row.closest('[data-sidebar-scroll]') as HTMLElement | null;
+  if (!view) return;
+  const r = row.getBoundingClientRect();
+  const v = view.getBoundingClientRect();
+  const delta = nearestScrollDelta(r.top - v.top, r.height, v.height);
+  if (delta !== 0) view.scrollTop += delta;
+}
+
 const WIDTH_KEY = 'flow.sidebarWidth';
 const DEFAULT_WIDTH = 240;
 const clampWidth = (w: number) => Math.min(360, Math.max(180, w));
@@ -80,7 +121,10 @@ export default function Sidebar() {
   const [showInvite, setShowInvite] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showColor, setShowColor] = useState(false);
+  const [showLeave, setShowLeave] = useState(false);
+  const [showDeleteWs, setShowDeleteWs] = useState(false);
   const [showApps, setShowApps] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
   const [showInviteAgent, setShowInviteAgent] = useState(false);
   const [showFeatures, setShowFeatures] = useState(false);
@@ -112,6 +156,9 @@ export default function Sidebar() {
 
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
+  // Which way out this workspace offers — see lib/workspaceExit, which is
+  // mirrored in Swift and holds the "roster not loaded yet" rule.
+  const exit = workspaceExit(ws?.role, members.data, auth.user.id);
   const color = sidebarColor(ws?.sidebarColor);
 
   // Restored-workspace guard + default channel: a stale persisted workspace id
@@ -221,6 +268,9 @@ export default function Sidebar() {
           className="flex min-w-0 items-center gap-1 rounded px-1 text-left text-base font-bold hover:bg-white/10"
           onClick={() => setWsMenuOpen((v) => !v)}
         >
+          {ws?.avatarUrl && (
+            <AuthImg path={ws.avatarUrl} alt={ws.name} className="h-5 w-5 shrink-0 rounded object-cover" />
+          )}
           <span className="truncate">{ws?.name ?? 'Workspace'}</span>
           <span className="text-xs text-white/55">▾</span>
         </button>
@@ -243,7 +293,10 @@ export default function Sidebar() {
             {isAdmin && (
               <>
                 <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
-                  Workspace color…
+                  Workspace appearance…
+                </MenuItem>
+                <MenuItem testid="menu-emoji" onClick={() => { setWsMenuOpen(false); setShowEmoji(true); }}>
+                  Custom Emoji…
                 </MenuItem>
                 <MenuItem testid="menu-apps" onClick={() => { setWsMenuOpen(false); setShowApps(true); }}>
                   Manage Apps…
@@ -256,6 +309,32 @@ export default function Sidebar() {
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
             </MenuItem>
+            {/* Leaving is self-service for everyone but the owner (#340). An
+                owner with company has to hand the workspace over first; an
+                owner on their own has nobody to hand it to, so they get to end
+                it instead of staring at a permanently disabled row. */}
+            {exit === 'delete' ? (
+              <MenuItem
+                testid="menu-delete-workspace"
+                destructive
+                onClick={() => { setWsMenuOpen(false); setShowDeleteWs(true); }}
+              >
+                Delete workspace…
+              </MenuItem>
+            ) : (
+              <MenuItem
+                testid="menu-leave-workspace"
+                destructive
+                disabled={exit === 'transferFirst'}
+                title={exit === 'transferFirst' ? 'Transfer ownership first' : undefined}
+                onClick={() => { setWsMenuOpen(false); setShowLeave(true); }}
+              >
+                Leave workspace
+                {exit === 'transferFirst' && (
+                  <span className="ml-1 text-ink/35">— transfer ownership first</span>
+                )}
+              </MenuItem>
+            )}
             <hr className="my-1 border-hairline3" />
             <button
               data-testid="build-number"
@@ -269,7 +348,10 @@ export default function Sidebar() {
         )}
       </div>
 
-      <div className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm">
+      <div
+        data-sidebar-scroll
+        className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm"
+      >
         <ActivityRow
           active={sel.channelId === ACTIVITY_VIEW_ID}
           unread={live.notificationUnread}
@@ -437,7 +519,14 @@ export default function Sidebar() {
       {showInvite && sel.workspaceId && <InviteModal workspaceId={sel.workspaceId} onClose={() => setShowInvite(false)} />}
       {showNewDm && sel.workspaceId && <NewDmModal workspaceId={sel.workspaceId} onClose={() => setShowNewDm(false)} />}
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
+      {showLeave && sel.workspaceId && (
+        <LeaveWorkspaceModal workspaceId={sel.workspaceId} onClose={() => setShowLeave(false)} />
+      )}
+      {showDeleteWs && sel.workspaceId && (
+        <DeleteWorkspaceModal workspaceId={sel.workspaceId} onClose={() => setShowDeleteWs(false)} />
+      )}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
+      {showEmoji && sel.workspaceId && <EmojiModal workspaceId={sel.workspaceId} onClose={() => setShowEmoji(false)} />}
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
       {showInviteAgent && sel.workspaceId && (
         <InviteAgentModal workspaceId={sel.workspaceId} onClose={() => setShowInviteAgent(false)} />
@@ -652,8 +741,19 @@ function ChannelRow({
   // reactions; every message in a DM) and nothing else.
   const unread = channel.unreadCount > 0 && !hideUnread;
   const notifications = hideUnread ? 0 : channel.unreadNotifications;
+  // Arriving at a channel by any route other than clicking it here — a
+  // notification, a deep link, the switcher, being added to a channel — left the
+  // sidebar wherever it was, so the row you just landed on could sit below the
+  // fold (#319). Scroll it back into view, by the minimum needed: a row that is
+  // already visible does not move, which is why a plain sidebar click still
+  // never jumps.
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (active && rowRef.current) scrollRowIntoView(rowRef.current);
+  }, [active]);
   return (
     <div
+      ref={rowRef}
       data-nested={nested ? 'true' : undefined}
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${nested ? 'ml-3' : ''} ${
         active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
@@ -704,15 +804,28 @@ function MenuItem({
   children,
   onClick,
   testid,
+  destructive,
+  disabled,
+  title,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   testid?: string;
+  destructive?: boolean;
+  disabled?: boolean;
+  /** Hover hint — how a disabled item explains itself. */
+  title?: string;
 }) {
   return (
     <button
       data-testid={testid}
-      className="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent/10"
+      title={title}
+      disabled={disabled}
+      className={`block w-full px-3 py-1.5 text-left text-sm ${
+        disabled
+          ? 'cursor-default text-ink/35'
+          : `${destructive ? 'text-red-600 hover:bg-red-50' : ''} hover:bg-accent/10`
+      }`}
       onClick={onClick}
     >
       {children}

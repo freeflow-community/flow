@@ -26,6 +26,8 @@ function msg(over: Partial<MessageDTO> = {}): MessageDTO {
     createdAt: '2026-07-20T00:00:00.000Z',
     editedAt: null,
     deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
     systemKind: null,
     replyCount: 0,
     lastReplyAt: null,

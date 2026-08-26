@@ -7,8 +7,10 @@ import {
   CreateDmBody,
   CreateInviteBody,
   CreateWorkspaceBody,
+  CreateWorkspaceEmojiBody,
   EditMessageBody,
   EmojiParam,
+  ListChannelFilesQuery,
   ListMessagesQuery,
   ListNotificationsQuery,
   ListThreadQuery,
@@ -63,11 +65,15 @@ import { listIdentities } from '../services/oauthAccounts.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
 import * as ci from '../services/channelIndicators.js';
+import * as hd from '../services/huddles.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
+import * as wse from '../services/workspaceEmoji.js';
 import * as fl from '../services/files.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
+import { deleteMyAccount } from '../services/accountDeletion.js';
+import { detachUserFromWorkspace, disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
 import * as ag from '../services/agents.js';
@@ -129,7 +135,27 @@ export function registerRoutes(app: FastifyInstance): void {
     google: config.googleEnabled,
     googleClientId: config.googleClientId ?? null,
     apple: config.appleEnabled,
+    maxFileBytes: config.maxFileBytes,
+    huddles: config.livekitEnabled,
   }));
+
+  // LiveKit webhook (Phase 1 voice huddle): the reconciliation safety net for
+  // a participant/room that vanished without a REST leave call. Not a Flow
+  // user — no requireAuth — `WebhookReceiver` verifies the request's own
+  // signed Authorization header instead. The body arrives as a raw Buffer via
+  // app.ts's catch-all content-type parser, which is exactly what
+  // WebhookReceiver.receive() wants (it parses the JSON itself post-verify).
+  app.post('/v1/livekit/webhook', async (req, reply) => {
+    const authHeader = req.headers.authorization ?? '';
+    const body = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
+    try {
+      await hd.handleLiveKitWebhook(body, authHeader);
+    } catch (err) {
+      req.log.warn({ err }, 'livekit webhook rejected');
+      return reply.status(400).send({ error: { code: 'invalid_webhook', message: 'invalid webhook' } });
+    }
+    return reply.status(200).send({ ok: true });
+  });
 
   // Public macOS app download (operator feature): 302 to a short-lived signed
   // URL for the notarized DMG in blob storage. No auth — it's linked from the
@@ -280,6 +306,17 @@ export function registerRoutes(app: FastifyInstance): void {
     return us.patchMe(req.user.id, body);
   });
 
+  // Self-service account deletion (App Store 5.1.1(v)). The clients gate this
+  // behind an explicit confirmation; the server just needs a valid session.
+  app.delete('/v1/me', { preHandler: requireAuth }, async (req) => {
+    if (!rateAllow(`delete-me:${req.user.id}`, 3, 10 * 60_000)) {
+      throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
+    }
+    await deleteMyAccount(req.user.id);
+    disconnectUser(req.user.id);
+    return { ok: true };
+  });
+
   app.post('/v1/me/avatar', { preHandler: requireAuth }, async (req) => {
     const { mimeType, data } = await readUpload(req);
     return us.setAvatar(req.user.id, data, mimeType);
@@ -346,6 +383,19 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = parse(UpdateWorkspaceBody, req.body);
     return ws.updateWorkspace(id, req.user.id, body);
+  });
+
+  // workspace avatar (#336): owner/admin sets or clears the image mark; both
+  // paths broadcast `workspace.updated` so every client restyles live.
+  app.post('/v1/workspaces/:id/avatar', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const { mimeType, data } = await readUpload(req);
+    return ws.setWorkspaceAvatar(id, req.user.id, data, mimeType);
+  });
+
+  app.delete('/v1/workspaces/:id/avatar', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ws.clearWorkspaceAvatar(id, req.user.id);
   });
 
   // ---- Slack-compat app management (phase 4, owner/admin, web-only UI) ----
@@ -488,6 +538,26 @@ export function registerRoutes(app: FastifyInstance): void {
     return { members: await ws.listMembers(id, req.user.id) };
   });
 
+  // The sole owner's only way out (#340 follow-up): they cannot leave a
+  // workspace with nobody to transfer it to, so they can end it instead.
+  app.delete('/v1/workspaces/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ws.deleteWorkspace(id, req.user.id);
+    detachUserFromWorkspace(req.user.id, id);
+    return { ok: true };
+  });
+
+  // Self-service departure (#340). Not under the admin block below: any
+  // member may leave, and the only one who may not is the owner.
+  app.post('/v1/workspaces/:id/leave', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ws.leaveWorkspace(id, req.user.id);
+    // Sockets last: the service published member.left, and detaching writes it
+    // straight to this user's other clients before dropping the subscription.
+    detachUserFromWorkspace(req.user.id, id);
+    return { ok: true };
+  });
+
   // ---- admin panel: manage users (owner/admin, web-only UI) ----
   app.patch('/v1/workspaces/:id/members/:userId/role', { preHandler: requireAuth }, async (req) => {
     const { id, userId } = req.params as { id: string; userId: string };
@@ -572,6 +642,20 @@ export function registerRoutes(app: FastifyInstance): void {
     return ci.setChannelIndicator(id, req.user.id, body.state, body.ttlSeconds);
   });
 
+  // Voice huddle (Phase 1, LiveKit Cloud): ambient, audio-only, channel-scoped.
+  // See CONTEXT.md (Huddle) and services/huddles.ts for the join/leave/webhook
+  // design. Join is idempotent — re-mints a fresh token, also the reconnect path.
+  app.post('/v1/channels/:id/huddle/join', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return hd.joinHuddle(id, req.user.id);
+  });
+
+  app.post('/v1/channels/:id/huddle/leave', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await hd.leaveHuddle(id, req.user.id);
+    return { ok: true };
+  });
+
   app.put('/v1/channels/:id/notify', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(SetNotifyLevelBody, req.body);
@@ -591,6 +675,19 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const q = parse(ListMessagesQuery, req.query);
     return msg.listMessages(id, req.user.id, q.before, q.limit);
+  });
+
+  // Channel Files panel (#347): every file shared in the channel, sorted and
+  // cursor-paged. Membership is checked in the service, same as reading.
+  app.get('/v1/channels/:id/files', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const q = parse(ListChannelFilesQuery, req.query);
+    return fl.listChannelFiles(id, req.user.id, q.sort, q.before, q.limit);
+  });
+
+  app.get('/v1/channels/:id/pins', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { messages: await msg.listPinnedMessages(id, req.user.id) };
   });
 
   app.post('/v1/channels/:id/messages', { preHandler: requireAuth }, async (req, reply) => {
@@ -622,6 +719,16 @@ export function registerRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
+  app.put('/v1/messages/:id/pin', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return msg.pinMessage(id, req.user.id);
+  });
+
+  app.delete('/v1/messages/:id/pin', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return msg.unpinMessage(id, req.user.id);
+  });
+
   app.get('/v1/messages/:id/thread', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const q = parse(ListThreadQuery, req.query);
@@ -647,6 +754,27 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id, emoji } = req.params as { id: string; emoji: string };
     const parsed = parse(EmojiParam, decodeURIComponent(emoji));
     return { reactions: await rx.removeReaction(id, req.user.id, parsed) };
+  });
+
+  // ---- custom emoji (#175) -------------------------------------
+  // Listing is member-level (you need the images to render other people's
+  // reactions); create/delete are owner/admin, enforced in the service.
+  app.get('/v1/workspaces/:id/emoji', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { emoji: await wse.listEmoji(id, req.user.id) };
+  });
+
+  app.post('/v1/workspaces/:id/emoji', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(CreateWorkspaceEmojiBody, req.body);
+    const dto = await wse.createEmoji(id, req.user.id, body.shortcode, body.fileId);
+    return reply.status(201).send(dto);
+  });
+
+  app.delete('/v1/workspaces/:id/emoji/:emojiId', { preHandler: requireAuth }, async (req) => {
+    const { emojiId } = req.params as { emojiId: string };
+    await wse.deleteEmoji(emojiId, req.user.id);
+    return { ok: true };
   });
 
   // ---- files (phase2.md §3; presigned direct uploads 2026-07-20) ----

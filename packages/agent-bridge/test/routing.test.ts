@@ -32,8 +32,11 @@ function config(over: Partial<BridgeConfig> = {}): BridgeConfig {
     },
     eventScope: 'mentions',
     respondToAgents: false,
+    agentMentionsOnly: false,
+    agentChainLimit: 6,
     concurrency: 1,
     progress: 'silent',
+    relayText: true,
     ...over,
   };
 }
@@ -69,6 +72,8 @@ function message(over: Partial<MessageDTO> = {}): MessageDTO {
     createdAt: '2026-07-22T00:00:00Z',
     editedAt: null,
     deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
     replyCount: 0,
     lastReplyAt: null,
     replyParticipantUserIds: [],
@@ -121,6 +126,104 @@ describe('replyRoot — where the answer goes', () => {
     const replyInThatThread = message({ id: 'msg-10', threadRootId: 'msg-9' });
     expect(b.convKey(top)).toBe(b.convKey(replyInThatThread));
   });
+
+  // A run that creates its own #task-N channel owns it, but never calls
+  // start_task (the dispatcher path has no daemon to hand off to), so
+  // taskChannels stays empty. inScope already answers these top-level, and
+  // replyRoot has to agree or the answer lands in a new thread.
+  it('answers top-level in a channel it created, without start_task', () => {
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBeUndefined();
+  });
+
+  it('answers top-level in a registered task channel someone else created', () => {
+    const b = bridge();
+    b.taskChannels.add('chan-1');
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBeUndefined();
+  });
+
+  it('keeps every top-level message in an owned channel on one session', () => {
+    // The point of replying top-level: a human interjecting reaches the run
+    // with its context, instead of opening a fresh session per thread.
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(b.convKey(message({ id: 'msg-9' }))).toBe(b.convKey(message({ id: 'msg-10' })));
+  });
+
+  it('still threads in a channel someone else created', () => {
+    const b = bridge(); // createdBy: HUMAN
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBe('msg-9');
+  });
+
+  it('leaves a thread reply in its thread even in a channel it owns', () => {
+    // Owning the room is not owning every side conversation in it.
+    const b = bridge(config(), [channel({ createdBy: AGENT })]);
+    expect(b.replyRoot(message({ id: 'msg-10', threadRootId: 'root-1' }))).toBe('root-1');
+  });
+});
+
+describe('inScope — agent loop guards', () => {
+  const dm = channel({ id: 'dm-1', kind: 'group_dm', name: null });
+
+  it('agentMentionsOnly: an agent message in a DM without a mention is ignored', async () => {
+    const b = bridge(config({ respondToAgents: true, agentMentionsOnly: true }), [dm]);
+    expect(await b.inScope(message({ channelId: 'dm-1', userId: OTHER_AGENT, body: 'No response requested.' }))).toBe(
+      false,
+    );
+  });
+
+  it('agentMentionsOnly: the same message with my mention triggers', async () => {
+    const b = bridge(config({ respondToAgents: true, agentMentionsOnly: true }), [dm]);
+    expect(
+      await b.inScope(message({ channelId: 'dm-1', userId: OTHER_AGENT, body: `<@${AGENT}> merge PR #7` })),
+    ).toBe(true);
+  });
+
+  it('agentMentionsOnly: humans are exempt — a bare DM still triggers', async () => {
+    const b = bridge(config({ respondToAgents: true, agentMentionsOnly: true }), [dm]);
+    expect(await b.inScope(message({ channelId: 'dm-1', userId: HUMAN, body: 'hi' }))).toBe(true);
+  });
+
+  it('chain limit: consecutive agent messages trip the breaker, even with mentions', async () => {
+    const b = bridge(config({ respondToAgents: true, agentChainLimit: 3 }), [dm]);
+    const agentMsg = (i: number) =>
+      message({ id: `m-${i}`, channelId: 'dm-1', userId: OTHER_AGENT, body: `<@${AGENT}> ping ${i}` });
+    expect(await b.inScope(agentMsg(1))).toBe(true);
+    expect(await b.inScope(agentMsg(2))).toBe(true);
+    expect(await b.inScope(agentMsg(3))).toBe(true);
+    expect(await b.inScope(agentMsg(4))).toBe(false); // tripped
+    expect(await b.inScope(agentMsg(5))).toBe(false); // stays tripped
+  });
+
+  it('chain limit: a human speaking re-arms the channel', async () => {
+    const b = bridge(config({ respondToAgents: true, agentChainLimit: 2 }), [dm]);
+    const agentMsg = (i: number) =>
+      message({ id: `m-${i}`, channelId: 'dm-1', userId: OTHER_AGENT, body: `<@${AGENT}> ping ${i}` });
+    await b.inScope(agentMsg(1));
+    await b.inScope(agentMsg(2));
+    expect(await b.inScope(agentMsg(3))).toBe(false); // tripped
+    expect(await b.inScope(message({ id: 'm-h', channelId: 'dm-1', userId: HUMAN, body: 'carry on' }))).toBe(true);
+    expect(await b.inScope(agentMsg(4))).toBe(true); // re-armed
+  });
+
+  it("chain limit: my own posts count toward the chain (they're agent traffic too)", async () => {
+    const b = bridge(config({ respondToAgents: true, agentChainLimit: 2 }), [dm]);
+    b.members.set(AGENT, { userId: AGENT, displayName: 'Omni', isAgent: true });
+    const mine = (i: number) => message({ id: `s-${i}`, channelId: 'dm-1', userId: AGENT, body: `note ${i}` });
+    await b.inScope(mine(1));
+    await b.inScope(mine(2));
+    expect(
+      await b.inScope(message({ id: 'm-o', channelId: 'dm-1', userId: OTHER_AGENT, body: `<@${AGENT}> hey` })),
+    ).toBe(false); // 3rd consecutive agent message — tripped
+  });
+
+  it('chain limit: 0 disables the breaker', async () => {
+    const b = bridge(config({ respondToAgents: true, agentChainLimit: 0 }), [dm]);
+    for (let i = 1; i <= 10; i++) {
+      expect(
+        await b.inScope(message({ id: `m-${i}`, channelId: 'dm-1', userId: OTHER_AGENT, body: `ping ${i}` })),
+      ).toBe(true);
+    }
+  });
 });
 
 describe('inScope — channels the agent created', () => {
@@ -160,9 +263,13 @@ describe('inScope — channels the agent created', () => {
     expect(await b.inScope(message({ userId: OTHER_AGENT, body: 'hi' }))).toBe(false);
   });
 
-  it('opens a thread on the message it answers, as usual', () => {
+  // Was: 'opens a thread on the message it answers, as usual'. Reversed
+  // deliberately — a channel the agent created is its own conversation, so
+  // threading a reply there split the run's log and its session. See the
+  // replyRoot cases above.
+  it('answers top-level in its own channel, not in a new thread', () => {
     const b = bridge(config(), [mine()]);
-    expect(b.replyRoot(message({ id: 'msg-9' }))).toBe('msg-9');
+    expect(b.replyRoot(message({ id: 'msg-9' }))).toBeUndefined();
   });
 });
 

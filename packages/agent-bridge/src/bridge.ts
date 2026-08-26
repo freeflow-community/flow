@@ -134,6 +134,10 @@ export class AgentBridge {
   private workspace!: WorkspaceDTO;
   private channels = new Map<string, ChannelDTO>();
   private members = new Map<string, WorkspaceMemberDTO>();
+  /** Set once we learn we are no longer a member of this workspace (#340).
+   * Every workspace-scoped call would 404 from here on, so we stop making
+   * them rather than logging a failed refresh on every event. */
+  private departed = false;
   private conversations = new Map<string, Conversation>();
   /** Channels homing a start_task run. The bridge converses in them DM-style —
    * top-level, one session — so the run and human interjections share context.
@@ -319,6 +323,8 @@ export class AgentBridge {
       createdAt: new Date().toISOString(),
       editedAt: null,
       deletedAt: null,
+      pinnedAt: null,
+      pinnedBy: null,
       systemKind: null,
       replyCount: 0,
       lastReplyAt: null,
@@ -384,7 +390,7 @@ export class AgentBridge {
   }
 
   private scheduleRefresh(): void {
-    if (this.refreshTimer) return;
+    if (this.departed || this.refreshTimer) return;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
       this.refreshDirectory().catch((err: Error) => this.log(`directory refresh failed: ${err.message}`));
@@ -392,7 +398,37 @@ export class AgentBridge {
     this.refreshTimer.unref();
   }
 
+  /**
+   * We were removed from the workspace — the sponsor left and took us with
+   * them, or an admin removed us (#340). Nothing here is recoverable without a
+   * re-invite, so say so once and go quiet: the alternative is a directory
+   * refresh that 404s on every subsequent event. The process stays up so a
+   * supervisor sees a clean exit reason rather than a crash.
+   */
+  private handleOwnRemoval(): void {
+    if (this.departed) return;
+    this.departed = true;
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    this.channels.clear();
+    this.members.clear();
+    this.log(
+      `removed from workspace ${this.workspace.name} — no longer serving it ` +
+        `(ask an admin to re-invite this agent, then restart the bridge)`,
+    );
+  }
+
   private handleEvent(ev: Event): void {
+    // Our own workspace-level departure, before anything else: a `member.left`
+    // with no channelId naming us is the last event we can act on.
+    if (ev.type === 'member.left' && !ev.channelId && (ev.data as { userId?: string })?.userId === this.me.id) {
+      this.handleOwnRemoval();
+      return;
+    }
+    // Someone else's membership change while we're out: nothing to refresh.
+    if (this.departed) return;
     if (ev.type === 'member.joined' || ev.type === 'member.left' || ev.type === 'channel.created') {
       this.scheduleRefresh();
       return;
@@ -523,13 +559,39 @@ export class AgentBridge {
     setTimeout(() => this.exitProcess(update ? EXIT_UPDATE : EXIT_RESTART), 300);
   }
 
+  /**
+   * Consecutive agent-authored messages per channel since a human last spoke
+   * (our own posts count — they are agent traffic too). The circuit breaker
+   * (`agentChainLimit`) reads this: a channel where only agents have been
+   * talking for a while is a loop, whatever the messages say.
+   */
+  private agentChain = new Map<string, number>();
+
   /** Sender gating + self/agent loop guard + event-scope filter. */
   private async inScope(msg: MessageDTO): Promise<boolean> {
-    if (msg.userId === this.me.id) return false; // never our own messages (incl. MCP-sent)
     if (msg.deletedAt) return false;
     const sender = this.members.get(msg.userId);
+    // Chain accounting first, on every real message we can attribute — a
+    // human speaking re-arms the channel; agent chatter (ours included)
+    // burns it down. Status/system lines don't count either way.
+    let chain = 0;
+    if (sender && !msg.systemKind && !msg.body.startsWith(THINKING_PREFIX)) {
+      chain = sender.isAgent ? (this.agentChain.get(msg.channelId) ?? 0) + 1 : 0;
+      this.agentChain.set(msg.channelId, chain);
+    }
+    if (msg.userId === this.me.id) return false; // never our own messages (incl. MCP-sent)
     if (!sender) return false; // only workspace members
     if (sender.isAgent && !this.cfg.respondToAgents) return false; // agent-to-agent loop guard
+    if (sender.isAgent && this.cfg.agentChainLimit > 0 && chain > this.cfg.agentChainLimit) {
+      this.log(
+        `loop breaker: ${chain} consecutive agent messages in ${msg.channelId} — ignoring until a human speaks`,
+      );
+      return false;
+    }
+    // Agent-to-agent traffic must be an explicit hand-off: with
+    // agentMentionsOnly, an agent's message triggers us only when it
+    // @-mentions us — including in DMs, where the ping-pong loops live.
+    if (sender.isAgent && this.cfg.agentMentionsOnly && !msg.body.includes(`<@${this.me.id}>`)) return false;
     const chan = this.channels.get(msg.channelId);
     if (!chan?.isMember) return false; // only channels we're in
     // Channel event lines ("Alice joined the channel") are notices for humans,
@@ -563,12 +625,23 @@ export class AgentBridge {
    */
   private replyRoot(msg: MessageDTO): string | undefined {
     if (msg.threadRootId) return msg.threadRootId;
-    // A task channel converses DM-style: the channel *is* the conversation.
+    const chan = this.channels.get(msg.channelId);
+    // A channel we own converses DM-style: the channel *is* the conversation.
     // Top-level replies keep the run's log linear, and — via convKey — route
     // every top-level message into the run's own session, which is what lets
     // a human interject with the run's full context.
-    if (this.taskChannels.has(msg.channelId)) return undefined;
-    const chan = this.channels.get(msg.channelId);
+    //
+    // "Ours" must mean the same here as it does in inScope, or the two
+    // disagree: a channel the agent created is in scope for top-level
+    // messages, so it answers them, but if only `taskChannels` counted as
+    // owned it would answer them in a *new thread* — and each thread is its
+    // own convKey, so the reply also lost the run's context. That is the
+    // common case, not a corner: a dispatched run has no start_task to call
+    // (it is the fallback path in work-project-tasks/SKILL.md §3), so it
+    // creates its own #task-N channel and `taskChannels` never learns of it.
+    // `taskChannels` is in-memory besides, so a bridge restart drops even the
+    // channels that did register.
+    if (this.taskChannels.has(msg.channelId) || chan?.createdBy === this.me.id) return undefined;
     if (!chan || chan.kind === 'dm' || chan.kind === 'group_dm') return undefined;
     return msg.id;
   }
@@ -666,6 +739,7 @@ export class AgentBridge {
       this.api,
       this.socket,
       this.cfg.progress,
+      this.cfg.relayText,
       msg.channelId,
       replyRoot,
       (m) => this.log(m),
@@ -687,6 +761,7 @@ export class AgentBridge {
           mcpConfigPath,
           signal: live.controller.signal,
           onToolStep: (step) => progress.onStep(step),
+          onText: (text) => progress.onText(text),
           log: (m) => this.log(m),
         });
       let result = await run(conv.started);
@@ -698,7 +773,9 @@ export class AgentBridge {
         conv.started = true;
         result = await run(true);
       }
-      await progress.finish();
+      // The reply we're about to post is (for claude) the last text block we
+      // already relayed — hand it over so the narration doesn't end on it.
+      await progress.finish(result.text);
       if (result.interrupted) {
         // Asked for, not broken: say who stopped it and hand back the partial
         // work. The session survives (SIGTERM let the CLI flush its

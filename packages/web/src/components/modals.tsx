@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { SIDEBAR_COLORS } from '@flow/shared';
+import { SIDEBAR_COLORS, PROFILE_BIO_MAX, PROFILE_WEBSITE_MAX, isProfileWebsiteUrl } from '@flow/shared';
 import type { ChannelDTO, InviteDTO, JoinLinkDTO, NotificationPrefs, UserDTO } from '@flow/shared';
-import { api, uploadAvatar } from '../lib/api';
+import { api, uploadAvatar, uploadWorkspaceAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { AuthImg, Avatar } from './Avatar';
@@ -84,13 +84,31 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
   );
 }
 
-/** Edit a standard channel's name + topic (ui_nits item 5); any member. */
-export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
+/**
+ * Channel options (#188): name, topic and delete, reached from the header's
+ * "⋯" menu — the same three on every client. Deleting is the server's archive
+ * (soft: the channel leaves the sidebar and goes read-only), and #general
+ * can be neither renamed nor deleted.
+ */
+export function ChannelOptionsModal({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
   const qc = useQueryClient();
+  const sel = useSelection();
   const [name, setName] = useState(channel.name ?? '');
   const [topic, setTopic] = useState(channel.topic ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const isGeneral = channel.name === 'general';
+
+  const remove = async () => {
+    try {
+      await api('POST', `/v1/channels/${channel.id}/archive`);
+      await qc.invalidateQueries({ queryKey: ['channels', channel.workspaceId] });
+      if (sel.channelId === channel.id) sel.selectChannel(null);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
 
   const save = async () => {
     try {
@@ -106,8 +124,8 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
   };
 
   return (
-    <Modal onClose={onClose} testid="edit-channel-modal">
-      <h3 className="mb-3 font-bold">Channel settings</h3>
+    <Modal onClose={onClose} testid="channel-options-modal">
+      <h3 className="mb-3 font-bold">Channel options</h3>
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Name</label>
       <input data-testid="edit-channel-name" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm disabled:opacity-60"
         placeholder="name (lowercase, a-z 0-9 - _)" value={name} disabled={isGeneral}
@@ -119,11 +137,24 @@ export function EditChannelModal({ channel, onClose }: { channel: ChannelDTO; on
         onChange={(e) => setTopic(e.target.value)} autoFocus={isGeneral}
         onKeyDown={(e) => { if (e.key === 'Enter') void save(); }} />
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
-        <button data-testid="edit-channel-save"
-          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-          disabled={!isGeneral && !name.trim()} onClick={() => void save()}>Save</button>
+      <div className="flex items-center justify-between gap-2">
+        {isGeneral ? (
+          <span />
+        ) : confirmDelete ? (
+          <button data-testid="channel-delete-confirm"
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700"
+            onClick={() => void remove()}>Really delete?</button>
+        ) : (
+          <button data-testid="channel-delete"
+            className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+            onClick={() => setConfirmDelete(true)}>Delete channel</button>
+        )}
+        <div className="flex gap-2">
+          <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
+          <button data-testid="edit-channel-save"
+            className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+            disabled={!isGeneral && !name.trim()} onClick={() => void save()}>Save</button>
+        </div>
       </div>
     </Modal>
   );
@@ -493,19 +524,136 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
   );
 }
 
-/** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
-export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+/**
+ * Leaving a workspace (#340). Destructive and irreversible from the leaver's
+ * side — they need a re-invite to come back — so it confirms first and says
+ * plainly what survives. The owner never reaches this dialog; the menu item
+ * that opens it is disabled for them.
+ */
+export function LeaveWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const qc = useQueryClient();
+  const sel = useSelection();
   const workspaces = useWorkspaces();
-  const current = (workspaces.data ?? []).find((w) => w.id === workspaceId)?.sidebarColor;
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pick = async (id: string) => {
+  const leave = async () => {
     setError(null);
     setBusy(true);
     try {
-      await api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id });
+      await api('POST', `/v1/workspaces/${workspaceId}/leave`);
+      // Land somewhere valid before the list refetches, so no render sees a
+      // selection pointing at a workspace that is gone.
+      const next = (workspaces.data ?? []).find((w) => w.id !== workspaceId);
+      sel.selectWorkspace(next?.id ?? null);
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="leave-workspace-modal">
+      <h3 className="mb-2 font-bold">Leave {ws?.name ?? 'workspace'}?</h3>
+      <p className="mb-4 text-sm text-ink-soft">
+        You&rsquo;ll lose access to all its channels. Your past messages will remain.
+      </p>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          data-testid="leave-workspace-confirm"
+          className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void leave()}
+        >
+          {busy ? 'Leaving…' : 'Leave workspace'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Deleting a workspace (#340 follow-up). Only reachable by an owner who is the
+ * last person in it — otherwise there is somebody to hand it to, and the menu
+ * offers "transfer ownership first" instead.
+ *
+ * Confirmation weight matches "Delete account" in `ProfileModal`, the nearest
+ * equally irreversible action in this app: an explicit destructive press, no
+ * type-the-name gesture. The blast radius here is one person's own workspace.
+ */
+export function DeleteWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const sel = useSelection();
+  const workspaces = useWorkspaces();
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const destroy = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api('DELETE', `/v1/workspaces/${workspaceId}`);
+      const next = (workspaces.data ?? []).find((w) => w.id !== workspaceId);
+      sel.selectWorkspace(next?.id ?? null);
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="delete-workspace-modal">
+      <h3 className="mb-2 font-bold">Delete {ws?.name ?? 'workspace'}?</h3>
+      <p className="mb-4 text-sm text-ink-soft">
+        You&rsquo;re the only one left, so there&rsquo;s nobody to hand it to. Deleting removes the workspace
+        and every channel, message and file in it, for good. This cannot be undone.
+      </p>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          data-testid="delete-workspace-confirm"
+          className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void destroy()}
+        >
+          {busy ? 'Deleting…' : 'Delete workspace'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
+/** Owner/admin workspace branding: the sidebar color preset, and the optional
+ * avatar image (#336) that replaces the color/initial mark when set. */
+export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const workspaces = useWorkspaces();
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  const current = ws?.sidebarColor;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  /** Both branding writes look the same from here: run it, refresh the list
+   * (the server has already broadcast `workspace.updated` to everyone else). */
+  const save = async (write: () => Promise<unknown>) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await write();
       await qc.invalidateQueries({ queryKey: ['workspaces'] });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed');
@@ -514,9 +662,59 @@ export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: str
     }
   };
 
+  const pick = (id: string) => save(() => api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id }));
+
+  const pickAvatar = (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    void save(() => uploadWorkspaceAvatar(workspaceId, file));
+  };
+
   return (
     <Modal onClose={onClose} testid="workspace-color-modal">
-      <h3 className="mb-3 font-bold">Workspace color</h3>
+      <h3 className="mb-3 font-bold">Workspace appearance</h3>
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Avatar</label>
+      <div className="mb-4 flex items-center gap-3">
+        {ws?.avatarUrl ? (
+          <AuthImg
+            path={ws.avatarUrl}
+            alt={ws.name}
+            className="h-12 w-12 rounded-xl object-cover"
+          />
+        ) : (
+          <span
+            data-testid="workspace-avatar-placeholder"
+            className="flex h-12 w-12 items-center justify-center rounded-xl bg-daypill text-lg font-bold text-muted"
+          >
+            {(ws?.name ?? '?').slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        <div className="flex flex-col items-start gap-0.5">
+          <label className="cursor-pointer text-sm text-accent-soft hover:underline">
+            {busy ? 'Working…' : ws?.avatarUrl ? 'Replace image…' : 'Upload image…'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              hidden
+              data-testid="workspace-avatar-input"
+              onChange={(e) => { pickAvatar(e.target.files); e.target.value = ''; }}
+            />
+          </label>
+          {ws?.avatarUrl ? (
+            <button
+              data-testid="workspace-avatar-remove"
+              disabled={busy}
+              className="text-sm text-ink-soft hover:underline disabled:opacity-50"
+              onClick={() => void save(() => api('DELETE', `/v1/workspaces/${workspaceId}/avatar`))}
+            >
+              Remove
+            </button>
+          ) : (
+            <span className="text-xs text-faint">PNG, JPEG, GIF or WebP — under 1MB.</span>
+          )}
+        </div>
+      </div>
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Color</label>
       <div className="mb-3 grid grid-cols-4 gap-2">
         {SIDEBAR_COLORS.map((c) => (
           <button
@@ -578,14 +776,40 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [displayName, setDisplayName] = useState(auth.user.displayName);
   const [timezone, setTimezone] = useState(auth.user.timezone || 'UTC');
+  const [website, setWebsite] = useState(auth.user.website ?? '');
+  const [bio, setBio] = useState(auth.user.bio ?? '');
   const [error, setError] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const timezones = Intl.supportedValuesOf('timeZone');
   const prefs = auth.user.notificationPrefs;
 
+  /** App Store 5.1.1(v) parity: the same self-service deletion the apps offer. */
+  const deleteAccount = async () => {
+    setDeleteBusy(true);
+    setError(null);
+    try {
+      await api('DELETE', '/v1/me');
+      auth.signOut(); // local teardown; its logout POST failing on the dead session is fine
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setDeleteBusy(false);
+    }
+  };
+
+  // #220: the server rejects anything that isn't an absolute http(s) URL, so say
+  // so here rather than letting Save fail with a raw validation error.
+  const websiteInvalid = website.trim() !== '' && !isProfileWebsiteUrl(website.trim());
+
   const save = async () => {
     try {
-      const me = await api<UserDTO>('PATCH', '/v1/me', { displayName, timezone });
+      const me = await api<UserDTO>('PATCH', '/v1/me', {
+        displayName,
+        timezone,
+        website: website.trim(),
+        bio,
+      });
       auth.setUser(me);
       await qc.invalidateQueries({ queryKey: ['members'] });
       onClose();
@@ -646,6 +870,28 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
       </select>
 
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Website</label>
+      <input data-testid="profile-website" type="url" placeholder="https://example.com"
+        maxLength={PROFILE_WEBSITE_MAX}
+        className={`w-full rounded border px-3 py-2 text-sm ${websiteInvalid ? 'border-red-500' : 'border-hairline2'}`}
+        value={website} onChange={(e) => setWebsite(e.target.value)} />
+      <p data-testid="profile-website-error"
+        className={`mb-3 mt-1 text-xs ${websiteInvalid ? 'text-red-600' : 'text-faint'}`}>
+        {websiteInvalid ? 'Must be a full link starting with http:// or https://' : 'Shown on your profile card.'}
+      </p>
+
+      <div className="mb-1 flex items-baseline justify-between">
+        <label className="block text-xs font-semibold text-faint uppercase">Bio</label>
+        <span data-testid="profile-bio-count"
+          className={`text-xs ${bio.length >= PROFILE_BIO_MAX ? 'text-red-600' : 'text-faint'}`}>
+          {bio.length}/{PROFILE_BIO_MAX}
+        </span>
+      </div>
+      <textarea data-testid="profile-bio" rows={3} maxLength={PROFILE_BIO_MAX}
+        placeholder="A sentence or two about you."
+        className="mb-3 w-full resize-y rounded border border-hairline2 px-3 py-2 text-sm"
+        value={bio} onChange={(e) => setBio(e.target.value)} />
+
       <div className="mt-2 mb-1 border-t border-hairline pt-3 text-xs font-semibold text-faint uppercase">
         Notifications
       </div>
@@ -660,15 +906,41 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.threadReply !== false} onChange={(v) => void setPref('threadReply', v)} />
       <PrefToggle testid="pref-reaction" label="Reactions" hint="someone reacts to your message"
         checked={prefs.reaction !== false} onChange={(v) => void setPref('reaction', v)} />
+      <PrefToggle testid="pref-channel-invite" label="Channel invites" hint="someone adds you to a channel"
+        checked={prefs.channelInvite !== false} onChange={(v) => void setPref('channelInvite', v)} />
       <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
         checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
+
+      <div className="mt-3 border-t border-hairline pt-3">
+        {confirmingDelete ? (
+          <div data-testid="profile-delete-confirm">
+            <p className="mb-2 text-sm text-red-600">
+              Permanently delete your account? You leave every workspace, your email is freed for future
+              use, and this cannot be undone. Past messages remain, attributed to your name.
+            </p>
+            <div className="flex gap-2">
+              <button data-testid="profile-delete-really"
+                className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                disabled={deleteBusy} onClick={() => void deleteAccount()}>
+                {deleteBusy ? 'Deleting…' : 'Delete my account'}
+              </button>
+              <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={deleteBusy}
+                onClick={() => setConfirmingDelete(false)}>Keep my account</button>
+            </div>
+          </div>
+        ) : (
+          <button data-testid="profile-delete"
+            className="text-sm text-red-600 hover:underline"
+            onClick={() => setConfirmingDelete(true)}>Delete account…</button>
+        )}
+      </div>
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <div className="mt-3 flex justify-end gap-2">
         <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
         <button data-testid="profile-save"
           className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-          disabled={!displayName.trim()} onClick={() => void save()}>Save</button>
+          disabled={!displayName.trim() || websiteInvalid} onClick={() => void save()}>Save</button>
       </div>
     </Modal>
   );
@@ -732,6 +1004,27 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
           {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
           <p className="text-sm text-muted select-all">{user.email}</p>
           <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>
+          {/* #220: the server only stores http(s) URLs, but re-check before
+              making it clickable — a row written before that rule must not
+              become a javascript: link in someone else's page. */}
+          {user.website &&
+            (isProfileWebsiteUrl(user.website) ? (
+              <a data-testid="user-card-website" href={user.website} target="_blank" rel="noreferrer noopener"
+                className="max-w-full truncate text-sm text-accent-deep underline">
+                {user.website.replace(/^https?:\/\//i, '')}
+              </a>
+            ) : (
+              <span data-testid="user-card-website" className="max-w-full truncate text-sm text-muted">
+                {user.website}
+              </span>
+            ))}
+          {/* Plain text, not markdown: a React text child escapes it, and
+              whitespace-pre-wrap is what keeps the author's line breaks. */}
+          {user.bio && (
+            <p data-testid="user-card-bio" className="mt-1 max-w-xs whitespace-pre-wrap text-left text-sm text-ink-soft">
+              {user.bio}
+            </p>
+          )}
           {sponsor && (
             <div
               data-testid="user-card-sponsor"

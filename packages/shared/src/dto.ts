@@ -8,6 +8,14 @@ export interface UserDTO {
   timezone: string; // IANA name, default UTC
   statusEmoji: string; // '' = no status
   statusText: string; // '' = no status
+  /** Personal website (#220). '' = none. Always an absolute http(s) URL — the
+   * server rejects every other scheme, so clients may link it directly (with
+   * rel="noreferrer noopener"). */
+  website: string;
+  /** Free-text bio (#220). '' = none. **Plain text**, not markdown: newlines are
+   * significant, everything else renders literally. Render it in a node that
+   * escapes (a React text child, SwiftUI Text) — never as HTML. */
+  bio: string;
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
   /** Agents only: the human member who sponsored (approved) the agent. null for
@@ -33,6 +41,10 @@ export interface NotificationPrefs {
   threadReply?: boolean | undefined;
   /** Reactions on my own messages (kind 4). Default on. */
   reaction?: boolean | undefined;
+  /** Someone added me to a channel (kind 5). Default on. Deliberately its own
+   * key rather than sharing `mention`: muting mentions must not silently mute
+   * invites, which are the only signal that new work has arrived. */
+  channelInvite?: boolean | undefined;
   /** Web-only presentation pref: OS notifications persist until dismissed (requireInteraction). Default off. */
   persistentBanners?: boolean | undefined;
 }
@@ -47,10 +59,18 @@ export interface WorkspaceDTO {
   createdBy: string;
   createdAt: string;
   sidebarColor: string; // preset id from SIDEBAR_COLORS (phase 3.5)
+  /** #336: optional workspace avatar, an authenticated `/v1/avatars/<key>`
+   * path (same route user avatars use). null = draw the color/initial mark. */
+  avatarUrl: string | null;
   /** Phase 16 §5a: when set, any Google user with a *verified* email on this
    * domain self-enrols on sign-in — no invite. null = off (the default). */
   googleSelfRegisterDomain: string | null;
   role?: MemberRole; // present on "my workspaces"
+  /** #345: unread notifications across this workspace's channels — the number
+   * the sidebar rail badge shows. The same rows the Activity total counts, so
+   * reading the feed drains it. Present on "my workspaces" only; absent
+   * elsewhere means "not computed", not zero. */
+  unreadCount?: number;
 }
 
 export type MemberRole = 'owner' | 'admin' | 'member';
@@ -64,6 +84,9 @@ export interface WorkspaceMemberDTO {
   statusText: string;
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
+  /** App/integration bot user. Like `isAgent`, it means "not a person" — which
+   * is what the sole-human check behind Delete workspace turns on. */
+  isBot: boolean;
   /** Agents only: the human member who sponsored (approved) the agent and is responsible for it. */
   sponsorId: string | null;
   role: MemberRole;
@@ -114,6 +137,12 @@ export type NotifyLevel = 0 | 1 | 2;
  */
 export type ChannelIndicatorState = 'busy';
 
+/** One participant in a channel's live voice huddle (Phase 1: audio-only). */
+export interface HuddleParticipantDTO {
+  userId: string;
+  joinedAt: string; // ISO
+}
+
 export interface ChannelDTO {
   id: string;
   workspaceId: string;
@@ -138,6 +167,13 @@ export interface ChannelDTO {
    * badge shows, and these sum to the Activity row's total.
    */
   unreadNotifications: number;
+  /**
+   * Thread roots in this channel with an unread notification for me (#270) —
+   * clients put a dot on the root's "N replies" chip, so a reply that needs
+   * you is visible in the transcript and not only in the sidebar badge.
+   * Empty for a non-member, and cleared for a thread once you open it.
+   */
+  unreadThreadRootIds: string[];
   notifyLevel: NotifyLevel;
   /**
    * Parent channel (#118) — set at creation, one level deep, so clients can
@@ -156,12 +192,33 @@ export interface ChannelDTO {
    * `channel.indicator` events carry every change after that.
    */
   indicator?: ChannelIndicatorState | null;
+  /**
+   * Live voice huddle participants (Phase 1) — ambient, per-channel audio call.
+   * Transient server state, never a DB column (see `huddles.ts`): LiveKit is
+   * the source of truth, this is a cache of it. Present on the channel list so
+   * a fresh client shows an already-active huddle; `huddle.updated` events
+   * carry every change after that. Absent/empty means no active huddle.
+   */
+  huddleParticipants?: HuddleParticipantDTO[];
 }
 
 export interface ReactionAggDTO {
   emoji: string; // unicode emoji
   count: number;
   userIds: string[];
+}
+
+/** A workspace custom emoji (#175). `emoji` is the `:shortcode:` form — exactly
+ * the string a reaction row stores — so clients can key their lookup map on it
+ * directly. The image is fetched from `/v1/files/{fileId}` like any other. */
+export interface WorkspaceEmojiDTO {
+  id: string;
+  workspaceId: string;
+  shortcode: string; // bare, no colons
+  emoji: string; // `:shortcode:`
+  fileId: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface FileDTO {
@@ -175,6 +232,35 @@ export interface FileDTO {
   height: number | null;
   hasThumb: boolean;
   createdAt: string;
+}
+
+/** One row of the channel Files panel (#347): a file attached to a live
+ * message in the channel. `messageId` is the message it was shared in, so a
+ * client can jump to it; a file shared twice appears once per message. */
+export interface ChannelFileDTO {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  hasThumb: boolean;
+  /** who uploaded it — id plus a display name so a row renders without a roster */
+  userId: string;
+  uploaderName: string;
+  /** when the file was shared (the message's timestamp) */
+  createdAt: string;
+  messageId: string;
+}
+
+export type ChannelFileSort = 'newest' | 'oldest' | 'name' | 'size';
+
+/** GET /v1/channels/:id/files. `nextCursor` is opaque — hand it straight back
+ * as `before` for the next page; null means the list is exhausted. */
+export interface ChannelFilePage {
+  files: ChannelFileDTO[];
+  total: number;
+  nextCursor: string | null;
 }
 
 /** Response of POST /v1/workspaces/:id/files/presign: upload the bytes to
@@ -250,6 +336,19 @@ export interface UnfurlDTO {
     provider?: string;
     durationSec?: number;
   };
+  /** Present when the link is a video we can play inside Flow. The player URL
+   * is built by the server from the parsed `videoId` — the provider's own
+   * oEmbed `html` is never forwarded — so a client renders a frame it was
+   * handed, not third-party markup it has to trust. Clients show a play badge
+   * and only load `playerUrl` once the viewer asks for it. `playerUrl` carries
+   * no query string, so appending `?autoplay=1` is safe. */
+  embed?: {
+    provider: 'youtube';
+    videoId: string;
+    playerUrl: string;
+    width?: number;
+    height?: number;
+  };
   fetchedAt: string;
   expiresAt: string;
 }
@@ -267,6 +366,10 @@ export interface MessageDTO {
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+  /** Channel-wide pin metadata. Null means the message is not currently
+   * pinned; any channel member may pin or unpin a live message. */
+  pinnedAt: string | null;
+  pinnedBy: string | null;
   replyCount: number;
   lastReplyAt: string | null;
   /** Non-null marks a channel event line (join/leave) rather than a user message.
@@ -286,9 +389,10 @@ export interface MessageDTO {
 
 /**
  * notifications.kind: 0=mention (incl. group mentions), 1=dm, 2=thread_reply,
- * 3=channel activity (notify_level=all), 4=reaction on one of my messages
+ * 3=channel activity (notify_level=all), 4=reaction on one of my messages,
+ * 5=someone added me to a channel (#303)
  */
-export type NotificationKind = 0 | 1 | 2 | 3 | 4;
+export type NotificationKind = 0 | 1 | 2 | 3 | 4 | 5;
 
 export interface NotificationDTO {
   id: string;
@@ -362,6 +466,10 @@ export interface PublicConfigDTO {
   googleClientId: string | null;
   /** Sign in with Apple is configured server-side (native iOS flow). */
   apple: boolean;
+  /** Largest file the presigned upload path accepts, in bytes. Public so a
+   * client can refuse an over-size file before the round trip and say what the
+   * limit is — the iOS share extension does this for videos (issue #219). */
+  maxFileBytes: number;
 }
 
 /** GET /v1/me/identities — external identities linked to the signed-in user.

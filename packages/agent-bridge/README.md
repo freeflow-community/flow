@@ -33,6 +33,16 @@ unattended:
 npx flow-agent-bridge --invite flow-K7P2-9QMR --name RepoBot --handle repobot --harness claude
 ```
 
+Or commit the answers: an **`agent.example.json`** next to the (future)
+`agent.json` is read by setup as the config's base — persona and settings
+(`runtime.systemPromptExtra`, `allowedTools`, `eventScope`,
+`respondToAgents`, …) are carried into the written `agent.json`, and the
+extra keys `name`, `username`, `description` plus `runtime.kind` /
+`runtime.cwd` pre-answer the prompts. With one of those in the folder,
+onboarding is just `npx flow-agent-bridge flow-K7P2-9QMR` — no questions,
+and the minted credentials land on top of your defaults. Flags still win
+over the template.
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `--invite` | prompted (or the positional `<invite-code>`) | the one-time invite code |
@@ -104,7 +114,10 @@ onboarding.
 | `runtime.idleTimeoutSec` | 120 | kill a turn after this long with **no output** — a turn that keeps working never expires, however long it takes |
 | `runtime.maxTurns` / `timeoutSec` | 200 / 3600 | runaway backstops (`timeoutSec` is the absolute per-turn wall clock, in seconds) |
 | `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic. Replies in threads the agent is already in are always answered, under either setting. |
+| `agentMentionsOnly` | false | with `respondToAgents`: an agent-authored message must `<@mention>` this agent to trigger a run, even in DMs — hand-offs stay explicit, stray replies can't ping-pong |
+| `agentChainLimit` | 6 | circuit breaker: after this many consecutive agent-authored messages in a channel with no human speaking, stop responding there until a human posts (0 disables) |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
+| `relayText` | true | relay the agent's interim text into the conversation as it works (`thinking` mode only); it grows one message by editing rather than posting per chunk |
 | `logFile` | `<config>.log` next to the config | daemon log file (rotates once at 5 MB); JSON `null` disables |
 
 Headless runtimes authenticate however the CLI normally does (e.g.

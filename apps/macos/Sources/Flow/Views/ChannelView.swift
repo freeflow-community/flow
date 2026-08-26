@@ -4,9 +4,11 @@ import SwiftUI
 struct ChannelView: View {
     let channelId: String
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
+    @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
     @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     /// One roster observer for the whole header + list: names, status and the
     /// agent flag all come off the same User records (#70 needs status *text*,
@@ -19,25 +21,58 @@ struct ChannelView: View {
     /// carries memberIds for DMs.
     @State private var channelMemberIds: [String] = []
     @State private var showMembers = false
+    @State private var showPins = false
+    /// How many of the newest cached messages the transcript shows. A hot
+    /// channel accumulates thousands of rows in SQLite, and rendering them
+    /// all is both slow and — worse — pushes the list onto the LazyVStack
+    /// path, whose row-height estimates are the root of every parked/blank
+    /// open and misplaced restore. One window's worth keeps every ordinary
+    /// open on the exact, eager path; "Load earlier" widens it.
+    @State private var transcriptWindow = ChannelView.windowStep
+
+    static let windowStep = 100
+
+    /// The fetch grabs one row beyond the window, so "is there more in the
+    /// cache" needs no second query.
+    private var hasMoreCached: Bool { messages.value.count > transcriptWindow }
+    private var transcript: [Message] {
+        hasMoreCached ? Array(messages.value.dropFirst()) : messages.value
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            SyncBar(syncing: app.isSyncing)
 
             MessageListView(
-                messages: messages.value,
+                messages: transcript,
                 userNames: userNames,
                 userStatuses: userStatuses,
                 currentUserId: app.currentUser?.id,
                 canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
-                hasMore: app.hasMore[channelId] ?? false,
+                context: TranscriptContext(
+                    engine: app.engine,
+                    avatarPaths: app.avatarPaths,
+                    agentIds: app.agentIds,
+                    onError: { app.showError($0) },
+                    onSelectArtifact: { win.selectArtifact($0) }
+                ),
+                hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
+                isLoadingHistory: app.loadingHistory.contains(channelId),
                 showThreadAffordances: true,
+                unreadThreadRootIds: Set(channel.value?.unreadThreadRootIds ?? []),
                 onLoadOlder: {
-                    Task { await app.engine.loadOlder(channelId: channelId) }
+                    // Widen the window first (instant, from cache); go to the
+                    // server only once the cache is exhausted.
+                    let cacheHadMore = hasMoreCached
+                    transcriptWindow += Self.windowStep
+                    if !cacheHadMore {
+                        Task { await app.engine.loadOlder(channelId: channelId) }
+                    }
                 },
                 onOpenThread: { rootId in
-                    app.openThread(rootId)
+                    win.openThread(rootId)
                 },
                 onEdit: { message in
                     editingMessage = message
@@ -51,8 +86,8 @@ struct ChannelView: View {
                 scrollKey: channelId,
                 // Jump-to-message (phase 12): the main list owns the target
                 // unless it's a thread reply (ThreadPanelView handles those).
-                focusMessageId: app.openThreadRootId == nil ? app.focusMessageId : nil,
-                onFocused: { app.focusMessageId = nil }
+                focusMessageId: win.openThreadRootId == nil ? win.focusMessageId : nil,
+                onFocused: { win.focusMessageId = nil }
             )
 
             TypingIndicatorView(channelId: channelId, userNames: userNames)
@@ -73,13 +108,15 @@ struct ChannelView: View {
             }
         }
         .task(id: channelId) {
+            transcriptWindow = Self.windowStep
             channel.start(db: app.db, reset: nil) { db in
                 try Channel.fetchOne(db, key: channelId)
             }
-            messages.start(db: app.db, reset: []) { db in
+            startMessages()
+            pinnedMessages.start(db: app.db, reset: []) { db in
                 try Message
-                    .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
-                    .order(Column("id"))
+                    .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
+                    .order(Column("pinnedAt").desc)
                     .fetchAll(db)
             }
             users.start(db: app.db, reset: [:]) { db in
@@ -93,11 +130,16 @@ struct ChannelView: View {
                 )
             }
             await loadChannelMembers()
+            // A transcript on screen must have been asked for at least once —
+            // the selection-driven fetch alone can leave this one blank (#269).
+            await app.engine.ensureHistory(channelId: channelId)
+            await app.engine.loadPinnedMessages(channelId: channelId)
         }
         // Jump-to-message (phase 12): a target from the Activity feed may sit
         // beyond the loaded page — page older history until it's in the list,
         // then MessageListView scrolls to it. Give up once history is exhausted.
-        .onChange(of: app.focusMessageId) { _, _ in pageToFocusIfNeeded() }
+        .onChange(of: transcriptWindow) { _, _ in startMessages() }
+        .onChange(of: win.focusMessageId) { _, _ in pageToFocusIfNeeded() }
         .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
@@ -112,6 +154,22 @@ struct ChannelView: View {
             if let c = channel.value {
                 ChannelEditSheet(channel: c)
             }
+        }
+        .sheet(isPresented: $showPins) {
+            PinnedMessagesSheet(
+                messages: pinnedMessages.value,
+                userNames: userNames,
+                onSelect: { message in
+                    guard let workspaceId = channel.value?.workspaceId else { return }
+                    win.openNotification(
+                        workspaceId: workspaceId,
+                        channelId: message.channelId,
+                        messageId: message.id,
+                        threadRootId: message.threadRootId
+                    )
+                    showPins = false
+                }
+            )
         }
     }
 
@@ -132,15 +190,35 @@ struct ChannelView: View {
         channelMemberIds = ids.isEmpty ? (channel.value?.memberIds ?? []) : ids
     }
 
+    /// (Re)start the windowed transcript observation: the newest
+    /// `transcriptWindow` + 1 rows, ascending (the +1 is the has-more probe).
+    private func startMessages() {
+        let channelId = channelId
+        let limit = transcriptWindow + 1
+        messages.start(db: app.db, reset: []) { db in
+            try Array(
+                Message
+                    .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
+                    .order(Column("id").desc)
+                    .limit(limit)
+                    .fetchAll(db)
+                    .reversed()
+            )
+        }
+    }
+
     /// Page older history toward a jump-to-message target until it's loaded
     /// (thread-reply targets are handled by ThreadPanelView, not here).
     private func pageToFocusIfNeeded() {
-        guard app.openThreadRootId == nil, let fid = app.focusMessageId else { return }
-        if messages.value.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
-        if app.hasMore[channelId] ?? false {
+        guard win.openThreadRootId == nil, let fid = win.focusMessageId else { return }
+        if transcript.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
+        if hasMoreCached {
+            transcriptWindow += Self.windowStep // cached but outside the window
+        } else if app.hasMore[channelId] ?? false {
+            transcriptWindow += Self.windowStep
             Task { await app.engine.loadOlder(channelId: channelId) }
         } else {
-            app.focusMessageId = nil // not in this channel's history
+            win.focusMessageId = nil // not in this channel's history
         }
     }
 
@@ -165,6 +243,26 @@ struct ChannelView: View {
         return c.isDM
             ? c.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
             : "#\(c.name ?? "")"
+    }
+
+    /// The header topic, run through the same inline renderer as a message body
+    /// (#194) so a URL in it is a real link that opens in the system browser
+    /// instead of inert grey text.
+    ///
+    /// The colours are set per run rather than with a view-level
+    /// `.foregroundStyle`, which would paint the link muted grey too and leave
+    /// it looking exactly as unclickable as before. Runs that already carry a
+    /// colour are mention pills — `MentionRendering` owns those.
+    private var headerTopic: AttributedString? {
+        guard let raw = channel.value?.topic, !raw.isEmpty else { return nil }
+        var topic = MentionRendering.attributed(
+            raw, names: userNames, currentUserId: app.currentUser?.id
+        )
+        let uncoloured = topic.runs.filter { $0.foregroundColor == nil }.map { ($0.range, $0.link) }
+        for (range, link) in uncoloured {
+            topic[range].foregroundColor = link == nil ? MC.muted : MC.accent
+        }
+        return topic
     }
 
     private var header: some View {
@@ -207,19 +305,127 @@ struct ChannelView: View {
                             .foregroundStyle(MC.ink)
                     }
                 }
-                if let topic = channel.value?.topic, !topic.isEmpty {
+                if let topic = headerTopic {
                     Text(topic)
                         .flowFont(size: 12)
-                        .foregroundStyle(MC.muted)
                         .lineLimit(1)
+                        // A topic URL is a real link (#194), so it gets the
+                        // hand cursor like any other (#276).
+                        .linkCursor(topic, size: 12)
+                        .accessibilityIdentifier("channel.topic")
                 }
             }
             Spacer()
+            huddleButton
             headerAvatars
+            channelMenu
         }
         .padding(.horizontal, 22)
         .frame(height: 60)
         .background(MC.base)
+    }
+
+    /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
+    /// not while archived. "Join Huddle" doubles as start — there's no
+    /// separate ring/start action (CONTEXT.md: Huddle). The participant count
+    /// is the ambient indicator for a huddle that's live but not yet joined.
+    @ViewBuilder
+    private var huddleButton: some View {
+        if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
+            let inThisHuddle = app.activeHuddleChannelId == channelId
+            let roster = app.huddleRosters[channelId] ?? []
+            Button {
+                if inThisHuddle {
+                    app.leaveHuddle()
+                } else if let workspaceId = channel.value?.workspaceId {
+                    app.joinHuddle(channelId: channelId, workspaceId: workspaceId)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "mic.fill")
+                    Text(inThisHuddle ? "Leave Huddle" : "Join Huddle")
+                    if !inThisHuddle, !roster.isEmpty {
+                        Text("\(roster.count)")
+                            .flowFont(size: 11, weight: .bold)
+                            .padding(.horizontal, 5)
+                            .background(Capsule().fill(MC.accent.opacity(0.15)))
+                    }
+                }
+                .flowFont(size: 12, weight: .semibold)
+                .foregroundStyle(inThisHuddle ? MC.accent : MC.muted)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(app.huddleConnecting)
+            .help(inThisHuddle ? "Leave huddle" : "Join huddle")
+            .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
+        }
+    }
+
+    /// The header's "⋯" menu (#188): the channel's shared files (#347), pinned
+    /// messages, its artifacts and channel options in one place, matching web
+    /// and iOS. Replaces the
+    /// standalone pin button that used to sit next to the avatars.
+    private var channelMenu: some View {
+        Menu {
+            Button {
+                win.openFiles(true)
+            } label: {
+                Label("Files", systemImage: "paperclip")
+            }
+            .accessibilityIdentifier("channel.files")
+
+            Button {
+                showPins = true
+            } label: {
+                Label(
+                    pinnedMessages.value.isEmpty
+                        ? "Pinned Messages"
+                        : "Pinned Messages (\(pinnedMessages.value.count))",
+                    systemImage: pinnedMessages.value.isEmpty ? "pin" : "pin.fill"
+                )
+            }
+            .accessibilityIdentifier("channel.pins")
+
+            let artifacts = win.artifacts(inChannel: channelId)
+            Menu {
+                if artifacts.isEmpty {
+                    Text("No artifacts yet")
+                } else {
+                    ForEach(artifacts) { artifact in
+                        Button {
+                            win.selectArtifact(artifact.id)
+                        } label: {
+                            Text("\(artifact.glyph)  \(artifact.name)")
+                        }
+                        .accessibilityIdentifier("artifact.row.\(artifact.name)")
+                    }
+                }
+            } label: {
+                Label(artifacts.isEmpty ? "Artifacts" : "Artifacts (\(artifacts.count))",
+                      systemImage: "doc.text")
+            }
+            .accessibilityIdentifier("channel.artifacts")
+
+            if channel.value?.kind == "standard" {
+                Divider()
+                Button {
+                    showChannelEdit = true
+                } label: {
+                    Label("Channel Options…", systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("channel.options")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .flowFont(size: 13)
+                .foregroundStyle(MC.muted)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 20)
+        .help("Channel menu")
+        .accessibilityIdentifier("channel.menu")
     }
 
     /// Design 3a: overlapping member avatars + "+N" at the header's right edge —
@@ -388,6 +594,83 @@ struct ChannelView: View {
     }
 }
 
+struct PinnedMessagesSheet: View {
+    let messages: [Message]
+    let userNames: [String: String]
+    let onSelect: (Message) -> Void
+    @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Pinned Messages").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+
+            if messages.isEmpty {
+                ContentUnavailableView(
+                    "No Pinned Messages",
+                    systemImage: "pin",
+                    description: Text("Pin an important message to keep it easy to find.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(messages) { message in
+                            HStack(alignment: .top, spacing: 8) {
+                                Button {
+                                    onSelect(message)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack {
+                                            Text(userNames[message.userId] ?? "Unknown")
+                                                .font(.system(size: 12, weight: .bold))
+                                            Spacer()
+                                            if let at = message.pinnedAt {
+                                                Text(ISO8601.parse(at)?.formatted(date: .abbreviated, time: .shortened) ?? "")
+                                                    .font(.system(size: 10))
+                                                    .foregroundStyle(MC.faint)
+                                            }
+                                        }
+                                        Text(message.body.isEmpty ? (message.files.first?.name ?? "Message") : message.body)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(MC.inkSoft)
+                                            .lineLimit(3)
+                                        if message.threadRootId != nil {
+                                            Text("Reply in thread")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(MC.accentSoft)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    Task { await app.engine.togglePin(message) }
+                                } label: {
+                                    Image(systemName: "pin.slash")
+                                        .foregroundStyle(MC.accentSoft)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Unpin message")
+                            }
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(MC.daypill.opacity(0.45)))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(MC.hairline, lineWidth: 1))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 480, height: 440)
+    }
+}
+
 struct TypingIndicatorView: View {
     let channelId: String
     /// nil = the channel's main composer; set = that thread's composer, so the
@@ -395,6 +678,7 @@ struct TypingIndicatorView: View {
     var threadRootId: String? = nil
     let userNames: [String: String]
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     var body: some View {
         let ids = app.typingUserIds(channelId: channelId, threadRootId: threadRootId)
@@ -427,6 +711,7 @@ struct TypingIndicatorView: View {
 struct EditMessageSheet: View {
     let message: Message
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var text: String
 
@@ -458,16 +743,20 @@ struct EditMessageSheet: View {
     }
 }
 
-/// Edit a standard channel's name + topic (ui_nits item 5); any member.
-/// Empty topic clears the sub-headline; #general keeps its name.
+/// Channel options (#188): name, topic and delete, reached from the header's
+/// "⋯" menu — the same three on every client. Empty topic clears the
+/// sub-headline; #general can be neither renamed nor deleted. "Delete" is the
+/// server's archive (soft: the channel leaves the sidebar and goes read-only).
 struct ChannelEditSheet: View {
     let channel: Channel
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var topic: String
     @State private var error: String?
     @State private var saving = false
+    @State private var confirmDelete = false
 
     init(channel: Channel) {
         self.channel = channel
@@ -479,7 +768,7 @@ struct ChannelEditSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Channel settings").flowFont(.headline)
+            Text("Channel options").flowFont(.headline)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Name").flowFont(.caption).foregroundStyle(.secondary)
                 TextField("name (lowercase, a-z 0-9 - _)", text: $name)
@@ -498,6 +787,11 @@ struct ChannelEditSheet: View {
                 Text(error).flowFont(.caption).foregroundStyle(.red)
             }
             HStack {
+                if !isGeneral {
+                    Button("Delete Channel…", role: .destructive) { confirmDelete = true }
+                        .disabled(saving)
+                        .accessibilityIdentifier("channel.edit.delete")
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -510,6 +804,31 @@ struct ChannelEditSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+        .confirmationDialog(
+            "Delete #\(channel.name ?? "")?",
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Channel", role: .destructive) { remove() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It leaves everyone's sidebar and becomes read-only. Its history is kept.")
+        }
+    }
+
+    /// Archive — the server's delete for a channel (see the type comment).
+    private func remove() {
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                try await app.engine.archiveChannel(channel.id)
+                if win.selectedChannelId == channel.id { win.selectChannel(nil) }
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func save() {

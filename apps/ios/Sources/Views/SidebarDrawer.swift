@@ -10,6 +10,13 @@ import GRDB
 /// Selecting anything (channel, DM, activity) drives `AppState` the same way
 /// macOS does, then calls `onSelect` so `MainView` can close the drawer and let
 /// the conversation take the full screen (matching the web's mobile behavior).
+/// Just enough of the roster to answer "is this workspace down to one person?"
+struct WorkspaceRosterEntry: Decodable, FetchableRecord, Equatable, Sendable, WorkspaceRosterMember {
+    var userId: String
+    var isAgent: Bool?
+    var isBot: Bool?
+}
+
 struct SidebarDrawer: View {
     /// Called after a selection so the host can dismiss the drawer.
     var onSelect: () -> Void = {}
@@ -18,9 +25,20 @@ struct SidebarDrawer: View {
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
+    /// The current workspace's roster, for the sole-human check behind Delete
+    /// workspace (#340). `users` is every user we've ever cached, which is not
+    /// the same question.
+    @StateObject private var roster = DBObserved<[WorkspaceRosterEntry]>(initial: [])
 
     @State private var showCreateChannel = false
+    @State private var showNewDm = false
     @State private var showAddWorkspace = false
+    @State private var showInvite = false
+    /// The channel whose "Invite to Channel…" sheet is open (long-press a row).
+    @State private var inviteChannel: Channel?
+    @State private var showFeatures = false
+    @State private var confirmLeaveWorkspace = false
+    @State private var confirmDeleteWorkspace = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
 
@@ -36,6 +54,17 @@ struct SidebarDrawer: View {
     }
     private var palette: SidebarPalette {
         SidebarPalette.palette(for: currentWorkspace?.sidebarColor)
+    }
+
+
+    /// Which way out this workspace offers — see `WorkspaceExit`, which is
+    /// shared with macOS and holds the "empty roster means don't know" rule.
+    private var workspaceExit: WorkspaceExit {
+        WorkspaceExit.offered(
+            role: currentWorkspace?.role,
+            roster: roster.value,
+            me: app.currentUser?.id
+        )
     }
 
     /// Joined standard channels in sidebar order — sub-channels (#118) follow
@@ -116,9 +145,13 @@ struct SidebarDrawer: View {
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
             }
             users.start(db: app.db) { try User.fetchAll($0) }
+            reloadRoster()
             reloadChannels()
         }
-        .onChange(of: app.selectedWorkspaceId) { _, _ in reloadChannels() }
+        .onChange(of: app.selectedWorkspaceId) { _, _ in
+            reloadRoster()
+            reloadChannels()
+        }
         // Default channel + persistent self-DM (macOS SidebarView parity): a
         // workspace opened with nothing selected lands on #general; every
         // workspace gets a "<Name> (you)" DM (idempotent server upsert).
@@ -128,7 +161,46 @@ struct SidebarDrawer: View {
                 NewChannelSheet(workspaceId: wsId, onCreated: { open($0) })
             }
         }
+        .sheet(isPresented: $showNewDm) {
+            if let wsId = app.selectedWorkspaceId {
+                NewDmSheet(workspaceId: wsId, onCreated: { open($0) })
+            }
+        }
         .sheet(isPresented: $showAddWorkspace) { AddWorkspaceSheet() }
+        .sheet(isPresented: $showInvite) {
+            if let wsId = app.selectedWorkspaceId {
+                InviteSheet(workspaceId: wsId)
+            }
+        }
+        .sheet(item: $inviteChannel) { InviteToChannelSheet(channel: $0) }
+        .modifier(DebugOpenNewDm { showNewDm = true })
+        .sheet(isPresented: $showFeatures) { FeaturesSheet() }
+        // `.alert`, not `.confirmationDialog`: hung off the drawer the dialog
+        // adapts to a *popover*, which drops the cancel button entirely and
+        // leaves tapping outside as the only way back (#340). An alert always
+        // renders both choices.
+        .alert(
+            "Leave \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmLeaveWorkspace
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Leave Workspace", role: .destructive) { leaveWorkspace() }
+        } message: {
+            Text("You'll lose access to all its channels. Your past messages will remain.")
+        }
+        .alert(
+            "Delete \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmDeleteWorkspace
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Workspace", role: .destructive) { deleteWorkspace() }
+        } message: {
+            Text(
+                "You're the only one left, so there's nobody to hand it to. "
+                    + "Deleting removes the workspace and every channel, message and file in it, "
+                    + "for good. This cannot be undone."
+            )
+        }
     }
 
     // MARK: - Sidebar column
@@ -145,26 +217,24 @@ struct SidebarDrawer: View {
                     activityRow
 
                     sectionHeader("Channels") {
-                        Button {
+                        addButton(id: "channel.create", label: "New channel") {
                             showCreateChannel = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.6))
-                                .frame(width: 28, height: 28)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("channel.create")
-                        .accessibilityLabel("New channel")
                     }
                     ForEach(standard, id: \.channel.id) { channelRow($0.channel, isNested: $0.isNested) }
 
-                    if !dms.isEmpty {
-                        sectionHeader("Direct Messages") { EmptyView() }
-                        ForEach(dms) { dm in
-                            dmRow(dm)
-                            ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
+                    // The header renders whether or not there are DMs yet: its
+                    // "+" is the only way in to a first conversation (#257), so
+                    // it must not be the thing that disappears when the list is
+                    // empty. Channels behaves the same way.
+                    sectionHeader("Direct Messages") {
+                        addButton(id: "dm.create", label: "New direct message") {
+                            showNewDm = true
                         }
+                    }
+                    ForEach(dms) { dm in
+                        dmRow(dm)
+                        ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
                     }
 
                     if !browsable.isEmpty {
@@ -195,18 +265,54 @@ struct SidebarDrawer: View {
     private var header: some View {
         Menu {
             ForEach(workspaces.value) { ws in
+                // The switcher spells the count out (#345): the rail badge is a
+                // 10pt number on a 40pt icon, and this menu is the accessible
+                // way to the same information.
+                let title = unreadBadgeLabel(ws.unreadCount).map { "\(ws.name) (\($0))" } ?? ws.name
                 Button {
                     app.selectWorkspace(ws.id)
                 } label: {
                     if ws.id == app.selectedWorkspaceId {
-                        Label(ws.name, systemImage: "checkmark")
+                        Label(title, systemImage: "checkmark")
                     } else {
-                        Text(ws.name)
+                        Text(title)
                     }
                 }
             }
             Divider()
+            // Invite People (web + macOS parity, #283). Disabled with no
+            // workspace selected — there'd be nothing to invite anyone to.
+            Button("Invite People…") { showInvite = true }
+                .disabled(app.selectedWorkspaceId == nil)
+                .accessibilityIdentifier("sidebar.invitePeople")
             Button("Add Workspace…") { showAddWorkspace = true }
+            if currentWorkspace != nil {
+                switch workspaceExit {
+                case .delete:
+                    Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
+                        .accessibilityIdentifier("sidebar.deleteWorkspace")
+                case .leave, .transferFirst:
+                    // Destructive, and disabled for the owner with the reason in
+                    // the label — a menu item has nowhere else to put a hint
+                    // (web + macOS parity, #340).
+                    let blocked = workspaceExit == .transferFirst
+                    Button(
+                        blocked ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                        role: .destructive
+                    ) { confirmLeaveWorkspace = true }
+                        .disabled(blocked)
+                        .accessibilityIdentifier("sidebar.leaveWorkspace")
+                }
+            }
+            Divider()
+            // Version tag + release notes (web + macOS parity: macOS hangs the
+            // sheet off the version label at the foot of this same menu).
+            Button { showFeatures = true } label: {
+                Text("What's new")
+                Text(BuildInfo.label)
+                Image(systemName: "sparkles")
+            }
+            .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
             HStack(spacing: 4) {
                 Text(currentWorkspace?.name ?? "Flow")
@@ -235,6 +341,20 @@ struct SidebarDrawer: View {
         .padding(.horizontal, 8)
         .padding(.top, 14)
         .padding(.bottom, 3)
+    }
+
+    /// The "+" that hangs off a section header. One helper so Channels and
+    /// Direct Messages can't drift apart in weight or tap target.
+    private func addButton(id: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+        .accessibilityLabel(label)
     }
 
     // MARK: - Rows
@@ -310,6 +430,16 @@ struct SidebarDrawer: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Long-press: the channel context actions web + macOS hang off a
+        // right-click. Only "invite" so far — see the CHANGELOG Parity note.
+        .contextMenu {
+            Button {
+                inviteChannel = channel
+            } label: {
+                Label("Invite to Channel…", systemImage: "person.badge.plus")
+            }
+            .accessibilityIdentifier("sidebar.channel.invite")
+        }
         // Indent outside the background, so the pill insets with the row.
         .padding(.leading, isNested ? 12 : 0)
         .accessibilityElement(children: .combine)
@@ -419,6 +549,37 @@ struct SidebarDrawer: View {
         onSelect()
     }
 
+    /// Confirmed departure (#340): the engine leaves, clears the local mirror
+    /// and reports where to land; `workspaceBecameUnavailable` moves the
+    /// window. Closing the drawer afterwards puts the new workspace on screen.
+    private func leaveWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.leaveWorkspace(ws.id)
+                app.workspaceBecameUnavailable(ws.id, landOn: next)
+                onSelect()
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Confirmed deletion (#340 follow-up). Same landing as leaving — the
+    /// workspace is gone for us either way.
+    private func deleteWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.deleteWorkspace(ws.id)
+                app.workspaceBecameUnavailable(ws.id, landOn: next)
+                onSelect()
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
     private func join(_ channel: Channel) {
         Task {
             do {
@@ -427,6 +588,28 @@ struct SidebarDrawer: View {
             } catch {
                 app.showError(error.localizedDescription)
             }
+        }
+    }
+
+    private func reloadRoster() {
+        guard let wsId = app.selectedWorkspaceId else { return }
+        // Fetch the roster directly rather than waiting for `selectWorkspace`'s
+        // channels → members → artifacts chain to reach it. The workspace menu
+        // decides between Leave and Delete from this list, and a SwiftUI `Menu`
+        // snapshots its contents when it opens — so a roster that arrives late
+        // doesn't correct an already-open menu, it just makes the next one
+        // right (#340 follow-up).
+        Task { await app.engine.refreshMembers(workspaceId: wsId) }
+        roster.start(db: app.db, reset: []) { db in
+            try WorkspaceRosterEntry.fetchAll(
+                db,
+                sql: """
+                    SELECT m.userId AS userId, u.isAgent AS isAgent, u.isBot AS isBot
+                    FROM member m JOIN user u ON u.id = m.userId
+                    WHERE m.workspaceId = ?
+                    """,
+                arguments: [wsId]
+            )
         }
     }
 
@@ -462,6 +645,40 @@ struct SidebarDrawer: View {
 
 /// The 64px workspace rail (web/macOS design column 1): the active workspace's
 /// siblings as initial chips, plus a "+" that offers create/accept-invite.
+/// The workspace identity mark: its avatar image when one is set (#336),
+/// otherwise the initial on a color chip. Display-only on iOS — the avatar is
+/// managed from web/macOS. Active is a white fill for the initial mark and a
+/// white ring for an avatar, since an image can't be tinted.
+private struct WorkspaceMark: View {
+    let workspace: Workspace
+    let size: CGFloat
+    var cornerRadius: CGFloat = 12
+    var active: Bool = true
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        Group {
+            if let path = workspace.avatarUrl, path.hasPrefix("/v1/avatars/") {
+                AuthImage(path: path) { shape.fill(Color.white.opacity(0.15)) }
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(shape)
+                    .opacity(active ? 1 : 0.7)
+                    .overlay(active ? shape.strokeBorder(Color.white, lineWidth: 2) : nil)
+            } else {
+                shape
+                    .fill(active ? Color.white : Color.white.opacity(0.15))
+                    .frame(width: size, height: size)
+                    .overlay(
+                        Text(String(workspace.name.prefix(1)).uppercased())
+                            .font(.system(size: size * 0.4, weight: .heavy))
+                            .foregroundStyle(active ? MC.accent : .white)
+                    )
+            }
+        }
+    }
+}
+
 private struct WorkspaceRail: View {
     let workspaces: [Workspace]
     let palette: SidebarPalette
@@ -477,18 +694,20 @@ private struct WorkspaceRail: View {
                     Button {
                         if !active { app.selectWorkspace(ws.id) }
                     } label: {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(active ? Color.white : Color.white.opacity(0.15))
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                Text(String(ws.name.prefix(1)).uppercased())
-                                    .font(.system(size: 16, weight: .heavy))
-                                    .foregroundStyle(active ? MC.accent : .white)
-                            )
+                        WorkspaceMark(workspace: ws, size: 40, cornerRadius: 12, active: active)
+                            // Unread across this workspace's channels (#345) —
+                            // the overlay sits outside the mark's clip shape,
+                            // so it can overhang the corner as designed.
+                            .overlay(alignment: .topTrailing) {
+                                WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: palette.rail)
+                                    .offset(x: 7, y: -7)
+                                    .accessibilityIdentifier("rail.unread.\(ws.slug)")
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("rail.workspace.\(ws.slug)")
                     .accessibilityLabel(ws.name)
+                    .accessibilityValue((ws.unreadCount ?? 0) > 0 ? "\(ws.unreadCount!) unread" : "read")
                     .accessibilityAddTraits(active ? [.isSelected] : [])
                 }
                 Button(action: onAdd) {
@@ -507,6 +726,10 @@ private struct WorkspaceRail: View {
                 .accessibilityLabel("Add a workspace")
             }
             .padding(.vertical, 16)
+            // The scroll content is clipped to its own width, and the unread
+            // badge (#345) overhangs its icon — without this the content sizes
+            // to the 40pt marks and the badge loses its right-hand edge.
+            .frame(maxWidth: .infinity)
         }
         .frame(width: 64)
         .frame(maxHeight: .infinity)
@@ -577,6 +800,13 @@ private struct DrawerStatusFooter: View {
             .accessibilityIdentifier("sidebar.statusFooter")
         }
         .sheet(isPresented: $showAccount) { AccountSheet() }
+        // QA: FLOW_DEBUG_OPEN_PROFILE=1 opens the account sheet on launch; the
+        // sheet then pushes My Profile itself.
+        .onAppear {
+            if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_PROFILE"] == "1" {
+                showAccount = true
+            }
+        }
     }
 }
 

@@ -1,0 +1,491 @@
+## 2026-08-06
+
+- **The Mac app tells you which version you're running.** The line at the
+  bottom of the workspace menu now reads something like "Version 2.2.18"
+  instead of a commit code, so it matches the version in the release notes.
+  Clicking it still opens "What's new".
+
+## 2026-08-03
+
+- **Your team's own emoji.** Workspace admins can upload images as custom emoji
+  under a name like `:party-parrot:` (workspace menu → Custom Emoji), and anyone
+  can then react to a message with them. On the web for now — the Mac and iPhone
+  apps show the name rather than the picture until they catch up.
+
+## 2026-08-02
+
+- **Sharing a photo from your iPhone is much faster.** Photos are now scaled
+  down and compressed before they're sent, so a shot straight off the camera
+  uploads around five times smaller — and iPhone photos in Apple's HEIC format
+  now show up as pictures in the conversation instead of as a file you have to
+  download to look at.
+
+## 2026-08-01
+
+- **Messages are readable again if your Mac or iPhone is set to Dark Mode.**
+  Flow's look is light, but it wasn't telling your device that — so on a dark
+  system the text of a message could come out white on white and vanish. Flow
+  now always shows its own light theme, whichever mode you're in.
+
+## 2026-07-31
+
+- **Headings look like headings on Mac and iPhone.** A message written with
+  `#` headings — most agent replies, for instance — used to show the raw `##`
+  marks. Now it renders as a proper heading, the way it always has on the web.
+
+## 2026-07-31
+
+- **Channels open where the conversation is, on iPhone.** Opening a channel
+  takes you to the newest message instead of leaving you part-way up its
+  history, and a message you send always scrolls into view. Scroll back to read
+  older messages and Flow stays put, as before.
+
+## 2026-07-31
+
+- **Long messages show all the way to the end again.** On Mac and iPhone, a long
+  message that had a link preview attached could stop partway through, with the
+  preview card sitting where the rest of the text should be. The whole message
+  now renders.
+- **Agents think out loud.** When an agent takes a while, you can now watch it
+  work: what it says along the way appears in the conversation as it happens,
+  instead of the channel sitting silent and then dropping everything at once at
+  the end. It fills in one message as it goes rather than sending a stream of
+  new ones, so it won't flood your unreads — and its final answer no longer
+  repeats what you already read.
+
+## 2026-07-30
+
+- **Documents on your iPhone.** Channels with pinned documents now show a Docs
+  button at the top right, with a count. Tap it for the list, tap one to read it
+  full screen — and when an agent makes something for you, it opens by itself.
+  Before this, anything an agent created was only reachable on a computer.
+- **Browse a pinned link together, from your phone.** Pinned links open in
+  Flow's shared mini-browser on iPhone now, the same one the Mac app has —
+  whoever moves to a new page moves it for everyone looking.
+
+## 2026-08-25
+
+- **Owners and admins can make a message disappear completely.** The permanent
+  delete action works on messages from people, bots, and agents—even an existing
+  “message was deleted” notice—and deleting a thread starter removes its replies
+  too. Regular members still get the usual deletion notice for their own posts.
+
+## 2026-07-30
+
+- **Flow has a home page.** freeflow.im now introduces Flow — what it is, how
+  agents fit in, and how to self-host — with live demos you can click through.
+
+## 2026-07-30
+
+- **Bigger (or smaller) text in the Mac app.** Press ⌘+ and ⌘− to resize
+  everything — messages, the channel list, the box you type in — and ⌘0 to go
+  back to normal. They're in the View menu too, and the app remembers where you
+  left it.
+- **Keep important messages within reach.** Anyone in a channel can pin a message, see every pin from the channel header, and jump straight back to its place in the conversation or thread.
+
+## 2026-07-29
+
+- **The Mac app shows which channels an agent is working in too.** The same
+  small spinner as in the browser, on channels and direct messages alike.
+
+## 2026-07-29
+
+- **You can stop an agent mid-thought.** While an agent is working, its
+  "thinking…" line now carries an **Interrupt** button — press it and the agent
+  stops there and then, tells you what it got done, and stays ready to carry on
+  when you send the next message. On every client, and `/stop` does the same by
+  typing.
+
+
+- **Sign in with Apple on iPhone.** The iOS app now offers the native Apple
+  sign-in sheet next to Google — one tap with Face ID, and hiding your email
+  behind Apple's private relay works too.
+- **Agents now hand long jobs off instead of making you wait.** Ask an agent to
+  work the task queue and it opens a task channel, hands the work to a separate
+  run of itself that lives there, and gives you your conversation back in
+  seconds. Watch the run in the task channel — and just talk in that channel to
+  steer or stop it; the working agent sees your message with full context.
+
+## 2026-07-29
+
+- **See at a glance which channels an agent is working in.** A small spinner
+  appears at the end of a channel's name in the sidebar while an agent is busy
+  in there, and stops when it's done — so you can tell a run is still going
+  without opening the channel.
+- **The keyboard gets out of the way on iPhone.** Scroll back through a
+  conversation and the keyboard drops away the moment you start — as it already
+  did when you tap the messages or open the channel menu.
+
+## 2026-07-28
+
+- **The conversation follows new messages again on the Mac app.** When you're
+  at the bottom, fresh messages scroll into view on their own — the
+  "Latest msgs ↓" pill now only appears once you've actually scrolled up to
+  read older messages.
+
+## 2026-07-28
+
+- **Agents listen in the channels they open.** If an agent created a channel,
+  you can just talk in it — no `@`-mention needed. It answers in a thread on
+  your message, as usual. Everywhere else, mention it as before.
+- **A "Latest msgs ↓" button brings you back to the newest message.** Scroll up
+  to read and a pill appears at the bottom of the conversation — one click and
+  you're back at the end. New messages also stop dragging you down to the bottom
+  while you're reading back through history.
+- **Links look clickable on the Mac.** Hovering a link in a message now switches
+  the cursor to the pointing hand, the way it does in the browser.
+- **The message hover menu tells you what its buttons do (Mac).** Rest on react,
+  reply, copy, edit or delete and a small label appears.
+- **The @-mention menu no longer shoves your conversation off screen (Mac).**
+  Typing `@` (or `:` for emoji) now pops the suggestion list up over the
+  messages instead of stretching the message box — previously the whole
+  transcript could scroll away and leave the channel looking empty.
+
+## 2026-07-28
+
+- **Only one thing looks selected at a time in the sidebar (Mac).** Opening
+  Activity used to leave the channel you came from highlighted as well, so two
+  rows looked current at once. Closing Activity still returns you to that
+  channel.
+
+## 2026-07-28
+
+- **Channels can now sit inside other channels.** A channel created as a
+  sub-channel appears indented under its parent in the sidebar. Agents can also
+  tuck one under a direct message — handy when an agent wants somewhere to put
+  a long build log without filling up your conversation; those are private and
+  include everyone in the DM.
+
+## 2026-07-28
+
+- **Flow has a public privacy policy.** It lives at
+  [app.freeflow.im/privacy](https://app.freeflow.im/privacy) — plain language,
+  no legalese for the sake of legalese.
+- **Update your agent from chat.** Send an agent `/update` (DM it, or mention
+  it in a channel) and its bridge downloads the newest version, restarts, and
+  posts "back online" right where you asked. `/restart` just relaunches it.
+  Agents also come back on their own now if their bridge crashes.
+
+## 2026-07-28
+
+- **Videos play in the right shape on the Mac app.** A portrait clip from your
+  phone now fills a tall player instead of a slim strip boxed in by black bars,
+  and square or ultra-wide video is sized to match too.
+
+## 2026-07-27
+
+- **Activity only shows the workspace you're in.** It used to list mentions,
+  DMs and replies from every workspace you belong to, so a brand-new workspace
+  opened onto a wall of unrelated activity — often from people it couldn't even
+  name. Each workspace now has its own Activity and its own unread count.
+- **An expired session now just asks you to sign in again.** On the Mac and
+  iPhone apps, if your session ran out while the app was open, it kept looking
+  signed in — but pasting an image or creating a workspace would fail with a
+  baffling "invalid or expired token". Now the app notices, takes you to the
+  sign-in screen and tells you your session expired.
+- **Invite links now tell you where you're going.** Clicking a workspace join
+  link used to drop you straight onto the app home page with no explanation —
+  you couldn't tell whether it had worked, or even which workspace it was for.
+  Now the link opens a page that names the workspace and asks: sign in or
+  create an account if you're new, or confirm the join if you're already
+  signed in. If you're a member already it just offers to open the workspace,
+  and a link that's been revoked says so instead of quietly doing nothing.
+- **A tidier sign-in page.** The agent-skill download card has been taken off
+  the signed-out screen, leaving just the sign-in box and the Mac app download.
+- **The chat no longer disappears when you start a message.** On the Mac app,
+  attaching a file or typing a draft long enough to wrap onto a second line
+  could make the whole conversation scroll away and leave you staring at an
+  empty panel — you had to scroll back up to find your messages again. The
+  transcript now stays exactly where it was.
+- **Threads stay open when you look at something else.** Popping over to
+  another channel used to close whatever thread you had open, so coming back
+  meant scrolling for the root message again. Now each channel remembers the
+  thread you were reading: switch away, switch back, and you're right where you
+  left off. Closing the thread yourself still closes it for good.
+- **Agents can take as long as a job actually needs.** An agent teammate used
+  to be cut off after ten minutes, even mid-task — so a long build, a big test
+  suite or a genuinely hard piece of work would end in an error with nothing to
+  show for it. Now an agent is only stopped if it goes properly quiet, so it
+  can keep working for as long as it's making progress. And if an agent does
+  get stopped, it no longer loses the thread: it tells you where it got to, and
+  picks up from there when you ask it to carry on — instead of starting over
+  with no memory of the work it had already done.
+- **Flow has a new address: freeflow.im.** The app now lives at
+  **app.freeflow.im**, and our emails come from `mail.freeflow.im` — so if you
+  filter or allow-list mail from us, update it. Two things to expect on the day
+  of the switch: the Mac and iPhone apps will ask you to sign in again (nothing
+  is lost, they just don't recognise the new address as the same place yet), and
+  if you run a coding agent in Flow you'll want to point it at the new address.
+  The old address keeps working for a while, then retires.
+
+## 2026-07-26
+
+- **One link that lets people join your workspace.** Instead of emailing
+  invitations one address at a time, admins can now open **Invite People** and
+  create a join link to drop in a doc, a group chat, or a welcome email —
+  anyone who follows it lands in the workspace. There's one link at a time and
+  it doesn't expire: it works until you regenerate it (which quietly retires
+  the old one) or revoke it outright. The link carries your workspace name, so
+  people can see where they're going before they click.
+- **Agents can open files you shared earlier.** Ask an agent about a screenshot,
+  PDF or recording someone posted further up the channel and it can now find it
+  and open it — previously it only saw files attached to the message that
+  mentioned it, and would tell you there was nothing there.
+- **Invite your coding agent straight from the Mac app.** The 🤖 **Invite your
+  Agent** button now sits at the bottom of the sidebar on Mac, just like on the
+  web. Click it and Flow hands you a one-time code and the exact command to run
+  wherever your agent lives — copy, paste, and it introduces itself and joins
+  the workspace on its own. No more hopping over to the browser to get a code.
+- **The Mac app updates itself.** No more finding out months later that you're
+  running an old build: Flow checks for a new version once a day, downloads it
+  quietly in the background, and installs it the next time you quit — or right
+  now, via **Check for Updates…** in the Flow menu. Every update is
+  cryptographically signed, so the app refuses anything that isn't genuinely
+  from us.
+- **Notifications stop vanishing — and stop sticking.** A mention that lands
+  while Flow sits in a background tab now stays unread until you actually come
+  back to it, and a thread reply stays marked until you open the thread — not
+  just the channel. And when you leave a channel (or it gets archived), its
+  pending notifications stop counting against your badge instead of haunting
+  it forever.
+- **A number in the sidebar now always means "this needs you."** Channels with
+  new messages simply go **bold**; the number only appears when something in
+  there is actually for you — a mention, a reply in your thread, a reaction to
+  your message, or a direct message. So a busy channel you're only half
+  following stops shouting "47", and the numbers you do see are worth acting
+  on. They add up to the count on Activity and on the app icon.
+
+## 2026-07-25
+
+- **Someone reacts to your message? You'll know.** Reactions on your own
+  messages now show up in Activity ("Bob reacted 🎉 to your message") and can
+  raise a notification — with a new Reactions switch in your notification
+  settings if you'd rather they didn't. Adding and removing the same reaction
+  only ever tells you once.
+- **Notifications clear themselves when you've seen them.** Opening the channel
+  — or the thread — a notification came from marks it read, so the Activity dot
+  and the app's badge number match what you've actually looked at, on every
+  device you're signed in on. Clicking a single item in Activity now marks just
+  that one read instead of everything below it.
+- **Notes to yourself stay quiet.** A message in your own personal DM never
+  notifies you.
+- **Starting a DM is where you'd expect it.** In the browser, the button for a
+  new direct message has moved off the workspace name and into the **Direct
+  messages** heading — a `+` right where the DM list starts, matching the one
+  on Channels. (The Mac and iPhone apps already worked this way.)
+- **Ask an agent to set up a channel.** AI agents in your workspace can now
+  create a channel and add people to it — so "spin up a channel for this
+  incident and pull in Alice and Bob" is one request instead of something you
+  do by hand first. They can add a whole group at once, and they're bound by
+  the same rules you are: no adding people to a private channel they're not in.
+- **See who's in a channel.** Click the little stack of faces at the top right
+  of a conversation and you get the full member list — who's online, their
+  status, and a click through to anyone's profile card. The faces themselves
+  now show the channel's actual members too, instead of everyone in the
+  workspace. On the web and in the Mac app.
+
+## 2026-07-24
+
+- **No more unread badges for your own messages.** Sending a message no longer
+  leaves the conversation looking unread in your sidebar — including DMs, where
+  a note you sent yourself or a reply you fired off from your phone used to
+  come back with a number on it. Messages from other people badge as always.
+- **iPhone: the keyboard gets out of the way.** Opening the channel menu now
+  puts the keyboard down instead of sliding the menu over it, and tapping (or
+  dragging down) the conversation dismisses it too.
+- **Reload a shared page.** In the mini browser, pressing **Go** (or Enter) on
+  the address that's already showing now reloads the page instead of doing
+  nothing — handy for a dashboard that's gone stale, or to get back to the
+  shared page after clicking around inside it. Only actually changing the
+  address still moves everyone else's view.
+- **Sign in with Google — on the web, Mac and iPhone.** There's now a
+  **Continue with Google** button on the sign-in screen everywhere: one click and
+  you're in, no password to pick and no confirmation email to wait for. If you
+  already have a Flow account with the same address, Google just gets added to
+  it; you don't end up with two accounts. On the Mac and iPhone the button pops
+  open your browser to finish with Google, then hands you straight back to the
+  app — so you sign in with whichever Google account you're already using there.
+- **Open your workspace to your whole company.** When you create a workspace
+  after signing in with Google, you can tick *"Let anyone with an @yourcompany
+  email join this workspace automatically"* — and colleagues who sign in with
+  their work Google account land straight in, no invite needed. You can turn it
+  on or off later from **Invite People**. It's offered for company domains only,
+  never for personal ones like gmail.com.
+
+- **Your Direct Messages list is now properly alphabetical everywhere.** On the
+  Mac and iPhone apps the list wasn't sorted at all, and on the web agents you
+  hadn't messaged yet got stuck at the bottom. Now everyone — people and agents
+  alike — sorts together by name on every device, with your own personal
+  "(you)" note pinned neatly at the bottom.
+
+- **Sign in to the iPhone app without your password.** The sign-in screen now
+  has an **Email me a sign-in link** button — type your email, tap it, and we'll
+  send you a one-time link so you don't have to remember your password.
+
+## 2026-07-23
+
+- **Invite your coding agent with a one-time code.** There's a new **Invite your
+  Agent** button at the bottom of the sidebar. Click it and Flow generates a
+  one-time invite code, then shows you the exact command to run wherever your
+  agent lives — `npx flow-agent-bridge <code>`, with a copy button. Your agent
+  picks its name and handle and joins the workspace right away — no email to
+  type and no approval step. It starts with a random robot avatar you can change
+  any time from the members list. Then it's ready to collaborate on tasks and
+  code, and share files and artifacts with the team.
+- **See who joins and leaves.** Channels now show a quiet "so-and-so joined the
+  channel" (or left) line right in the conversation — including when someone
+  brings an agent on board. It shows up everywhere you're signed in, and it
+  never marks the channel unread.
+- **Edit a message right where you type.** Press ↑ in an empty message box (or
+  hit the ✏️ on your own message) and it opens in the composer for editing —
+  same box you write in, with mention and emoji autocomplete. Enter saves,
+  Esc cancels and hands you back whatever you were drafting.
+- **Tidier Direct Messages.** Your DMs are now listed in alphabetical order, and
+  your personal "note to self" chat no longer shows an unread badge.
+- **Pin any link and browse it together.** Every link shared in a channel now
+  has a 📌 **Pin as artifact** button — on the preview card and on plain links in
+  a message. Pinning opens a little built-in browser in the side panel with the
+  address at the top and the page below it. Type a different address to go
+  somewhere else, or just click around the page — and because the pin is shared,
+  everyone in the channel sees it move to the same page in real time. It's a
+  simple way to look at something together. (On the Mac app the mini-browser is
+  fully native; on the web a few sites won't allow being embedded, and Flow will
+  offer to open those in a new tab instead.)
+- **Get the Mac app right from the sign-in page.** There's now a **Download the
+  Mac app** link on the logged-out screen — grab the desktop app, drag it to
+  Applications, and open it (no scary security warnings; it's signed and
+  notarized). And if you click "Open the app" but don't have it installed yet,
+  Flow now notices and offers you the download instead of just doing nothing.
+- **iPhone: your channels now slide in over the conversation.** The Flow app on
+  iPhone gets the same channel menu as the mobile web app — tap the ☰ button in
+  the top-left and the workspace rail and channel list slide in from the side,
+  right over your conversation, instead of taking you to a separate list screen.
+  Pick a channel and it slides away so you're back in the conversation. Your
+  profile and status live at the bottom of the menu, and a “+” on the workspace
+  rail lets you add or join another workspace.
+- **Click a notification banner to jump right to the message.** On both the web
+  and the Mac app, clicking a desktop notification now brings Flow to the front
+  and takes you straight to the message that triggered it — opening the thread
+  if it was a reply and (on web) marking the notification read.
+- **Artifacts are now shared per channel.** Pin a file (or a document an agent
+  makes for you) as an artifact and it shows up for everyone in that channel,
+  tucked under the channel’s name in the sidebar. Want it private? Pin it in a
+  private channel. Old “save as artifact” is now **“Pin as artifact.”**
+- **Artifacts open beside your conversation**, in a side panel on the right —
+  no more full-screen takeover — so you can read a doc and keep chatting. The
+  panel has **tabs** across the top: your open thread and each of the channel's
+  artifacts, so you can flip between them in one place. Close the panel with its
+  ✕; delete an artifact for everyone with the ✕ on its sidebar row.
+- **Agents can create and update artifacts.** An agent can pin a document to the
+  channel and later revise it in place — everyone viewing it sees the new
+  version. When you ask an agent to make one, it now **opens for you
+  automatically** in the side panel, so you don't have to go find it in the
+  sidebar.
+- **See what’s new** — click the “Build …” label at the bottom of the workspace
+  menu to open these release notes right inside the app.
+- Agents now show their **“thinking…”** status inside the thread they’re
+  replying to, instead of at the bottom of the main channel.
+
+## 2026-07-22
+
+- **Activity feed** replaces the notifications bell — an always-present entry at
+  the top of your channel list that collects your mentions, direct messages,
+  thread replies, and notify-all activity in one place. Tap any item to jump
+  straight to the message and see it flash into view.
+- **A message that fails to send now stays put with a Retry.** Instead of
+  vanishing, it stays in the conversation with a “Failed to send · Retry /
+  Discard” option so you never lose what you typed.
+- **See who you’re talking to** — click any sender’s avatar on a message to open
+  their profile card. For agents, the card shows the person who sponsors them.
+- **Channels remember where you were.** Scroll up in one channel, hop to
+  another, and come back — you land right where you left off rather than being
+  snapped to the bottom.
+- **Agents “think” instead of “type.”** While an agent is working, the indicator
+  reads “is thinking…”.
+- **The workspace menu shows which build you’re running**, at the bottom of the
+  menu — handy when reporting an issue.
+- **Rich link previews for pasted links** — a card with title, description,
+  image and site name, on web, Mac, and iPhone. Preview images and icons load
+  privately, without sharing your address with the linked site.
+- **Copy a message straight from its menu.**
+- **Markdown tables render as real tables**, with aligned columns.
+- **Flow works well in a mobile browser** — the layout collapses to a single
+  pane with a slide-in menu on small screens.
+
+### Mac
+
+- The message hover menu now matches the web app: one-tap 👍 👀 🙌 reactions,
+  plus add-reaction, reply-in-thread, copy, edit and delete.
+
+### iPhone
+
+- **Browse, join, and create channels** — find public channels you’re not in and
+  join them, or start a new one, right from your phone.
+- **Tap your avatar** to open your account: edit your profile (photo, name,
+  timezone), and set your status.
+- **Share videos** from your photo library, not just photos.
+
+## 2026-07-21
+
+- **Notification settings.** Choose exactly what alerts you — direct messages,
+  mentions, group mentions (@here/@channel), thread replies — and optionally
+  keep banners on screen until you dismiss them.
+- **Set a status that pauses notifications.** “Focusing”, “In a meeting”, “At
+  lunch” and “Do not disturb” quiet your alerts; clearing your status turns them
+  back on.
+- **Artifacts.** Save any file shared in chat as a personal artifact and open it
+  in a dedicated panel — images, video, text, PDF, and web pages (web and Mac).
+- **Bring AI agents into your workspace.** An agent registers with a human
+  sponsor who approves it with a quick pairing code; once in, it answers in
+  threads, reacts, shares files, and can create artifacts. Sponsors can give an
+  agent one of a dozen robot avatars.
+- **Bigger uploads and instant video.** Files up to 500 MB, and videos start
+  playing immediately instead of downloading first.
+- **Heads-up when you @mention someone who isn’t in the channel** — an “Add to
+  channel” prompt so your mention actually reaches them (now on Mac too).
+- **Manage your workspace’s members** — an admin panel to change roles and
+  remove people.
+
+## 2026-07-20
+
+- **A new iPhone app.** Sign in, switch workspaces, browse channels and DMs, and
+  send messages — with full messaging close behind: reactions, threads, file
+  attachments and previews, typing indicators, rich markdown, and @mentions.
+- **Passwordless sign-in** — get a one-time “email me a sign-in link” instead of
+  typing a password.
+- **Invite teammates by email** with a clickable accept link that drops them
+  straight into the workspace.
+- **Inline markdown in messages** — bold, italic, `code`, ~~strikethrough~~ and
+  links render as you’d expect.
+- **Videos play inline** in the conversation, with an expand-to-fullscreen view.
+- **AI agents show a 🤖 badge** everywhere their name appears, and are always
+  reachable in your DM list.
+- **App icons and a web favicon**, matching the “Quiet, in violet” look.
+- **Emoji search matches anywhere in the name**, not just the start.
+
+## 2026-07-19
+
+- **Email verification and password reset**, with a “check your email” flow.
+- **Email-first sign-up** — just enter your email and finish your account from
+  the link, so no one can pre-set your password.
+- **Sign in on the web and hand off to the desktop app** with one click.
+- **Inline previews for text and PDF files** — a monospace snippet for text, a
+  first-page preview and in-app reader for PDFs.
+- **Slack-compatible apps** — build integrations against a Slack-style API,
+  including Socket Mode.
+- **Edit your last message by pressing ↑**, and deleting now asks for
+  confirmation.
+- **Edit a channel’s name and topic** right from its header.
+- The product is now called **Flow**.
+
+## 2026-07-18
+
+- **The essentials landed.** Direct messages (1:1 and group), reactions, file
+  attachments with thumbnails, @mentions including @channel / @here / @everyone,
+  notifications with per-channel levels, and member profiles (name, timezone,
+  avatar) — plus the web client and macOS app.
+- **Design & personalization** — the “Quiet, in violet” theme, a user status
+  (emoji + label), a workspace-wide sidebar color, a resizable sidebar, image
+  paste into the composer, and live markdown styling as you type.
+- **The foundation** — workspaces, channels, threads, presence, and unread
+  tracking.

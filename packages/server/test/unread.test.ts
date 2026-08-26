@@ -1,7 +1,7 @@
 // Per-channel unread counts (#71): your own messages must never badge, and
 // posting advances your read cursor. DB-backed — scratch database on the dev
 // postgres (docker compose in packages/infra, host port 5442).
-import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 process.env.DATABASE_URL = process.env.FLOW_TEST_DATABASE_URL
@@ -25,9 +25,11 @@ const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
 const ch = await import('../src/services/channels.js');
 const msg = await import('../src/services/messages.js');
-const { and, eq } = await import('drizzle-orm');
+const { and, desc, eq, isNull } = await import('drizzle-orm');
+const { encryptBody } = await import('../src/crypto/index.js');
+const { newId } = await import('../src/lib/ids.js');
 
-const { channelMembers } = schema;
+const { channelMembers, messages, notifications } = schema;
 
 let aliceId = '';
 let bobId = '';
@@ -121,5 +123,97 @@ describe('sending advances the read cursor', () => {
     // alice replies in a thread — a reply must not touch the channel cursor
     await msg.sendMessage(channelId, aliceId, randomUUID(), 'threaded reply', newer.id);
     expect(await readCursor(aliceId, channelId)).toBe(newer.id);
+  });
+});
+
+// #270: a thread hanging off a join/leave line is unreachable — no client
+// draws a thread affordance on one — so a notification it raises could never
+// be read, and the sidebar badge stuck at 1 for ever.
+describe('threads on system messages', () => {
+  // Earlier tests in this file leave bob notifications of their own; these
+  // assert exact counts, so start each one from a clean inbox.
+  beforeEach(async () => {
+    await db.delete(notifications).where(eq(notifications.userId, bobId));
+  });
+
+  async function systemRootId(): Promise<string> {
+    const rows = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(and(eq(messages.channelId, channelId), eq(messages.systemKind, 'member_joined')))
+      .limit(1);
+    const id = rows[0]?.id;
+    if (!id) throw new Error('expected a member_joined line from addMember');
+    return id;
+  }
+
+  it('refuses a reply to a join/leave line', async () => {
+    const root = await systemRootId();
+    await expect(msg.sendMessage(channelId, aliceId, randomUUID(), 'reply to a join line', root))
+      .rejects.toMatchObject({ code: 'bad_thread_root' });
+  });
+
+  it('a channel visit clears a notification already stuck under a system root', async () => {
+    // Rows like this exist in the wild, written before the refusal above: a
+    // reply under the join line, notifying its author. Forge one directly.
+    const root = await systemRootId();
+    const replyId = newId();
+    const enc = encryptBody('a reply that predates the fix');
+    await db.insert(messages).values({
+      id: replyId,
+      channelId,
+      userId: aliceId,
+      threadRootId: root,
+      clientMsgId: newId(),
+      body: enc.body,
+      bodyNonce: enc.bodyNonce,
+      encKeyId: enc.encKeyId,
+      encScheme: enc.encScheme,
+    });
+    await db.insert(notifications).values({
+      id: newId(),
+      userId: bobId, // bob authored the join line, so the reply notified him
+      messageId: replyId,
+      channelId,
+      kind: 2,
+      actorId: aliceId,
+    });
+
+    const before = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(before?.unreadNotifications).toBe(1);
+    // and it is visible on the root's reply chip, not only in the sidebar
+    expect(before?.unreadThreadRootIds).toContain(root);
+
+    const newest = (
+      await db
+        .select({ id: messages.id })
+        .from(messages)
+        .where(and(eq(messages.channelId, channelId), isNull(messages.threadRootId)))
+        .orderBy(desc(messages.id))
+        .limit(1)
+    )[0]!.id;
+    await ch.markRead(channelId, bobId, newest);
+
+    const after = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(after?.unreadNotifications).toBe(0);
+    expect(after?.unreadThreadRootIds).toEqual([]);
+  });
+
+  it('an ordinary thread reply still waits for the thread to be opened', async () => {
+    const root = await msg.sendMessage(channelId, bobId, randomUUID(), 'a real root');
+    await msg.sendMessage(channelId, aliceId, randomUUID(), 'a real reply', root.id);
+
+    const before = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(before?.unreadNotifications).toBe(1);
+    expect(before?.unreadThreadRootIds).toEqual([root.id]);
+
+    await ch.markRead(channelId, bobId, root.id); // visiting the channel is not enough
+    const mid = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(mid?.unreadNotifications).toBe(1);
+
+    await ch.markRead(channelId, bobId, root.id, root.id); // opening the thread is
+    const after = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(after?.unreadNotifications).toBe(0);
+    expect(after?.unreadThreadRootIds).toEqual([]);
   });
 });

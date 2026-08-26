@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, UnfurlDTO } from '@flow/shared';
 import { api } from '../lib/api';
@@ -29,6 +30,11 @@ export function UnfurlCard({
   const sel = useSelection();
   const target = unfurl.canonicalUrl ?? unfurl.url;
   const host = hostOf(target);
+  // Click-to-play: nothing from the provider is loaded until this flips, so a
+  // channel full of video links costs the reader no third-party requests.
+  const [playing, setPlaying] = useState(false);
+  const embed = unfurl.embed;
+  const duration = formatDuration(unfurl.media?.durationSec);
 
   // Pin this link as a co-browsing artifact in the channel and open it.
   const pin = async () => {
@@ -88,7 +94,61 @@ export function UnfurlCard({
           </p>
         )}
 
-        {unfurl.image && (
+        {embed && playing && (
+          // Only reached after a click. `playerUrl` is built by the server from
+          // the parsed video id — never the provider's own markup — and points
+          // at youtube-nocookie so playing a video in a chat doesn't hand out a
+          // tracking cookie.
+          <div className="mt-2 aspect-video w-full max-w-[440px] overflow-hidden rounded-md border border-hairline bg-black">
+            <iframe
+              data-testid="unfurl-player"
+              src={`${embed.playerUrl}?autoplay=1`}
+              title={unfurl.title ?? 'Video player'}
+              className="h-full w-full"
+              allow="accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen"
+              referrerPolicy="strict-origin-when-cross-origin"
+              allowFullScreen
+            />
+          </div>
+        )}
+
+        {embed && !playing && (
+          <button
+            data-testid="unfurl-play"
+            aria-label={unfurl.title ? `Play ${unfurl.title}` : 'Play video'}
+            onClick={() => setPlaying(true)}
+            className="group/play relative mt-2 block w-fit cursor-pointer"
+          >
+            {unfurl.image ? (
+              <AuthImg
+                path={unfurl.image.url}
+                alt={unfurl.image.alt ?? ''}
+                className="max-h-[320px] max-w-full rounded-md border border-hairline object-contain"
+              />
+            ) : (
+              // The proxy dropped the thumbnail; the card is still playable.
+              <span className="flex h-[180px] w-[320px] items-center justify-center rounded-md border border-hairline bg-black/80" />
+            )}
+            <span
+              aria-hidden
+              className="absolute inset-0 flex items-center justify-center transition group-hover/play:brightness-110"
+            >
+              <span className="flex h-11 w-16 items-center justify-center rounded-xl bg-black/65 text-lg text-white shadow group-hover/play:bg-[#f00]">
+                ▶
+              </span>
+            </span>
+            {duration && (
+              <span
+                data-testid="unfurl-duration"
+                className="absolute right-1.5 bottom-1.5 rounded bg-black/80 px-1.5 py-0.5 text-xs font-medium text-white tabular-nums"
+              >
+                {duration}
+              </span>
+            )}
+          </button>
+        )}
+
+        {unfurl.image && !embed && (
           // The image links out to the shared page, like the title — clicking
           // the picture is the obvious gesture, and matches Slack.
           //
@@ -147,6 +207,17 @@ function hostOf(url: string): string {
   } catch {
     return '';
   }
+}
+
+/** `m:ss`, or `h:mm:ss` once it runs past an hour. */
+export function formatDuration(seconds: number | undefined): string | null {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 function formatDate(iso: string | undefined): string {

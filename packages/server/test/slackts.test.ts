@@ -6,6 +6,13 @@ function msOfUuid(id: string): number {
   return parseInt(id.replace(/-/g, '').slice(0, 12), 16);
 }
 
+/** Compare two derived ts numerically, seconds then fraction (avoids float rounding). */
+function cmpTs(a: string, b: string): number {
+  const [as, af] = a.split('.').map(Number) as [number, number];
+  const [bs, bf] = b.split('.').map(Number) as [number, number];
+  return as !== bs ? as - bs : af - bf;
+}
+
 /** Build a real UUIDv7 via the uuidv7 package with explicit fields. */
 function v7(ms: number, randA: number, randBHi = 0x1234_5678 % 2 ** 30, randBLo = 0x9abc_def0 % 2 ** 32): string {
   return UUID.fromFieldsV7(ms, randA, randBHi, randBLo).toString();
@@ -45,26 +52,49 @@ describe('slack ts codec', () => {
     expect(tss.size).toBe(ids.length);
   });
 
-  it('lexicographic id order implies numeric ts order within a channel', () => {
-    // strictly increasing across ms; monotone rand_a (< 1000) within one ms
+  it('lexicographic id order implies strictly increasing ts across milliseconds', () => {
+    // The unconditional half of the codec's ordering contract: whenever two ids
+    // fall in different milliseconds, id order is ts order. True for any rand_a,
+    // so real generator output belongs in this assertion.
     const base = Date.now();
     const ids: string[] = [];
     for (let m = 0; m < 20; m++) {
       for (let a = 0; a < 5; a++) ids.push(v7(base + m, a * 7, a, a));
     }
-    // also mix in real generator output at later timestamps
+    // Real generator output lands *inside* the window above on a fast machine,
+    // not after it — which is why it is only asserted across ms here (#239).
     ids.push(...Array.from({ length: 50 }, () => uuidv7()));
     const sorted = [...ids].sort();
-    const asPair = (ts: string): [number, number] => {
-      const [s, f] = ts.split('.');
-      return [Number(s), Number(f)];
-    };
-    let prev: [number, number] = [-1, -1];
+    let prev: string | null = null;
     for (const id of sorted) {
-      const [s, f] = asPair(tsFromUuid(id));
-      expect(s > prev[0] || (s === prev[0] && f >= prev[1])).toBe(true);
-      prev = [s, f];
+      if (prev !== null && msOfUuid(id) !== msOfUuid(prev)) {
+        expect(cmpTs(tsFromUuid(id), tsFromUuid(prev))).toBeGreaterThan(0);
+      }
+      prev = id;
     }
+  });
+
+  it('within one millisecond ts is weakly monotonic while rand_a stays under 1000', () => {
+    // The conditional half: below the fold, id order still implies ts order.
+    const ms = Date.now();
+    const ids = Array.from({ length: 200 }, (_, i) => v7(ms, i * 5, i, i)); // rand_a 0..995
+    const sorted = [...ids].sort();
+    let prev: string | null = null;
+    for (const id of sorted) {
+      if (prev !== null) expect(cmpTs(tsFromUuid(id), tsFromUuid(prev))).toBeGreaterThanOrEqual(0);
+      prev = id;
+    }
+  });
+
+  it('within one millisecond rand_a >= 1000 folds, so a later id can derive a smaller ts', () => {
+    // ts.ts documents that rand_a % 1000 folds 4096 values onto 1000, leaving the
+    // derived ts only weakly monotonic within one ms. Pin that caveat, so a test
+    // asserting more than the codec promises fails here rather than at random.
+    const ms = Date.now();
+    const earlier = v7(ms, 0x01c); // rand_a 28   -> fraction .028
+    const later = v7(ms, 0x7d0); //   rand_a 2000 -> fraction .000
+    expect(later > earlier).toBe(true);
+    expect(cmpTs(tsFromUuid(later), tsFromUuid(earlier))).toBeLessThan(0);
   });
 
   it('uuidBoundForMs brackets every id of that millisecond', () => {

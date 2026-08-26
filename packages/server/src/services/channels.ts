@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
-import type { ChannelDTO, ChannelIndicatorState, ChannelKind, NotifyLevel } from '@flow/shared';
+import type { ChannelDTO, ChannelIndicatorState, ChannelKind, HuddleParticipantDTO, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -11,9 +11,11 @@ import {
   clearChannelNotificationsForAll,
   markChannelNotificationsRead,
   markThreadNotificationsRead,
+  notifyChannelInvite,
 } from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 import { channelIndicators } from '../indicators.js';
+import { huddleParticipantsMany, toParticipantDTOs } from '../huddles.js';
 
 const { channels, channelMembers, messages, notifications, workspaceMembers } = schema;
 
@@ -26,9 +28,11 @@ export function toChannelDTO(
     lastReadMsgId?: string | null | undefined;
     unreadCount?: number | undefined;
     unreadNotifications?: number | undefined;
+    unreadThreadRootIds?: string[] | undefined;
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
     indicator?: ChannelIndicatorState | null | undefined;
+    huddleParticipants?: HuddleParticipantDTO[] | undefined;
   },
 ): ChannelDTO {
   const dto: ChannelDTO = {
@@ -45,6 +49,7 @@ export function toChannelDTO(
     lastReadMsgId: opts.lastReadMsgId ?? null,
     unreadCount: opts.unreadCount ?? 0,
     unreadNotifications: opts.unreadNotifications ?? 0,
+    unreadThreadRootIds: opts.unreadThreadRootIds ?? [],
     notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
     parentId: c.parentId,
   };
@@ -52,6 +57,9 @@ export function toChannelDTO(
   // Only sent when something is actually showing: absent means "no spinner",
   // and every other DTO path (create, patch, join…) leaves it out entirely.
   if (opts.indicator) dto.indicator = opts.indicator;
+  // Same absent-means-quiet convention as indicator, for the same reason:
+  // every other DTO path (create, patch, join…) leaves this out entirely.
+  if (opts.huddleParticipants?.length) dto.huddleParticipants = opts.huddleParticipants;
   return dto;
 }
 
@@ -296,10 +304,34 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     .groupBy(notifications.channelId);
   const notifByChannel = new Map(notifRows.map((r) => [r.channelId, r.n]));
 
+  // Which threads are waiting on this user (#270) — the reply chip draws an
+  // unread dot from this, so a thread reply that needs you is visible in the
+  // transcript and not only in the sidebar number. One grouped query over the
+  // same unread rows; thread notifications are few, so the lists stay short.
+  const threadRootRows = await db
+    .selectDistinct({ channelId: notifications.channelId, rootId: messages.threadRootId })
+    .from(notifications)
+    .innerJoin(messages, eq(messages.id, notifications.messageId))
+    .where(
+      and(
+        eq(notifications.userId, userId),
+        isNull(notifications.readAt),
+        sql`${messages.threadRootId} IS NOT NULL`,
+      ),
+    );
+  const threadRootsByChannel = new Map<string, string[]>();
+  for (const r of threadRootRows) {
+    if (!r.rootId) continue;
+    threadRootsByChannel.set(r.channelId, [...(threadRootsByChannel.get(r.channelId) ?? []), r.rootId]);
+  }
+
   // Live activity spinners (#137) — in-memory, so this is a map lookup, not a
   // query. Riding the channel list means a client that just loaded (or came
   // back from a refresh) starts in the right state without a second call.
   const indicators = channelIndicators(visible.map((r) => r.c.id));
+  // Live huddle rosters (Phase 1) — same reasoning: a map lookup, not a query,
+  // so a client that just loaded shows an already-active huddle immediately.
+  const huddles = huddleParticipantsMany(visible.map((r) => r.c.id));
 
   const result: ChannelDTO[] = [];
   for (const r of visible) {
@@ -326,9 +358,11 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         lastReadMsgId: r.lastReadMsgId,
         unreadCount,
         unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
+        unreadThreadRootIds: r.isMember ? (threadRootsByChannel.get(r.c.id) ?? []) : [],
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
         indicator: indicators.get(r.c.id) ?? null,
+        huddleParticipants: toParticipantDTOs(huddles.get(r.c.id) ?? []),
       }),
     );
   }
@@ -420,7 +454,10 @@ export async function addMember(channelId: string, actorId: string, targetUserId
       ts: new Date().toISOString(),
       data: { userId: targetUserId, channelId, workspaceId: chan.workspaceId },
     });
-    await postSystemMessage(chan, targetUserId, 'member_joined');
+    // #303: the join line is the notification's anchor and its tap
+    // destination, so the notification follows it rather than racing it.
+    const line = await postSystemMessage(chan, targetUserId, 'member_joined');
+    if (line) await notifyChannelInvite(chan, line, targetUserId, actorId);
   }
 }
 

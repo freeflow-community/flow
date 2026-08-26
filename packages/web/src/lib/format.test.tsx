@@ -1,7 +1,7 @@
 // Inline markdown rendering (agent replies): assertions on static HTML output.
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { InlineLinkContext, renderBlocks, renderBody } from './format';
+import { fenceLanguage, InlineLinkContext, renderBlocks, renderBody, segmentBody } from './format';
 
 const html = (body: string) => renderToStaticMarkup(<>{renderBlocks(body, {}, undefined)}</>);
 
@@ -30,6 +30,19 @@ describe('inline markdown', () => {
     expect(html('[docs](https://example.com/a)')).toContain('href="https://example.com/a"');
     expect(html('[docs](https://example.com/a)')).toContain('>docs</a>');
     expect(html('see https://example.com/path.')).toContain('href="https://example.com/path"');
+  });
+
+  it('auto-links a URL in a channel topic and leaves the words around it plain (#194)', () => {
+    // ChannelView's header renders the topic through renderBody, so the topic
+    // gets the same bare-URL rule a message body has — no second URL regex.
+    const topic = renderToStaticMarkup(
+      <>{renderBody('Claude skill: https://app.flowtoo.org/flow-agent-member-SKILL.md', {}, undefined)}</>,
+    );
+    expect(topic).toContain('href="https://app.flowtoo.org/flow-agent-member-SKILL.md"');
+    expect(topic).toContain('target="_blank"');
+    expect(topic).toContain('Claude skill: ');
+    // The prose either side stays text, not part of the anchor.
+    expect(topic.indexOf('Claude skill: ')).toBeLessThan(topic.indexOf('<a '));
   });
 
   it('offers a "Pin as artifact" affordance on links when a handler is in context', () => {
@@ -117,5 +130,50 @@ describe('block markdown', () => {
     expect(out).not.toContain('<ul');
     expect(out).not.toContain('<table');
     expect(out).toContain('# not a heading');
+  });
+});
+
+describe('mermaid blocks (#229)', () => {
+  const kinds = (body: string) => segmentBody(body).map((s) => s.kind);
+
+  it('reads the fence info string, case- and space-insensitively', () => {
+    expect(fenceLanguage('```mermaid')).toBe('mermaid');
+    expect(fenceLanguage('```Mermaid  ')).toBe('mermaid');
+    expect(fenceLanguage('```mermaid theme=forest')).toBe('mermaid');
+    expect(fenceLanguage('```ts')).toBe('ts');
+    expect(fenceLanguage('```')).toBe('');
+  });
+
+  it('makes a ```mermaid fence its own segment, keeping the source verbatim', () => {
+    const source = 'flowchart LR\n  A[Client] --> B[Bridge]';
+    const segments = segmentBody('```mermaid\n' + source + '\n```');
+    expect(segments).toEqual([{ kind: 'mermaid', content: source }]);
+  });
+
+  it('leaves every other fence a code block', () => {
+    expect(kinds('```\nplain\n```')).toEqual(['code']);
+    expect(kinds('```ts\nconst x = 1;\n```')).toEqual(['code']);
+    // An empty diagram has nothing to draw, so it stays code.
+    expect(kinds('```mermaid\n\n```')).toEqual(['code']);
+  });
+
+  it('renders the diagram in a sandboxed frame, never in this document', () => {
+    const out = html('```mermaid\nflowchart LR\n  A --> B\n```');
+    expect(out).toContain('data-testid="mermaid-block"');
+    expect(out).toContain('src="/mermaid/sandbox.html"');
+    // No allow-same-origin: the frame gets an opaque origin and cannot reach
+    // this document. Losing that is the whole isolation, so assert it.
+    expect(out).toContain('sandbox="allow-scripts"');
+    expect(out).not.toContain('allow-same-origin');
+    // The source is not written into this document as markup.
+    expect(out).not.toContain('flowchart LR');
+  });
+
+  it('offers a copy-source control', () => {
+    expect(html('```mermaid\nflowchart LR\n  A --> B\n```')).toContain('data-testid="mermaid-copy"');
+  });
+
+  it('does not disturb neighbouring blocks', () => {
+    expect(kinds('# T\n```mermaid\npie\n```\n- a')).toEqual(['heading', 'mermaid', 'ulist']);
   });
 });

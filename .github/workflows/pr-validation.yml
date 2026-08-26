@@ -1,4 +1,4 @@
-name: PR validation
+name: Apple client validation
 
 on:
   pull_request:
@@ -8,45 +8,6 @@ permissions:
   contents: read
 
 jobs:
-  server-and-web:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: flow
-          POSTGRES_PASSWORD: flow_dev
-          POSTGRES_DB: flow
-        ports:
-          - 5442:5432
-        options: >-
-          --health-cmd "pg_isready -U flow -d flow"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @flow/shared build
-
-      - name: Server build
-        run: pnpm --filter @flow/server build
-
-      - name: Server tests, including Postgres-backed purge coverage
-        run: pnpm --filter @flow/server test
-
-      - name: Web tests
-        run: pnpm --filter @flow/web test
-
-      - name: Web production build
-        run: pnpm --filter @flow/web build
-
   apple-clients:
     runs-on: macos-14
     steps:

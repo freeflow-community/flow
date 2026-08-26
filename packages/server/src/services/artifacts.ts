@@ -19,7 +19,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { ArtifactDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
-import { badRequest, forbidden, notFound } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { reapFileIfUnreferenced, requireFileAccess, toFileDTO } from './files.js';
 import { requireChannelAccess } from './channels.js';
 import { publishEvent, subjectArtifact } from '../bus.js';
@@ -198,9 +198,30 @@ export async function updateArtifact(
     if (patch.fileId !== undefined) throw badRequest('bad_request', 'cannot attach a file to a link artifact');
     if (patch.url !== undefined && patch.url !== a.url) {
       if (!/^https?:\/\//i.test(patch.url)) throw badRequest('bad_url', 'url must be http(s)');
+      // The (channel, url) pin is unique — re-pointing onto a url another
+      // link artifact in this channel already pins would hit the
+      // artifacts_channel_link_pin index raw and 500 (#315). Answer 409
+      // instead; the racy window between this check and the UPDATE is
+      // closed by mapping the index violation to the same conflict.
+      const clash = await db
+        .select({ id: artifacts.id })
+        .from(artifacts)
+        .where(and(eq(artifacts.channelId, a.channelId), eq(artifacts.kind, 'link'), eq(artifacts.url, patch.url)))
+        .limit(1);
+      if (clash[0] && clash[0].id !== artifactId) {
+        throw conflict('link_exists', 'that url is already pinned in this channel');
+      }
       set.url = patch.url;
     }
-    const updated = await db.update(artifacts).set(set).where(eq(artifacts.id, artifactId)).returning();
+    let updated: ArtifactRow[];
+    try {
+      updated = await db.update(artifacts).set(set).where(eq(artifacts.id, artifactId)).returning();
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        throw conflict('link_exists', 'that url is already pinned in this channel');
+      }
+      throw err;
+    }
     const dto = toArtifactDTO(updated[0]!, null);
     publishArtifactEvent('artifact.updated', dto);
     return dto;

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Stale-lock sweeper. Hourly. Posts to Flow only when it finds something, and
+  at most once per lock per day.
+
+    cp .claude/skills/work-project-tasks/com.freeflow.flow-lock-sweeper.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.freeflow.flow-lock-sweeper.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.freeflow.flow-lock-sweeper</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>/Users/rentamac/flow/.claude/skills/work-project-tasks/sweep-locks.sh 2</string>
+  </array>
+
+  <key>StartInterval</key><integer>3600</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FLOW_REPO_ROOT</key><string>/Users/rentamac/flow</string>
+    <key>PATH</key><string>/Users/rentamac/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StandardOutPath</key><string>/Users/rentamac/flow-dispatcher.log</string>
+  <key>StandardErrorPath</key><string>/Users/rentamac/flow-dispatcher.log</string>
+</dict>
+</plist>

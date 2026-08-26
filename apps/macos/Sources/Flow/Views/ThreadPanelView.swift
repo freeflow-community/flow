@@ -7,6 +7,7 @@ struct ThreadPanelView: View {
     /// header/tab strip and background, so we drop our own chrome.
     var embedded: Bool = false
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     @StateObject private var thread = DBObserved<[Message]>(initial: [])
     @StateObject private var userNames = DBObserved<[String: String]>(initial: [:])
@@ -16,6 +17,36 @@ struct ThreadPanelView: View {
     @State private var profileUserId: String?
     /// The reply currently flashing after a jump-to-message (phase 12).
     @State private var flashId: String?
+    /// The single owner of this panel's follow/scroll decisions — the same
+    /// model the channel transcript uses (#334). Before it, the panel scrolled
+    /// to the newest reply unconditionally: a reader who had scrolled up to
+    /// re-read an earlier reply was yanked back down by everyone else's, and a
+    /// reply that sized late (an agent's markdown, an image) was left below the
+    /// fold with nothing to correct it. `.topEdge` is the macOS style — there
+    /// is no touch, so wheel and trackpad deltas are the only unpin signal.
+    @State private var followBox = TranscriptFollowBox(style: .topEdge)
+
+    /// When to re-assert the end after opening or after a reply lands, in
+    /// nanoseconds from the previous pass — the channel list's cadence
+    /// (`MessageListView`).
+    private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
+    private static let scrollSpace = "threadScroll"
+
+    /// Executes a follow-model command. The one place this panel scrolls to
+    /// its end — and it scrolls to the row *identity*, never a message id
+    /// (#329: rows are keyed on `clientMsgId`, so a message id matches no row
+    /// and silently scrolls nowhere).
+    private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
+        guard case .stick(let animated) = command,
+              let lastKey = thread.value.lastRowKey else { return }
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(lastKey, anchor: .bottom)
+            }
+        } else {
+            proxy.scrollTo(lastKey, anchor: .bottom)
+        }
+    }
 
     private var root: Message? {
         thread.value.first { $0.id == rootId }
@@ -35,7 +66,7 @@ struct ThreadPanelView: View {
                     }
                     Spacer()
                     Button {
-                        app.openThread(nil)
+                        win.openThread(nil)
                     } label: {
                         Image(systemName: "xmark")
                     }
@@ -50,12 +81,26 @@ struct ThreadPanelView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(thread.value) { message in
+                        // Keyed on clientMsgId, like the `.id()` below and the
+                        // channel list: when the optimistic row is swapped for
+                        // its server twin the *element* has to stay the same
+                        // element, or ForEach reads a delete + insert whose two
+                        // views claim one `.id()` — and the leaving pending row
+                        // wins, leaving the spinner up over a delivered message
+                        // (#328) until something forces a remount.
+                        ForEach(thread.value, id: \.clientMsgId) { message in
                             MessageRow(
                                 message: message,
                                 userNames: userNames.value,
                                 currentUserId: app.currentUser?.id,
                                 canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
+                                context: TranscriptContext(
+                                    engine: app.engine,
+                                    avatarPaths: app.avatarPaths,
+                                    agentIds: app.agentIds,
+                                    onError: { app.showError($0) },
+                                    onSelectArtifact: { win.selectArtifact($0) }
+                                ),
                                 showHeader: true,
                                 showThreadAffordances: false,
                                 highlighted: message.id == flashId,
@@ -66,7 +111,12 @@ struct ThreadPanelView: View {
                                 },
                                 onOpenProfile: { profileUserId = $0 }
                             )
-                            .id(message.id)
+                            .equatable()
+                            // See MessageListView: key on clientMsgId so the
+                            // optimistic reply row survives its server echo
+                            // instead of remounting (and re-flashing its
+                            // avatar placeholder).
+                            .id(message.clientMsgId)
                             if message.id == rootId {
                                 HStack {
                                     Text(replies.isEmpty
@@ -82,19 +132,76 @@ struct ThreadPanelView: View {
                         }
                     }
                     .padding(.vertical, 8)
+                    // Geometry feeds the follow model, exactly as it does in
+                    // the channel list: a content move or resize is one event,
+                    // and the command it returns is the only scroll toward the
+                    // end. This is what keeps a streaming reply pinned as it
+                    // grows, and what leaves a back-scrolled reader alone.
+                    .background(
+                        GeometryReader { geo in
+                            let frame = geo.frame(in: .named(Self.scrollSpace))
+                            Color.clear
+                                .onAppear { _ = followBox.model.contentChanged(to: frame) }
+                                .onChange(of: frame) { _, new in
+                                    run(followBox.model.contentChanged(to: new), proxy)
+                                }
+                        }
+                    )
                 }
-                .defaultScrollAnchor(.bottom) // open at the newest reply
+                .coordinateSpace(name: Self.scrollSpace)
+                // The composer growing (a wrapping draft, the typing
+                // indicator appearing under an agent's reply) shrinks this
+                // viewport; a pinned reader is carried to the newest reply.
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { _ = followBox.model.viewportChanged(to: geo.size.height) }
+                            .onChange(of: geo.size.height) { _, new in
+                                run(followBox.model.viewportChanged(to: new), proxy)
+                            }
+                    }
+                )
+                // Open at the newest reply — but on macOS 15+ scope the anchor
+                // to initial offset + alignment (MacBottomAnchor, #159/#312's
+                // lesson in the channel list). The all-roles form also
+                // re-anchors on every *content size change*, and a LazyVStack
+                // materialising rows after a jump-to-reply scroll is exactly
+                // that: the centring scroll was issued and then dragged back to
+                // the end before it could be seen (#329).
+                .modifier(MacBottomAnchor())
                 .onChange(of: thread.value.last?.id) { _, newId in
                     // A pending jump owns the scroll position.
-                    guard app.focusMessageId == nil, let newId else { return }
-                    proxy.scrollTo(newId, anchor: .bottom)
+                    guard win.focusMessageId == nil, newId != nil else { return }
+                    // The model follows a new reply down only while the reader
+                    // is at the end — except my own reply, which always re-pins
+                    // (#111/#334, the channel list's rule).
+                    let own = app.currentUser?.id != nil
+                        && thread.value.last?.userId == app.currentUser?.id
+                    run(followBox.model.lastMessageChanged(isOwn: own), proxy)
                 }
                 // Jump-to-message (phase 12): scroll to + flash a thread reply
                 // reached from the Activity feed. The thread loads whole, so no
                 // paging is needed here (unlike the channel's main list).
-                .onChange(of: app.focusMessageId) { _, _ in tryFocus(proxy) }
+                .onChange(of: win.focusMessageId) { _, _ in tryFocus(proxy) }
                 .onChange(of: thread.value.count) { _, _ in tryFocus(proxy) }
                 .onAppear { tryFocus(proxy) }
+                // Landing at the newest reply is this view's job now: with the
+                // anchor scoped to the initial offset, a first paint whose rows
+                // are still estimating their heights comes up short and nothing
+                // corrects it. The same belt covers a reply arriving later —
+                // it is scrolled to before its row has a height (#334). Keyed
+                // on the row identity so an optimistic reply reconciling with
+                // its echo doesn't re-run it, and gated on the model, so a
+                // back-scrolled reader or a jump is never overridden.
+                .task(id: thread.value.lastRowKey) {
+                    guard !thread.value.isEmpty else { return }
+                    for delay in Self.settleDelays {
+                        try? await Task.sleep(nanoseconds: delay)
+                        let command = followBox.model.arrivalSettleCommand()
+                        guard case .stick = command else { return }
+                        run(command, proxy)
+                    }
+                }
             }
 
             if let root {
@@ -118,6 +225,15 @@ struct ThreadPanelView: View {
             }
         }
         .task(id: rootId) {
+            // A different thread is a different transcript: land it pinned to
+            // its newest reply, with the previous thread's pin and jump state
+            // dropped. Reset in place rather than by replacing the box — the
+            // measured viewport height is the panel's, not the thread's, and
+            // a model that has forgotten it reads every frame as "far from the
+            // end" until the panel happens to resize.
+            followBox.model.positionRestored(atBottom: true)
+            followBox.model.focusActive = false
+            followBox.model.landingIssued()
             thread.start(db: app.db, reset: []) { db in
                 try Message
                     .filter(Column("id") == rootId || Column("threadRootId") == rootId)
@@ -172,12 +288,16 @@ struct ThreadPanelView: View {
     /// Center + flash the jump-to-message target once the thread has loaded it,
     /// then release the shared target.
     private func tryFocus(_ proxy: ScrollViewProxy) {
-        guard let fid = app.focusMessageId, thread.value.contains(where: { $0.id == fid }) else { return }
+        guard let fid = win.focusMessageId,
+              let key = thread.value.rowKey(forMessageId: fid) else { return }
+        // The jump owns the position for the rest of this thread's life, so
+        // no glue or follow can drag the reader off the reply they came for.
+        followBox.model.focusEngaged()
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(fid, anchor: .center)
+            proxy.scrollTo(key, anchor: .center) // row identity, not message id (#329)
         }
         flashId = fid
-        app.focusMessageId = nil
+        win.focusMessageId = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             withAnimation(.easeOut(duration: 0.6)) {
                 if flashId == fid { flashId = nil }

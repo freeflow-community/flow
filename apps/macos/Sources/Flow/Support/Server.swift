@@ -8,6 +8,14 @@ import Foundation
 enum Server {
     static let defaultLocal = URL(string: "http://127.0.0.1:8787")!
 
+    /// True inside an app extension, where `Bundle.main` is the *extension's*
+    /// bundle — so the host app's Info.plist, and its `FlowServerURL`, are not
+    /// visible here (issue #214). Each extension stamps its own copy of the
+    /// key; a missing one is a packaging bug, not a dev default, because the
+    /// resulting `storageSuffix` change also moves the Keychain account name
+    /// and silently signs the extension out.
+    static let isAppExtension = Bundle.main.bundlePath.hasSuffix(".appex")
+
     static let baseURL: URL = {
         if let raw = ProcessInfo.processInfo.environment["FLOW_SERVER_URL"],
            let url = URL(string: raw.hasSuffix("/") ? String(raw.dropLast()) : raw),
@@ -19,6 +27,12 @@ enum Server {
            url.scheme != nil {
             return url
         }
+        assert(
+            !isAppExtension,
+            "FlowServerURL is missing from this extension's Info.plist — it would "
+                + "silently fall back to \(defaultLocal) and read the wrong Keychain account. "
+                + "Stamp the key in the target's info: block in apps/ios/project.yml."
+        )
         return defaultLocal
     }()
 

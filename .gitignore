@@ -3,6 +3,8 @@ dist/
 *.log
 # …but frozen changelog archives are project history, not build noise.
 !CHANGES_ARCHIVE_*.log
+# generated from changelog/ by scripts/build-features.mjs — never hand-edited
+/FEATURES.md
 .DS_Store
 .env
 .env.local
@@ -25,3 +27,5 @@ agent.json
 packages/web/public/flow-agent-member-SKILL.md
 # generated at predev/prebuild from repo-root FEATURES.md
 packages/web/public/FEATURES.md
+# generated at predev/prebuild from the mermaid package (3.5 MB browser bundle)
+packages/web/public/mermaid/mermaid.min.js

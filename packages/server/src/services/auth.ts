@@ -39,6 +39,8 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
     timezone: u.timezone,
     statusEmoji: u.statusEmoji,
     statusText: u.statusText,
+    website: u.website,
+    bio: u.bio,
     isAgent: u.isAgent,
     sponsorId: u.isAgent ? u.sponsorUserId : null,
     notificationPrefs: u.notificationPrefs,
@@ -334,6 +336,9 @@ export async function authenticate(token: string): Promise<UserDTO> {
     if (agentUser) return agentUser;
     throw unauthorized();
   }
+  // Tombstoned users drop their sessions in the same transaction, but a race
+  // (or a future partial tombstone) must never let a dead account act.
+  if (row.user.deletedAt) throw unauthorized();
   const slideThreshold = new Date(now.getTime() + (config.sessionTtlDays - 1) * 86400_000);
   if (row.expiresAt < slideThreshold) {
     await db

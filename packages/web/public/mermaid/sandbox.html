@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Required for the native hosts. Without it a WKWebView lays the page
+         out at a 980 px viewport and scales the result down to fit, so the
+         height reported back is ~2.6× the height actually drawn and the app
+         leaves a tall empty gap under every diagram. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Flow Mermaid sandbox</title>
+    <!--
+      The one Mermaid renderer for all three clients (#229). The web client
+      mounts this page in a `sandbox="allow-scripts"` iframe; the macOS and iOS
+      clients mount the same URL from their own server in an ephemeral
+      WKWebView. Diagram source never reaches the host document — it arrives
+      here by postMessage and the rendered SVG stays inside this frame, so the
+      host only ever learns a height or a parse error.
+
+      CSP is defence in depth on top of that isolation: no network of any kind
+      (`connect-src 'none'`), no plugins, no nested frames, no form posts. The
+      script sources stay scheme-broad because a sandboxed frame has an opaque
+      origin, against which `'self'` cannot match.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline' http: https:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'"
+    />
+    <style>
+      /* Design 3a tokens, light. The dark set mirrors them for a dark host. */
+      :root {
+        color-scheme: light;
+        --ink: #39342f;
+        --ink-soft: #635d56;
+        --base: #fbfaf8;
+        --line: #ddd8cf;
+        --accent: #6b30af;
+        --accent-soft: #efe9f8;
+        --danger: #c4342e;
+      }
+      html[data-theme='dark'] {
+        color-scheme: dark;
+        --ink: #ece8e2;
+        --ink-soft: #b7b0a6;
+        --base: #241f2e;
+        --line: #4a4256;
+        --accent: #b48cf0;
+        --accent-soft: #362e46;
+        --danger: #ff8a82;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--ink);
+        font: 13px/1.45 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #out {
+        display: block;
+      }
+      /* Zoomed (#232): the frame is the whole overlay, so the diagram is
+         centred in it and the script sizes the SVG to fit. */
+      html[data-fit='window'],
+      html[data-fit='window'] body,
+      html[data-fit='window'] #out {
+        height: 100%;
+      }
+      html[data-fit='window'] #out {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      /* Opaque when zoomed. Inline the frame is transparent so a diagram sits
+         on the message background; over a dimmed overlay that same
+         transparency lets the conversation show through the diagram. */
+      html[data-fit='window'] body {
+        background: var(--base);
+      }
+      /* The whole inline frame is the affordance — clicking it asks the host
+         for the overlay, the way clicking an image opens the lightbox. */
+      html[data-fit='inline'] body {
+        cursor: zoom-in;
+      }
+      #out svg {
+        display: block;
+        /* Mermaid's `useMaxWidth` puts the diagram's natural width in an
+           inline `max-width`, and `width="100%"` under it. Together those
+           already do the right thing: never wider than natural, and scaled
+           down when the frame is narrower — which is what keeps a flowchart
+           readable on a phone. So do NOT override that max-width here; only
+           free the height, which mermaid pins in px, so the aspect ratio
+           survives the scaling. */
+        height: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="out"></div>
+    <script src="./mermaid.min.js"></script>
+    <script src="./sandbox.js"></script>
+  </body>
+</html>

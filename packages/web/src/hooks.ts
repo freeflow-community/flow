@@ -12,6 +12,8 @@ import type {
   AppDTO,
   ArtifactDTO,
   ChannelDTO,
+  ChannelFilePage,
+  ChannelFileSort,
   FileDTO,
   MessageDTO,
   MessagePage,
@@ -19,6 +21,7 @@ import type {
   OAuthIdentityDTO,
   UserDTO,
   WorkspaceDTO,
+  WorkspaceEmojiDTO,
   WorkspaceMemberDTO,
 } from '@flow/shared';
 import { api } from './lib/api';
@@ -135,6 +138,26 @@ export function useApps(workspaceId: string | null) {
   });
 }
 
+/** Workspace custom emoji (#175). Every member can read this — you need the
+ * images to render other people's reactions, not just to add your own. */
+export function useWorkspaceEmoji(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ['emoji', workspaceId],
+    queryFn: () => api<{ emoji: WorkspaceEmojiDTO[] }>('GET', `/v1/workspaces/${workspaceId}/emoji`),
+    select: (d) => d.emoji,
+    enabled: workspaceId !== null,
+  });
+}
+
+/** `:shortcode:` → emoji, for rendering reactions. Keyed on the colon form so a
+ * reaction string is a direct lookup. */
+export function useWorkspaceEmojiMap(workspaceId: string | null): Record<string, WorkspaceEmojiDTO> {
+  const q = useWorkspaceEmoji(workspaceId);
+  const map: Record<string, WorkspaceEmojiDTO> = {};
+  for (const e of q.data ?? []) map[e.emoji] = e;
+  return map;
+}
+
 /** Channel member ids — standard channels included (mention CTA, invite lists). */
 export function useChannelMembers(channelId: string | null) {
   return useQuery({
@@ -156,6 +179,34 @@ export function useMessages(channelId: string | null) {
     initialPageParam: '',
     getNextPageParam: (last) =>
       last.hasMore && last.messages.length > 0 ? last.messages[last.messages.length - 1]!.id : undefined,
+    enabled: channelId !== null,
+  });
+}
+
+/**
+ * Channel Files panel (#347): every file shared in the channel, one sort order
+ * at a time. Keyed by sort so switching links swaps to a cached list rather
+ * than refetching, and paged with the server's opaque cursor.
+ */
+export function useChannelFiles(channelId: string | null, sort: ChannelFileSort) {
+  return useInfiniteQuery({
+    queryKey: ['channelFiles', channelId, sort],
+    queryFn: ({ pageParam }) =>
+      api<ChannelFilePage>(
+        'GET',
+        `/v1/channels/${channelId}/files?sort=${sort}&limit=30${pageParam ? `&before=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: channelId !== null,
+  });
+}
+
+export function usePinnedMessages(channelId: string | null) {
+  return useQuery({
+    queryKey: ['pins', channelId],
+    queryFn: () => api<{ messages: MessageDTO[] }>('GET', `/v1/channels/${channelId}/pins`),
+    select: (d) => d.messages,
     enabled: channelId !== null,
   });
 }
@@ -233,6 +284,8 @@ export function useSendMessage(channelId: string) {
     createdAt: new Date().toISOString(),
     editedAt: null,
     deletedAt: null,
+    pinnedAt: null,
+    pinnedBy: null,
     systemKind: null,
     replyCount: 0,
     lastReplyAt: null,
@@ -299,6 +352,21 @@ export function useToggleReaction() {
   });
 }
 
+export function useTogglePin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (message: MessageDTO) =>
+      api<MessageDTO>(
+        message.pinnedAt ? 'DELETE' : 'PUT',
+        `/v1/messages/${message.id}/pin`,
+      ),
+    onSuccess: (updated) => {
+      applyMessageEvent(qc, updated, false);
+      void qc.invalidateQueries({ queryKey: ['pins', updated.channelId] });
+    },
+  });
+}
+
 /**
  * Advance the channel read cursor — which also clears that channel's Activity
  * notifications server-side (issue #63). With `threadRootId` it means "I'm
@@ -313,7 +381,12 @@ export function useMarkRead() {
         lastReadMsgId: input.lastReadMsgId,
         ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
       }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['channels'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['channels'] });
+      // Reading a channel drops that workspace's rail badge (#345) — the total
+      // lives on the workspace list, so it has to be refetched too.
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    },
   });
 }
 

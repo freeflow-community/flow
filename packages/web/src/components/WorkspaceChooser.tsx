@@ -4,7 +4,9 @@ import type { WorkspaceDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useSelfRegisterDomain, useWorkspaces } from '../hooks';
+import { EMPTY_SLUG_FIELD, slugEdited, slugForName } from '../lib/slugify';
 import { OpenInAppButton } from './OpenInApp';
+import { AuthImg } from './Avatar';
 
 export default function WorkspaceChooser() {
   const auth = useAuth();
@@ -17,7 +19,10 @@ export default function WorkspaceChooser() {
   const [showCreate, setShowCreate] = useState(false);
   const [showAccept, setShowAccept] = useState(false);
   const [name, setName] = useState('');
-  const [slug, setSlug] = useState('');
+  // The slug follows the name until the user edits it themselves (#256) — the
+  // same behaviour macOS and iOS have always had.
+  const [slugField, setSlugField] = useState(EMPTY_SLUG_FIELD);
+  const slug = slugField.slug;
   const [openToDomain, setOpenToDomain] = useState(false);
   const [inviteToken, setInviteToken] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -63,9 +68,13 @@ export default function WorkspaceChooser() {
             onClick={() => sel.selectWorkspace(ws.id)}
             className="flex w-full items-center gap-3 rounded-lg border border-hairline bg-white p-3 text-left shadow-sm hover:border-accent"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent font-bold text-white">
-              {ws.name.slice(0, 1).toUpperCase()}
-            </span>
+            {ws.avatarUrl ? (
+              <AuthImg path={ws.avatarUrl} alt={ws.name} className="h-10 w-10 shrink-0 rounded-lg object-cover" />
+            ) : (
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent font-bold text-white">
+                {ws.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
             <span className="flex-1">
               <span className="block font-semibold text-ink">{ws.name}</span>
               <span className="block text-sm text-muted">{ws.slug}</span>
@@ -94,10 +103,15 @@ export default function WorkspaceChooser() {
       </div>
       {showCreate && (
         <div className="flex w-96 flex-col gap-2 rounded-lg border border-hairline bg-white p-4">
-          <input className="rounded border border-hairline2 px-3 py-2 text-sm" placeholder="Name"
-            value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="rounded border border-hairline2 px-3 py-2 text-sm" placeholder="slug (lowercase-dashes)"
-            value={slug} onChange={(e) => setSlug(e.target.value)} />
+          <input data-testid="create-ws-name" className="rounded border border-hairline2 px-3 py-2 text-sm"
+            placeholder="Name" value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setSlugField((f) => slugForName(f, e.target.value));
+            }} />
+          <input data-testid="create-ws-slug" className="rounded border border-hairline2 px-3 py-2 text-sm"
+            placeholder="slug (lowercase-dashes)" value={slug}
+            onChange={(e) => setSlugField(slugEdited(e.target.value))} />
           {selfRegisterDomain && (
             <label data-testid="create-ws-self-register" className="flex items-start gap-2 text-sm text-ink-soft">
               <input type="checkbox" className="mt-0.5" checked={openToDomain}
@@ -108,7 +122,8 @@ export default function WorkspaceChooser() {
               </span>
             </label>
           )}
-          <button className="rounded bg-accent py-2 text-sm font-semibold text-white disabled:opacity-50"
+          <button data-testid="create-ws-submit"
+            className="rounded bg-accent py-2 text-sm font-semibold text-white disabled:opacity-50"
             disabled={!name || !slug} onClick={create}>Create</button>
         </div>
       )}

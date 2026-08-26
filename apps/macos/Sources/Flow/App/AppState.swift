@@ -1,8 +1,13 @@
+import Combine
 import Foundation
+import LiveKit
 import SwiftUI
 
-/// Main-actor UI state: auth phase, selection, and ephemeral (non-persisted)
-/// typing/presence maps. Persistent data lives in GRDB and is observed
+/// Main-actor app-wide state: auth phase, connection, and ephemeral
+/// (non-persisted) typing/presence maps, shared by every window. What each
+/// window is *looking at* lives in that window's `WindowState`; AppState keeps
+/// a registry of them so cross-window questions ("is anyone viewing this
+/// channel?") have one answer. Persistent data lives in GRDB and is observed
 /// directly by views.
 @MainActor
 final class AppState: ObservableObject {
@@ -27,17 +32,6 @@ final class AppState: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .loading
-    @Published var selectedWorkspaceId: String?
-    @Published var selectedChannelId: String?
-    @Published var openThreadRootId: String?
-    /// Open artifact (phase 13) — when set, the right-hand side panel shows the
-    /// artifact next to its channel (mutually exclusive with the thread panel).
-    @Published var selectedArtifactId: String?
-    /// Activity feed (phase 12) — the always-present virtual "channel" that
-    /// replaced the notifications bell. When true the content pane shows
-    /// <ActivityFeedView>; the selected channel stays put behind it (like an
-    /// artifact) so picking a channel returns to a normal conversation.
-    @Published var showActivity: Bool = false
     /// Whether a channel or DM sidebar row should draw the selected pill (#113).
     ///
     /// The artifact panel and the Activity feed each sit *over* the channel
@@ -54,25 +48,53 @@ final class AppState: ObservableObject {
         selectedChannelId == rowId && selectedArtifactId == nil && !showActivity
     }
 
-    /// Jump-to-message target (phase 12): a message id the channel/thread view
-    /// should scroll to and flash after navigation (set when a notification is
-    /// tapped in the Activity feed). Cleared once reached (or given up on).
-    @Published var focusMessageId: String?
-    /// Visible artifacts for the active workspace (phase 13) — those in channels
-    /// I'm a member of, newest first. Grouped by channel in the sidebar.
-    @Published private(set) var artifacts: [Artifact] = []
+    /// Scroll identity for a sidebar channel/DM row (#319), so the sidebar can
+    /// scroll the active channel into view when you arrive from a notification,
+    /// a deep link or being added to a channel. Namespaced rather than the bare
+    /// channel id: the same id already identifies the `ForEach` element that
+    /// wraps the row *and its artifacts*, and scrolling should target the row.
+    nonisolated static func sidebarRowID(_ channelId: String) -> String {
+        "sidebar-row-\(channelId)"
+    }
+
+    /// Visible artifacts per workspace (phase 13) — those in channels I'm a
+    /// member of, newest first. Keyed by workspace because two windows can
+    /// show two workspaces at once; each window reads its own slice.
+    @Published private(set) var artifactsByWorkspace: [String: [Artifact]] = [:]
     @Published private(set) var connection: Connection = .connecting
+    /// How many catch-up passes are in flight (#234). A *count*, not a flag:
+    /// a second reconnect can start while the first backfill is still paging,
+    /// and a Bool would let the first one to finish declare the app caught up.
+    @Published private(set) var catchUpCount: Int = 0
     /// userId -> online?
     @Published private(set) var presence: [String: Bool] = [:]
     /// channelId -> (userId -> last typing event time)
     @Published private(set) var typing: [String: [String: Date]] = [:]
     /// Channels an agent is working in right now (#137) — the sidebar spinner.
     @Published private(set) var busyChannelIds: Set<String> = []
+    /// channelId -> live voice-huddle roster (Phase 1). Purely in-memory, like
+    /// busyChannelIds: LiveKit is the source of truth (decision log
+    /// 2026-08-20), not this cache, so nothing here is worth persisting.
+    @Published private(set) var huddleRosters: [String: [HuddleParticipant]] = [:]
+    /// Channel id of the huddle this app is connected to, or nil. App-level
+    /// (not per-window) so the connection survives navigating between
+    /// channels — see CONTEXT.md (Huddle).
+    @Published private(set) var activeHuddleChannelId: String?
+    @Published private(set) var activeHuddleWorkspaceId: String?
+    @Published private(set) var huddleConnecting: Bool = false
+    /// Muted on join, by decision — the mic is never auto-published.
+    @Published private(set) var huddleMuted: Bool = true
+    private var huddleRoom: Room?
     /// channelId -> more history available on the server
     @Published private(set) var hasMore: [String: Bool] = [:]
-    /// Unread notifications in the *selected* workspace — the sidebar Activity
-    /// badge, matching the workspace-scoped feed behind it.
-    @Published private(set) var notificationUnread: Int = 0
+    /// Channels whose history page is in flight (#191). A transcript with
+    /// nothing cached yet is indistinguishable from a lost conversation, so the
+    /// clients render a loading state instead of bare background while this
+    /// holds the channel.
+    @Published private(set) var loadingHistory: Set<String> = []
+    /// Unread notifications per workspace — each window's sidebar Activity
+    /// badge reads its own workspace's count.
+    @Published private(set) var notificationUnreadByWorkspace: [String: Int] = [:]
     /// Unread across every workspace — the dock badge, which has to keep
     /// speaking for the workspaces you aren't looking at.
     @Published private(set) var notificationUnreadTotal: Int = 0
@@ -92,14 +114,110 @@ final class AppState: ObservableObject {
     /// (currently: the session expired under them). Cleared on a fresh sign-in.
     @Published var signedOutReason: String?
 
-    /// channelId -> the thread that was open there (issue #89). The open thread
-    /// lives in the single `openThreadRootId` slot, so switching channels would
-    /// otherwise drop it; this parks it instead, and coming back restores it.
-    /// In-memory and per-workspace — cleared on workspace switch/sign-out.
-    private var openThreadByChannel: [String: String] = [:]
-
     let db: AppDatabase
     let engine: SyncEngine
+
+    // MARK: - Window registry
+
+    /// Weak box so a closed window's state just falls out of the registry —
+    /// window teardown has no reliable "last onDisappear" to unregister on.
+    private final class WeakWindow {
+        weak var value: WindowState?
+        init(_ value: WindowState) { self.value = value }
+    }
+
+    private var windowRefs: [WeakWindow] = []
+    /// The window that last was (or is) key — where an OS banner tap or an
+    /// accepted invite should navigate.
+    private weak var keyWindow: WindowState?
+
+    /// The live windows, compacting out any that have closed.
+    var windows: [WindowState] {
+        windowRefs.removeAll { $0.value == nil }
+        return windowRefs.compactMap(\.value)
+    }
+
+    func register(_ window: WindowState) {
+        windowRefs.append(WeakWindow(window))
+        if keyWindow == nil { keyWindow = window }
+    }
+
+    func noteKeyWindow(_ window: WindowState) {
+        keyWindow = window
+    }
+
+    /// The window navigation from outside a window (banner tap, invite accept)
+    /// should land in.
+    private var routingWindow: WindowState? {
+        if let keyWindow { return keyWindow }
+        return windows.first
+    }
+
+#if os(iOS)
+    // MARK: - Single-window bridge (iOS)
+
+    // iOS has exactly one window, so AppState owns its WindowState and keeps
+    // the pre-window-split member names the phone views were written against.
+    // WindowState's changes are re-published through AppState (the sink below)
+    // because those views observe AppState, not the window.
+    private var _window: WindowState?
+    private var windowBridge: AnyCancellable?
+    var window: WindowState {
+        if let w = _window { return w }
+        let w = WindowState(app: self)
+        windowBridge = w.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        _window = w
+        return w
+    }
+
+    var selectedWorkspaceId: String? { window.selectedWorkspaceId }
+    var selectedChannelId: String? { window.selectedChannelId }
+    var openThreadRootId: String? { window.openThreadRootId }
+    var selectedArtifactId: String? { window.selectedArtifactId }
+    var showActivity: Bool {
+        get { window.showActivity }
+        set { window.showActivity = newValue }
+    }
+    var focusMessageId: String? {
+        get { window.focusMessageId }
+        set { window.focusMessageId = newValue }
+    }
+    /// The selected workspace's visible artifacts (newest first).
+    var artifacts: [Artifact] { window.artifacts() }
+    /// Unread notifications in the selected workspace (the Activity badge).
+    var notificationUnread: Int {
+        selectedWorkspaceId.flatMap { notificationUnreadByWorkspace[$0] } ?? 0
+    }
+
+    func selectWorkspace(_ id: String?) { window.selectWorkspace(id) }
+    func restoreActiveWorkspace() { window.restoreActiveWorkspace() }
+    func selectChannel(_ id: String?) { window.selectChannel(id) }
+    func openThread(_ rootId: String?) { window.openThread(rootId) }
+    func selectArtifact(_ id: String?) { window.selectArtifact(id) }
+    func showActivityFeed() { window.showActivityFeed() }
+    func artifacts(inChannel channelId: String) -> [Artifact] { window.artifacts(inChannel: channelId) }
+#endif
+
+    /// Workspaces open in any window — what the engine keeps fresh and applies
+    /// workspace-scoped events for.
+    var openWorkspaceIds: Set<String> {
+        Set(windows.compactMap(\.selectedWorkspaceId))
+    }
+
+    /// Channels selected in any window (whether or not covered by Activity or
+    /// an artifact — the conversation is still mounted behind those).
+    var openChannelIds: Set<String> {
+        Set(windows.compactMap(\.selectedChannelId))
+    }
+
+    /// Threads open in any window.
+    var openThreadRootIds: Set<String> {
+        Set(windows.compactMap(\.openThreadRootId))
+    }
+
+    func isWorkspaceOpen(_ id: String) -> Bool {
+        openWorkspaceIds.contains(id)
+    }
 
     init() {
         do {
@@ -127,12 +245,8 @@ final class AppState: ObservableObject {
         phase = p
         if case .signedIn = p { signedOutReason = nil }
         if case .signedOut = p {
-            selectedWorkspaceId = nil
-            selectedChannelId = nil
-            openThreadRootId = nil
-            openThreadByChannel.removeAll()
-            selectedArtifactId = nil
-            artifacts = []
+            windows.forEach { $0.clearForSignOut() }
+            artifactsByWorkspace = [:]
         }
     }
 
@@ -146,23 +260,52 @@ final class AppState: ObservableObject {
 
     func didSignOut() {
         phase = .signedOut
-        selectedWorkspaceId = nil
-        selectedChannelId = nil
-        openThreadRootId = nil
-        openThreadByChannel.removeAll()
-        selectedArtifactId = nil
-        showActivity = false
-        focusMessageId = nil
-        artifacts = []
+        windows.forEach { $0.clearForSignOut() }
+        artifactsByWorkspace = [:]
         presence = [:]
         typing = [:]
         busyChannelIds = []
+        huddleRosters = [:]
+        leaveHuddle() // don't leave a signed-out session's token connected
         hasMore = [:]
-        setNotificationUnread(0)
+        loadingHistory = []
+        notificationUnreadByWorkspace = [:]
+        notificationUnreadTotal = 0
+        catchUpCount = 0
+        Banners.setBadge(0)
     }
 
     func setConnection(_ c: Connection) {
         connection = c
+    }
+
+    /// Bracket a catch-up pass (the post-connect backfill). Paired calls only —
+    /// see `catchUpCount`.
+    func beginCatchUp() {
+        catchUpCount += 1
+    }
+
+    func endCatchUp() {
+        catchUpCount = max(0, catchUpCount - 1)
+    }
+
+    /// Is the chat behind the server right now (#234) — the reconnect bar's
+    /// input, before any show/hide timing is applied.
+    ///
+    /// Connected-but-catching-up counts: `SyncEngine` reports `.connected` the
+    /// moment the socket says hello, then spends real time refetching channels
+    /// and paging messages. A bar tied to the socket alone disappears while the
+    /// transcript on screen is still stale, which is exactly the launch delay
+    /// this was filed about.
+    ///
+    /// Static and pure so the rule is one testable thing rather than a
+    /// condition retyped in the macOS and iOS views.
+    nonisolated static func isSyncing(connection: Connection, catchUpCount: Int) -> Bool {
+        connection != .connected || catchUpCount > 0
+    }
+
+    var isSyncing: Bool {
+        Self.isSyncing(connection: connection, catchUpCount: catchUpCount)
     }
 
     func showError(_ message: String) {
@@ -171,6 +314,14 @@ final class AppState: ObservableObject {
 
     func setHasMore(channelId: String, _ value: Bool) {
         hasMore[channelId] = value
+    }
+
+    func setLoadingHistory(channelId: String, _ value: Bool) {
+        if value {
+            loadingHistory.insert(channelId)
+        } else {
+            loadingHistory.remove(channelId)
+        }
     }
 
     func typingReceived(channelId: String, threadRootId: String? = nil, userId: String) {
@@ -215,6 +366,22 @@ final class AppState: ObservableObject {
         busyChannelIds = ids
     }
 
+    /// A channel's live huddle roster after a change (Phase 1) — the server's
+    /// aggregate, not one joiner/leaver. Empty means the huddle ended.
+    func huddleUpdated(channelId: String, participants: [HuddleParticipant]) {
+        if participants.isEmpty {
+            huddleRosters.removeValue(forKey: channelId)
+        } else {
+            huddleRosters[channelId] = participants
+        }
+    }
+
+    /// Replace the whole map from a channel-list fetch, same reasoning as
+    /// setBusyChannelIds.
+    func setHuddleRosters(_ rosters: [String: [HuddleParticipant]]) {
+        huddleRosters = rosters
+    }
+
     func setAvatarPaths(_ paths: [String: String]) {
         avatarPaths = paths
     }
@@ -223,39 +390,69 @@ final class AppState: ObservableObject {
         agentIds = ids
     }
 
-    func setArtifacts(_ list: [Artifact]) {
-        artifacts = list
+    func setArtifacts(_ list: [Artifact], workspaceId: String) {
+        artifactsByWorkspace[workspaceId] = list
     }
 
-    /// Open artifact was removed (here or on another device): close the panel
-    /// back to the channel behind it.
+    /// A workspace's visible artifacts (newest first); empty when none loaded.
+    func artifacts(workspaceId: String?) -> [Artifact] {
+        workspaceId.flatMap { artifactsByWorkspace[$0] } ?? []
+    }
+
+    /// Open artifact was removed (here or on another device): any window
+    /// showing it closes the panel back to the channel behind it.
     func artifactBecameUnavailable(_ artifactId: String) {
-        if selectedArtifactId == artifactId {
-            selectedArtifactId = nil
-        }
+        windows.forEach { $0.artifactBecameUnavailable(artifactId) }
+    }
+
+    /// Auto-open an agent-created artifact in whichever window is viewing its
+    /// channel (see `WindowState.maybeAutoOpenArtifact` for the gating).
+    func maybeAutoOpenArtifact(_ a: Artifact) {
+        windows.forEach { $0.maybeAutoOpenArtifact(a) }
+    }
+
+    /// One workspace's Activity-badge count.
+    func notificationUnread(workspaceId: String?) -> Int {
+        workspaceId.flatMap { notificationUnreadByWorkspace[$0] } ?? 0
     }
 
     /// `total` nil = the server didn't send one (pre-scoping build): fall back
     /// to the scoped number so the dock badge still shows something sane.
-    func setNotificationUnread(_ n: Int, total: Int? = nil) {
-        notificationUnread = n
+    func setNotificationUnread(_ n: Int, workspaceId: String?, total: Int? = nil) {
+        if let workspaceId { notificationUnreadByWorkspace[workspaceId] = n }
         notificationUnreadTotal = total ?? n
         Banners.setBadge(notificationUnreadTotal)
     }
 
-    /// A row for another workspace still counts on the dock, but not in this
-    /// workspace's sidebar — its Activity feed will never show it.
+    /// A row counts on the dock always, and in the sidebar badge of whichever
+    /// windows show its workspace — their Activity feeds will show the row.
     func notificationReceived(_ n: NotificationItem) {
         setNotificationUnread(
-            n.workspaceId == selectedWorkspaceId ? notificationUnread + 1 : notificationUnread,
+            notificationUnread(workspaceId: n.workspaceId) + 1,
+            workspaceId: n.workspaceId,
             total: notificationUnreadTotal + 1
+        )
+    }
+
+    /// Opening a channel reads its Activity rows — count them off the badges
+    /// now rather than after the server's `notification.read` comes back
+    /// (#227). Clamped at zero: this is a guess from the local cache, and the
+    /// event that follows replaces both numbers with the server's.
+    func notificationsCleared(count: Int, workspaceId: String?) {
+        guard count > 0 else { return }
+        setNotificationUnread(
+            max(0, notificationUnread(workspaceId: workspaceId) - count),
+            workspaceId: workspaceId,
+            total: max(0, notificationUnreadTotal - count)
         )
     }
 
     func messagePermanentlyDeleted(_ message: Message) {
         notificationRowsChanged()
-        if message.threadRootId == nil, openThreadRootId == message.id {
-            openThread(nil)
+        if message.threadRootId == nil {
+            windows
+                .filter { $0.openThreadRootId == message.id }
+                .forEach { $0.openThread(nil) }
         }
     }
 
@@ -263,13 +460,29 @@ final class AppState: ObservableObject {
         notificationRevision += 1
     }
 
-    /// Is the user actually looking at this channel *right now*? A selected
-    /// channel in a backgrounded window is NOT being looked at — the app keeps
-    /// its selection while you work elsewhere, so treating "selected" as "read"
-    /// silently swallows DMs that arrive while the app sits behind a browser
-    /// (the web client's equivalent test is `document.hidden`).
+    /// Is the user actually looking at this channel *right now*, in any
+    /// window? A selected channel in a backgrounded app is NOT being looked
+    /// at — the app keeps its selection while you work elsewhere, so treating
+    /// "selected" as "read" silently swallows DMs that arrive while the app
+    /// sits behind a browser (the web client's equivalent test is
+    /// `document.hidden`).
     func isViewing(channelId: String) -> Bool {
-        isAppActive && selectedChannelId == channelId && !showActivity
+        isAppActive && windows.contains {
+            $0.selectedChannelId == channelId && !$0.showActivity
+        }
+    }
+
+    /// The banner/read gate for an incoming notification: is its message on
+    /// screen somewhere? For a top-level message that's `isViewing`; for a
+    /// thread reply the thread must also be open *in a window that is viewing
+    /// the channel* — a reply behind a closed thread is not "seen".
+    func isViewingMessage(channelId: String, threadRootId: String?) -> Bool {
+        guard isAppActive else { return false }
+        return windows.contains { w in
+            guard w.selectedChannelId == channelId, !w.showActivity else { return false }
+            guard let threadRootId else { return true }
+            return w.openThreadRootId == threadRootId
+        }
     }
 
     /// Frontmost-and-visible, driven by SwiftUI's `scenePhase` in both app
@@ -278,47 +491,40 @@ final class AppState: ObservableObject {
     func setAppActive(_ active: Bool) {
         guard isAppActive != active else { return }
         isAppActive = active
-        // Coming back to a channel that collected mail while we were away is
-        // the moment to read it — the arrival path deliberately didn't.
-        if active, let channelId = selectedChannelId {
+        guard active else { return }
+        // Coming back to channels that collected mail while we were away is
+        // the moment to read them — the arrival path deliberately didn't.
+        for channelId in openChannelIds {
             Task { await engine.catchUpRead(channelId: channelId) }
         }
+        // A suspended app's socket is regularly dead with no error on either
+        // side, so returning to the front also has to re-check the connection.
+        // That is `SyncEngine.observeWake` (#271), on the foreground/wake
+        // notification rather than here: it checks liveness first, so a flick
+        // to another app and straight back costs nothing.
     }
 
-    /// Active channel was archived or left — drop the selection.
+    /// A channel was archived or left — every window showing it drops the
+    /// selection (each checks its own).
     func channelBecameUnavailable(_ channelId: String) {
-        openThreadByChannel.removeValue(forKey: channelId) // nothing to come back to
-        if selectedChannelId == channelId {
-            selectedChannelId = nil
-            openThreadRootId = nil
-        }
+        windows.forEach { $0.channelBecameUnavailable(channelId) }
     }
 
-    /// Activity-feed navigation: jump to a notification's channel (and thread),
-    /// then scroll to + flash the triggering message. `focusMessageId` is set
-    /// last, since selectChannel clears it for ordinary channel switches.
-    func openNotification(_ n: NotificationItem) {
-        openNotification(
-            workspaceId: n.workspaceId,
-            channelId: n.channelId,
-            messageId: n.messageId,
-            threadRootId: n.message.threadRootId
-        )
+    /// A workspace we left (#340) — every window showing it moves to `landOn`,
+    /// or to the chooser when that was the last one. Its Activity badge goes
+    /// with it: the count belongs to a workspace we can no longer read.
+    func workspaceBecameUnavailable(_ workspaceId: String, landOn: String?) {
+        notificationUnreadByWorkspace.removeValue(forKey: workspaceId)
+        windows.forEach { $0.workspaceBecameUnavailable(workspaceId, landOn: landOn) }
     }
 
-    /// Same jump as `openNotification(_:)` but from the flat fields carried in a
-    /// tapped OS banner's `userInfo` — the notification-center callback has no
-    /// `NotificationItem` to hand (see `AppDelegate`).
+    /// A tapped OS banner routes to the key window (see `AppDelegate`) — the
+    /// window the user last worked in is where the jump should happen.
     func openNotification(workspaceId: String, channelId: String, messageId: String, threadRootId: String?) {
-        if selectedWorkspaceId != workspaceId {
-            selectWorkspace(workspaceId)
-        }
-        selectChannel(channelId)
-        // Unconditional: an explicit jump decides what's open in the target
-        // channel, so a top-level target closes any thread parked there rather
-        // than letting it hide the message we're jumping to (issue #89).
-        openThread(threadRootId)
-        focusMessageId = messageId
+        routingWindow?.openNotification(
+            workspaceId: workspaceId, channelId: channelId,
+            messageId: messageId, threadRootId: threadRootId
+        )
     }
 
     /// Who's typing in one composer. `threadRootId` nil = the channel's main
@@ -330,129 +536,7 @@ final class AppState: ObservableObject {
             .sorted()
     }
 
-    // MARK: - UI actions
-
-    private static let activeWorkspaceKey = "activeWorkspaceId" + Profile.suffix
-
-    func selectWorkspace(_ id: String?) {
-        selectedWorkspaceId = id
-        selectedChannelId = nil
-        openThreadRootId = nil
-        openThreadByChannel.removeAll()
-        selectedArtifactId = nil
-        showActivity = false
-        artifacts = []
-        // Active workspace survives relaunch (phase 3.5 fixes).
-        if let id {
-            UserDefaults.standard.set(id, forKey: Self.activeWorkspaceKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: Self.activeWorkspaceKey)
-        }
-        Task { await engine.selectWorkspace(id) }
-    }
-
-    /// Restore the last active workspace at launch (validated by the caller
-    /// against the workspace list once it loads).
-    func restoreActiveWorkspace() {
-        guard selectedWorkspaceId == nil,
-              let saved = UserDefaults.standard.string(forKey: Self.activeWorkspaceKey)
-        else { return }
-        selectedWorkspaceId = saved
-        Task { await engine.selectWorkspace(saved) }
-    }
-
-    func selectChannel(_ id: String?) {
-        // Selecting a channel always closes an open artifact panel or the
-        // activity feed — even when it's the same channel that's behind them.
-        selectedArtifactId = nil
-        showActivity = false
-        guard id != selectedChannelId else { return }
-        switchChannel(to: id)
-    }
-
-    /// Park the leaving channel's open thread, select `id`, and restore whatever
-    /// thread that channel had open (issue #89). The engine's own copy of the
-    /// selection is reset by `selectChannel`, so a restored thread has to be
-    /// re-announced — in the same task, since ordering between tasks isn't
-    /// guaranteed.
-    private func switchChannel(to id: String?) {
-        rememberOpenThread()
-        selectedChannelId = id
-        openThreadRootId = id.flatMap { openThreadByChannel[$0] }
-        let restored = openThreadRootId
-        Task {
-            await engine.selectChannel(id)
-            if let restored { await engine.openThread(rootId: restored) }
-        }
-    }
-
-    /// Record (or, with no thread open, forget) the active channel's thread.
-    private func rememberOpenThread() {
-        guard let channelId = selectedChannelId else { return }
-        openThreadByChannel[channelId] = openThreadRootId
-    }
-
-    /// Open/activate an artifact tab in the side panel (phase 13). The panel is
-    /// a tabbed container shared with the thread — opening an artifact does NOT
-    /// close an open thread (they coexist as tabs); it just makes the artifact
-    /// the visible tab and selects its channel so the conversation shows behind.
-    /// nil just clears the active artifact (the thread tab, if any, stays).
-    func selectArtifact(_ id: String?) {
-        if let id {
-            showActivity = false
-            if let a = artifacts.first(where: { $0.id == id }), a.channelId != selectedChannelId {
-                // Same park-and-restore as an ordinary channel switch, or the
-                // Thread tab would keep showing the *previous* channel's thread
-                // over this channel's conversation (issue #89).
-                switchChannel(to: a.channelId)
-            }
-        }
-        selectedArtifactId = id
-    }
-
-    /// Switch the side panel to the Thread tab (the thread stays open).
-    func showThread() {
-        selectedArtifactId = nil
-    }
-
-    /// Close the whole side panel — clears the thread and the active artifact.
-    func closeSidePanel() {
-        selectedArtifactId = nil
-        if openThreadRootId != nil {
-            openThreadRootId = nil
-            rememberOpenThread() // an explicit close: don't restore it later
-            Task { await engine.openThread(rootId: nil) }
-        }
-    }
-
-    /// Auto-open an agent-created artifact for the user viewing its channel —
-    /// the person who asked the agent to make it. Gated on `ownsFile` (the
-    /// content was agent-generated, not a human pin) and on the artifact's
-    /// channel being the active one, so it only pops for someone in that
-    /// conversation and a human "Pin as artifact" never steals focus.
-    func maybeAutoOpenArtifact(_ a: Artifact) {
-        guard a.ownsFile, a.channelId == selectedChannelId else { return }
-        selectArtifact(a.id)
-    }
-
-    /// Artifacts pinned in a given channel (for the sidebar's nested rows).
-    func artifacts(inChannel channelId: String) -> [Artifact] {
-        artifacts.filter { $0.channelId == channelId }
-    }
-
-    /// Show the Activity feed (phase 12). Like opening an artifact it covers the
-    /// content pane while the channel selection stays put behind it.
-    func showActivityFeed() {
-        selectedArtifactId = nil
-        showActivity = true
-    }
-
-    func openThread(_ rootId: String?) {
-        if rootId != nil { selectedArtifactId = nil } // shares the slot with the artifact panel (phase 13)
-        openThreadRootId = rootId
-        rememberOpenThread() // so leaving this channel and coming back restores it
-        Task { await engine.openThread(rootId: rootId) }
-    }
+    // MARK: - App-level actions
 
     /// Handles flow://invite/<token> deep links (and pasted URLs/tokens).
     func acceptInvite(_ raw: String) {
@@ -464,7 +548,7 @@ final class AppState: ObservableObject {
         Task {
             do {
                 let ws = try await engine.acceptInvite(token: token)
-                selectWorkspace(ws.id)
+                routingWindow?.selectWorkspace(ws.id)
             } catch {
                 errorMessage = "Couldn't accept invite: \(error.localizedDescription)"
             }
@@ -499,6 +583,89 @@ final class AppState: ObservableObject {
             } catch {
                 errorMessage = "Couldn't sign in from the app link: \(error.localizedDescription)"
             }
+        }
+    }
+
+    // MARK: - Voice huddle (Phase 1)
+
+    /// Join a channel's huddle: mints a token via the server, then connects
+    /// LiveKit's `Room`. "Join" doubles as start — there's no separate
+    /// ring/start action (CONTEXT.md: Huddle). Idempotent — calling this
+    /// while already in this channel's huddle is a no-op.
+    func joinHuddle(channelId: String, workspaceId: String) {
+        guard activeHuddleChannelId != channelId else { return }
+        Task {
+            if activeHuddleChannelId != nil { await leaveHuddleAsync() }
+            huddleConnecting = true
+            defer { huddleConnecting = false }
+            do {
+                let resp = try await engine.joinHuddle(channelId: channelId)
+                let room = Room(delegate: self)
+                do {
+                    try await room.connect(url: resp.url, token: resp.token)
+                } catch {
+                    // The REST join already landed server-side (it publishes
+                    // on roster change), but the RTC connection never came
+                    // up — without this, the roster would show a participant
+                    // who was never actually live. Roll it back.
+                    await engine.leaveHuddle(channelId: channelId)
+                    throw error
+                }
+                huddleRoom = room
+                activeHuddleChannelId = channelId
+                activeHuddleWorkspaceId = workspaceId
+                huddleMuted = true
+            } catch {
+                errorMessage = "Couldn't join the huddle: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func leaveHuddle() {
+        Task { await leaveHuddleAsync() }
+    }
+
+    private func leaveHuddleAsync() async {
+        guard let channelId = activeHuddleChannelId else { return }
+        let room = huddleRoom
+        huddleRoom = nil
+        activeHuddleChannelId = nil
+        activeHuddleWorkspaceId = nil
+        huddleMuted = true
+        await room?.disconnect()
+        await engine.leaveHuddle(channelId: channelId)
+    }
+
+    func toggleHuddleMute() {
+        guard let room = huddleRoom else { return }
+        let next = !huddleMuted
+        Task {
+            do {
+                try await room.localParticipant.setMicrophone(enabled: !next)
+                huddleMuted = next
+            } catch {
+                // Mic permission denied or capture failed — leave the UI
+                // reflecting reality (still muted) rather than claiming live
+                // audio that was never actually published.
+                errorMessage = "Couldn't turn on the microphone: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+extension AppState: RoomDelegate {
+    /// LiveKit's own disconnect signal — not guaranteed to arrive on the main
+    /// thread, hence the hop. Covers both a real network drop and a second
+    /// device/tab taking over our identity (decision log 2026-08-20:
+    /// bare-userId identity, one live presence per person) — both look the
+    /// same from here, and both should clear local huddle state.
+    nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
+        Task { @MainActor [weak self] in
+            guard let self, self.huddleRoom === room else { return }
+            self.huddleRoom = nil
+            self.activeHuddleChannelId = nil
+            self.activeHuddleWorkspaceId = nil
+            self.huddleMuted = true
         }
     }
 }

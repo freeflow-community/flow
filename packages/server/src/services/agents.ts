@@ -19,7 +19,7 @@ import { hashToken, newToken } from '../lib/tokens.js';
 import { badRequest, forbidden, notFound, unauthorized } from '../lib/errors.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 import { postSystemMessage } from './messages.js';
-import { requireMembership } from './workspaces.js';
+import { requireMembership, toWorkspaceDTO } from './workspaces.js';
 import { killAgentCredentials, removeMemberDeep } from './memberRemoval.js';
 import { hashSecret, toUserDTO, verifySecret } from './auth.js';
 import { setAvatar } from './users.js';
@@ -162,15 +162,7 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
   return {
     agentToken,
     user: toUserDTO(userRow),
-    workspace: {
-      id: wsRow.id,
-      slug: wsRow.slug,
-      name: wsRow.name,
-      sidebarColor: wsRow.sidebarColor,
-      googleSelfRegisterDomain: wsRow.googleSelfRegisterDomain,
-      createdBy: wsRow.createdBy,
-      createdAt: wsRow.createdAt.toISOString(),
-    },
+    workspace: toWorkspaceDTO(wsRow),
   };
 }
 

@@ -13,8 +13,8 @@ If you only want to run Flow locally, you want
 | Artifact | Build | Release | Automatic? |
 |---|---|---|---|
 | Server + web client | `pnpm build` | `git push origin main` | **Yes** — Railway builds every push to `main` |
-| macOS app | `apps/macos/tools/make-app.sh` | `apps/macos/tools/publish-dmg.sh --build` | No — run locally, needs signing credentials |
-| iOS app | `xcodegen generate` + Xcode | archive + `xcodebuild -exportArchive` (see below) | No — run locally, needs the signing account |
+| macOS app | `apps/macos/tools/make-app.sh` | `apps/macos/tools/release-macos.sh` | No — run locally, needs signing credentials |
+| iOS app | `xcodegen generate` + Xcode | `apps/ios/tools/release-ios.sh` | No — run locally, needs the signing account |
 | `flow-agent-bridge` (npm) | `pnpm --filter flow-agent-bridge build` | bump `version`, merge to `main` | **Yes** — GitHub Actions publishes |
 | Marketing site (`flowlandingpage/`) | `pnpm build` (in `flowlandingpage/`) | merge to `main` | **Yes** — GitHub Actions deploys to Cloudflare Pages |
 
@@ -111,30 +111,49 @@ against different servers coexist on one Mac without interfering.
 
 ### Release
 
-One command, from the repo root:
+One command, from the repo root, on a clean `main` that matches origin:
 
 ```sh
-apps/macos/tools/publish-dmg.sh --build
+apps/macos/tools/release-macos.sh              # patch bump  (2.2.24 -> 2.2.25)
+apps/macos/tools/release-macos.sh --minor      # 2.2.24 -> 2.3.0
+apps/macos/tools/release-macos.sh 2.5.0        # explicit
+apps/macos/tools/release-macos.sh --dry-run    # show the plan, build nothing
 ```
 
-That runs the whole chain — release build, sign, notarize, staple, DMG, signed
-Sparkle appcast — and uploads the update archives, deltas, appcast and DMG to
-R2. Do not run `dist.sh` and `publish-dmg.sh` as separate steps unless you have
-a reason to; `--build` already defaults the signing identity and the notarytool
-profile, and publishing a DMG without the appcast ships a build that no existing
-install is ever offered.
+**Releasing is a separate act from merging, and the version comes from the live
+appcast — not from a file in the repo.** The script reads
+`https://app.freeflow.im/download/mac/appcast.xml` to learn what is actually
+published, adds one, prints the commits since the last tag, asks you to confirm,
+then runs the full chain via `publish-dmg.sh --build`: release build, sign,
+notarize, staple, DMG, signed Sparkle appcast, and the uploads to R2. On success
+— and only then — it tags the commit `macos-v<version>` and pushes the tag.
 
-Three things to know:
+That ordering is the point. A `macos-v*` tag always means "this exact commit is
+live", never "someone tried". It is also the only thing that records *which
+commit* a release contains; `apps/macos/VERSION` never did.
 
-- **Bump `apps/macos/VERSION` first.** `CFBundleVersion` is the commit count so
-  it always increases, and Sparkle will offer the update either way — but the
-  release notes users see are keyed to the short version, and reusing it puts
-  two identically-titled items in the feed.
+Four things to know:
+
+- **Don't bump `apps/macos/VERSION` in a PR.** It is now just a fallback for
+  local `make-app.sh` builds. The release version arrives through
+  `FLOW_APP_VERSION`, which `make-app.sh` already prefers.
+- **`CFBundleVersion` is untouched** — still `git rev-list --count HEAD`, which
+  is derived and monotonic. Sparkle orders updates by it.
 - **Run it in a terminal you can see.** The appcast is signed with an EdDSA key
   in the login keychain, which can raise a GUI prompt (`-25320` if unanswered).
+  `--yes` skips the confirmation but cannot answer a keychain prompt.
 - **One-time credentials:** a Developer ID Application certificate, a
-  `flow-notary` notarytool profile, `dmgbuild`, and R2 keys in the repo-root
-  `.env`. Setup is in [docs/specs/phase14.md](docs/specs/phase14.md) §2.
+  `flow-notary` notarytool profile, `dmgbuild` importable by the `python3` on
+  PATH, and R2 keys in the repo-root `.env`. Setup is in
+  [docs/specs/phase14.md](docs/specs/phase14.md) §2.
+
+**The Sparkle EdDSA private key lives in one login keychain on one Mac.** If
+that machine is lost, no future appcast can be signed and every installed copy
+stops receiving updates permanently. Keep a backup of that key somewhere safe.
+
+`publish-dmg.sh --build` still works on its own if you need to re-upload without
+cutting a version. It just won't tag, and it will reuse whatever version is in
+`VERSION` — which is why `release-macos.sh` is the normal path.
 
 `.github/workflows/dist-macos.yml` mirrors this in CI, but it is
 `workflow_dispatch` only and **has never been run** — every release so far has
@@ -166,20 +185,43 @@ xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
 
 ### Release (TestFlight / App Store)
 
-Signing team is `RP5QYMYA4Z`, bundle id `im.freeflow.app` — both live in
-`project.yml` so they survive `xcodegen generate`. Bump
-`CURRENT_PROJECT_VERSION` in `project.yml` first (App Store Connect rejects a
-re-used build number), regenerate, then from `apps/ios`:
+One command, from the repo root:
 
 ```sh
-xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
-  -destination 'generic/platform=iOS' -archivePath build/Flow.xcarchive \
-  -derivedDataPath .build archive -allowProvisioningUpdates
-xcodebuild -exportArchive -archivePath build/Flow.xcarchive \
-  -exportOptionsPlist ExportOptions.plist -allowProvisioningUpdates
+apps/ios/tools/release-ios.sh              # archive + upload
+apps/ios/tools/release-ios.sh --dry-run    # print the plan, build nothing
+apps/ios/tools/release-ios.sh 412          # explicit build number (escape hatch)
 ```
 
-The second command signs with an auto-provisioned Apple Distribution
+Signing team is `RP5QYMYA4Z`, bundle id `im.freeflow.app` — both live in
+`project.yml` so they survive `xcodegen generate`.
+
+**The build number is derived, not authored.** The script uses
+`git rev-list --count HEAD` and passes it to `xcodebuild` as a command-line
+build setting, which outranks the project and reaches both the app and its
+share extension — they must match or the archive is rejected. This is the same
+mechanism `apps/macos/tools/make-app.sh` already uses for the macOS
+`CFBundleVersion`. `CURRENT_PROJECT_VERSION` in `project.yml` is a fallback for
+local Xcode builds; **do not bump it per upload.**
+
+Why: bumping a number in the repo records an intention, not a fact. Builds 23,
+24, 25, 26 and 28 were all uploaded while their bump commits sat on unmerged
+branches, so `main` claimed 23 when App Store Connect already held 28. Each
+drift ended in a rejected upload or a bookkeeping PR that would have moved
+`main` *backwards*. A number in the repo cannot see the server that owns it;
+the commit count can only go up. If App Store Connect still rejects the number,
+the script bumps and retries.
+
+The script tags `ios-build-<n>` **after** a successful upload, so a tag always
+means "this commit is on App Store Connect" and names the commit — which no
+version file ever did.
+
+The archive needs **Node on `PATH`**: a "Bundle FEATURES.md" build phase runs
+`scripts/build-features.mjs` and copies the result into the app, so the
+"What's new" screen ships the notes of that exact build. The phase fails the
+build with a clear message if it can't find `node`.
+
+The export step signs with an auto-provisioned Apple Distribution
 cert/profile and **uploads straight to App Store Connect** (that's the
 `destination: upload` in `ExportOptions.plist`); the build lands in TestFlight
 after a few minutes of processing. Auth rides the Apple ID session in Xcode →

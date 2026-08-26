@@ -34,6 +34,10 @@ interface SocketState {
   /** channels the user is a member of */
   member: Set<string>;
   subs: { unsubscribe(): void }[];
+  /** workspaceId -> that workspace's wildcard subscription, so leaving one
+   * workspace can drop exactly its sub without disturbing the others. */
+  wsSubs: Map<string, { unsubscribe(): void }>;
+  sock: WebSocket;
 }
 
 // single-node presence: the userId -> socket-count map lives in ../presence.js
@@ -43,6 +47,51 @@ const socketsByUser = new Map<string, Set<SocketState>>();
 
 function send(sock: WebSocket, frame: ServerFrame): void {
   if (sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify(frame));
+}
+
+/**
+ * Force-close every live socket a user holds (account deletion). The close
+ * handler does the usual bookkeeping (presence fan-out, sub teardown).
+ */
+export function disconnectUser(userId: string): void {
+  for (const s of socketsByUser.get(userId) ?? []) {
+    s.sock.close(4003, 'account deleted');
+  }
+}
+
+/**
+ * Drop one workspace from every socket a user holds (leaving a workspace).
+ * Unlike `disconnectUser` this is surgical: the socket stays up and keeps
+ * serving the user's *other* workspaces, it just stops receiving this one.
+ *
+ * The departure event is written straight to the socket before the
+ * unsubscribe. The bus is fire-and-forget core NATS, so relying on the
+ * published `member.left` to arrive before we tear the subscription down is a
+ * race the leaver loses — and losing it means their other clients never learn
+ * they left. Clients may therefore see the event twice; handling is
+ * idempotent on all three.
+ */
+export function detachUserFromWorkspace(userId: string, workspaceId: string): void {
+  for (const s of socketsByUser.get(userId) ?? []) {
+    if (!s.workspaces.has(workspaceId)) continue;
+    send(s.sock, {
+      op: 'event',
+      event: {
+        type: 'member.left',
+        workspaceId,
+        ts: new Date().toISOString(),
+        data: { userId, workspaceId },
+      },
+    });
+    s.wsSubs.get(workspaceId)?.unsubscribe();
+    s.wsSubs.delete(workspaceId);
+    s.workspaces.delete(workspaceId);
+    for (const [chanId, meta] of s.chans) {
+      if (meta.workspaceId !== workspaceId) continue;
+      s.chans.delete(chanId);
+      s.member.delete(chanId);
+    }
+  }
 }
 
 async function loadState(userId: string): Promise<Pick<SocketState, 'workspaces' | 'chans' | 'member'>> {
@@ -105,7 +154,7 @@ function presenceEvent(workspaceId: string, userId: string, status: 'online' | '
 /** Subscribe a socket to one workspace's wildcard subject and pump events to it. */
 function attachWorkspaceSub(s: SocketState, sock: WebSocket, wsId: string): void {
   const sub = subscribeBus(subjectWorkspaceAll(wsId));
-  s.subs.push(sub);
+  s.wsSubs.set(wsId, sub);
   void (async () => {
     for await (const m of sub) {
       try {
@@ -189,6 +238,8 @@ export function attachGateway(server: HttpServer): { close(): void } {
               userId: user.id,
               ...loaded,
               subs: [],
+              wsSubs: new Map(),
+              sock,
             };
             const s = state;
 
@@ -217,6 +268,9 @@ export function attachGateway(server: HttpServer): { close(): void } {
                     );
                   }
                   sendPresenceSnapshot(s, sock, event.workspaceId);
+                  // forward after the subs are attached so the client's refetch
+                  // lands on a socket that already receives the new workspace
+                  send(sock, { op: 'event', event });
                 } catch {
                   /* skip malformed */
                 }
@@ -293,6 +347,7 @@ export function attachGateway(server: HttpServer): { close(): void } {
       liveness.delete(sock);
       if (!state) return;
       for (const sub of state.subs) sub.unsubscribe();
+      for (const sub of state.wsSubs.values()) sub.unsubscribe();
       socketsByUser.get(state.userId)?.delete(state);
       const count = (online.get(state.userId) ?? 1) - 1;
       if (count <= 0) {

@@ -14,9 +14,10 @@ import WebKit
 struct ArtifactPanelView: View {
     let artifactId: String
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
 
     private var artifact: Artifact? {
-        app.artifacts.first { $0.id == artifactId }
+        win.artifacts().first { $0.id == artifactId }
     }
 
     var body: some View {
@@ -47,7 +48,7 @@ struct ArtifactPanelView: View {
         // The artifact vanished (removed on another device / event raced the
         // list): fall back to the channel behind it.
         .onChange(of: artifact) { _, now in
-            if now == nil { app.selectArtifact(nil) }
+            if now == nil { win.selectArtifact(nil) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("artifact.panel")
@@ -60,6 +61,7 @@ private struct ArtifactToolbarView: View {
     let artifact: Artifact
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var editing = false
     @State private var draft = ""
     @State private var busy = false
@@ -192,6 +194,7 @@ private struct ArtifactImagePane: View {
 private struct ArtifactVideoPane: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var player: AVPlayer?
     @State private var failed = false
 
@@ -225,6 +228,7 @@ private struct ArtifactVideoPane: View {
 private struct ArtifactPdfPane: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var doc: PDFDocument?
     @State private var failed = false
 
@@ -264,6 +268,7 @@ private struct ArtifactPdfPane: View {
 private struct ArtifactHtmlPane: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var html: String?
     @State private var failed = false
 
@@ -318,6 +323,7 @@ private struct SandboxedHTMLView: NSViewRepresentable {
 struct LinkArtifactView: View {
     let artifact: Artifact
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var draft: String = ""
     /// Bumped when the URL bar is submitted with the url we're already showing:
     /// nothing changes server-side, so this is what makes it a reload.
@@ -452,6 +458,7 @@ private struct ArtifactTextPane: View {
 
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var text: String?
     @State private var failed = false
 
@@ -497,6 +504,7 @@ private struct ArtifactTextPane: View {
 private struct ArtifactDownloadPane: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var win: WindowState
     @State private var saving = false
 
     var body: some View {
