@@ -244,7 +244,7 @@ const TOOLS = [
   {
     name: 'create_artifact',
     description:
-      'Create an artifact — a named object pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Two kinds: a FILE artifact (provide the content inline, or a local file path, or the id of an already-uploaded file) or a LINK artifact (provide a url — members get the live page, not a file). Returns the artifact id (use it with update_artifact).',
+      'Create an artifact — a named object pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Two kinds: a FILE artifact (provide the content inline, or a local file path, or the id of an already-uploaded file) or a LINK artifact (provide a url — members get the live page, not a file). Returns the artifact id (use it with update_artifact). A link artifact can also be registered as an APP (app: true) — see the app parameter.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -255,6 +255,11 @@ const TOOLS = [
         fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to pin as-is.' },
         url: { type: 'string', description: 'http(s) URL to pin as a link artifact instead of a file. Mutually exclusive with content/path/fileId.' },
         channelId: { type: 'string', description: 'Channel to pin the artifact in (default: the current conversation).' },
+        app: {
+          type: 'boolean',
+          description:
+            'Register this url as an app (url only): only members of the channel can reach it. The response carries a secret, returned ONCE — run `FLOW_APP_SECRET=<secret> npx flow-agent-bridge app-guard --upstream <your local app> --port 8788` and tunnel 8788 instead of the app. The guard authenticates viewers offline and passes their identity to your app in X-Flow-User-Id / X-Flow-User-Name headers.',
+        },
       },
     },
   },
@@ -610,10 +615,28 @@ export async function runMcpServer(): Promise<void> {
         if (url && hasFileSource) {
           return toolText('create_artifact takes either url (link artifact) or one file source (content/path/fileId), not both', true);
         }
+        const asApp = args.app === true;
+        if (asApp && !url) return toolText('create_artifact: app is only valid with url', true);
         if (url) {
           if (!/^https?:\/\//i.test(url)) return toolText('url must be http(s)', true);
-          const created = await api.createArtifact(channelId, { url, name: artifactName });
-          return toolText(`link artifact "${created.name}" created (id ${created.id})`);
+          const created = await api.createArtifact(channelId, { url, name: artifactName, app: asApp });
+          if (!asApp) return toolText(`link artifact "${created.name}" created (id ${created.id})`);
+          // The secret exists in this one response and nowhere else — Flow
+          // cannot show it again (docs/design/MINI_APPS.md), so hand it to the
+          // agent with the exact command it is for.
+          if (!created.appSecret) {
+            return toolText(
+              `app artifact "${created.name}" created (id ${created.id}) but the server returned no secret — this Flow server may predate mini apps`,
+              true,
+            );
+          }
+          return toolText(
+            `app artifact "${created.name}" created (id ${created.id}).\n` +
+              'Only members of this channel can reach it. Put the guard in front of your local app and tunnel the GUARD\'s port:\n' +
+              `  FLOW_APP_SECRET=${created.appSecret} npx flow-agent-bridge app-guard --upstream http://localhost:3000 --port 8788\n` +
+              'This secret is shown once and is not stored in Flow — keep it if you need to restart the guard. ' +
+              'Your app receives each viewer as X-Flow-User-Id / X-Flow-User-Name / X-Flow-Is-Agent headers.',
+          );
         }
         // resolve a file id: pin an existing file, or upload path/content (owned)
         const resolved = await resolveArtifactFile(args, artifactName);
@@ -659,7 +682,7 @@ export async function runMcpServer(): Promise<void> {
         if (rows.length === 0) return toolText('no artifacts in this channel');
         const lines = rows.map((a) =>
           a.kind === 'link'
-            ? `[link] "${a.name}" (id ${a.id}) → ${a.url} — updated ${a.updatedAt}`
+            ? `[${a.isApp ? 'app' : 'link'}] "${a.name}" (id ${a.id}) → ${a.url} — updated ${a.updatedAt}`
             : `[file] "${a.name}" (id ${a.id}) — fileId ${a.fileId}${a.file ? `, ${a.file.mimeType}, ${a.file.sizeBytes} bytes` : ''} — updated ${a.updatedAt}`,
         );
         return toolText(lines.join('\n'));

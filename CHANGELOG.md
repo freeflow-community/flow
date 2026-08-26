@@ -13,6 +13,12 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Mini apps (`docs/design/MINI_APPS.md`) have their server (#369) and bridge
+  guard (#370) but no client yet: no surface mints a token before opening an
+  `isApp` link artifact, so opening one lands on the guard's 401 rather than
+  the app. Build-order step 3 is one small PR per surface (web iframe, macOS
+  webview, iOS external open) — and the Safari `SameSite=None`-in-an-iframe
+  spike gates the web one.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a
