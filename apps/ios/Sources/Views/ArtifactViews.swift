@@ -558,12 +558,16 @@ private struct ArtifactLinkPane: View {
 /// What an `isApp` artifact shows instead of the co-browsing web view: a
 /// hand-off card, because a mini app can only be *opened*, not co-browsed.
 ///
-/// It deliberately frames nothing. The url on its own renders the guard's 401,
-/// and the token that would fix that can't survive the trip: the #371 spike
-/// measured WebKit dropping the guard's cookie across its 302 in a cross-site
-/// frame, so re-minting per load doesn't help either (CHANGELOG → Parity).
-/// Handing the tokened url to the system browser is the path that does work —
-/// a top-level Safari load, which is exactly what web falls back to.
+/// It deliberately frames nothing, and *not* for #371's reason. That spike
+/// measured WebKit dropping the guard's cookie in a cross-site **iframe**;
+/// this pane's load is top-level, so the guard's origin is first-party and the
+/// cookie survives its 302 — measured here, the app renders authenticated in
+/// this very `WKWebView` (CHANGELOG → Parity). The reason is co-browsing: the
+/// guard's 302 to the clean url looks like a user navigation, so the pane
+/// PATCHes the shared artifact and re-points it for every member of the
+/// channel. A minted token is one viewer's credential, so a co-browsed app is
+/// the wrong shape regardless of cookies. Handing the tokened url to the
+/// system browser is what the ticket asks for and what web falls back to.
 private struct AppHandoffPane: View {
     let minting: Bool
     let open: () -> Void
