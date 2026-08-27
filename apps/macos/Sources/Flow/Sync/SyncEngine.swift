@@ -1546,9 +1546,16 @@ actor SyncEngine {
             let _: OkResponse = try await api.delete("/v1/messages/\(id)", query: query)
             if permanently, let local {
                 if await purgeMessage(local) {
-                    if local.threadRootId == nil, openThreadRootId == local.id { openThreadRootId = nil }
+                    // Closing the thread panel is AppState's call, not the
+                    // engine's: the purged root may be open in more than one
+                    // window, and `messagePermanentlyDeleted` closes every one.
                     await appState?.messagePermanentlyDeleted(local)
-                    if local.threadRootId == nil, let workspaceId = activeWorkspaceId {
+                    // Channel rollups (last message, reply counts) are refetched
+                    // for the workspace the *message* lives in — which is not
+                    // necessarily the one any window is looking at right now.
+                    if local.threadRootId == nil,
+                       let workspaceId = await workspaceId(ofChannel: local.channelId),
+                       await appState?.isWorkspaceOpen(workspaceId) == true {
                         await refreshChannels(workspaceId: workspaceId)
                     }
                     await refreshNotificationBadge()
@@ -1689,7 +1696,6 @@ actor SyncEngine {
                 // server-authoritative channel/thread refreshes are not gated
                 // on whether the local delete found it.
                 _ = await purgeMessage(m)
-                if m.threadRootId == nil, openThreadRootId == m.id { openThreadRootId = nil }
                 await appState?.messagePermanentlyDeleted(m)
                 let openThreadRootIds = await appState?.openThreadRootIds ?? []
                 if let rootId = m.threadRootId, openThreadRootIds.contains(rootId) {
@@ -1967,6 +1973,15 @@ actor SyncEngine {
     // Internal so the shared macOS/iOS cache semantics can be exercised with
     // an in-memory database. Network callers still enter through
     // `deleteMessage` or websocket event handling.
+    /// The workspace a cached channel belongs to. The purge paths need it to
+    /// refresh the right workspace's channel list; a channel the device has
+    /// never cached yields nil and the server event does the reconciling.
+    private func workspaceId(ofChannel channelId: String) async -> String? {
+        try? await db.reader.read { db in
+            try Channel.fetchOne(db, key: channelId)?.workspaceId
+        }
+    }
+
     func purgeMessage(_ m: Message) async -> Bool {
         let removed: Bool? = try? await db.writer.write { db in
             let deleted: Int
