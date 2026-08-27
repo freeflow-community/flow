@@ -30,6 +30,12 @@ This file keeps two things:
   pass: the app loads as a *top-level* document, so the guard's cookie is
   first-party and ITP has nothing to block (document, subresource and XHR all
   authenticated). The limitation is iframe-specific, not WebKit-wide.
+- **Chat polish** (#387) landed on web and macOS only; iOS was out of scope for
+  the issue. The white chat background is an `MC.chat` token macOS uses and iOS
+  does not, and the message-body rhythm (1.5 line-height, block/list spacing,
+  `list-disc`-sized bullets) plus the inline-code chip live in the macOS
+  `MessageListView` and behind `MentionRendering.attributed(codeChips:)`, which
+  defaults off. Closing the gap is adopting both in the iOS message list.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a

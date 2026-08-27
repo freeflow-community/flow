@@ -79,7 +79,9 @@ struct MainView: View {
             // ideal width; otherwise it sets the whole HStack's minimum and the
             // rail and sidebar get clipped off the leading edge (#354).
             .frame(minWidth: 0, maxWidth: .infinity)
-            .background(MC.base)
+            // The chat pane is white (#387), matching web's `bg-white` on the
+            // same surface; the rail, sidebar and side panel keep MC.base.
+            .background(MC.chat)
         }
     }
 
@@ -125,7 +127,9 @@ struct MainView: View {
     /// can see, or the panel jumps on the first pixel of movement.
     private func sidePanelResizer(laidOut: Double) -> some View {
         Rectangle()
-            .fill(MC.base)
+            // Borders the chat pane, so it takes the chat's white (#387)
+            // rather than showing a warm strip against it.
+            .fill(MC.chat)
             .frame(width: Self.resizerWidth)
             .overlay(Rectangle().fill(MC.hairline).frame(width: 1))
             .contentShape(Rectangle())
