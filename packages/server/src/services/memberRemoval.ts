@@ -1,10 +1,12 @@
 // Deep workspace removal for bot-like members, generalized from deleteApp
 // (AGENTS_DESIGN.md: remove-agent reuses app-removal semantics).
 //
-// Leaves the workspace + all channels, deletes 1:1 DMs outright (a DM whose
-// only other member is gone renders as a broken self-DM; group DMs just lose
-// the membership), keeps the user row so message authorship keeps its name,
-// and publishes the same member.left events deleteApp always has.
+// Leaves the workspace + all channels THERE, deletes that workspace's 1:1 DMs
+// outright (a DM whose only other member is gone renders as a broken self-DM;
+// group DMs just lose the membership), keeps the user row so message
+// authorship keeps its name, and publishes the same member.left events
+// deleteApp always has. Channels and DMs in the member's other workspaces are
+// untouched.
 import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { publishEvent, subjectMeta } from '../bus.js';
@@ -33,12 +35,14 @@ export async function removeMemberDeep(
   userId: string,
   also?: (tx: Tx) => Promise<void>,
 ): Promise<void> {
-  // The member's channels (bot-like members never join other workspaces).
+  // The member's channels IN THIS WORKSPACE only. Members can belong to
+  // several workspaces (humans always could; agents since #357), and leaving
+  // one must not touch channel memberships or DMs in the others.
   const memberChannels = await db
     .select({ id: channels.id, kind: channels.kind })
     .from(channelMembers)
     .innerJoin(channels, eq(channels.id, channelMembers.channelId))
-    .where(eq(channelMembers.userId, userId));
+    .where(and(eq(channelMembers.userId, userId), eq(channels.workspaceId, workspaceId)));
   const dmIds = memberChannels.filter((c) => c.kind === 'dm').map((c) => c.id);
   // Human members of those DMs, captured before the cascade deletes the rows.
   const dmMembers = dmIds.length
@@ -50,7 +54,11 @@ export async function removeMemberDeep(
   const channelIds = memberChannels.map((c) => c.id);
   await db.transaction(async (tx) => {
     if (dmIds.length) await tx.delete(channels).where(inArray(channels.id, dmIds));
-    await tx.delete(channelMembers).where(eq(channelMembers.userId, userId));
+    if (channelIds.length) {
+      await tx
+        .delete(channelMembers)
+        .where(and(eq(channelMembers.userId, userId), inArray(channelMembers.channelId, channelIds)));
+    }
     await tx
       .delete(workspaceMembers)
       .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
