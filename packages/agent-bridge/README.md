@@ -163,6 +163,12 @@ The app sees a plain reverse proxy with identity attached to every request:
 Inbound `X-Flow-*` headers are stripped, so those values cannot be spoofed. A
 naive app needs no changes; a per-user app reads two headers.
 
+An app already pinned as a plain link doesn't need re-pinning by hand:
+`create_artifact` on the **same url** with `app: true` promotes that artifact in
+place and returns its secret, so it keeps its id and its place in everyone's
+sidebar. Doing it twice is refused — a second secret would silently kill every
+token the first one has out; rotate in Flow instead.
+
 Pinning the same app in a second channel makes a second artifact with its own
 secret — pass both, comma-separated, in `FLOW_APP_SECRET`. Sessions live in
 memory, so restarting the guard just makes everyone's next open re-mint.
