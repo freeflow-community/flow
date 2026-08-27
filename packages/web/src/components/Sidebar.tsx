@@ -21,6 +21,7 @@ import { AgentsModal } from './AgentsModal';
 import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
 import { FeaturesModal } from './FeaturesModal';
+import { useHoverTooltip } from './HoverTooltip';
 import StatusFooter from './StatusPicker';
 import { AuthImg } from './Avatar';
 
@@ -839,9 +840,20 @@ function ChannelRow({
   useEffect(() => {
     if (active && rowRef.current) scrollRowIntoView(rowRef.current);
   }, [active]);
+  // #392: the topic on hover, so you can tell what a channel is for without
+  // opening it. The hover target is the whole row, not the few dozen pixels the
+  // name occupies — pointing at a channel means the row, and anchoring to the
+  // row is also what keeps the bubble clear of it. No topic, no tooltip and no
+  // handlers; DMs never have one, so they're inert here.
+  const topicTip = useHoverTooltip(channel.topic, `channel-topic-tooltip-${channel.name ?? channel.id}`);
+  const { ref: tipRef, ...tipHandlers } = topicTip.anchorProps;
   return (
     <div
-      ref={rowRef}
+      ref={(el) => {
+        rowRef.current = el;
+        tipRef(el);
+      }}
+      {...tipHandlers}
       data-nested={nested ? 'true' : undefined}
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${nested ? 'ml-3' : ''} ${
         active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
@@ -884,6 +896,7 @@ function ChannelRow({
       >
         ⋯
       </button>
+      {topicTip.tooltip}
     </div>
   );
 }

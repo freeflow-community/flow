@@ -565,6 +565,9 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // #392: the topic on hover, so you can tell what a channel is for
+        // without opening it. No topic, no tooltip.
+        .topicHelp(channel.topic)
         // Indent outside the background so the pill insets with the row rather
         // than the label sliding around inside a full-width pill.
         .padding(.leading, isNested ? 12 : 0)
