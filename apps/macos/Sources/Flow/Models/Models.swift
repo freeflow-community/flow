@@ -585,6 +585,28 @@ struct PublicConfig: Decodable, Sendable {
     let apple: Bool?
 }
 
+/// One built-in help topic (#383/#384): a markdown file in the repo's
+/// `docs/help/`, listed by GET /v1/help/topics in sidebar order. The list is
+/// derived from the directory server-side, so a new file is a new topic with
+/// no client change — never hardcode it here.
+struct HelpTopic: Decodable, Sendable, Identifiable, Equatable {
+    var id: String { slug }
+    let slug: String
+    let title: String
+    let order: Int
+}
+
+struct HelpTopicsResponse: Decodable, Sendable {
+    let topics: [HelpTopic]
+}
+
+/// GET /v1/help/pages/:slug — one page's raw markdown, front-matter stripped.
+struct HelpPage: Decodable, Sendable, Equatable {
+    let slug: String
+    let title: String
+    let markdown: String
+}
+
 struct MemberDTO: Decodable, Sendable {
     let userId: String
     let displayName: String
