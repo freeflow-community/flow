@@ -19,7 +19,7 @@ import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
 import { HuddleProvider } from '../huddle';
-import { useNameMap, useWorkspaces } from '../hooks';
+import { useNameMap, useWorkspaceInvites, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
@@ -28,6 +28,7 @@ import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
 import HuddleMiniBar from './HuddleMiniBar';
 import { MobileMenuButton } from './MobileMenuButton';
+import { HelpModal } from './HelpModal';
 import { AuthImg } from './Avatar';
 import { RailUnreadBadge } from './RailUnreadBadge';
 
@@ -38,7 +39,10 @@ export default function Main() {
   const [status, setStatus] = useState<SocketStatus>('connecting');
   // Post-connect refetches in flight (#234) — see the socket effect below.
   const [catchUpCount, setCatchUpCount] = useState(0);
-  const [presence, setPresence] = useState<Record<string, boolean>>({});
+  // workspaceId -> userId -> online? Presence is per (user, workspace) since
+  // #364 — one socket carries every workspace we belong to, so a flat
+  // userId -> bool map lit the dot in all of them at once.
+  const [presence, setPresence] = useState<Record<string, Record<string, boolean>>>({});
   const [typing, setTyping] = useState<Record<string, Record<string, number>>>({});
   const [notificationUnread, setNotificationUnread] = useState(0);
   // Responsive layout: below `md` the rail+sidebar collapse into a slide-in
@@ -47,6 +51,9 @@ export default function Main() {
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Built-in help docs (#383) — large layout only, so it closes with the
+  // breakpoint rather than being stranded open on a phone-width window.
+  const [helpOpen, setHelpOpen] = useState(false);
   const socketRef = useRef<SocketClient | null>(null);
   // refs so the socket handler always sees current selection
   const selRef = useRef(sel);
@@ -98,6 +105,10 @@ export default function Main() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
+  useEffect(() => {
+    if (isMobile) setHelpOpen(false);
+  }, [isMobile]);
+
   // On mobile, picking a channel/artifact from the drawer closes it so the
   // conversation takes the full screen. (Covers every selection path at once.)
   useEffect(() => {
@@ -115,6 +126,9 @@ export default function Main() {
           // The refetch is what the reconnect bar waits on (#234): the socket
           // says hello long before the screen stops being stale. Counted, not
           // flagged, so a second reconnect mid-refetch can't clear the first.
+          // the server sends a fresh presence snapshot right after hello, and
+          // nobody sends `offline` for a user who left while we were down
+          setPresence({});
           setCatchUpCount((n) => n + 1);
           void qc.invalidateQueries().finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
         }
@@ -236,7 +250,10 @@ export default function Main() {
       }
       case 'presence': {
         const p = event.data as PresenceData;
-        setPresence((prev) => ({ ...prev, [p.userId]: p.status === 'online' }));
+        setPresence((prev) => ({
+          ...prev,
+          [event.workspaceId]: { ...prev[event.workspaceId], [p.userId]: p.status === 'online' },
+        }));
         break;
       }
       case 'channel.created':
@@ -265,6 +282,12 @@ export default function Main() {
         void qc.invalidateQueries({ queryKey: ['channelMembers'] });
         break;
       }
+      case 'workspace.invited':
+        // Someone invited me to a workspace (#359), or the invitation I was
+        // shown just ended (accepted on another device, declined, expired).
+        // Same refetch either way — the list IS the answer.
+        void qc.invalidateQueries({ queryKey: ['workspaceInvites'] });
+        break;
       case 'member.updated':
         // Role change (admin panel): refresh the roster, and the workspace list
         // so the affected member's own menu gating (owner/admin) re-derives.
@@ -408,14 +431,14 @@ export default function Main() {
     () => ({
       status,
       syncing: status !== 'connected' || catchUpCount > 0,
-      presence,
+      isOnline: (userId: string) => !!(sel.workspaceId && presence[sel.workspaceId]?.[userId]),
       typing,
       notificationUnread,
       setNotificationUnread,
       sendTyping: (channelId: string, threadRootId?: string) =>
         socketRef.current?.sendTyping(channelId, threadRootId),
     }),
-    [status, catchUpCount, presence, typing, notificationUnread],
+    [status, catchUpCount, presence, sel.workspaceId, typing, notificationUnread],
   );
 
   const mobileNav = useMemo(
@@ -445,7 +468,7 @@ export default function Main() {
               drawerOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'
             }`}
           >
-            <WorkspaceRail />
+            <WorkspaceRail showHelp={!isMobile} onOpenHelp={() => setHelpOpen(true)} />
             <Sidebar />
           </div>
           {isMobile && drawerOpen && (
@@ -479,6 +502,7 @@ export default function Main() {
             )}
           </div>
         </div>
+        {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       </div>
       </HuddleProvider>
      </MobileNavContext.Provider>
@@ -487,11 +511,12 @@ export default function Main() {
 }
 
 /** Design 3a column 1: the 64px violet workspace rail. */
-function WorkspaceRail() {
+function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp: () => void }) {
   const sel = useSelection();
   const workspaces = useWorkspaces();
   const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const railBg = sidebarColor(activeWs?.sidebarColor).rail;
+  const invites = (useWorkspaceInvites().data ?? []).length;
   return (
     <nav
       className="flex w-16 shrink-0 flex-col items-center gap-3.5 py-4"
@@ -534,14 +559,34 @@ function WorkspaceRail() {
           </div>
         );
       })}
-      <button
-        data-testid="rail-add-workspace"
-        title="Add a workspace"
-        className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-white/40 text-white/70 hover:border-white/70 hover:text-white"
-        onClick={() => sel.selectWorkspace(null)}
-      >
-        +
-      </button>
+      {/* Pending workspace invitations (#359) live on the chooser behind this
+          button, so it carries their badge — otherwise an invitation would be
+          found only by accident. */}
+      <div className="relative">
+        <button
+          data-testid="rail-add-workspace"
+          title={invites > 0 ? `${invites} workspace invitation${invites === 1 ? '' : 's'}` : 'Add a workspace'}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-dashed border-white/40 text-white/70 hover:border-white/70 hover:text-white"
+          onClick={() => sel.selectWorkspace(null)}
+        >
+          +
+        </button>
+        <RailUnreadBadge count={invites} ringColor={railBg} testId="rail-workspace-invites" what="workspace invitations" />
+      </div>
+      {/* Built-in help (#383): far lower-left, large layout only. `max-md:hidden`
+          as well as the prop — the class is true the instant the window
+          narrows, before the media-query listener has re-rendered anything. */}
+      {showHelp && (
+        <button
+          data-testid="help-button"
+          title="Help"
+          aria-label="Help"
+          className="mt-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-lg font-bold text-white hover:bg-white/25 max-md:hidden"
+          onClick={onOpenHelp}
+        >
+          ?
+        </button>
+      )}
     </nav>
   );
 }

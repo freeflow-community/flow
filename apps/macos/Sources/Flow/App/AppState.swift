@@ -66,8 +66,11 @@ final class AppState: ObservableObject {
     /// a second reconnect can start while the first backfill is still paging,
     /// and a Bool would let the first one to finish declare the app caught up.
     @Published private(set) var catchUpCount: Int = 0
-    /// userId -> online?
-    @Published private(set) var presence: [String: Bool] = [:]
+    /// workspaceId -> (userId -> online?). Presence is per (user, workspace)
+    /// since #364: one socket carries every workspace we belong to, so a flat
+    /// userId map lit an agent's dot in workspaces its bridge wasn't serving.
+    /// Read it through `isOnline(_:in:)`, never directly.
+    @Published private(set) var presenceByWorkspace: [String: [String: Bool]] = [:]
     /// channelId -> (userId -> last typing event time)
     @Published private(set) var typing: [String: [String: Date]] = [:]
     /// Channels an agent is working in right now (#137) — the sidebar spinner.
@@ -262,7 +265,7 @@ final class AppState: ObservableObject {
         phase = .signedOut
         windows.forEach { $0.clearForSignOut() }
         artifactsByWorkspace = [:]
-        presence = [:]
+        presenceByWorkspace = [:]
         typing = [:]
         busyChannelIds = []
         huddleRosters = [:]
@@ -344,8 +347,22 @@ final class AppState: ObservableObject {
         typing[TypingKey.make(channelId: channelId, threadRootId: threadRootId)]?.removeValue(forKey: userId)
     }
 
-    func presenceReceived(userId: String, online: Bool) {
-        presence[userId] = online
+    func presenceReceived(workspaceId: String, userId: String, online: Bool) {
+        presenceByWorkspace[workspaceId, default: [:]][userId] = online
+    }
+
+    /// Is this user online *in this workspace*? A connection to another
+    /// workspace doesn't count (#364) — that was the whole bug.
+    func isOnline(_ userId: String, in workspaceId: String?) -> Bool {
+        guard let workspaceId else { return false }
+        return presenceByWorkspace[workspaceId]?[userId] == true
+    }
+
+    /// Drop every presence entry — used on reconnect, where the server sends a
+    /// fresh snapshot and nobody sends `offline` for someone who left while we
+    /// were down.
+    func presenceReset() {
+        presenceByWorkspace = [:]
     }
 
     /// A channel's activity spinner turned on or off (#137). Purely in-memory,

@@ -207,16 +207,26 @@ export class FlowApi {
   /** Phase 13: pin `fileId` as a shared artifact in a channel. The caller must
    * be a member of the channel and able to read the file. `ownsFile` marks an
    * artifact whose file was uploaded for it (agent-generated). */
+  /** With `app: true` (link artifacts only) the response is an
+   * `AppArtifactSecretDTO`: the artifact plus its app secret, which Flow
+   * returns exactly once — see docs/design/MINI_APPS.md. */
   createArtifact(
     channelId: string,
-    opts: { fileId?: string | undefined; url?: string | undefined; name?: string | undefined; ownsFile?: boolean | undefined },
-  ): Promise<ArtifactDTO> {
+    opts: {
+      fileId?: string | undefined;
+      url?: string | undefined;
+      name?: string | undefined;
+      ownsFile?: boolean | undefined;
+      app?: boolean | undefined;
+    },
+  ): Promise<ArtifactDTO & { appSecret?: string }> {
     return this.req('POST', '/v1/artifacts', {
       channelId,
       ...(opts.fileId ? { fileId: opts.fileId } : {}),
       ...(opts.url ? { url: opts.url } : {}),
       ...(opts.name ? { name: opts.name } : {}),
       ...(opts.ownsFile ? { ownsFile: opts.ownsFile } : {}),
+      ...(opts.app ? { app: true } : {}),
     });
   }
 

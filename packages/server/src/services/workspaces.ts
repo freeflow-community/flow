@@ -17,7 +17,7 @@ import { hashToken, newLinkToken, newToken } from '../lib/tokens.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
 import { blobStore } from '../storage/index.js';
-import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
+import { publishEvent, subjectMeta, subjectUserMeta, subjectUserNotify } from '../bus.js';
 import { emailSender } from '../email/index.js';
 import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents, tombstoneUser } from './memberRemoval.js';
 import { postSystemMessage } from './messages.js';
@@ -339,7 +339,9 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
     statusText: r.u.statusText,
     isAgent: r.u.isAgent,
     isBot: r.u.isBot,
-    sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
+    // #357: the sponsor who vouched for this agent HERE; pre-#357 rows fall
+    // back to the account-level sponsor.
+    sponsorId: r.u.isAgent ? r.m.sponsorUserId ?? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   }));
@@ -363,7 +365,9 @@ export async function toMemberDTO(workspaceId: string, userId: string): Promise<
     statusText: r.u.statusText,
     isAgent: r.u.isAgent,
     isBot: r.u.isBot,
-    sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
+    // #357: the sponsor who vouched for this agent HERE; pre-#357 rows fall
+    // back to the account-level sponsor.
+    sponsorId: r.u.isAgent ? r.m.sponsorUserId ?? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   };
@@ -427,10 +431,6 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
   const tombstoneEligible = !!u && !u.isBot && !u.isAgent;
   // Sponsor-departure cascade (AGENT_MEMBERS.md): their agents go with them.
   if (tombstoneEligible) await removeSponsoredAgents(workspaceId, targetId);
-  // Removing an agent here (admin panel) must mean the same as the Agents
-  // modal: revoke tokens + kill username/key, or the daemon lingers as an
-  // authenticated zombie with no memberships.
-  if (u?.isAgent) await killAgentCredentials(targetId);
   await removeMemberDeep(workspaceId, targetId, async (tx) => {
     // removeMemberDeep has already deleted the target's row for THIS workspace
     // before `also` runs, so any remaining row means they're still elsewhere.
@@ -443,6 +443,18 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
     if (stillMember.length > 0) return;
     await tombstoneUser(tx, targetId, u.email);
   });
+  // Removing an agent here (admin panel) must mean the same as the Agents
+  // modal: revoke tokens + kill username/key, or the daemon lingers as an
+  // authenticated zombie. Since #357 that is only true once its LAST membership
+  // is gone — an agent that still belongs elsewhere keeps working there.
+  if (u?.isAgent) {
+    const stillMember = await db
+      .select({ one: sql`1` })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, targetId))
+      .limit(1);
+    if (stillMember.length === 0) await killAgentCredentials(targetId);
+  }
 }
 
 /**
@@ -500,7 +512,15 @@ export async function deleteWorkspace(workspaceId: string, actorId: string): Pro
     .innerJoin(users, eq(users.id, workspaceMembers.userId))
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), ne(workspaceMembers.userId, actorId)));
   for (const machine of machines) {
-    if (machine.isAgent) await killAgentCredentials(machine.userId);
+    if (!machine.isAgent) continue;
+    // #357: only the agent's last workspace kills its credentials. One that
+    // also serves another workspace must survive this one's deletion.
+    const elsewhere = await db
+      .select({ one: sql`1` })
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.userId, machine.userId), ne(workspaceMembers.workspaceId, workspaceId)))
+      .limit(1);
+    if (elsewhere.length === 0) await killAgentCredentials(machine.userId);
   }
 
   // Blobs, before the rows that name them disappear.
@@ -633,13 +653,23 @@ export async function createInvite(workspaceId: string, inviterId: string, email
   };
 }
 
-/** Accept invite by raw token → join workspace + auto-join #general. */
-export async function acceptInvite(userId: string, token: string): Promise<WorkspaceDTO> {
-  const tokenHash = hashToken(token);
-  const rows = await db.select().from(invites).where(eq(invites.tokenHash, tokenHash)).limit(1);
-  const inv = rows[0];
+/**
+ * Accept an invite → join the workspace + auto-join #general.
+ *
+ * Two ways in, one row and one code path (#359): the emailed link carries the
+ * raw `token`, while an in-app invitation addressed to a known user carries its
+ * `inviteId` — its token was minted and hashed but never shown to anyone, so id
+ * is the only handle the invitee has. An id only opens the invite addressed to
+ * the caller; anything else reads as "not found".
+ */
+export async function acceptInvite(
+  userId: string,
+  by: { token?: string | undefined; inviteId?: string | undefined },
+): Promise<WorkspaceDTO> {
+  const inv = await findInvite(userId, by);
   if (!inv) throw notFound('invite not found');
   if (inv.acceptedAt) throw conflict('invite_used', 'invite already accepted');
+  if (inv.declinedAt) throw conflict('invite_declined', 'invite was declined');
   if (inv.expiresAt < new Date()) throw badRequest('invite_expired', 'invite has expired');
 
   const joined = await db.transaction(async (tx) => {
@@ -648,8 +678,47 @@ export async function acceptInvite(userId: string, token: string): Promise<Works
   });
 
   if (joined) await announceJoin(inv.workspaceId, userId);
+  if (inv.invitedUserId) publishInviteEnded(userId, inv.workspaceId, inv.id);
   const ws = await db.select().from(workspaces).where(eq(workspaces.id, inv.workspaceId)).limit(1);
   return toWorkspaceDTO(ws[0]!, 'member');
+}
+
+/**
+ * Decline an in-app workspace invitation (#359). Quiet by design: no membership,
+ * no announcement, nothing said to the inviter — declining is not a message.
+ * The row stays as history and stops blocking a future invite.
+ */
+export async function declineInvite(userId: string, inviteId: string): Promise<void> {
+  const inv = await findInvite(userId, { inviteId });
+  if (!inv) throw notFound('invite not found');
+  if (inv.acceptedAt) throw conflict('invite_used', 'invite already accepted');
+  if (inv.declinedAt) return; // idempotent
+  await db.update(invites).set({ declinedAt: new Date() }).where(eq(invites.id, inv.id));
+  publishInviteEnded(userId, inv.workspaceId, inv.id);
+}
+
+async function findInvite(userId: string, by: { token?: string | undefined; inviteId?: string | undefined }) {
+  if (by.token !== undefined) {
+    return (await db.select().from(invites).where(eq(invites.tokenHash, hashToken(by.token))).limit(1))[0];
+  }
+  if (by.inviteId === undefined) return undefined;
+  return (
+    await db
+      .select()
+      .from(invites)
+      .where(and(eq(invites.id, by.inviteId), eq(invites.invitedUserId, userId)))
+      .limit(1)
+  )[0];
+}
+
+/** Tell the invitee's other sessions the card is gone (accepted or declined). */
+function publishInviteEnded(userId: string, workspaceId: string, inviteId: string): void {
+  publishEvent(subjectUserNotify(userId), {
+    type: 'workspace.invited',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: { inviteId },
+  });
 }
 
 // ---- Persistent workspace join links (issue #85) --------------------------
@@ -775,10 +844,12 @@ export async function enrollInWorkspace(
   workspaceId: string,
   userId: string,
   role: MemberRole = 'member',
+  /** Agents only (#357): who vouched for this agent in THIS workspace. */
+  sponsorUserId?: string,
 ): Promise<boolean> {
   const inserted = await tx
     .insert(workspaceMembers)
-    .values({ workspaceId, userId, role })
+    .values({ workspaceId, userId, role, sponsorUserId: sponsorUserId ?? null })
     .onConflictDoNothing()
     .returning({ userId: workspaceMembers.userId });
   const general = await tx

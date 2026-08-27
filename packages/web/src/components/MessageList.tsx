@@ -8,7 +8,7 @@ import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
 import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
 import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
-import { messageDeleteMode } from '../lib/messagePermissions';
+import { messageDeleteConfirmation, messageDeleteMode } from '../lib/messagePermissions';
 import { Avatar, AuthImg } from './Avatar';
 import { LightboxButton, LightboxShell } from './Lightbox';
 import { EmojiGlyph } from './CustomEmoji';
@@ -385,6 +385,9 @@ function MessageRow({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const mine = message.userId === auth.user.id;
   const deleteMode = messageDeleteMode(message, auth.user.id, membersById[auth.user.id]?.role);
+  const deleteConfirmation = deleteMode
+    ? messageDeleteConfirmation(deleteMode, message.threadRootId, message.replyCount)
+    : null;
   const sender = names[message.userId] ?? 'Unknown';
   const member = membersById[message.userId];
   // Optimistic row awaiting the server echo: actions suppressed. It renders
@@ -728,19 +731,10 @@ function MessageRow({
 
       {showCard && <UserCard userId={message.userId} onClose={() => setShowCard(false)} />}
 
-      {confirmDelete && (
+      {confirmDelete && deleteConfirmation && (
         <Modal onClose={() => setConfirmDelete(false)} testid="delete-confirm-modal">
-          <h3 className="mb-2 font-bold">
-            {deleteMode === 'permanent' ? 'Permanently delete message?' : 'Delete message?'}
-          </h3>
-          <p className="mb-3 text-sm text-muted">
-            {deleteMode === 'permanent' && message.threadRootId === null && message.replyCount > 0
-              ? `This will permanently delete the message and all ${message.replyCount} replies.`
-              : deleteMode === 'permanent'
-                ? 'This message will disappear for everyone.'
-                : 'The message will be replaced by a deletion notice.'}{' '}
-            This can&apos;t be undone.
-          </p>
+          <h3 className="mb-2 font-bold">{deleteConfirmation.title}</h3>
+          <p className="mb-3 text-sm text-muted">{deleteConfirmation.body}</p>
           {deleteError && <p className="mb-3 text-sm text-red-600">{deleteError}</p>}
           <div className="flex justify-end gap-2">
             <button disabled={deleting} className="px-3 py-1.5 text-sm text-ink-soft" onClick={() => setConfirmDelete(false)}>Cancel</button>
@@ -750,7 +744,7 @@ function MessageRow({
               className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white"
               onClick={() => void deleteSelectedMessage()}
             >
-              {deleting ? 'Deleting…' : deleteMode === 'permanent' ? 'Permanently delete' : 'Delete'}
+              {deleting ? 'Deleting…' : deleteConfirmation.confirmLabel}
             </button>
           </div>
         </Modal>

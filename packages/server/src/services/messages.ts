@@ -30,10 +30,11 @@ export function mayDeleteMessage(
   role: 'owner' | 'admin' | 'member',
   permanently: boolean,
   isSystem: boolean,
+  allowOwnPermanentDelete = false,
 ): boolean {
   if (isSystem) return false;
-  if (actorId === authorId) return true;
-  return permanently && (role === 'owner' || role === 'admin');
+  if (!permanently) return actorId === authorId;
+  return role === 'owner' || role === 'admin' || (allowOwnPermanentDelete && actorId === authorId);
 }
 
 interface DtoExtras {
@@ -506,14 +507,15 @@ export async function editMessage(messageId: string, userId: string, body: strin
  *
  * `hard` fully removes the row (child reactions/files/notifications cascade)
  * and publishes `message.purged` so clients drop it with no tombstone. Owners
- * and admins may purge any message they can see; authors retain the capability
- * for the agent-bridge's ephemeral "thinking…" status. Purging a root removes
- * its complete thread, while purging one reply repairs the root rollup.
+ * and admins may purge any message they can see. Session-authenticated agent
+ * identities may purge their own ephemeral status rows for bridge compatibility; ordinary
+ * members cannot turn their own soft deletes into permanent deletes. Purging a
+ * root removes its complete thread, while purging one reply repairs the rollup.
  */
 export async function deleteMessage(
   messageId: string,
   userId: string,
-  opts?: { hard?: boolean },
+  opts?: { hard?: boolean; allowOwnPermanentDelete?: boolean },
 ): Promise<void> {
   const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
   const row = rows[0];
@@ -523,8 +525,19 @@ export async function deleteMessage(
   }
   const { chan } = await requireChannelAccess(row.channelId, userId);
   const actor = await requireMembership(chan.workspaceId, userId);
-  if (!mayDeleteMessage(userId, row.userId, actor.role, opts?.hard === true, row.systemKind !== null)) {
-    throw forbidden('only the author, workspace owner, or an admin can delete a message');
+  if (!mayDeleteMessage(
+    userId,
+    row.userId,
+    actor.role,
+    opts?.hard === true,
+    row.systemKind !== null,
+    opts?.allowOwnPermanentDelete === true,
+  )) {
+    throw forbidden(
+      opts?.hard
+        ? 'only workspace owners, admins, or the authoring automation can permanently delete a message'
+        : 'only the author can delete a message',
+    );
   }
 
   if (opts?.hard) {

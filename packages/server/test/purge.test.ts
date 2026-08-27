@@ -26,6 +26,7 @@ process.env.FLOW_DATA_KEY = randomBytes(32).toString('base64');
 // dynamic imports so the env above is set before config/db read it
 const { migrate } = await import('../src/db/migrate.js');
 const { db, schema, closeDb } = await import('../src/db/index.js');
+const { buildApp } = await import('../src/app.js');
 const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
 const ch = await import('../src/services/channels.js');
@@ -33,11 +34,14 @@ const msg = await import('../src/services/messages.js');
 const { newId } = await import('../src/lib/ids.js');
 const { eq, inArray } = await import('drizzle-orm');
 
-const { messages, notifications, reactions, workspaceMembers } = schema;
+const { files, messageFiles, messagePins, messages, notifications, reactions, users, workspaceMembers } = schema;
 
 let userId = '';
 let adminId = '';
 let memberId = '';
+let adminToken = '';
+let memberToken = '';
+let workspaceId = '';
 let channelId = '';
 let cmid = 0;
 const nextCmid = (): string =>
@@ -57,6 +61,7 @@ beforeEach(async () => {
   if (!('token' in res)) throw new Error('expected autoVerify session');
   userId = res.user.id;
   const wsDto = await ws.createWorkspace(userId, 'WS', `ws-${Date.now()}`);
+  workspaceId = wsDto.id;
   const chan = await ch.createChannel(wsDto.id, userId, `chan-${Date.now()}`);
   channelId = chan.id;
   const admin = await auth.register('admin@example.test', {
@@ -72,6 +77,8 @@ beforeEach(async () => {
   if (!('token' in admin) || !('token' in member)) throw new Error('expected autoVerify sessions');
   adminId = admin.user.id;
   memberId = member.user.id;
+  adminToken = admin.token;
+  memberToken = member.token;
   await db.insert(workspaceMembers).values([
     { workspaceId: wsDto.id, userId: adminId, role: 'admin' },
     { workspaceId: wsDto.id, userId: memberId, role: 'member' },
@@ -130,6 +137,35 @@ describe('hard delete / purge', () => {
     expect(rows.length).toBe(1);
   });
 
+  it('does not let an ordinary member permanently delete their own message', async () => {
+    const m = await msg.sendMessage(channelId, memberId, nextCmid(), 'soft-delete only');
+    await expect(msg.deleteMessage(m.id, memberId, { hard: true })).rejects.toThrow();
+    expect(await db.select().from(messages).where(eq(messages.id, m.id))).toHaveLength(1);
+  });
+
+  it('lets a trusted internal agent cleanup purge its own ephemeral status row', async () => {
+    const m = await msg.sendMessage(channelId, memberId, nextCmid(), '🤖 *thinking…*');
+    await msg.deleteMessage(m.id, memberId, { hard: true, allowOwnPermanentDelete: true });
+    expect(await db.select().from(messages).where(eq(messages.id, m.id))).toHaveLength(0);
+  });
+
+  it('lets a session-authenticated agent purge its own status row through the HTTP route', async () => {
+    await db.update(users).set({ isAgent: true }).where(eq(users.id, memberId));
+    const m = await msg.sendMessage(channelId, memberId, nextCmid(), '🤖 *thinking…*');
+    const app = buildApp();
+    try {
+      const removed = await app.inject({
+        method: 'DELETE',
+        url: `/v1/messages/${m.id}?purge=true`,
+        headers: { authorization: `Bearer ${memberToken}` },
+      });
+      expect(removed.statusCode).toBe(200);
+      expect(await db.select().from(messages).where(eq(messages.id, m.id))).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it.each(['owner', 'admin'] as const)('%s can permanently delete another member’s message', async (role) => {
     const m = await msg.sendMessage(channelId, memberId, nextCmid(), 'moderate me');
     await msg.deleteMessage(m.id, role === 'owner' ? userId : adminId, { hard: true });
@@ -153,11 +189,99 @@ describe('hard delete / purge', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('does not let an owner or admin purge a system courtesy line', async () => {
+    await ch.joinChannel(channelId, adminId);
+    const [system] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.systemKind, 'member_joined'));
+    expect(system).toBeTruthy();
+
+    for (const actorId of [userId, adminId]) {
+      await expect(msg.deleteMessage(system!.id, actorId, { hard: true })).rejects.toThrow();
+    }
+    expect(await db.select().from(messages).where(eq(messages.id, system!.id))).toHaveLength(1);
+  });
+
+  it('enforces moderation and purge mode through the authenticated HTTP route', async () => {
+    const m = await msg.sendMessage(channelId, userId, nextCmid(), 'remove through the real API');
+    const memberOwn = await msg.sendMessage(channelId, memberId, nextCmid(), 'ordinary soft-delete only');
+    const app = buildApp();
+    try {
+      const ownDenied = await app.inject({
+        method: 'DELETE',
+        url: `/v1/messages/${memberOwn.id}?purge=true`,
+        headers: { authorization: `Bearer ${memberToken}` },
+      });
+      expect(ownDenied.statusCode).toBe(403);
+      expect(await db.select().from(messages).where(eq(messages.id, memberOwn.id))).toHaveLength(1);
+
+      const denied = await app.inject({
+        method: 'DELETE',
+        url: `/v1/messages/${m.id}?purge=true`,
+        headers: { authorization: `Bearer ${memberToken}` },
+      });
+      expect(denied.statusCode).toBe(403);
+      expect(await db.select().from(messages).where(eq(messages.id, m.id))).toHaveLength(1);
+
+      const removed = await app.inject({
+        method: 'DELETE',
+        url: `/v1/messages/${m.id}?purge=true`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(removed.statusCode).toBe(200);
+      expect(removed.json()).toEqual({ ok: true });
+      expect(await db.select().from(messages).where(eq(messages.id, m.id))).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('reaps an attachment after its last message reference is purged', async () => {
+    const fileId = newId();
+    await db.insert(files).values({
+      id: fileId,
+      workspaceId,
+      userId: memberId,
+      name: 'temporary.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 4,
+      storageKey: `test/${fileId}`,
+    });
+    const m = await msg.sendMessage(channelId, memberId, nextCmid(), 'attached', undefined, [fileId]);
+
+    await msg.deleteMessage(m.id, adminId, { hard: true });
+
+    expect(await db.select().from(messageFiles).where(eq(messageFiles.messageId, m.id))).toHaveLength(0);
+    expect(await db.select().from(files).where(eq(files.id, fileId))).toHaveLength(0);
+  });
+
+  it('keeps an attachment that another message still references', async () => {
+    const fileId = newId();
+    await db.insert(files).values({
+      id: fileId,
+      workspaceId,
+      userId: memberId,
+      name: 'shared.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 6,
+      storageKey: `test/${fileId}`,
+    });
+    const first = await msg.sendMessage(channelId, memberId, nextCmid(), 'first', undefined, [fileId]);
+    const survivor = await msg.sendMessage(channelId, memberId, nextCmid(), 'second', undefined, [fileId]);
+
+    await msg.deleteMessage(first.id, adminId, { hard: true });
+
+    expect(await db.select().from(files).where(eq(files.id, fileId))).toHaveLength(1);
+    expect(await db.select().from(messageFiles).where(eq(messageFiles.messageId, survivor.id))).toHaveLength(1);
+  });
+
   it('permanently deleting a root removes the complete thread', async () => {
     const root = await msg.sendMessage(channelId, memberId, nextCmid(), 'bad bot root');
     const one = await msg.sendMessage(channelId, userId, nextCmid(), 'first reply', root.id);
     const two = await msg.sendMessage(channelId, adminId, nextCmid(), 'second reply', root.id);
     await db.insert(reactions).values({ messageId: one.id, userId: memberId, emoji: '👍' });
+    await db.insert(messagePins).values({ messageId: root.id, channelId, pinnedBy: adminId });
     await db.insert(notifications).values({
       id: newId(),
       userId: memberId,
@@ -177,5 +301,6 @@ describe('hard delete / purge', () => {
     expect(rows).toHaveLength(0);
     expect(await db.select().from(reactions).where(inArray(reactions.messageId, targetIds))).toHaveLength(0);
     expect(await db.select().from(notifications).where(inArray(notifications.messageId, targetIds))).toHaveLength(0);
+    expect(await db.select().from(messagePins).where(inArray(messagePins.messageId, targetIds))).toHaveLength(0);
   });
 });

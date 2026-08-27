@@ -19,7 +19,7 @@ import type {
   WorkspaceDTO,
   WorkspaceMemberDTO,
 } from '@flow/shared';
-import type { BridgeConfig } from './config.js';
+import { resolveWorkspace, type BridgeConfig } from './config.js';
 import { FlowApi } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
@@ -184,9 +184,8 @@ export class AgentBridge {
   async start(): Promise<void> {
     this.me = await this.api.me();
     if (!this.me.isAgent) this.log('warning: token belongs to a non-agent user');
-    const wss = await this.api.myWorkspaces();
-    if (wss.length === 0) throw new Error('agent belongs to no workspace');
-    this.workspace = wss[0]!;
+    // #357: an agent can belong to several workspaces; this process serves one.
+    this.workspace = resolveWorkspace(await this.api.myWorkspaces(), this.cfg.workspace);
     await this.refreshDirectory();
     this.log(
       `${this.me.displayName} <@${this.me.id}> online in "${this.workspace.name}" — ` +
@@ -195,6 +194,9 @@ export class AgentBridge {
     this.socket = new FlowSocket({
       serverUrl: this.cfg.serverUrl,
       token: this.cfg.agentToken,
+      // one process, one workspace (#357) — so tell the server, or it lights
+      // our presence dot in every workspace we belong to (#364)
+      workspaces: [this.workspace.id],
       onEvent: (ev) => this.handleEvent(ev),
       log: (m) => this.log(m),
     });
@@ -421,6 +423,11 @@ export class AgentBridge {
   }
 
   private handleEvent(ev: Event): void {
+    // One process, one workspace (#357). The socket carries every workspace the
+    // agent belongs to, so anything from elsewhere belongs to a sibling process
+    // — acting on it here would have this agent answering in a room it was
+    // never pointed at, with the wrong workspace id on every reply.
+    if (ev.workspaceId && ev.workspaceId !== this.workspace.id) return;
     // Our own workspace-level departure, before anything else: a `member.left`
     // with no channelId naming us is the last event we can act on.
     if (ev.type === 'member.left' && !ev.channelId && (ev.data as { userId?: string })?.userId === this.me.id) {

@@ -11,11 +11,15 @@ import GRDB
 /// macOS does, then calls `onSelect` so `MainView` can close the drawer and let
 /// the conversation take the full screen (matching the web's mobile behavior).
 /// Just enough of the roster to answer "is this workspace down to one person?"
+/// — plus the name, which the Agents section (#361) lists agents by.
 struct WorkspaceRosterEntry: Decodable, FetchableRecord, Equatable, Sendable, WorkspaceRosterMember {
     var userId: String
+    var displayName: String
     var isAgent: Bool?
     var isBot: Bool?
 }
+
+extension WorkspaceRosterEntry: SidebarAgentMemberInfo {}
 
 struct SidebarDrawer: View {
     /// Called after a selection so the host can dismiss the drawer.
@@ -41,6 +45,8 @@ struct SidebarDrawer: View {
     @State private var confirmDeleteWorkspace = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
+    /// Agents section collapsed? Remembered per device, like macOS and web.
+    @AppStorage("flow.sidebarAgentsCollapsed") private var agentsCollapsed = false
 
     private var usersById: [String: User] {
         Dictionary(users.value.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -96,6 +102,15 @@ struct SidebarDrawer: View {
             by: { $0.parentId! }
         )
     }
+    /// Agents (#361) and the DMs left over once their 1:1s move up with them.
+    private var agentSplit: (agents: [AgentSection.Entry<WorkspaceRosterEntry>], rest: [Channel]) {
+        AgentSection.split(
+            dms: channels.value.filter { $0.isMember && $0.isDM },
+            members: roster.value,
+            currentUserId: app.currentUser?.id
+        )
+    }
+
     private var dms: [Channel] {
         // Direct messages sort alphabetically by display title, case-insensitive
         // (ui_nits — matches web/macOS). DM channels have a null `name`, so sort
@@ -107,8 +122,7 @@ struct SidebarDrawer: View {
         func isSelf(_ c: Channel) -> Bool {
             c.kind == "dm" && (c.memberIds ?? []).allSatisfy { $0 == me }
         }
-        return channels.value
-            .filter { $0.isMember && $0.isDM }
+        return agentSplit.rest
             .sorted {
                 if isSelf($0) != isSelf($1) { return !isSelf($0) }
                 return $0.displayTitle(userNames: names, currentUserId: me)
@@ -223,6 +237,29 @@ struct SidebarDrawer: View {
                     }
                     ForEach(standard, id: \.channel.id) { channelRow($0.channel, isNested: $0.isNested) }
 
+                    // Agents (#361): one row per workspace agent, between
+                    // Channels and Direct Messages, whether or not a DM exists
+                    // yet. An agent with a DM brings it up here, so it is never
+                    // listed twice.
+                    let agents = agentSplit.agents
+                    if !agents.isEmpty {
+                        sectionHeader("Agents", collapsed: agentsCollapsed) {
+                            agentsCollapsed.toggle()
+                        } action: {
+                            EmptyView()
+                        }
+                        if !agentsCollapsed {
+                            ForEach(agents) { entry in
+                                if let dm = entry.channel {
+                                    dmRow(dm, label: entry.member.displayName)
+                                    ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
+                                } else {
+                                    agentRow(entry.member)
+                                }
+                            }
+                        }
+                    }
+
                     // The header renders whether or not there are DMs yet: its
                     // "+" is the only way in to a first conversation (#257), so
                     // it must not be the thing that disappears when the list is
@@ -242,7 +279,7 @@ struct SidebarDrawer: View {
                         ForEach(browsable) { browseRow($0) }
                     }
 
-                    if standard.isEmpty && dms.isEmpty && browsable.isEmpty {
+                    if standard.isEmpty && dms.isEmpty && agents.isEmpty && browsable.isEmpty {
                         Text("No channels yet")
                             .font(.system(size: 14))
                             .foregroundStyle(.white.opacity(0.6))
@@ -329,12 +366,38 @@ struct SidebarDrawer: View {
         .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 
-    private func sectionHeader(_ label: String, @ViewBuilder action: () -> some View) -> some View {
+    /// A section title, optionally a collapse toggle (#361): pass `collapsed`
+    /// and `onToggle` and the label becomes a button with a disclosure chevron.
+    private func sectionHeader(
+        _ label: String,
+        collapsed: Bool? = nil,
+        onToggle: (() -> Void)? = nil,
+        @ViewBuilder action: () -> some View
+    ) -> some View {
         HStack {
-            Text(label.uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.55))
+            if let collapsed, let onToggle {
+                Button(action: onToggle) {
+                    HStack(spacing: 3) {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(label.uppercased())
+                            .font(.system(size: 11, weight: .semibold))
+                            .tracking(0.7)
+                    }
+                    .foregroundStyle(.white.opacity(0.55))
+                    // A tap target the size of the header strip, not of the text.
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.section.\(label.lowercased())")
+                .accessibilityValue(collapsed ? "collapsed" : "expanded")
+            } else {
+                Text(label.uppercased())
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.7)
+                    .foregroundStyle(.white.opacity(0.55))
+            }
             Spacer()
             action()
         }
@@ -451,8 +514,12 @@ struct SidebarDrawer: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
-    private func dmRow(_ channel: Channel) -> some View {
-        let title = channel.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
+    /// `label` overrides the resolved DM title — the Agents section (#361)
+    /// passes the agent's plain name, since a 🤖 badge under a header that
+    /// already says AGENTS is noise.
+    private func dmRow(_ channel: Channel, label: String? = nil) -> some View {
+        let title = label
+            ?? channel.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
         let active = app.selectedChannelId == channel.id && !app.showActivity
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { usersById[$0] }
@@ -462,7 +529,7 @@ struct SidebarDrawer: View {
             HStack(spacing: 9) {
                 if channel.kind == "dm" {
                     // self-DM (no other member): online by definition
-                    presenceDot(online: otherId.map { app.presence[$0] == true } ?? true)
+                    presenceDot(online: otherId.map { app.isOnline($0, in: app.selectedWorkspaceId) } ?? true)
                         .frame(width: 18)
                 } else {
                     Image(systemName: "person.2")
@@ -500,6 +567,43 @@ struct SidebarDrawer: View {
             : channel.unreadCount > 0 ? "unread" : "read"
         )
         .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// An agent with no DM yet (#361) — tapping creates one and opens it. Same
+    /// shape as a DM row minus the unread badge, which needs a channel to count.
+    private func agentRow(_ member: WorkspaceRosterEntry) -> some View {
+        let online = app.isOnline(member.userId, in: app.selectedWorkspaceId)
+        let status = usersById[member.userId]
+        return Button {
+            guard let wsId = app.selectedWorkspaceId else { return }
+            Task {
+                if let dm = try? await app.engine.createDm(workspaceId: wsId, userIds: [member.userId]) {
+                    open(dm.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 9) {
+                presenceDot(online: online)
+                    .frame(width: 18)
+                Text(member.displayName)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                if let emoji = status?.statusEmoji, !emoji.isEmpty {
+                    Text(emoji).font(.system(size: 15))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        // Same id shape as a real DM row, so an agent is targetable by name
+        // whether or not the conversation exists yet.
+        .accessibilityIdentifier("sidebar.dm.\(member.displayName)")
+        .accessibilityValue(online ? "online" : "offline")
     }
 
     /// A public channel you're not in yet: tapping Join enrolls and opens it,
@@ -604,7 +708,8 @@ struct SidebarDrawer: View {
             try WorkspaceRosterEntry.fetchAll(
                 db,
                 sql: """
-                    SELECT m.userId AS userId, u.isAgent AS isAgent, u.isBot AS isBot
+                    SELECT m.userId AS userId, u.displayName AS displayName,
+                           u.isAgent AS isAgent, u.isBot AS isBot
                     FROM member m JOIN user u ON u.id = m.userId
                     WHERE m.workspaceId = ?
                     """,

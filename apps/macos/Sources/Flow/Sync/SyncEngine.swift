@@ -168,6 +168,20 @@ actor SyncEngine {
         try await api.get("/v1/config")
     }
 
+    /// Built-in help docs (#384). Public endpoints, like /v1/config: the
+    /// content is documentation checked into the repo, so the viewer needs no
+    /// auth dance for prose and works on the sign-in screen's server too.
+    /// Fetched rather than bundled — a help edit reaches installed apps with
+    /// the server deploy, without a release.
+    func helpTopics() async throws -> [HelpTopic] {
+        let response: HelpTopicsResponse = try await api.get("/v1/help/topics")
+        return response.topics
+    }
+
+    func helpPage(slug: String) async throws -> HelpPage {
+        try await api.get("/v1/help/pages/\(slug)")
+    }
+
     /// Passwordless sign-in: ask the server to email a one-time sign-in link.
     /// The server never reveals whether the address has an account (no
     /// enumeration), so a success here just means "the request was accepted" —
@@ -262,6 +276,9 @@ actor SyncEngine {
         switch signal {
         case .connected:
             await appState?.setConnection(.connected)
+            // The server re-snapshots presence right after hello, and nobody
+            // sends `offline` for someone who left while we were down (#364).
+            await appState?.presenceReset()
             await backfillAfterReconnect()
         case .disconnected:
             await appState?.setConnection(.reconnecting)
@@ -408,13 +425,62 @@ actor SyncEngine {
     }
 
     func acceptInvite(token: String) async throws -> Workspace {
-        let ws: Workspace = try await api.post(
-            "/v1/invites/accept",
-            body: AcceptInviteBody(token: token)
-        )
+        try await acceptInvite(body: AcceptInviteBody(token: token))
+    }
+
+    /// Accept an in-app workspace invitation (#359) — same endpoint and same
+    /// row as the emailed link, addressed by id because the invitee never sees
+    /// a token.
+    func acceptWorkspaceInvite(inviteId: String) async throws -> Workspace {
+        try await acceptInvite(body: AcceptInviteBody(inviteId: inviteId))
+    }
+
+    private func acceptInvite(body: AcceptInviteBody) async throws -> Workspace {
+        let ws: Workspace = try await api.post("/v1/invites/accept", body: body)
         try? await db.writer.write { db in try ws.save(db) }
         await refreshWorkspaces()
         return ws
+    }
+
+    /// Decline an in-app workspace invitation (#359). Quiet: no membership, and
+    /// nothing said to the inviter.
+    func declineWorkspaceInvite(inviteId: String) async throws {
+        let _: OkResponse = try await api.post("/v1/invites/decline", body: DeclineInviteBody(inviteId: inviteId))
+    }
+
+    /// Workspace invitations addressed to me right now (#359).
+    func fetchWorkspaceInvites() async throws -> [PendingWorkspaceInvite] {
+        let resp: WorkspaceInvitesResponse = try await api.get("/v1/me/workspace-invites")
+        return resp.invites
+    }
+
+    /// The picker behind "Invite to workspace" (#358): my workspaces this
+    /// member is not in yet. Same question for an agent and a person.
+    func workspaceInviteTargets(userId: String) async throws -> [Workspace] {
+        let resp: WorkspaceInviteTargetsResponse = try await api.get("/v1/users/\(userId)/workspace-invites")
+        return resp.workspaces
+    }
+
+    /// Add an existing agent to another of my workspaces (#357). It joins
+    /// immediately and I become its sponsor there.
+    func inviteAgentToWorkspace(agentUserId: String, workspaceId: String) async throws -> Workspace {
+        let resp: AgentWorkspaceInviteResponse = try await api.post(
+            "/v1/agents/\(agentUserId)/workspace-invites",
+            body: WorkspaceInviteBody(workspaceId: workspaceId)
+        )
+        return resp.workspace
+    }
+
+    /// Invite a person into another of my workspaces (#359). They join when
+    /// they accept — nothing changes until then. Returns false when an
+    /// identical invitation was already pending.
+    @discardableResult
+    func inviteUserToWorkspace(userId: String, workspaceId: String) async throws -> Bool {
+        let resp: WorkspaceInviteResponse = try await api.post(
+            "/v1/users/\(userId)/workspace-invites",
+            body: WorkspaceInviteBody(workspaceId: workspaceId)
+        )
+        return resp.created
     }
 
     /// Sets the workspace's sidebar color preset (owner/admin only, server-enforced).
@@ -1189,6 +1255,16 @@ actor SyncEngine {
         await refreshArtifacts(workspaceId: artifact.workspaceId)
     }
 
+    /// Mints a short-lived identity token for an `isApp` artifact
+    /// (`docs/design/MINI_APPS.md`). Members only — the server applies the same
+    /// gate as every other artifact operation, so this throws `APIError` once
+    /// the caller has lost access or the artifact is gone. Nothing is cached:
+    /// the token is appended to the url being opened and then forgotten, and
+    /// the next open mints a fresh one.
+    func mintAppToken(artifactId: String) async throws -> AppTokenResponse {
+        try await api.post("/v1/artifacts/\(artifactId)/app-token")
+    }
+
     /// Deletes the shared artifact. The server reaps the backing file too if the
     /// artifact owned it (guarded).
     func deleteArtifact(_ artifact: Artifact) async throws {
@@ -1608,14 +1684,21 @@ actor SyncEngine {
         case .message(let m):
             if event.type == "message.purged" {
                 // Hard delete: remove the row entirely (no tombstone) and mirror
-                // the server's rollup decrement if it was a thread reply.
-                if await purgeMessage(m) {
-                    if m.threadRootId == nil, openThreadRootId == m.id { openThreadRootId = nil }
-                    await appState?.messagePermanentlyDeleted(m)
-                    if m.threadRootId == nil, event.workspaceId == activeWorkspaceId {
-                        await refreshChannels(workspaceId: event.workspaceId)
-                    }
+                // the server's rollup decrement if it was a thread reply. The
+                // row may never have been cached on this device, so the
+                // server-authoritative channel/thread refreshes are not gated
+                // on whether the local delete found it.
+                _ = await purgeMessage(m)
+                if m.threadRootId == nil, openThreadRootId == m.id { openThreadRootId = nil }
+                await appState?.messagePermanentlyDeleted(m)
+                let openThreadRootIds = await appState?.openThreadRootIds ?? []
+                if let rootId = m.threadRootId, openThreadRootIds.contains(rootId) {
+                    await fetchThread(rootId: rootId)
                 }
+                if await appState?.isWorkspaceOpen(event.workspaceId) == true {
+                    await refreshChannels(workspaceId: event.workspaceId)
+                }
+                await refreshNotificationBadge()
                 return
             }
             let isNew = await applyServerMessage(m)
@@ -1650,7 +1733,8 @@ actor SyncEngine {
             }
 
         case .presence(let p):
-            await appState?.presenceReceived(userId: p.userId, online: p.status == "online")
+            await appState?.presenceReceived(
+                workspaceId: event.workspaceId, userId: p.userId, online: p.status == "online")
 
         case .channelIndicator(let ind):
             // Any non-nil state spins the row — an added state later shouldn't
@@ -1880,7 +1964,10 @@ actor SyncEngine {
     /// the server's txn — a purged reply decrements the root's rollup and
     /// recomputes lastReplyAt; a re-posted reply re-bumps it. Participants
     /// recompute on the next thread fetch.
-    private func purgeMessage(_ m: Message) async -> Bool {
+    // Internal so the shared macOS/iOS cache semantics can be exercised with
+    // an in-memory database. Network callers still enter through
+    // `deleteMessage` or websocket event handling.
+    func purgeMessage(_ m: Message) async -> Bool {
         let removed: Bool? = try? await db.writer.write { db in
             let deleted: Int
             if m.threadRootId == nil {

@@ -208,7 +208,7 @@ describe('leaveWorkspace', () => {
     expect(pending).toHaveLength(1);
 
     const token = invite.inviteUrl.slice(invite.inviteUrl.lastIndexOf('/') + 1);
-    const rejoined = await ws.acceptInvite(member.id, token);
+    const rejoined = await ws.acceptInvite(member.id, { token });
     expect(rejoined.id).toBe(workspaceId);
     expect((await ws.myWorkspaces(member.id)).map((w) => w.id)).toContain(workspaceId);
   });

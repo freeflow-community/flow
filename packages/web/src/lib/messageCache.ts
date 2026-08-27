@@ -151,6 +151,13 @@ export function applyMessageEvent(qc: QueryClient, msg: MessageDTO, insert: bool
  * lives in — no tombstone. A purged reply also decrements the root rollup it
  * had bumped (mirrors the server's txn); a re-posted reply re-bumps it. */
 export function removeMessageFromCache(qc: QueryClient, msg: MessageDTO): void {
+  // The local DELETE response and its websocket echo both run this path. Keep
+  // a short-lived query-cache marker so a reply rollup is adjusted exactly
+  // once even when that thread was never opened locally.
+  const purgeKey = ['messagePurge', msg.id] as const;
+  if (qc.getQueryData<boolean>(purgeKey)) return;
+  qc.setQueryData(purgeKey, true);
+
   if (msg.threadRootId === null) {
     qc.setQueryData<MessagesData>(['messages', msg.channelId], (old) =>
       old
@@ -163,27 +170,22 @@ export function removeMessageFromCache(qc: QueryClient, msg: MessageDTO): void {
     return;
   }
   const rootId = msg.threadRootId;
-  // If the thread cache exists it is our idempotency marker: the API response
-  // may remove a reply immediately, then its websocket echo arrives later.
-  // Only the first call that actually finds the row adjusts the channel root.
-  // With no thread cache (the common remote-session case), the event still
-  // needs to decrement the visible channel rollup.
-  let adjustChannelRoot = true;
+  let exactReplyCount: number | undefined;
   qc.setQueryData<ThreadData>(['thread', rootId], (old) =>
     old
       ? (() => {
           const found = old.messages.some((m) => m.id === msg.id);
-          adjustChannelRoot = found;
-          if (!found) return old;
-          const messages = old.messages.filter((m) => m.id !== msg.id);
+          const messages = found ? old.messages.filter((m) => m.id !== msg.id) : old.messages;
           const fullyLoaded = !old.hasMore;
+          const replyCount = fullyLoaded ? messages.length : Math.max(0, old.root.replyCount - 1);
+          exactReplyCount = replyCount;
           return {
             ...old,
             messages,
             root: {
               ...old.root,
-              replyCount: Math.max(0, old.root.replyCount - 1),
-              lastReplyAt: fullyLoaded ? messages.at(-1)?.createdAt ?? null : old.root.lastReplyAt,
+              replyCount,
+              lastReplyAt: fullyLoaded && found ? messages.at(-1)?.createdAt ?? null : old.root.lastReplyAt,
               replyParticipantUserIds: fullyLoaded
                 ? [...new Set(messages.map((m) => m.userId))].slice(0, 4)
                 : old.root.replyParticipantUserIds,
@@ -192,7 +194,6 @@ export function removeMessageFromCache(qc: QueryClient, msg: MessageDTO): void {
         })()
       : old,
   );
-  if (!adjustChannelRoot) return;
   qc.setQueryData<MessagesData>(['messages', msg.channelId], (old) =>
     old
       ? {
@@ -200,7 +201,9 @@ export function removeMessageFromCache(qc: QueryClient, msg: MessageDTO): void {
           pages: old.pages.map((p) => ({
             ...p,
             messages: p.messages.map((m) =>
-              m.id === rootId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m,
+              m.id === rootId
+                ? { ...m, replyCount: exactReplyCount ?? Math.max(0, m.replyCount - 1) }
+                : m,
             ),
           })),
         }

@@ -10,16 +10,39 @@ This file keeps two things:
   others MUST still add a line here (and remove it when closed);
 - the index of frozen history archives at the bottom.
 
-### 2026-08-25 — Permanent message moderation
-
-- Workspace owners and admins can permanently remove visible user, bot, or
-  agent messages and tombstones; purging a root removes its full thread. `[server] [web] [macos] [ios]`
-- Purges reconcile attachments, Activity rows, unread badges, thread rollups,
-  and connected-client caches. `[server] [web] [macos] [ios] [qa]`
-
 ## Parity
 
 ### Gaps to close
+- Built-in **help docs** (#383) ship on web and macOS (#384); **iOS has no help
+  viewer**. The content and the API are client-agnostic (`docs/help/*.md` behind
+  `GET /v1/help/topics` and `/v1/help/pages/:slug`), so closing the gap is one
+  more viewer — the macOS one is ~200 lines over `MarkdownBlocks`, which iOS
+  already compiles. Web also hides help below the `md` breakpoint, so a
+  phone-width browser window has no way in.
+- Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
+  measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
+  frame nor sends one already established first-party, and the guard's 302 to
+  the clean url drops the token — so re-minting per load can't help either. Web
+  routes Safari to a new tab, which works. Closing the gap needs a guard-side
+  change (bridge): keep the session in a url the guard controls, or have the 401
+  page call `requestStorageAccess()`.
+  **The native clients are not affected** — #372 (macOS panel `WKWebView`) and
+  #373 (iOS in-app `WKWebView` and mobile Safari) each re-ran the spike and both
+  pass: the app loads as a *top-level* document, so the guard's cookie is
+  first-party and ITP has nothing to block (document, subresource and XHR all
+  authenticated). The limitation is iframe-specific, not WebKit-wide.
+- **Chat polish** (#387) landed on web and macOS only; iOS was out of scope for
+  the issue. The white chat background is an `MC.chat` token macOS uses and iOS
+  does not, and the message-body rhythm (1.5 line-height, block/list spacing,
+  `list-disc`-sized bullets) plus the inline-code chip live in the macOS
+  `MessageListView` and behind `MentionRendering.attributed(codeChips:)`, which
+  defaults off. Closing the gap is adopting both in the iOS message list.
+- **Invite to workspace** on the profile popup (#358) landed on web and macOS
+  only; iOS was explicitly out of scope for the batch. The server side (#357
+  agents, #359 people) is client-agnostic and complete, so closing this is a
+  `MemberProfileSheet` equivalent plus Accept/Decline cards on the iOS
+  workspace switcher — the same two views the other clients grew. Until then an
+  iOS-only user can be invited but cannot accept in the app.
 - The channel Files list (#347/#348) shows a video's first frame on web only.
   The browser can paint one from the presigned stream URL for free; macOS and
   iOS render a play badge on a tinted block instead, because AVFoundation would
@@ -144,8 +167,6 @@ This file keeps two things:
   channel (web + macOS offer "Add to channel" — matters most for agents, which
   never see mentions in channels they haven't joined). iOS has its own composer
   (not the shared macOS one), so the CTA needs porting there.
-- macOS: sidebar doesn't list DM-less agents under Direct Messages (web shows
-  virtual rows with presence + 🤖 that create the DM on click).
 - Web composer: browser-native undo degrades after programmatic splices
   (autocomplete/suggestion inserts) — contenteditable limitation; macOS undo is clean.
 - macOS: pasting a non-image file URL inserts its path as text; web handles
@@ -188,15 +209,15 @@ This file keeps two things:
   reconciling it with `.defaultScrollAnchor(.bottom)`, which owns the scroll
   position today. The shared `MessageScrollMemory` store is still there.
 - iOS: the new channel drawer (2026-07-23) omits several sidebar affordances the
-  web + macOS sidebars carry — the virtual agent rows under Direct Messages
-  (start a DM with a workspace agent that has no existing 1:1), the workspace
-  color picker, and the Manage Users / Manage Apps workspace-menu items. Channel
-  context actions (mute/leave/archive) are also not yet wired on iOS. The
-  drawer's structure makes these straightforward ports; none are backed
-  on-device yet. (The "new DM" composer was closed 2026-08-16, #257 — sidebar
-  "+" and a profile-card Message button. "Invite People" was closed 2026-08-18,
-  #283 — which also brought #85's join-link management to iOS. "Invite to
-  channel" was closed 2026-08-21 — ⋯ menu item + drawer long-press.)
+  web + macOS sidebars carry — the workspace color picker and the Manage Users /
+  Manage Apps workspace-menu items. Channel context actions
+  (mute/leave/archive) are also not yet wired on iOS. The drawer's structure
+  makes these straightforward ports; none are backed on-device yet. (The "new
+  DM" composer was closed 2026-08-16, #257 — sidebar "+" and a profile-card
+  Message button. "Invite People" was closed 2026-08-18, #283 — which also
+  brought #85's join-link management to iOS. "Invite to channel" was closed
+  2026-08-21 — ⋯ menu item + drawer long-press. Virtual agent rows were closed
+  2026-08-25, #361 — the Agents section carries them on all three clients.)
 - macOS + iOS: message editing still uses an inline/dedicated edit field — web
   moved editing into the prompt editor (↑ and ✏️ load the body into the composer,
   Enter saves, Esc restores the draft; 2026-07-23 ui_nits). Both clients already
@@ -246,6 +267,25 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Mini apps open **inline on macOS and iOS, in a new tab on web** (#380). The
+  native clients load the app top-level in their co-browser web view, where the
+  guard's cookie is first-party; web's artifact pane is a cross-site iframe,
+  which WebKit blocks (see the frame gap above), so it keeps the #371 new-tab
+  hand-off. Not a gap to close on web until that guard-side change lands.
+- Co-browsing is suppressed for `isApp` artifacts on macOS and iOS (#380) and
+  has no meaning on web, which never framed an app. An app is opened, not
+  co-browsed: each viewer mints their own token into their own guard session, so
+  broadcasting one member's navigation — or the guard's 302 on every open —
+  would re-point the shared artifact for the whole channel. `MiniApp` holds the
+  rule for both native clients and its tests compile into both.
+- Clamping the side panel to the space available, and making image and video
+  attachment cards fit the transcript column (#354), are both macOS-only. Web
+  has the same fixed-width panel and the same card caps, but flexbox squeezes
+  where SwiftUI's `HStack` and fixed `frame`s clip, and below the `md`
+  breakpoint web's panel becomes a full-screen overlay instead — so neither
+  defect exists there. iOS pushes Files and threads full-screen and has no split
+  to break. If macOS ever wants web's behaviour at
+  its narrowest widths, that is a follow-up, not a gap this leaves open.
 - Workspace avatars (#336) are *managed* from web and macOS only; iOS displays
   the mark but offers no upload or remove, as the issue specified. iOS has no
   workspace-settings surface at all today — the sidebar colour isn't editable

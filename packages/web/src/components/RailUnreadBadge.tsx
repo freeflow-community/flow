@@ -18,18 +18,21 @@ export function RailUnreadBadge({
   count,
   ringColor,
   testId,
+  what = 'unread',
 }: {
   count: number;
   /** The rail background, drawn as the ring that separates badge from icon. */
   ringColor: string;
   testId: string;
+  /** What the number counts, for screen readers ("3 unread", "1 invitation"). */
+  what?: string;
 }) {
   const label = unreadLabel(count);
   if (label === null) return null;
   return (
     <span
       data-testid={testId}
-      aria-label={`${count} unread`}
+      aria-label={`${count} ${what}`}
       // pointer-events-none: the badge overlaps the button's corner, and a
       // click there means "open this workspace", not "miss the button".
       className="pointer-events-none absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-unread px-1 text-[10px] font-bold leading-none text-white tabular-nums"

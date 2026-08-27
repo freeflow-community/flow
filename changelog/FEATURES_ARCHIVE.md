@@ -63,13 +63,6 @@
   Flow's shared mini-browser on iPhone now, the same one the Mac app has —
   whoever moves to a new page moves it for everyone looking.
 
-## 2026-08-25
-
-- **Owners and admins can make a message disappear completely.** The permanent
-  delete action works on messages from people, bots, and agents—even an existing
-  “message was deleted” notice—and deleting a thread starter removes its replies
-  too. Regular members still get the usual deletion notice for their own posts.
-
 ## 2026-07-30
 
 - **Flow has a home page.** freeflow.im now introduces Flow — what it is, how

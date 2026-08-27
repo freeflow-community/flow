@@ -1,6 +1,6 @@
 # Decision log
 
-## 2026-08-25 — Permanent message deletion is an owner/admin moderation power (operator)
+## 2026-08-27 — Permanent message deletion is an owner/admin moderation power (operator)
 
 - Workspace `owner` and `admin` roles may permanently delete any non-system
   message they can access, including bot/agent messages and existing soft-delete
@@ -9,6 +9,7 @@
   thread-root purge removes every reply atomically; a reply purge preserves the
   thread and recomputes its rollup. The server remains the authorization boundary,
   and clients must reconcile Activity, unread counts, attachments, and caches.
+
 ## 2026-08-20 — Phase 1 voice huddle rulings
 
 Grilling session ahead of implementing `docs/research/voice-huddle-livekit.md`

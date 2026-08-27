@@ -17,6 +17,8 @@
 //   (mints a fresh agent token, revoking the old one — the lost-agent.json path)
 //   flow-agent-bridge mcp-init [config.json]
 //   (write ./.mcp.json so MCP clients like the claude CLI load the flow server directly)
+//   flow-agent-bridge app-guard --upstream http://localhost:3000 --port 8788
+//   (put an agent-hosted web app behind Flow membership; secret in FLOW_APP_SECRET)
 //   flow-agent-bridge mcp                   (internal) the flow MCP stdio server
 import fs from 'node:fs';
 import { loadConfig } from './config.js';
@@ -26,6 +28,7 @@ import { runMcpServer } from './mcp-server.js';
 import { runMcpInit } from './mcp-init.js';
 import { runSetup, type SetupOptions } from './setup.js';
 import { runSupervisor } from './supervisor.js';
+import { AppGuardUsageError, runAppGuard } from './app-guard-cli.js';
 
 /** An invite code positional (`flow-XXXX-XXXX`), told apart from a config path. */
 const INVITE_CODE_RE = /^flow-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
@@ -39,7 +42,10 @@ function usage(): never {
       '                                   --server --token --description --cwd\n' +
       '  flow-agent-bridge run <config.json>\n' +
       '  flow-agent-bridge login --server <url> --username <handle> --key <secret>\n' +
-      '  flow-agent-bridge mcp-init [config.json]   write ./.mcp.json for MCP clients (claude CLI)\n',
+      '  flow-agent-bridge mcp-init [config.json]   write ./.mcp.json for MCP clients (claude CLI)\n' +
+      '  flow-agent-bridge app-guard --upstream <url> [--port 8788] [--host 0.0.0.0]\n' +
+      '      only Flow members of the app’s channel reach it; FLOW_APP_SECRET holds the\n' +
+      '      secret create_artifact returned (comma-separate several). Tunnel this port.\n',
   );
   process.exit(2);
 }
@@ -93,6 +99,19 @@ async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'mcp') return runMcpServer();
   if (cmd === 'mcp-init') return runMcpInit(rest[0] ?? 'agent.json');
+  // The guard is a standalone server, not a bridge daemon: no config, no Flow
+  // connection — verification is offline (docs/design/MINI_APPS.md).
+  if (cmd === 'app-guard') {
+    try {
+      return await runAppGuard(rest);
+    } catch (err) {
+      if (err instanceof AppGuardUsageError) {
+        console.error(err.message);
+        process.exit(2);
+      }
+      throw err;
+    }
+  }
   if (cmd === 'login') {
     const server = flag(rest, 'server');
     const username = flag(rest, 'username');

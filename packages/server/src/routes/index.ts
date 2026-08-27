@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { z, ZodTypeAny } from 'zod';
 import {
   AcceptInviteBody,
+  DeclineInviteBody,
+  WorkspaceInviteBody,
   AddChannelMemberBody,
   CreateChannelBody,
   CreateDmBody,
@@ -76,7 +78,9 @@ import { deleteMyAccount } from '../services/accountDeletion.js';
 import { detachUserFromWorkspace, disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
+import * as help from '../services/help.js';
 import * as ag from '../services/agents.js';
+import * as wi from '../services/workspaceInvites.js';
 import * as ar from '../services/artifacts.js';
 
 declare module 'fastify' {
@@ -131,6 +135,17 @@ export function registerRoutes(app: FastifyInstance): void {
   // Public bootstrap payload: which auth options this deployment offers, so the
   // signed-out client knows without a failed round-trip. A Google OAuth *web*
   // client id is public by design — it ships in the page that calls Google.
+  // Built-in help docs (#383). Public like /v1/config and served raw: the
+  // content is documentation checked into the repo, and each client renders the
+  // markdown with its own pipeline. Lives under /v1 rather than /api because
+  // /api/* is the Slack-compat surface (it ends in a catch-all).
+  app.get('/v1/help/topics', async () => ({ topics: help.listTopics() }));
+
+  app.get('/v1/help/pages/:slug', async (req) => {
+    const { slug } = req.params as { slug: string };
+    return help.getPage(slug);
+  });
+
   app.get('/v1/config', async () => ({
     google: config.googleEnabled,
     googleClientId: config.googleClientId ?? null,
@@ -490,7 +505,44 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.post('/v1/invites/accept', { preHandler: requireAuth }, async (req) => {
     const body = parse(AcceptInviteBody, req.body);
-    return ws.acceptInvite(req.user.id, body.token);
+    return ws.acceptInvite(req.user.id, body);
+  });
+
+  // ---- "Invite to workspace" from a profile popup (#357 agents / #359 people)
+  // The picker's list: my workspaces this member isn't in yet. Same question
+  // for an agent and a person, so one route answers both.
+  app.get('/v1/users/:id/workspace-invites', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return wi.workspaceInviteTargets(id, req.user.id);
+  });
+
+  // Agents join on the spot — the inviter vouches for them and becomes their
+  // sponsor in the target workspace (#357).
+  app.post('/v1/agents/:id/workspace-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(WorkspaceInviteBody, req.body);
+    const res = await ag.inviteAgentToWorkspace(id, body.workspaceId, req.user.id);
+    return reply.status(201).send(res);
+  });
+
+  // People are asked, not added (#359): this creates a pending invitation they
+  // accept or decline. Repeating it returns the invitation already in flight.
+  app.post('/v1/users/:id/workspace-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(WorkspaceInviteBody, req.body);
+    const res = await wi.inviteUserToWorkspace(id, body.workspaceId, req.user.id);
+    return reply.status(res.created ? 201 : 200).send(res);
+  });
+
+  // The invitee's side: their live invitations, and the "no thanks" that ends one.
+  app.get('/v1/me/workspace-invites', { preHandler: requireAuth }, async (req) => {
+    return { invites: await wi.listMyWorkspaceInvites(req.user.id) };
+  });
+
+  app.post('/v1/invites/decline', { preHandler: requireAuth }, async (req) => {
+    const body = parse(DeclineInviteBody, req.body);
+    await ws.declineInvite(req.user.id, body.inviteId);
+    return { ok: true };
   });
 
   // ---- Persistent workspace join link (issue #85): one live link per
@@ -715,7 +767,13 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     // ?purge=true fully removes the row (no tombstone); default is a soft delete.
     const { purge } = req.query as { purge?: string };
-    await msg.deleteMessage(id, req.user.id, { hard: purge === 'true' || purge === '1' });
+    await msg.deleteMessage(id, req.user.id, {
+      hard: purge === 'true' || purge === '1',
+      // The bridge's agent status row must vanish on completion. App bots use
+      // the separate Slack-compatible auth surface; session-authenticated
+      // human authors stay on the soft-delete path unless they are owner/admin.
+      allowOwnPermanentDelete: req.user.isAgent,
+    });
     return { ok: true };
   });
 
@@ -847,8 +905,26 @@ export function registerRoutes(app: FastifyInstance): void {
       url: body.url,
       name: body.name,
       ownsFile: body.ownsFile,
+      app: body.app,
     });
+    // With `app: true` this DTO carries `appSecret` — the only time it ever
+    // travels besides a rotation (MINI_APPS.md).
     return reply.status(201).send(dto);
+  });
+
+  // ---- mini apps (docs/design/MINI_APPS.md) ----
+  // Mint a 5-minute identity token for the caller; members only, same gate as
+  // every other artifact operation. The app's guard verifies it offline.
+  app.post('/v1/artifacts/:id/app-token', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.mintArtifactAppToken(id, req.user.id);
+  });
+
+  // Rotate the app's secret — returned once, and every token minted under the
+  // old one stops verifying. Creator or workspace admin.
+  app.post('/v1/artifacts/:id/app-secret', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.rotateArtifactAppSecret(id, req.user.id);
   });
 
   app.get('/v1/workspaces/:id/artifacts', { preHandler: requireAuth }, async (req) => {

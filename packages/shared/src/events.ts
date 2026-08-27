@@ -14,7 +14,7 @@ export type EventType =
   | 'message.created'
   | 'message.updated'
   | 'message.deleted' // soft delete: row kept, renders as a "This message was deleted" tombstone
-  | 'message.purged' // hard delete: row gone, clients remove it entirely (no tombstone) — used for the agent's ephemeral "thinking…" status
+  | 'message.purged' // hard delete: row gone, clients remove it entirely — bot cleanup or owner/admin moderation
   | 'thread.reply'
   | 'typing'
   | 'presence'
@@ -38,7 +38,11 @@ export type EventType =
   | 'artifact.deleted' // per-channel subject
   | 'user.updated' // meta subject of every workspace the user belongs to
   | 'workspace.updated' // meta subject; workspace-level changes (e.g. sidebar color)
-  | 'workspace.joined'; // per-user subject; gateway attaches the new workspace's subs, then forwards so other sessions refresh their workspace list
+  | 'workspace.joined' // per-user subject; gateway attaches the new workspace's subs, then forwards so other sessions refresh their workspace list
+  // per-user notify subject (#359): someone invited me to a workspace, or the
+  // invitation I was shown is gone (accepted elsewhere, declined, expired).
+  // Clients refetch GET /v1/me/workspace-invites; `workspaceId` is the target.
+  | 'workspace.invited';
 
 export interface Event<T = unknown> {
   type: EventType;
@@ -113,9 +117,21 @@ export interface NotificationReadData {
 export type ArtifactEventData = ArtifactDTO;
 export type UserUpdatedData = UserDTO;
 
+/** `workspace.invited` payload (#359) — the invitation, or just its id when it ended. */
+export interface WorkspaceInvitedData {
+  inviteId: string;
+  /** Present when the invitation is live; absent when it just ended. */
+  invite?: import('./dto.js').PendingWorkspaceInviteDTO;
+}
+
 // ---- WS protocol frames (phase1.md §4) --------------------------
 export type ClientFrame =
-  | { op: 'auth'; token: string }
+  // `workspaces` (optional, #364) narrows *presence* to the workspaces this
+  // connection actually serves — an agent bridge runs one process per
+  // workspace and would otherwise show a green dot in every workspace its
+  // agent belongs to. Omitted means "all of them", which is what the human
+  // clients want: one window is reachable in every workspace it shows.
+  | { op: 'auth'; token: string; workspaces?: string[] }
   // threadRootId scopes the indicator to a thread's composer; absent = the
   // channel's main composer. Older clients omit it and read as main-composer.
   | { op: 'typing'; channelId: string; threadRootId?: string }

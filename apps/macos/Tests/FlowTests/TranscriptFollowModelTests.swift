@@ -518,4 +518,85 @@ final class TranscriptFollowModelTests: XCTestCase {
         XCTAssertEqual(m.arrivalSettleCommand(), .none)
         XCTAssertTrue(m.pinned)
     }
+
+    // MARK: - Existing rows growing (#360)
+
+    /// The reported bug, in the numbers the follow log actually printed: a
+    /// reaction lands on the newest message while the reader is stuck to the
+    /// end. The chip is 19pt, so the content bottom ends up 27pt down — inside
+    /// `repinSlack`, which is where the re-pin branch used to return `.none`
+    /// and leave the chip below the fold.
+    func testReactionGrowthWhileStuckGlues() {
+        var m = model(.topEdge, viewport: 772, content: frame(top: -858, height: 1638))
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -858, height: 1657)), .stick(animated: true))
+        XCTAssertTrue(m.pinned)
+    }
+
+    /// Same crack, the other symptom: a thread reply adds no row to the
+    /// transcript — it grows the root row by its 22pt "N replies" affordance,
+    /// putting the bottom 30pt down. Also inside the slack, also swallowed.
+    func testReplyCountGrowthWhileStuckGlues() {
+        var m = model(.topEdge, viewport: 772, content: frame(top: -916, height: 1696))
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -916, height: 1718)), .stick(animated: true))
+        XCTAssertTrue(m.pinned)
+    }
+
+    /// The ticket's exact sequence: send a prompt, then the next event is a
+    /// reaction. The own send opens a quiet window; a reaction arriving inside
+    /// it corrects unanimated (as #334 established for growth), and one
+    /// arriving after it corrects animated. Neither may be dropped.
+    func testReactionAfterOwnSendGluesInsideAndOutsideTheQuietWindow() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        var m = model(.topEdge, viewport: 772, content: frame(top: -858, height: 1638))
+        XCTAssertEqual(m.lastMessageChanged(isOwn: true, at: t0), .stick(animated: true))
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -858, height: 1657), at: t0.addingTimeInterval(0.1)),
+            .stick(animated: false))
+        // That correction lands: the bottom is back against the viewport.
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -877, height: 1657), at: t0.addingTimeInterval(0.15)),
+            .none)
+        // A second reaction, long after the window closed, from that stuck
+        // position — 27pt down again, so inside the slack again.
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -877, height: 1676), at: t0.addingTimeInterval(2)),
+            .stick(animated: true))
+        XCTAssertTrue(m.pinned)
+    }
+
+    /// The #334 guarantee survives: a reader who has deliberately scrolled up
+    /// is not dragged down by someone else's reaction.
+    func testReactionGrowthWhileBackScrolledMovesNothing() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        var m = model(.topEdge, viewport: 772, content: frame(top: -858, height: 1638))
+        _ = m.contentChanged(to: frame(top: -400, height: 1638), at: t0) // scroll up
+        XCTAssertFalse(m.pinned)
+        XCTAssertEqual(
+            m.contentChanged(to: frame(top: -400, height: 1657), at: t0.addingTimeInterval(1)),
+            .none)
+        XCTAssertFalse(m.pinned)
+    }
+
+    /// Re-pinning still costs nothing on its own: frames that move inside the
+    /// slack without the content growing stay silent, so scrolling back to the
+    /// end (and the elastic bounce at it) cannot start a scroll war.
+    func testRepinWithoutGrowthStaysSilent() {
+        var m = model(.topEdge, viewport: 772, content: frame(top: -800, height: 1638))
+        XCTAssertEqual(m.contentChanged(to: frame(top: -858, height: 1638)), .none)
+        XCTAssertTrue(m.pinned)
+        XCTAssertEqual(m.contentChanged(to: frame(top: -840, height: 1638)), .none)
+        XCTAssertTrue(m.pinned)
+    }
+
+    /// Growth landing *inside* `alignedSlack` is still ignored — that gate is
+    /// the end of the blank-transcript layout war (#280) and this fix does not
+    /// reopen it. Nothing the transcript renders is that small; the smallest
+    /// real growth is the 19pt reaction chip above.
+    func testGrowthWithinTheAlignedBandIsStillIgnored() {
+        var m = model(.topEdge, viewport: 772, content: frame(top: -858, height: 1638))
+        XCTAssertEqual(m.contentChanged(to: frame(top: -858, height: 1646)), .none)
+        XCTAssertTrue(m.pinned)
+    }
 }

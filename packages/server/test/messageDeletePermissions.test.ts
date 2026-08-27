@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { mayDeleteMessage } from '../src/services/messages.js';
 
 describe('message deletion authorization', () => {
-  it('lets an author use the existing soft and permanent paths', () => {
+  it('keeps an ordinary author on the soft-delete path', () => {
     expect(mayDeleteMessage('author', 'author', 'member', false, false)).toBe(true);
-    expect(mayDeleteMessage('author', 'author', 'member', true, false)).toBe(true);
+    expect(mayDeleteMessage('author', 'author', 'member', true, false)).toBe(false);
+  });
+
+  it('preserves permanent cleanup for a bot or agent author', () => {
+    expect(mayDeleteMessage('agent', 'agent', 'member', true, false, true)).toBe(true);
+    expect(mayDeleteMessage('agent', 'someone-else', 'member', true, false, true)).toBe(false);
   });
 
   it.each(['owner', 'admin'] as const)('%s can permanently delete another author', (role) => {

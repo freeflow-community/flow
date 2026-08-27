@@ -104,6 +104,44 @@ export interface InviteDTO {
 }
 
 /**
+ * A workspace invitation addressed to a Flow user in-app (#359) — what the
+ * invitee sees, and what they Accept or Decline. No token: an in-app invite is
+ * addressed by id, since only the invitee can read the row.
+ */
+export interface PendingWorkspaceInviteDTO {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
+  /** Authenticated `/v1/avatars/<key>` path, or null — same shape as WorkspaceDTO. */
+  workspaceAvatarUrl: string | null;
+  inviterId: string;
+  inviterName: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/**
+ * Response of POST /v1/users/:userId/workspace-invites (#359). `created` is
+ * false when an identical invitation was already pending — the call is
+ * idempotent, and the caller should say "already invited" rather than claim it
+ * sent a second one.
+ */
+export interface UserWorkspaceInviteResponse {
+  invite: PendingWorkspaceInviteDTO;
+  created: boolean;
+}
+
+/**
+ * GET /v1/users/:userId/workspace-invites — the workspaces the viewer could
+ * still bring this member into: the viewer's own, minus the ones the member is
+ * already in (#358's picker). Empty means "already everywhere you are".
+ */
+export interface WorkspaceInviteTargetsDTO {
+  workspaces: WorkspaceDTO[];
+}
+
+/**
  * The workspace's persistent join link (issue #85). One live link at a time:
  * regenerating replaces it and revoking removes it, so `joinUrl: null` means
  * "no link right now — generate one".
@@ -297,11 +335,34 @@ export interface ArtifactDTO {
    * artifacts for the requester (a human pin does not steal focus). Always false
    * for link artifacts. */
   ownsFile: boolean;
+  /** Mini apps (docs/design/MINI_APPS.md): true when this link artifact is a
+   * registered app — clients mint a short-lived identity token
+   * (POST /v1/artifacts/:id/app-token) and append it to `url` before opening,
+   * so the app's guard can authenticate the viewer. Always false for file
+   * artifacts. The app's secret is NEVER in this DTO: it is returned once by
+   * create and once by each rotation, and by no read path ever. */
+  isApp: boolean;
   createdAt: string;
   updatedAt: string; // bumped when the name, backing file, or link url changes
   /** The underlying file, hydrated so clients can render without a second fetch.
    * Null for link artifacts. */
   file: FileDTO | null;
+}
+
+/** POST /v1/artifacts (with `app: true`) and POST /v1/artifacts/:id/app-secret.
+ * The plain ArtifactDTO plus the app secret — the ONLY two responses that ever
+ * carry it. Whoever creates or rotates the app has to capture it here; Flow
+ * cannot show it again. */
+export interface AppArtifactSecretDTO extends ArtifactDTO {
+  /** base64url, 32 random bytes. Hand to the guard as FLOW_APP_SECRET. */
+  appSecret: string;
+}
+
+/** POST /v1/artifacts/:id/app-token — a 5-minute, single-use identity token for
+ * the caller. Format documented in MINI_APPS.md. */
+export interface AppTokenDTO {
+  token: string;
+  expiresAt: string;
 }
 
 /** Phase 11 §8 link preview card. All fields except `url` and `type` are
@@ -533,8 +594,32 @@ export interface AgentRedeemResponse {
   workspace: WorkspaceDTO;
 }
 
+/**
+ * Response of POST /v1/agents/:agentUserId/workspace-invites (#357): the agent
+ * is a member of `workspace` as of now — no account was created, and the
+ * caller is its sponsor there.
+ */
+export interface AgentWorkspaceInviteResponse {
+  workspace: WorkspaceDTO;
+}
+
 /** Response of POST /v1/agents/login (username + key → fresh token; prior tokens revoked). */
 export interface AgentLoginResponse {
   agentToken: string;
   user: UserDTO;
+}
+
+/** One built-in help topic (#383): a markdown file in `docs/help/`, listed by
+ * `GET /v1/help/topics` in `order` and rendered by each client itself. */
+export interface HelpTopicDTO {
+  slug: string;
+  title: string;
+  order: number;
+}
+
+/** Response of GET /v1/help/pages/:slug — raw markdown, front-matter stripped. */
+export interface HelpPageDTO {
+  slug: string;
+  title: string;
+  markdown: string;
 }

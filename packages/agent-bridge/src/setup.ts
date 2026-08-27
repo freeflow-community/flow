@@ -109,12 +109,25 @@ export async function runSetup(configPath: string, opts: SetupOptions = {}): Pro
     let agentUsername: string | undefined;
     let agentKey: string | undefined;
     let kind: string;
+    // #357: the slug of the workspace this config serves, written into agent.json.
+    let workspaceSlug: string | undefined;
 
     if (opts.token) {
       // Reuse an existing agent: validate the token and skip registration.
       console.log('Verifying the agent token…');
-      const me = await new FlowApi(serverUrl, opts.token).me();
+      const api = new FlowApi(serverUrl, opts.token);
+      const [me, wss] = await Promise.all([api.me(), api.myWorkspaces()]);
       console.log(`Reconnecting as existing agent ${me.displayName} <@${me.id}>.\n`);
+      // One process serves one workspace (#357). With exactly one there is
+      // nothing to choose; with several, say so rather than picking silently —
+      // the daemon would refuse to start on an unset `workspace` anyway.
+      if (wss.length === 1) workspaceSlug = wss[0]!.slug;
+      else if (wss.length > 1) {
+        console.log(
+          `This agent is in ${wss.length} workspaces (${wss.map((w) => w.slug).join(', ')}) — ` +
+            `set "workspace" in the saved config to the one this process should serve.\n`,
+        );
+      }
       agentToken = opts.token;
       kind = await required(opts.harness ?? tr('kind'), 'Agent harness — claude, codex, or demo', {
         def: 'claude',
@@ -155,6 +168,7 @@ export async function runSetup(configPath: string, opts: SetupOptions = {}): Pro
       agentToken = res.agentToken;
       agentUsername = username;
       agentKey = key;
+      workspaceSlug = res.workspace.slug;
     }
 
     // Template values first, credentials and resolved answers on top — so an
@@ -167,6 +181,10 @@ export async function runSetup(configPath: string, opts: SetupOptions = {}): Pro
       // login` re-mints a token from them if agent.json's token is ever lost.
       ...(agentUsername ? { agentUsername } : {}),
       ...(agentKey ? { agentKey } : {}),
+      // #357: name the workspace this process serves. Harmless while the agent
+      // is in one, and the thing that stops startup failing the day someone
+      // invites it into a second from its profile popup.
+      ...(workspaceSlug ? { workspace: workspaceSlug } : {}),
       runtime: { ...tRuntime, kind } as Record<string, unknown>,
     };
     // Prompt-seed keys, not config keys.

@@ -164,10 +164,20 @@ struct TranscriptFollowModel: Equatable {
             // scroll, and our own glue animating down stays quiet.
             if !quiet {
                 if new.maxY - viewportHeight <= repinSlack {
+                    // Re-pin and keep going. It used to return here, and that
+                    // swallowed the glue for every growth small enough to land
+                    // inside the slack (#360): a reaction chip measures 19pt
+                    // and a "N replies" affordance 22pt, so the content bottom
+                    // ends up ~27-30pt down — past `alignedSlack`, plainly
+                    // below the fold, and comfortably inside the 40pt band
+                    // this branch covers. Nothing else was left to correct it:
+                    // an existing row growing adds no new row, so the
+                    // id-driven follow never fires, and the arrival settle is
+                    // keyed on the last row's identity, which does not change.
+                    // Re-pinning is a statement about where the reader is, not
+                    // a reason to leave them looking at the wrong pixels.
                     pinned = true
-                    return .none
-                }
-                if new.minY > old.minY + 1 {
+                } else if new.minY > old.minY + 1 {
                     pinned = false
                     return .none
                 }

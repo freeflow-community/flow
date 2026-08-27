@@ -174,7 +174,7 @@ struct NewDmSheet: View {
                     .font(.system(size: 15, weight: on ? .semibold : .regular))
                     .foregroundStyle(MC.ink)
                     .lineLimit(1)
-                if app.presence[person.userId] == true {
+                if app.isOnline(person.userId, in: workspaceId) {
                     Circle().fill(MC.online).frame(width: 8, height: 8)
                 }
                 Spacer(minLength: 0)

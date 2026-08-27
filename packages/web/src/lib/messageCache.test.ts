@@ -246,4 +246,30 @@ describe('removeMessageFromCache', () => {
     expect(cachedRoot.replyCount).toBe(249);
     expect(cachedRoot.lastReplyAt).toBe(root.lastReplyAt);
   });
+
+  it('decrements a channel-only reply rollup once for the API response and websocket echo', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-channel-only', replyCount: 4 });
+    const reply = msg({ id: 'reply-channel-only', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+
+    removeMessageFromCache(qc, reply);
+    removeMessageFromCache(qc, reply);
+
+    expect(channelCache(qc).find((m) => m.id === root.id)!.replyCount).toBe(3);
+  });
+
+  it('uses loaded survivors as the exact count when the deleted reply is already absent', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-refetched', replyCount: 1 });
+    const survivor = msg({ id: 'reply-survivor', threadRootId: root.id });
+    const delayedEvent = msg({ id: 'reply-already-gone', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [survivor], hasMore: false });
+
+    removeMessageFromCache(qc, delayedEvent);
+
+    expect(qc.getQueryData<ThreadData>(['thread', root.id])!.root.replyCount).toBe(1);
+    expect(channelCache(qc).find((m) => m.id === root.id)!.replyCount).toBe(1);
+  });
 });

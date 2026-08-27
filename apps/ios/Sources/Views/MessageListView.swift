@@ -544,7 +544,7 @@ struct SystemLineView: View {
     return min(360, max(160, available))
 }
 
-struct MessageRow: View, Equatable {
+struct MessageRow: View, @preconcurrency Equatable {
     let message: Message
     /// Pre-parsed body blocks from the row model; nil (thread screen) falls
     /// back to parsing in place.
@@ -576,7 +576,7 @@ struct MessageRow: View, Equatable {
     /// message covers it. Combined with `.equatable()` at the use sites, this
     /// is what stops a 200-row transcript re-running every row body whenever
     /// the list's scroll-tracking state changes.
-    nonisolated static func == (a: MessageRow, b: MessageRow) -> Bool {
+    static func == (a: MessageRow, b: MessageRow) -> Bool {
         a.message == b.message
             && a.showHeader == b.showHeader
             && a.showThreadAffordances == b.showThreadAffordances
@@ -802,7 +802,7 @@ struct MessageRow: View, Equatable {
             Button("Cancel", role: .cancel) {}
         } message: {
             if deleteMode == .permanent, message.threadRootId == nil, message.replyCount > 0 {
-                Text("This will permanently delete the message and all \(message.replyCount) replies. This can't be undone.")
+                Text("This will permanently delete the message and all \(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies"). This can't be undone.")
             } else if deleteMode == .permanent {
                 Text("This message will disappear for everyone. This can't be undone.")
             } else {

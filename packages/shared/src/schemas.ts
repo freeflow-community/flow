@@ -159,10 +159,36 @@ export const UpdateWorkspaceBody = z
   );
 export type UpdateWorkspaceBody = z.infer<typeof UpdateWorkspaceBody>;
 
-export const AcceptInviteBody = z.object({
-  token: z.string().min(16).max(128),
-});
+/**
+ * POST /v1/invites/accept — the emailed link carries `token`; an in-app
+ * workspace invitation (#359, addressed to a known user) carries `inviteId`
+ * instead, because its raw token was never handed to anyone. Same table, same
+ * accept path — only the way the row is addressed differs.
+ */
+export const AcceptInviteBody = z
+  .object({
+    token: z.string().min(16).max(128).optional(),
+    inviteId: z.string().uuid().optional(),
+  })
+  .refine((b) => (b.token === undefined) !== (b.inviteId === undefined), 'pass exactly one of token or inviteId');
 export type AcceptInviteBody = z.infer<typeof AcceptInviteBody>;
+
+/** POST /v1/invites/decline — in-app workspace invitations only (#359). */
+export const DeclineInviteBody = z.object({
+  inviteId: z.string().uuid(),
+});
+export type DeclineInviteBody = z.infer<typeof DeclineInviteBody>;
+
+/**
+ * POST /v1/agents/:agentUserId/workspace-invites (#357) and
+ * POST /v1/users/:userId/workspace-invites (#359) — "bring this member into
+ * that workspace of mine". Same body either way; agents join immediately,
+ * people get an invitation.
+ */
+export const WorkspaceInviteBody = z.object({
+  workspaceId: z.string().uuid(),
+});
+export type WorkspaceInviteBody = z.infer<typeof WorkspaceInviteBody>;
 
 /** POST /v1/join-links/redeem — the persistent workspace join link (issue #85).
  * The slug is carried for a readable URL; the token alone identifies the link. */
@@ -518,12 +544,18 @@ export const CreateArtifactBody = z
     url: z.string().url().max(2048).optional(),
     name: z.string().min(1).max(255).optional(),
     ownsFile: z.boolean().optional(),
+    /** Mini apps (MINI_APPS.md): register this link as an app — the row gets a
+     * per-artifact secret, returned once in the create response. Link-only. */
+    app: z.boolean().optional(),
   })
   .refine((b) => (b.fileId === undefined) !== (b.url === undefined), {
     message: 'provide exactly one of fileId or url',
   })
   .refine((b) => b.url === undefined || /^https?:\/\//i.test(b.url), {
     message: 'url must be http(s)',
+  })
+  .refine((b) => b.app !== true || b.url !== undefined, {
+    message: 'app is only valid with url',
   });
 export type CreateArtifactBody = z.infer<typeof CreateArtifactBody>;
 

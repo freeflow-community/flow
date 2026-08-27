@@ -561,6 +561,14 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     /// content via the Flow MCP rather than a human pinning a message file.
     /// Drives auto-opening agent-created artifacts for the requester.
     let ownsFile: Bool
+    /// Mini apps (`docs/design/MINI_APPS.md`): true when this link artifact is a
+    /// Flow app — the server sets it whenever the artifact carries an app
+    /// secret. Opening one mints a short-lived identity token first, so the
+    /// app's guard lets the viewer in already signed in.
+    /// Optional so a client pointed at a server predating the field decodes —
+    /// a non-optional `Bool` fails the whole artifacts payload, not just this
+    /// key. Test with `isApp == true`.
+    let isApp: Bool?
     let createdAt: String
     let updatedAt: String
     let file: FileAttachment? // null for link artifacts
@@ -595,6 +603,28 @@ struct PublicConfig: Decodable, Sendable {
     let google: Bool
     /// Optional so a client pointed at a server predating the field still decodes.
     let apple: Bool?
+}
+
+/// One built-in help topic (#383/#384): a markdown file in the repo's
+/// `docs/help/`, listed by GET /v1/help/topics in sidebar order. The list is
+/// derived from the directory server-side, so a new file is a new topic with
+/// no client change — never hardcode it here.
+struct HelpTopic: Decodable, Sendable, Identifiable, Equatable {
+    var id: String { slug }
+    let slug: String
+    let title: String
+    let order: Int
+}
+
+struct HelpTopicsResponse: Decodable, Sendable {
+    let topics: [HelpTopic]
+}
+
+/// GET /v1/help/pages/:slug — one page's raw markdown, front-matter stripped.
+struct HelpPage: Decodable, Sendable, Equatable {
+    let slug: String
+    let title: String
+    let markdown: String
 }
 
 struct MemberDTO: Decodable, Sendable {
@@ -714,6 +744,14 @@ struct OkResponse: Decodable, Sendable { let ok: Bool }
 struct ReactionsResponse: Decodable, Sendable { let reactions: [ReactionAgg] }
 struct ArtifactsResponse: Decodable, Sendable { let artifacts: [Artifact] } // newest first
 
+/// POST /v1/artifacts/:id/app-token — a 5-minute identity token for the caller
+/// against an `isApp` artifact. Never stored: it goes straight onto the url
+/// being opened, and the next open mints a fresh one.
+struct AppTokenResponse: Decodable, Sendable {
+    let token: String
+    let expiresAt: String
+}
+
 /// Server NotificationDTO: an in-app notification with its triggering message.
 struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
     let id: String
@@ -831,7 +869,43 @@ struct UpdateChannelBody: Encodable, Sendable {
     let topic: String?
 }
 struct CreateInviteBody: Encodable, Sendable { let email: String }
-struct AcceptInviteBody: Encodable, Sendable { let token: String }
+/// POST /v1/invites/accept — an emailed invite carries the raw `token`; an
+/// in-app workspace invitation (#359) carries its `inviteId`, since its token
+/// was minted, hashed and shown to nobody. Exactly one is ever set.
+struct AcceptInviteBody: Encodable, Sendable {
+    var token: String?
+    var inviteId: String?
+}
+struct DeclineInviteBody: Encodable, Sendable { let inviteId: String }
+
+/// POST /v1/{agents,users}/:id/workspace-invites (#357 / #359) — "bring this
+/// member into that workspace of mine". Same body for both; agents join on the
+/// spot, people get an invitation.
+struct WorkspaceInviteBody: Encodable, Sendable { let workspaceId: String }
+
+/// A workspace invitation addressed to me in-app (#359) — the Accept/Decline card.
+struct PendingWorkspaceInvite: Decodable, Sendable, Identifiable, Equatable {
+    let id: String
+    let workspaceId: String
+    let workspaceName: String
+    let workspaceSlug: String
+    let workspaceAvatarUrl: String?
+    let inviterId: String
+    let inviterName: String
+    let createdAt: String
+    let expiresAt: String
+}
+
+struct WorkspaceInvitesResponse: Decodable, Sendable { let invites: [PendingWorkspaceInvite] }
+/// `created` is false when an identical invitation was already pending — the
+/// endpoint is idempotent, so that reads as "already invited", not a re-send.
+struct WorkspaceInviteResponse: Decodable, Sendable {
+    let invite: PendingWorkspaceInvite
+    let created: Bool
+}
+/// GET /v1/users/:id/workspace-invites — my workspaces this member isn't in yet.
+struct WorkspaceInviteTargetsResponse: Decodable, Sendable { let workspaces: [Workspace] }
+struct AgentWorkspaceInviteResponse: Decodable, Sendable { let workspace: Workspace }
 struct SendMessageBody: Encodable, Sendable {
     let clientMsgId: String
     let body: String
