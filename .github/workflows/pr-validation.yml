@@ -21,7 +21,37 @@ permissions:
   contents: read
 
 jobs:
+  # Decide which clients a PR can actually affect, so server/web/bridge/docs
+  # PRs skip the expensive mac runners. Skipped jobs still report (as
+  # "skipped", which counts as passing) — unlike a workflow-level paths
+  # filter, this stays compatible with required checks. The iOS app compiles
+  # shared sources out of apps/macos/, so the ios filter must include both
+  # trees.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      macos: ${{ steps.filter.outputs.macos }}
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            macos:
+              - 'apps/macos/**'
+              - '.github/workflows/pr-validation.yml'
+            ios:
+              - 'apps/ios/**'
+              - 'apps/macos/**'
+              - '.github/workflows/pr-validation.yml'
+
   macos-client:
+    needs: changes
+    # push-to-main and manual runs are already path-gated by the trigger (or
+    # deliberate); only PRs consult the filter.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.macos == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -49,6 +79,8 @@ jobs:
         run: swift test --skip LiveAPITests
 
   ios-client:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
