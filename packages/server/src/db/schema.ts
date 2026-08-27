@@ -244,7 +244,7 @@ export const messages = pgTable(
     id: uuid('id').primaryKey(),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
     userId: uuid('user_id').notNull().references(() => users.id),
-    threadRootId: uuid('thread_root_id'),
+    threadRootId: uuid('thread_root_id').references((): AnyPgColumn => messages.id, { onDelete: 'cascade' }),
     clientMsgId: uuid('client_msg_id').notNull(),
     body: bytea('body').notNull(),
     bodyNonce: bytea('body_nonce').notNull(),

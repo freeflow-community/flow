@@ -13,6 +13,7 @@ struct ChannelScreen: View {
     @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
+    @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var threadRoute: ThreadRoute?
     /// The parked-thread restore (#89) must run only on the *first* appearance
@@ -218,6 +219,7 @@ struct ChannelScreen: View {
                     userNames: usersById.mapValues { $0.displayNameWithBadge },
                     userStatuses: statusesById,
                     currentUserId: app.currentUser?.id,
+                    canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
                     context: TranscriptContext(
                         engine: app.engine,
                         avatarPaths: app.avatarPaths,
@@ -240,8 +242,8 @@ struct ChannelScreen: View {
                         threadRoute = ThreadRoute(rootId: rootId)
                     },
                     onEdit: { editingMessage = $0 },
-                    onDelete: { msg in
-                        Task { await app.engine.deleteMessage(id: msg.id) }
+                    onDelete: { msg, permanently in
+                        Task { await app.engine.deleteMessage(id: msg.id, permanently: permanently) }
                     },
                     // Jump-to-message (phase 12): the Activity feed only sets a
                     // target for top-level messages on iOS (thread replies live
@@ -341,6 +343,13 @@ struct ChannelScreen: View {
             }
             users.start(db: app.db) { try User.fetchAll($0) }
             channel.start(db: app.db) { try Channel.filter(key: channelId).fetchOne($0) }
+            currentRole.start(db: app.db, reset: nil) { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT w.role FROM workspace w JOIN channel c ON c.workspaceId = w.id WHERE c.id = ?",
+                    arguments: [channelId]
+                )
+            }
             // No `reset:` — this screen's identity is the channel id (MainView
             // keys it), so anything already rendered belongs to *this* channel
             // and must survive the observation restarting. Clearing it first

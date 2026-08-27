@@ -9,6 +9,7 @@ struct ChannelView: View {
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
+    @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     /// One roster observer for the whole header + list: names, status and the
     /// agent flag all come off the same User records (#70 needs status *text*,
     /// which the old name/emoji maps dropped).
@@ -49,6 +50,7 @@ struct ChannelView: View {
                 userNames: userNames,
                 userStatuses: userStatuses,
                 currentUserId: app.currentUser?.id,
+                canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
                 context: TranscriptContext(
                     engine: app.engine,
                     avatarPaths: app.avatarPaths,
@@ -75,8 +77,8 @@ struct ChannelView: View {
                 onEdit: { message in
                     editingMessage = message
                 },
-                onDelete: { message in
-                    Task { await app.engine.deleteMessage(id: message.id) }
+                onDelete: { message, permanently in
+                    Task { await app.engine.deleteMessage(id: message.id, permanently: permanently) }
                 },
                 onOpenProfile: { userId in
                     profileUserId = userId
@@ -119,6 +121,13 @@ struct ChannelView: View {
             }
             users.start(db: app.db, reset: [:]) { db in
                 try Dictionary(uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0) })
+            }
+            currentRole.start(db: app.db, reset: nil) { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT w.role FROM workspace w JOIN channel c ON c.workspaceId = w.id WHERE c.id = ?",
+                    arguments: [channelId]
+                )
             }
             await loadChannelMembers()
             // A transcript on screen must have been asked for at least once —

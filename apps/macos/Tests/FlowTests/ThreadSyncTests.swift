@@ -299,6 +299,48 @@ final class ThreadSyncTests: XCTestCase {
         XCTAssertEqual(try message(db, "m-root")?.replyCount, 0)
     }
 
+    // MARK: Permanent-delete cache convergence
+
+    func testPermanentRootDeleteRemovesTheCompleteCachedThread() async throws {
+        let (engine, db) = try makeEngine(URL(string: "http://127.0.0.1:1")!)
+        try insertChannel(db)
+        try insertMessage(db, id: "m-root", replyCount: 2)
+        try insertMessage(db, id: "r1", threadRootId: "m-root")
+        try insertMessage(db, id: "r2", threadRootId: "m-root")
+
+        let root = try XCTUnwrap(try message(db, "m-root"))
+        let removed = await engine.purgeMessage(root)
+        XCTAssertTrue(removed)
+
+        let survivors = try await db.reader.read { dbc in try Message.fetchAll(dbc) }
+        XCTAssertTrue(survivors.isEmpty)
+    }
+
+    func testPermanentReplyDeleteRepairsTheRollupExactlyOnce() async throws {
+        let (engine, db) = try makeEngine(URL(string: "http://127.0.0.1:1")!)
+        try insertChannel(db)
+        try insertMessage(db, id: "m-root", replyCount: 2)
+        try insertMessage(
+            db, id: "r1", threadRootId: "m-root",
+            createdAt: "2026-08-24T01:00:00.000Z"
+        )
+        try insertMessage(
+            db, id: "r2", threadRootId: "m-root",
+            createdAt: "2026-08-24T02:00:00.000Z"
+        )
+
+        let last = try XCTUnwrap(try message(db, "r2"))
+        let firstRemoval = await engine.purgeMessage(last)
+        let duplicateRemoval = await engine.purgeMessage(last) // API response + websocket echo
+        XCTAssertTrue(firstRemoval)
+        XCTAssertFalse(duplicateRemoval)
+
+        let root = try XCTUnwrap(try message(db, "m-root"))
+        XCTAssertEqual(root.replyCount, 1)
+        XCTAssertEqual(root.lastReplyAt, "2026-08-24T01:00:00.000Z")
+        XCTAssertNil(try message(db, "r2"))
+    }
+
     // MARK: The overlap probe
 
     /// `backfillChannel` marks its overlap with the newest *top-level* row —

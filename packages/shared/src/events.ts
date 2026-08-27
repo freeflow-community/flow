@@ -14,7 +14,7 @@ export type EventType =
   | 'message.created'
   | 'message.updated'
   | 'message.deleted' // soft delete: row kept, renders as a "This message was deleted" tombstone
-  | 'message.purged' // hard delete: row gone, clients remove it entirely (no tombstone) — used for the agent's ephemeral "thinking…" status
+  | 'message.purged' // hard delete: row gone, clients remove it entirely — bot cleanup or owner/admin moderation
   | 'thread.reply'
   | 'typing'
   | 'presence'

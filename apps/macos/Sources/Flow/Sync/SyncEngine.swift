@@ -1537,18 +1537,41 @@ actor SyncEngine {
         }
     }
 
-    func deleteMessage(id: String) async {
+    func deleteMessage(id: String, permanently: Bool = false) async {
         do {
-            let _: OkResponse = try await api.delete("/v1/messages/\(id)")
-            let now = ISO8601.now()
-            try? await db.writer.write { db in
-                try db.execute(
-                    sql: "UPDATE message SET deletedAt = ?, body = '' WHERE id = ?",
-                    arguments: [now, id]
-                )
+            let local: Message? = try? await db.reader.read { db in
+                try Message.fetchOne(db, key: id)
+            }
+            let query = permanently ? [URLQueryItem(name: "purge", value: "true")] : []
+            let _: OkResponse = try await api.delete("/v1/messages/\(id)", query: query)
+            if permanently, let local {
+                if await purgeMessage(local) {
+                    // Closing the thread panel is AppState's call, not the
+                    // engine's: the purged root may be open in more than one
+                    // window, and `messagePermanentlyDeleted` closes every one.
+                    await appState?.messagePermanentlyDeleted(local)
+                    // Channel rollups (last message, reply counts) are refetched
+                    // for the workspace the *message* lives in — which is not
+                    // necessarily the one any window is looking at right now.
+                    if local.threadRootId == nil,
+                       let workspaceId = await workspaceId(ofChannel: local.channelId),
+                       await appState?.isWorkspaceOpen(workspaceId) == true {
+                        await refreshChannels(workspaceId: workspaceId)
+                    }
+                    await refreshNotificationBadge()
+                }
+            } else {
+                let now = ISO8601.now()
+                try? await db.writer.write { db in
+                    try db.execute(
+                        sql: "UPDATE message SET deletedAt = ?, body = '' WHERE id = ?",
+                        arguments: [now, id]
+                    )
+                }
             }
         } catch {
-            await appState?.showError("Couldn't delete message: \(error.localizedDescription)")
+            let verb = permanently ? "permanently delete" : "delete"
+            await appState?.showError("Couldn't \(verb) message: \(error.localizedDescription)")
         }
     }
 
@@ -1668,8 +1691,20 @@ actor SyncEngine {
         case .message(let m):
             if event.type == "message.purged" {
                 // Hard delete: remove the row entirely (no tombstone) and mirror
-                // the server's rollup decrement if it was a thread reply.
-                await purgeMessage(m)
+                // the server's rollup decrement if it was a thread reply. The
+                // row may never have been cached on this device, so the
+                // server-authoritative channel/thread refreshes are not gated
+                // on whether the local delete found it.
+                _ = await purgeMessage(m)
+                await appState?.messagePermanentlyDeleted(m)
+                let openThreadRootIds = await appState?.openThreadRootIds ?? []
+                if let rootId = m.threadRootId, openThreadRootIds.contains(rootId) {
+                    await fetchThread(rootId: rootId)
+                }
+                if await appState?.isWorkspaceOpen(event.workspaceId) == true {
+                    await refreshChannels(workspaceId: event.workspaceId)
+                }
+                await refreshNotificationBadge()
                 return
             }
             let isNew = await applyServerMessage(m)
@@ -1862,8 +1897,10 @@ actor SyncEngine {
 
         case .notificationRead:
             // Another session (or the server, on a channel/thread visit) read
-            // rows. The event's count is the cross-workspace total, so it can't
-            // drive the workspace-scoped sidebar badge — refetch both.
+            // or retired rows. The event's count is the cross-workspace total,
+            // so it can't drive the workspace-scoped sidebar badge — refetch
+            // both and make an open Activity feed converge too.
+            await appState?.notificationRowsChanged()
             await refreshNotificationBadge()
             // The rows can span channels (and workspaces, from the Activity
             // feed), and the event carries ids rather than a per-channel
@@ -1933,9 +1970,31 @@ actor SyncEngine {
     /// the server's txn — a purged reply decrements the root's rollup and
     /// recomputes lastReplyAt; a re-posted reply re-bumps it. Participants
     /// recompute on the next thread fetch.
-    private func purgeMessage(_ m: Message) async {
-        try? await db.writer.write { db in
-            try Message.filter(key: m.id).deleteAll(db)
+    // Internal so the shared macOS/iOS cache semantics can be exercised with
+    // an in-memory database. Network callers still enter through
+    // `deleteMessage` or websocket event handling.
+    /// The workspace a cached channel belongs to. The purge paths need it to
+    /// refresh the right workspace's channel list; a channel the device has
+    /// never cached yields nil and the server event does the reconciling.
+    private func workspaceId(ofChannel channelId: String) async -> String? {
+        try? await db.reader.read { db in
+            try Channel.fetchOne(db, key: channelId)?.workspaceId
+        }
+    }
+
+    func purgeMessage(_ m: Message) async -> Bool {
+        let removed: Bool? = try? await db.writer.write { db in
+            let deleted: Int
+            if m.threadRootId == nil {
+                // Server-side ON DELETE CASCADE makes a root purge a complete
+                // thread purge. Mirror that in the offline cache.
+                deleted = try Message
+                    .filter(Column("id") == m.id || Column("threadRootId") == m.id)
+                    .deleteAll(db)
+            } else {
+                deleted = try Message.filter(key: m.id).deleteAll(db)
+            }
+            guard deleted > 0 else { return false } // local response + WS echo
             if let root = m.threadRootId, var r = try Message.filter(key: root).fetchOne(db) {
                 r.replyCount = max(0, r.replyCount - 1)
                 r.lastReplyAt = try String.fetchOne(
@@ -1945,7 +2004,9 @@ actor SyncEngine {
                 )
                 try r.save(db)
             }
+            return true
         }
+        return removed ?? false
     }
 
     /// Local mirror of the server's thread rollup: bump replyCount/lastReplyAt

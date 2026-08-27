@@ -105,8 +105,11 @@ actor APIClient {
         try await request("PATCH", path, query: [], bodyData: try encoder.encode(body))
     }
 
-    func delete<T: Decodable & Sendable>(_ path: String) async throws -> T {
-        try await request("DELETE", path, query: [], bodyData: nil)
+    func delete<T: Decodable & Sendable>(
+        _ path: String,
+        query: [URLQueryItem] = []
+    ) async throws -> T {
+        try await request("DELETE", path, query: query, bodyData: nil)
     }
 
     func put<T: Decodable & Sendable>(_ path: String, body: some Encodable & Sendable) async throws -> T {

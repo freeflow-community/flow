@@ -18,6 +18,7 @@ struct ThreadScreen: View {
     @StateObject private var thread = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channelId = DBObserved<String?>(initial: nil)
+    @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var flashId: String?
     /// The member whose profile card is open (#223) — same card the channel
@@ -70,6 +71,7 @@ struct ThreadScreen: View {
                                 userNames: userNames,
                                 userStatuses: statusesById,
                                 currentUserId: app.currentUser?.id,
+                                canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
                                 context: TranscriptContext(
                                     engine: app.engine,
                                     avatarPaths: app.avatarPaths,
@@ -80,8 +82,8 @@ struct ThreadScreen: View {
                                 highlighted: message.id == flashId,
                                 onOpenThread: { _ in },
                                 onEdit: { editingMessage = $0 },
-                                onDelete: { msg in
-                                    Task { await app.engine.deleteMessage(id: msg.id) }
+                                onDelete: { msg, permanently in
+                                    Task { await app.engine.deleteMessage(id: msg.id, permanently: permanently) }
                                 },
                                 onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
                             )
@@ -177,6 +179,18 @@ struct ThreadScreen: View {
                 try String.fetchOne(
                     db,
                     sql: "SELECT channelId FROM message WHERE id = ?",
+                    arguments: [rootId]
+                )
+            }
+            currentRole.start(db: app.db, reset: nil) { db in
+                try String.fetchOne(
+                    db,
+                    sql: """
+                        SELECT w.role FROM workspace w
+                        JOIN channel c ON c.workspaceId = w.id
+                        JOIN message m ON m.channelId = c.id
+                        WHERE m.id = ?
+                        """,
                     arguments: [rootId]
                 )
             }

@@ -16,6 +16,7 @@ struct MessageListView: View {
     let userNames: [String: String]
     var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
     /// Engine + per-user lookups for the rows, passed by value so rows don't
     /// observe `AppState` (see `TranscriptContext`).
     let context: TranscriptContext
@@ -32,7 +33,7 @@ struct MessageListView: View {
     let onLoadOlder: () -> Void
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     /// Jump-to-message target (phase 12): scroll it into view + flash it once
     /// it's in the list, then call onFocused. Nil in the normal case.
     var focusMessageId: String? = nil
@@ -169,6 +170,7 @@ struct MessageListView: View {
                                     userNames: userNames,
                                     userStatuses: userStatuses,
                                     currentUserId: currentUserId,
+                                    canPermanentlyDelete: canPermanentlyDelete,
                                     context: context,
                                     showHeader: row.showsHeader,
                                     showThreadAffordances: showThreadAffordances,
@@ -542,7 +544,7 @@ struct SystemLineView: View {
     return min(360, max(160, available))
 }
 
-struct MessageRow: View, Equatable {
+struct MessageRow: View, @preconcurrency Equatable {
     let message: Message
     /// Pre-parsed body blocks from the row model; nil (thread screen) falls
     /// back to parsing in place.
@@ -550,6 +552,7 @@ struct MessageRow: View, Equatable {
     let userNames: [String: String]
     var userStatuses: [String: String] = [:]
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
     /// Engine + per-user lookups, passed by value: the row must not observe
     /// `AppState`, or every publish re-renders every visible row.
     let context: TranscriptContext
@@ -561,7 +564,7 @@ struct MessageRow: View, Equatable {
     var highlighted: Bool = false
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     /// Tapping the sender's avatar or name opens their profile card (#223).
     /// The presenting screen owns the sheet — a sheet per row would mean one
     /// presentation per message in the transcript.
@@ -573,13 +576,14 @@ struct MessageRow: View, Equatable {
     /// message covers it. Combined with `.equatable()` at the use sites, this
     /// is what stops a 200-row transcript re-running every row body whenever
     /// the list's scroll-tracking state changes.
-    nonisolated static func == (a: MessageRow, b: MessageRow) -> Bool {
+    static func == (a: MessageRow, b: MessageRow) -> Bool {
         a.message == b.message
             && a.showHeader == b.showHeader
             && a.showThreadAffordances == b.showThreadAffordances
             && a.threadUnread == b.threadUnread
             && a.highlighted == b.highlighted
             && a.currentUserId == b.currentUserId
+            && a.canPermanentlyDelete == b.canPermanentlyDelete
             && a.userNames == b.userNames
             && a.userStatuses == b.userStatuses
             && a.context == b.context
@@ -594,6 +598,17 @@ struct MessageRow: View, Equatable {
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
+    private var deleteMode: MessageDeleteMode? {
+        MessageDeletePolicy.mode(
+            isMine: isMine,
+            isDeleted: message.isDeleted,
+            isSystem: message.systemKind != nil,
+            canPermanentlyDelete: canPermanentlyDelete
+        )
+    }
+    private var deleteLabel: String {
+        deleteMode == .permanent ? "Permanently Delete" : "Delete"
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -720,67 +735,79 @@ struct MessageRow: View, Equatable {
         // Long-press context menu: iOS's answer to the macOS hover menu —
         // quick reactions, full picker, reply-in-thread, edit/delete (own).
         .contextMenu {
-            if !message.isDeleted, !message.pending {
-                ControlGroup {
-                    ForEach(Array(EmojiCatalog.quickReactions.prefix(4)), id: \.self) { emoji in
-                        Button(emoji) {
-                            Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+            if (!message.isDeleted || deleteMode == .permanent), !message.pending {
+                if !message.isDeleted {
+                    ControlGroup {
+                        ForEach(Array(EmojiCatalog.quickReactions.prefix(4)), id: \.self) { emoji in
+                            Button(emoji) {
+                                Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                            }
+                        }
+                    }
+                    .controlGroupStyle(.compactMenu)
+                    Button {
+                        showReactionPicker = true
+                    } label: {
+                        Label("Add Reaction…", systemImage: "face.smiling")
+                    }
+                    if showThreadAffordances {
+                        Button {
+                            onOpenThread(message.threadRootId ?? message.id)
+                        } label: {
+                            Label("Reply in Thread", systemImage: "bubble.left.and.bubble.right")
+                        }
+                    }
+                    if !message.body.isEmpty {
+                        Button {
+                            UIPasteboard.general.string = message.body
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                    }
+                    if !message.failed {
+                        Button {
+                            Task { await context.engine.togglePin(message) }
+                        } label: {
+                            Label(
+                                message.pinnedAt == nil ? "Pin Message" : "Unpin Message",
+                                systemImage: message.pinnedAt == nil ? "pin" : "pin.slash"
+                            )
+                        }
+                    }
+                    if isMine {
+                        Button {
+                            onEdit(message)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
                         }
                     }
                 }
-                .controlGroupStyle(.compactMenu)
-                Button {
-                    showReactionPicker = true
-                } label: {
-                    Label("Add Reaction…", systemImage: "face.smiling")
-                }
-                if showThreadAffordances {
-                    Button {
-                        onOpenThread(message.threadRootId ?? message.id)
-                    } label: {
-                        Label("Reply in Thread", systemImage: "bubble.left.and.bubble.right")
-                    }
-                }
-                if !message.body.isEmpty {
-                    Button {
-                        UIPasteboard.general.string = message.body
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
-                    }
-                }
-                if !message.failed {
-                    Button {
-                        Task { await context.engine.togglePin(message) }
-                    } label: {
-                        Label(
-                            message.pinnedAt == nil ? "Pin Message" : "Unpin Message",
-                            systemImage: message.pinnedAt == nil ? "pin" : "pin.slash"
-                        )
-                    }
-                }
-                if isMine {
-                    Button {
-                        onEdit(message)
-                    } label: {
-                        Label("Edit", systemImage: "pencil")
-                    }
+                if deleteMode != nil {
                     Button(role: .destructive) {
                         showDeleteConfirm = true
                     } label: {
-                        Label("Delete", systemImage: "trash")
+                        Label(deleteLabel, systemImage: "trash")
                     }
                 }
             }
         }
         .confirmationDialog(
-            "Delete this message?",
+            deleteMode == .permanent ? "Permanently delete this message?" : "Delete this message?",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) { onDelete(message) }
+            Button(deleteLabel, role: .destructive) {
+                onDelete(message, deleteMode == .permanent)
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This can't be undone.")
+            if deleteMode == .permanent, message.threadRootId == nil, message.replyCount > 0 {
+                Text("This will permanently delete the message and all \(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies"). This can't be undone.")
+            } else if deleteMode == .permanent {
+                Text("This message will disappear for everyone. This can't be undone.")
+            } else {
+                Text("The message will be replaced by a deletion notice.")
+            }
         }
         .sheet(isPresented: $showReactionPicker) {
             EmojiPickerView { emoji in

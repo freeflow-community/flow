@@ -1,0 +1,50 @@
+name: Apple client validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: apple-client-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  apple-clients:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Xcode 26 toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          test "$(xcodebuild -version | head -n 1 | awk '{print $2}' | cut -d. -f1)" = "26"
+
+      - name: Compile macOS client and run hermetic tests
+        working-directory: apps/macos
+        # LiveAPITests intentionally targets a developer's server on
+        # 127.0.0.1:8787. Every deterministic unit/cache test runs here.
+        run: swift test --skip LiveAPITests
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate iOS project
+        working-directory: apps/ios
+        run: xcodegen generate
+
+      - name: Compile iOS client and run hermetic tests
+        working-directory: apps/ios
+        run: >-
+          xcodebuild
+          -project FlowiOS.xcodeproj
+          -scheme Flow
+          -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17'
+          -derivedDataPath .build
+          -only-testing:FlowUnitTests
+          CODE_SIGNING_ALLOWED=NO
+          test
