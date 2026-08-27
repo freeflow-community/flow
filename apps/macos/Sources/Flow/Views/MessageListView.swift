@@ -16,6 +16,7 @@ struct MessageListView: View {
     let userNames: [String: String]
     var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
     /// Engine + per-user lookups for the rows, passed by value so rows don't
     /// observe `AppState` (see `TranscriptContext`).
     let context: TranscriptContext
@@ -32,7 +33,7 @@ struct MessageListView: View {
     let onLoadOlder: () -> Void
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     /// Tapping a sender's avatar opens their profile (ui_nits).
     var onOpenProfile: (String) -> Void = { _ in }
     /// Identifies whose transcript this is (channels pass their id), so the
@@ -169,6 +170,7 @@ struct MessageListView: View {
                                     userNames: userNames,
                                     userStatuses: userStatuses,
                                     currentUserId: currentUserId,
+                                    canPermanentlyDelete: canPermanentlyDelete,
                                     context: context,
                                     showHeader: row.showsHeader,
                                     showThreadAffordances: showThreadAffordances,
@@ -592,7 +594,7 @@ struct SystemLineView: View {
     }
 }
 
-struct MessageRow: View, Equatable {
+struct MessageRow: View, @preconcurrency Equatable {
     let message: Message
     /// Pre-parsed body blocks from the row model; nil (thread panel) falls
     /// back to parsing in place.
@@ -600,6 +602,7 @@ struct MessageRow: View, Equatable {
     let userNames: [String: String]
     var userStatuses: [String: String] = [:]
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
     /// Engine + per-user lookups, passed by value: the row must not observe
     /// `AppState`, or every publish re-renders every visible row.
     let context: TranscriptContext
@@ -611,7 +614,7 @@ struct MessageRow: View, Equatable {
     var highlighted: Bool = false
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     var onOpenProfile: (String) -> Void = { _ in }
 
     /// Everything the row *renders* — and only that. Closures are recreated
@@ -620,13 +623,14 @@ struct MessageRow: View, Equatable {
     /// message covers it. Combined with `.equatable()` at the use sites, this
     /// is what stops a 200-row transcript re-running every row body whenever
     /// the list's scroll-tracking state changes.
-    nonisolated static func == (a: MessageRow, b: MessageRow) -> Bool {
+    static func == (a: MessageRow, b: MessageRow) -> Bool {
         a.message == b.message
             && a.showHeader == b.showHeader
             && a.showThreadAffordances == b.showThreadAffordances
             && a.threadUnread == b.threadUnread
             && a.highlighted == b.highlighted
             && a.currentUserId == b.currentUserId
+            && a.canPermanentlyDelete == b.canPermanentlyDelete
             && a.userNames == b.userNames
             && a.userStatuses == b.userStatuses
             && a.context == b.context
@@ -644,6 +648,17 @@ struct MessageRow: View, Equatable {
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
+    private var deleteMode: MessageDeleteMode? {
+        MessageDeletePolicy.mode(
+            isMine: isMine,
+            isDeleted: message.isDeleted,
+            isSystem: message.systemKind != nil,
+            canPermanentlyDelete: canPermanentlyDelete
+        )
+    }
+    private var deleteLabel: String {
+        deleteMode == .permanent ? "Permanently Delete" : "Delete"
+    }
 
     /// Hover-menu hysteresis (ui_nits: menu "stutters"/blinks while hovering).
     /// The toolbar is an overlay pinned to the row's top-trailing edge, so the
@@ -836,20 +851,28 @@ struct MessageRow: View, Equatable {
         // down (operator-reported bug at the item-6 checkpoint).
         .overlay(alignment: .topTrailing) {
             if hovering || showReactionPicker || showDeleteConfirm,
-               !message.isDeleted, !message.pending, !message.failed {
+               (!message.isDeleted || deleteMode == .permanent), !message.pending, !message.failed {
                 hoverMenu
                     .padding(.trailing, 22)
             }
         }
         .confirmationDialog(
-            "Delete this message?",
+            deleteMode == .permanent ? "Permanently delete this message?" : "Delete this message?",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) { onDelete(message) }
+            Button(deleteLabel, role: .destructive) {
+                onDelete(message, deleteMode == .permanent)
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This can't be undone.")
+            if deleteMode == .permanent, message.threadRootId == nil, message.replyCount > 0 {
+                Text("This will permanently delete the message and all \(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies"). This can't be undone.")
+            } else if deleteMode == .permanent {
+                Text("This message will disappear for everyone. This can't be undone.")
+            } else {
+                Text("The message will be replaced by a deletion notice.")
+            }
         }
         .contextMenu {
             if !message.isDeleted, !message.pending, !message.failed {
@@ -886,7 +909,9 @@ struct MessageRow: View, Equatable {
             }
             if isMine, !message.isDeleted, !message.pending {
                 Button("Edit…") { onEdit(message) }
-                Button("Delete", role: .destructive) { showDeleteConfirm = true }
+            }
+            if deleteMode != nil, !message.pending {
+                Button(deleteLabel, role: .destructive) { showDeleteConfirm = true }
             }
         }
     }
@@ -902,80 +927,84 @@ struct MessageRow: View, Equatable {
     /// edit / delete gated by the same conditions.
     private var hoverMenu: some View {
         HStack(spacing: 2) {
-            ForEach(Self.quickReactions, id: \.self) { emoji in
-                MenuIconButton(help: "React \(emoji)") {
-                    Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+            if !message.isDeleted {
+                ForEach(Self.quickReactions, id: \.self) { emoji in
+                    MenuIconButton(help: "React \(emoji)") {
+                        Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                    } label: {
+                        Text(emoji)
+                    }
+                    .accessibilityIdentifier("msg.quickReact.\(emoji)")
+                }
+
+                Rectangle()
+                    .fill(MC.hairline)
+                    .frame(width: 1, height: 22)
+                    .padding(.horizontal, 2)
+
+                MenuIconButton(help: "Add reaction") {
+                    showReactionPicker = true
                 } label: {
-                    Text(emoji)
+                    Text("🙂")
                 }
-                .accessibilityIdentifier("msg.quickReact.\(emoji)")
-            }
-
-            Rectangle()
-                .fill(MC.hairline)
-                .frame(width: 1, height: 22)
-                .padding(.horizontal, 2)
-
-            MenuIconButton(help: "Add reaction") {
-                showReactionPicker = true
-            } label: {
-                Text("🙂")
-            }
-            .accessibilityIdentifier("msg.addReaction")
-            .popover(isPresented: $showReactionPicker) {
-                EmojiPickerView { emoji in
-                    showReactionPicker = false
-                    Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                .accessibilityIdentifier("msg.addReaction")
+                .popover(isPresented: $showReactionPicker) {
+                    EmojiPickerView { emoji in
+                        showReactionPicker = false
+                        Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                    }
                 }
-            }
 
-            if showThreadAffordances {
-                MenuIconButton(help: "Reply in thread") {
-                    onOpenThread(message.threadRootId ?? message.id)
+                if showThreadAffordances {
+                    MenuIconButton(help: "Reply in thread") {
+                        onOpenThread(message.threadRootId ?? message.id)
+                    } label: {
+                        Text("💬")
+                    }
+                    .accessibilityIdentifier("msg.replyInThread")
+                }
+
+                if !message.body.isEmpty {
+                    MenuIconButton(help: "Copy text") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.body, forType: .string)
+                    } label: {
+                        Text("📋")
+                    }
+                    .accessibilityIdentifier("msg.copy")
+                }
+
+                MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
+                    Task { await context.engine.togglePin(message) }
                 } label: {
-                    Text("💬")
+                    Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
                 }
-                .accessibilityIdentifier("msg.replyInThread")
-            }
+                .accessibilityIdentifier("msg.togglePin")
 
-            if !message.body.isEmpty {
-                MenuIconButton(help: "Copy text") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.body, forType: .string)
-                } label: {
-                    Text("📋")
+                if !message.files.isEmpty {
+                    MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
+                        // Web draws this one as an inline SVG (box + leaving arrow);
+                        // the matching SF Symbol keeps the same open-external read.
+                        Image(systemName: "arrow.up.right.square")
+                            .flowFont(size: 15)
+                            .foregroundStyle(MC.inkSoft)
+                    }
+                    .accessibilityIdentifier("msg.saveArtifact")
                 }
-                .accessibilityIdentifier("msg.copy")
-            }
 
-            MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
-                Task { await context.engine.togglePin(message) }
-            } label: {
-                Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
-            }
-            .accessibilityIdentifier("msg.togglePin")
-
-            if !message.files.isEmpty {
-                MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
-                    // Web draws this one as an inline SVG (box + leaving arrow);
-                    // the matching SF Symbol keeps the same open-external read.
-                    Image(systemName: "arrow.up.right.square")
-                        .flowFont(size: 15)
-                        .foregroundStyle(MC.inkSoft)
+                if isMine {
+                    MenuIconButton(help: "Edit") {
+                        onEdit(message)
+                    } label: {
+                        Text("✏️")
+                    }
+                    .accessibilityIdentifier("msg.edit")
                 }
-                .accessibilityIdentifier("msg.saveArtifact")
             }
-
-            if isMine {
-                MenuIconButton(help: "Edit") {
-                    onEdit(message)
-                } label: {
-                    Text("✏️")
-                }
-                .accessibilityIdentifier("msg.edit")
-                MenuIconButton(help: "Delete") {
+            if deleteMode != nil {
+                MenuIconButton(help: deleteLabel) {
                     showDeleteConfirm = true
                 } label: {
                     Text("🗑")
@@ -1128,7 +1157,7 @@ struct MessageRow: View, Equatable {
                 }
             } else {
                 HStack(alignment: .bottom, spacing: 4) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: Self.blockSpacing * textZoom) {
                         ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                             segmentView(segment)
                         }
@@ -1201,9 +1230,12 @@ struct MessageRow: View, Equatable {
                 userNames: userNames, currentUserId: currentUserId
             )
         case .ulist(let items):
-            listView(items.map { (marker: "•", text: $0) })
+            listView(items.map { (marker: "•", text: $0) }, bulleted: true)
         case .olist(let start, let items):
-            listView(items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) })
+            listView(
+                items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) },
+                bulleted: false
+            )
         case .hr:
             Rectangle()
                 .fill(MC.hairline)
@@ -1218,13 +1250,22 @@ struct MessageRow: View, Equatable {
     /// normal inline pass on each item — mentions and `**bold**` still work
     /// inside items. Markers are right-aligned in a fixed column so multi-digit
     /// numbers keep their text edges lined up.
-    private func listView(_ items: [(marker: String, text: String)]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    ///
+    /// Spacing and marker weight come from web (#387): a `list-disc` item is a
+    /// 21px line box with `space-y-0.5` between items — a 23px pitch on a 14px
+    /// font, which at our 13pt body is `bodyLineHeight + listSpacing`. The disc
+    /// is drawn **bold at body size**, not larger: the marker shares the row's
+    /// baseline alignment, so a bigger font would make the row itself taller
+    /// and leave bullet lists looser than numbered ones. Bold widens the glyph
+    /// to about web's disc without touching the line box. Markers take the text
+    /// colour, as web's `currentColor` ones do, instead of the softer ink.
+    private func listView(_ items: [(marker: String, text: String)], bulleted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Self.listSpacing * textZoom) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(item.marker)
-                        .flowFont(.callout)
-                        .foregroundStyle(MC.inkSoft)
+                        .flowFont(.callout, weight: bulleted ? .bold : nil)
+                        .foregroundStyle(MC.ink)
                         .frame(minWidth: 14, alignment: .trailing)
                     paragraphText(item.text)
                 }
@@ -1243,7 +1284,8 @@ struct MessageRow: View, Equatable {
     private func headingText(level: Int, text: String) -> some View {
         let size: CGFloat = level == 1 ? 17 : (level == 2 ? 15.5 : 13)
         let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+            text, names: userNames, currentUserId: currentUserId,
+            scale: textZoom, codeChips: true
         )
         return Text(attributed)
             .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
@@ -1257,12 +1299,23 @@ struct MessageRow: View, Equatable {
             .accessibilityIdentifier("msg.heading")
     }
 
+    /// Body rhythm ported from web (#387), where the message body is
+    /// `text-sm leading-normal` — 14px text on a 1.5 line-height — and blocks
+    /// carry `my-1`. Our body is 13pt, so the same ratio wants ~19.5pt line
+    /// boxes against the ~16pt AppKit draws by default; `lineSpacing` makes up
+    /// the difference. Everything scales with the text zoom, like the fonts do.
+    static let lineSpacing: CGFloat = 3.5
+    static let listSpacing: CGFloat = 6
+    static let blockSpacing: CGFloat = 10
+
     private func paragraphText(_ text: String) -> some View {
         let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+            text, names: userNames, currentUserId: currentUserId,
+            scale: textZoom, codeChips: true
         )
         return Text(attributed)
             .flowFont(.callout)
+            .lineSpacing(Self.lineSpacing * textZoom)
             .textSelection(.enabled)
             // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
             // inside a Text, so linkCursor re-lays the string to find them.

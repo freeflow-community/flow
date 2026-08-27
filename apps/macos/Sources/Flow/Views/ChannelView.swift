@@ -9,6 +9,7 @@ struct ChannelView: View {
     @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
+    @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     /// One roster observer for the whole header + list: names, status and the
     /// agent flag all come off the same User records (#70 needs status *text*,
     /// which the old name/emoji maps dropped).
@@ -49,6 +50,7 @@ struct ChannelView: View {
                 userNames: userNames,
                 userStatuses: userStatuses,
                 currentUserId: app.currentUser?.id,
+                canPermanentlyDelete: currentRole.value == "owner" || currentRole.value == "admin",
                 context: TranscriptContext(
                     engine: app.engine,
                     avatarPaths: app.avatarPaths,
@@ -75,8 +77,8 @@ struct ChannelView: View {
                 onEdit: { message in
                     editingMessage = message
                 },
-                onDelete: { message in
-                    Task { await app.engine.deleteMessage(id: message.id) }
+                onDelete: { message, permanently in
+                    Task { await app.engine.deleteMessage(id: message.id, permanently: permanently) }
                 },
                 onOpenProfile: { userId in
                     profileUserId = userId
@@ -119,6 +121,13 @@ struct ChannelView: View {
             }
             users.start(db: app.db, reset: [:]) { db in
                 try Dictionary(uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0) })
+            }
+            currentRole.start(db: app.db, reset: nil) { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT w.role FROM workspace w JOIN channel c ON c.workspaceId = w.id WHERE c.id = ?",
+                    arguments: [channelId]
+                )
             }
             await loadChannelMembers()
             // A transcript on screen must have been asked for at least once —
@@ -303,6 +312,10 @@ struct ChannelView: View {
                         // A topic URL is a real link (#194), so it gets the
                         // hand cursor like any other (#276).
                         .linkCursor(topic, size: 12)
+                        // #392: the header's topic is one truncated line, so
+                        // hovering shows the whole thing — raw text, matching
+                        // the sidebar tooltip and the web client.
+                        .topicHelp(channel.value?.topic)
                         .accessibilityIdentifier("channel.topic")
                 }
             }
@@ -313,7 +326,7 @@ struct ChannelView: View {
         }
         .padding(.horizontal, 22)
         .frame(height: 60)
-        .background(MC.base)
+        .background(MC.chat)
     }
 
     /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
@@ -439,7 +452,7 @@ struct ChannelView: View {
                             size: 26,
                             radius: 13
                         )
-                        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(MC.base, lineWidth: 2))
+                        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(MC.chat, lineWidth: 2))
                     }
                 }
                 if extra > 0 {

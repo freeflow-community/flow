@@ -101,6 +101,9 @@ final class AppState: ObservableObject {
     /// Unread across every workspace — the dock badge, which has to keep
     /// speaking for the workspaces you aren't looking at.
     @Published private(set) var notificationUnreadTotal: Int = 0
+    /// Bumped when notification-backed content is removed. ActivityFeedView
+    /// includes it in its fetch key so already-read rows disappear immediately.
+    @Published private(set) var notificationRevision: Int = 0
     /// Is the app frontmost? See `isViewing(channelId:)` — a selection in a
     /// backgrounded window must not count as "the user has seen this".
     @Published private(set) var isAppActive: Bool = true
@@ -459,6 +462,19 @@ final class AppState: ObservableObject {
             workspaceId: workspaceId,
             total: max(0, notificationUnreadTotal - count)
         )
+    }
+
+    func messagePermanentlyDeleted(_ message: Message) {
+        notificationRowsChanged()
+        if message.threadRootId == nil {
+            windows
+                .filter { $0.openThreadRootId == message.id }
+                .forEach { $0.openThread(nil) }
+        }
+    }
+
+    func notificationRowsChanged() {
+        notificationRevision += 1
     }
 
     /// Is the user actually looking at this channel *right now*, in any

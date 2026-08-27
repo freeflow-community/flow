@@ -10,6 +10,7 @@ import ChannelOverflowMenu from './ChannelOverflowMenu';
 import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 import { MobileMenuButton } from './MobileMenuButton';
+import { useHoverTooltip } from './HoverTooltip';
 import { ChannelOptionsModal, Modal, UserCard } from './modals';
 import { renderBody } from '../lib/format';
 import { useSyncBar } from '../lib/syncBar';
@@ -125,14 +126,21 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const inThisHuddle = huddle.channelId === channelId;
   const huddleEligible = channel?.kind === 'standard' && !channel?.archivedAt;
 
+  // #392: the header shows the topic on one truncated line — hovering it gives
+  // the whole thing, raw, matching the sidebar tooltip.
+  const topicTip = useHoverTooltip(channel?.topic, 'channel-topic-tooltip');
+
   // Main-composer typing only — thread typing shows in its own panel. An agent
   // at work "thinks" rather than "types" (ui_nits), so carry the isAgent flag.
   const typers = Object.entries(live.typing[typingKey(channelId)] ?? {})
     .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
     .map(([uid]) => ({ name: names[uid] ?? 'Someone', isAgent: memberMap[uid]?.isAgent ?? false }));
 
+  // #387: the chat pane sits on pure white, not the app shell's warm
+  // `bg-base` — messages read cleaner, and it is what the macOS client paints
+  // now too. Every other surface keeps `bg-base`.
   return (
-    <section className="flex min-w-0 flex-1 flex-col bg-base">
+    <section className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
         <MobileMenuButton />
         <div className="min-w-0 flex-1">
@@ -154,10 +162,16 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           {/* #194: the topic runs through the same inline renderer as a message
               body, so a URL in it is a real link (new tab) instead of grey text. */}
           {channel?.topic && (
-            <p data-testid="channel-topic" className="truncate text-xs text-muted">
+            // #392: the header's topic line is one truncated line, so hovering
+            // it shows the whole thing — same tooltip as the sidebar, and the
+            // raw text rather than the rendered links. The handlers go on the
+            // line itself, not the text inside it, so a pointer anywhere along
+            // the row counts as hovering it.
+            <p data-testid="channel-topic" {...topicTip.anchorProps} className="truncate text-xs text-muted">
               {renderBody(channel.topic, names, auth.user.id)}
             </p>
           )}
+          {topicTip.tooltip}
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">
@@ -204,7 +218,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
                     avatarUrl={m?.avatarUrl}
                     size={26}
                     radius={13}
-                    className="ring-2 ring-base"
+                    className="ring-2 ring-white"
                   />
                 </span>
               );

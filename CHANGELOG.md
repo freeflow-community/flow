@@ -13,6 +13,30 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Built-in **help docs** (#383) ship on web and macOS (#384); **iOS has no help
+  viewer**. The content and the API are client-agnostic (`docs/help/*.md` behind
+  `GET /v1/help/topics` and `/v1/help/pages/:slug`), so closing the gap is one
+  more viewer — the macOS one is ~200 lines over `MarkdownBlocks`, which iOS
+  already compiles. Web also hides help below the `md` breakpoint, so a
+  phone-width browser window has no way in.
+- Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
+  measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
+  frame nor sends one already established first-party, and the guard's 302 to
+  the clean url drops the token — so re-minting per load can't help either. Web
+  routes Safari to a new tab, which works. Closing the gap needs a guard-side
+  change (bridge): keep the session in a url the guard controls, or have the 401
+  page call `requestStorageAccess()`.
+  **The native clients are not affected** — #372 (macOS panel `WKWebView`) and
+  #373 (iOS in-app `WKWebView` and mobile Safari) each re-ran the spike and both
+  pass: the app loads as a *top-level* document, so the guard's cookie is
+  first-party and ITP has nothing to block (document, subresource and XHR all
+  authenticated). The limitation is iframe-specific, not WebKit-wide.
+- **Chat polish** (#387) landed on web and macOS only; iOS was out of scope for
+  the issue. The white chat background is an `MC.chat` token macOS uses and iOS
+  does not, and the message-body rhythm (1.5 line-height, block/list spacing,
+  `list-disc`-sized bullets) plus the inline-code chip live in the macOS
+  `MessageListView` and behind `MentionRendering.attributed(codeChips:)`, which
+  defaults off. Closing the gap is adopting both in the iOS message list.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a
@@ -243,6 +267,27 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The **hover ⋯ menu on sidebar rows** (#399) ships on web and macOS and not on
+  iOS, for the same reason as the topic tooltip below: a touch client has no
+  hover to reveal it on. iOS reaches channel options from the channel screen
+  instead (`ChannelOptionsSheet`), so nothing is out of reach; its sidebar
+  long-press stays the one-item Invite menu it is today. Not a gap to close.
+- The **channel topic tooltip** (#392) ships on web and macOS and not on iOS —
+  the issue scoped it that way, because a touch client has no hover to hang it
+  on. iOS already shows the topic under the channel name in the header, so
+  nothing is hidden there; a phone equivalent would be a different affordance
+  (tap-and-hold), not this one. Not a gap to close.
+- Mini apps open **inline on macOS and iOS, in a new tab on web** (#380). The
+  native clients load the app top-level in their co-browser web view, where the
+  guard's cookie is first-party; web's artifact pane is a cross-site iframe,
+  which WebKit blocks (see the frame gap above), so it keeps the #371 new-tab
+  hand-off. Not a gap to close on web until that guard-side change lands.
+- Co-browsing is suppressed for `isApp` artifacts on macOS and iOS (#380) and
+  has no meaning on web, which never framed an app. An app is opened, not
+  co-browsed: each viewer mints their own token into their own guard session, so
+  broadcasting one member's navigation — or the guard's 302 on every open —
+  would re-point the shared artifact for the whole channel. `MiniApp` holds the
+  rule for both native clients and its tests compile into both.
 - Clamping the side panel to the space available, and making image and video
   attachment cards fit the transcript column (#354), are both macOS-only. Web
   has the same fixed-width panel and the same card caps, but flexbox squeezes

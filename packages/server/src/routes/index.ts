@@ -78,6 +78,7 @@ import { deleteMyAccount } from '../services/accountDeletion.js';
 import { detachUserFromWorkspace, disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
+import * as help from '../services/help.js';
 import * as ag from '../services/agents.js';
 import * as wi from '../services/workspaceInvites.js';
 import * as ar from '../services/artifacts.js';
@@ -134,6 +135,17 @@ export function registerRoutes(app: FastifyInstance): void {
   // Public bootstrap payload: which auth options this deployment offers, so the
   // signed-out client knows without a failed round-trip. A Google OAuth *web*
   // client id is public by design — it ships in the page that calls Google.
+  // Built-in help docs (#383). Public like /v1/config and served raw: the
+  // content is documentation checked into the repo, and each client renders the
+  // markdown with its own pipeline. Lives under /v1 rather than /api because
+  // /api/* is the Slack-compat surface (it ends in a catch-all).
+  app.get('/v1/help/topics', async () => ({ topics: help.listTopics() }));
+
+  app.get('/v1/help/pages/:slug', async (req) => {
+    const { slug } = req.params as { slug: string };
+    return help.getPage(slug);
+  });
+
   app.get('/v1/config', async () => ({
     google: config.googleEnabled,
     googleClientId: config.googleClientId ?? null,
@@ -755,7 +767,13 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     // ?purge=true fully removes the row (no tombstone); default is a soft delete.
     const { purge } = req.query as { purge?: string };
-    await msg.deleteMessage(id, req.user.id, { hard: purge === 'true' || purge === '1' });
+    await msg.deleteMessage(id, req.user.id, {
+      hard: purge === 'true' || purge === '1',
+      // The bridge's agent status row must vanish on completion. App bots use
+      // the separate Slack-compatible auth surface; session-authenticated
+      // human authors stay on the soft-delete path unless they are owner/admin.
+      allowOwnPermanentDelete: req.user.isAgent,
+    });
     return { ok: true };
   });
 
@@ -887,8 +905,26 @@ export function registerRoutes(app: FastifyInstance): void {
       url: body.url,
       name: body.name,
       ownsFile: body.ownsFile,
+      app: body.app,
     });
+    // With `app: true` this DTO carries `appSecret` — the only time it ever
+    // travels besides a rotation (MINI_APPS.md).
     return reply.status(201).send(dto);
+  });
+
+  // ---- mini apps (docs/design/MINI_APPS.md) ----
+  // Mint a 5-minute identity token for the caller; members only, same gate as
+  // every other artifact operation. The app's guard verifies it offline.
+  app.post('/v1/artifacts/:id/app-token', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.mintArtifactAppToken(id, req.user.id);
+  });
+
+  // Rotate the app's secret — returned once, and every token minted under the
+  // old one stops verifying. Creator or workspace admin.
+  app.post('/v1/artifacts/:id/app-secret', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.rotateArtifactAppSecret(id, req.user.id);
   });
 
   app.get('/v1/workspaces/:id/artifacts', { preHandler: requireAuth }, async (req) => {

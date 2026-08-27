@@ -1,6 +1,7 @@
 # Mini apps: authenticated agent-hosted apps behind link artifacts
 
-Status: **draft spec — not yet built**. Written 2026-08-24.
+Status: **built and deployed**. Written 2026-08-24, shipped 2026-08-26/27
+across #369–#374. The Task Board is the first app running behind it.
 
 ## Problem
 
@@ -176,3 +177,20 @@ All three do the same small thing: opening a link artifact with
    first.
 4. Convert the Task Board tunnel to run behind the guard; retire the bare
    tunnel.
+
+All four shipped. What the last step turned up, for whoever converts the
+next app:
+
+- **Promotion, not re-pinning.** `create_artifact` on a url already pinned
+  as a plain link upgrades that artifact into an app in place and returns
+  the secret — same artifact id, same sidebar entry, no second pin for
+  members to be confused by. Repointing it at the guard's tunnel is then an
+  ordinary `update_artifact`.
+- **Order matters:** get the secret first (the promote call), start the
+  guard with it, tunnel the guard, repoint the artifact, and only then kill
+  the old tunnel. The app is briefly an app pointing at an unguarded url;
+  the alternative leaves it pointing at nothing.
+- **The app's own view is exactly as designed.** The Task Board needed no
+  changes to sit behind the guard, and ~15 lines to read the identity
+  headers. Served bare on localhost the headers are simply absent, so
+  development doesn't require the guard.

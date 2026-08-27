@@ -522,6 +522,26 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     }
 }
 
+enum MessageDeleteMode: Equatable {
+    case soft
+    case permanent
+}
+
+/// Shared macOS/iOS affordance policy. The server remains authoritative.
+enum MessageDeletePolicy {
+    static func mode(
+        isMine: Bool,
+        isDeleted: Bool,
+        isSystem: Bool,
+        canPermanentlyDelete: Bool
+    ) -> MessageDeleteMode? {
+        if isSystem { return nil }
+        if canPermanentlyDelete { return .permanent }
+        if isMine && !isDeleted { return .soft }
+        return nil
+    }
+}
+
 /// A personal bookmark of a file shared in chat (server ArtifactDTO, phase 9).
 /// Not cached in GRDB: the list is small and per-workspace, so it's fetched
 /// on demand and held in AppState (same treatment as notifications).
@@ -541,6 +561,14 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     /// content via the Flow MCP rather than a human pinning a message file.
     /// Drives auto-opening agent-created artifacts for the requester.
     let ownsFile: Bool
+    /// Mini apps (`docs/design/MINI_APPS.md`): true when this link artifact is a
+    /// Flow app — the server sets it whenever the artifact carries an app
+    /// secret. Opening one mints a short-lived identity token first, so the
+    /// app's guard lets the viewer in already signed in.
+    /// Optional so a client pointed at a server predating the field decodes —
+    /// a non-optional `Bool` fails the whole artifacts payload, not just this
+    /// key. Test with `isApp == true`.
+    let isApp: Bool?
     let createdAt: String
     let updatedAt: String
     let file: FileAttachment? // null for link artifacts
@@ -575,6 +603,28 @@ struct PublicConfig: Decodable, Sendable {
     let google: Bool
     /// Optional so a client pointed at a server predating the field still decodes.
     let apple: Bool?
+}
+
+/// One built-in help topic (#383/#384): a markdown file in the repo's
+/// `docs/help/`, listed by GET /v1/help/topics in sidebar order. The list is
+/// derived from the directory server-side, so a new file is a new topic with
+/// no client change — never hardcode it here.
+struct HelpTopic: Decodable, Sendable, Identifiable, Equatable {
+    var id: String { slug }
+    let slug: String
+    let title: String
+    let order: Int
+}
+
+struct HelpTopicsResponse: Decodable, Sendable {
+    let topics: [HelpTopic]
+}
+
+/// GET /v1/help/pages/:slug — one page's raw markdown, front-matter stripped.
+struct HelpPage: Decodable, Sendable, Equatable {
+    let slug: String
+    let title: String
+    let markdown: String
 }
 
 struct MemberDTO: Decodable, Sendable {
@@ -693,6 +743,14 @@ struct AgentInviteResponse: Decodable, Sendable {
 struct OkResponse: Decodable, Sendable { let ok: Bool }
 struct ReactionsResponse: Decodable, Sendable { let reactions: [ReactionAgg] }
 struct ArtifactsResponse: Decodable, Sendable { let artifacts: [Artifact] } // newest first
+
+/// POST /v1/artifacts/:id/app-token — a 5-minute identity token for the caller
+/// against an `isApp` artifact. Never stored: it goes straight onto the url
+/// being opened, and the next open mints a fresh one.
+struct AppTokenResponse: Decodable, Sendable {
+    let token: String
+    let expiresAt: String
+}
 
 /// Server NotificationDTO: an in-app notification with its triggering message.
 struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
