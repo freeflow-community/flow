@@ -16,6 +16,12 @@ enum MC {
     static let hairline3 = Color(hex: 0xEEE7DC)
     static let daypill = Color(hex: 0xF0EDE7)
     static let codeBg = Color(hex: 0xF4F2EE) // warm code-block background
+    static let codeInk = Color(hex: 0xC2544A) // inline-code foreground (web's text-[#c2544a])
+    /// The chat pane's own background (#387). Pure white, unlike the warm
+    /// `base` the rest of the shell sits on — web paints the same surface
+    /// `bg-white` while everything else keeps `bg-base`. macOS only for now;
+    /// this file is compiled into the iOS app too, which has not adopted it.
+    static let chat = Color.white
     static let accent = Color(hex: 0x6B30AF) // oklch(0.46 0.19 300)
     static let accentDeep = Color(hex: 0x6529A9)
     static let accentSoft = Color(hex: 0x52339B) // oklch(0.42 0.16 292)

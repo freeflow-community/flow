@@ -131,8 +131,11 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
     .map(([uid]) => ({ name: names[uid] ?? 'Someone', isAgent: memberMap[uid]?.isAgent ?? false }));
 
+  // #387: the chat pane sits on pure white, not the app shell's warm
+  // `bg-base` — messages read cleaner, and it is what the macOS client paints
+  // now too. Every other surface keeps `bg-base`.
   return (
-    <section className="flex min-w-0 flex-1 flex-col bg-base">
+    <section className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
         <MobileMenuButton />
         <div className="min-w-0 flex-1">
@@ -204,7 +207,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
                     avatarUrl={m?.avatarUrl}
                     size={26}
                     radius={13}
-                    className="ring-2 ring-base"
+                    className="ring-2 ring-white"
                   />
                 </span>
               );

@@ -313,7 +313,7 @@ struct ChannelView: View {
         }
         .padding(.horizontal, 22)
         .frame(height: 60)
-        .background(MC.base)
+        .background(MC.chat)
     }
 
     /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
@@ -439,7 +439,7 @@ struct ChannelView: View {
                             size: 26,
                             radius: 13
                         )
-                        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(MC.base, lineWidth: 2))
+                        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(MC.chat, lineWidth: 2))
                     }
                 }
                 if extra > 0 {

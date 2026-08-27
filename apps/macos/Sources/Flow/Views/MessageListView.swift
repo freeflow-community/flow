@@ -1128,7 +1128,7 @@ struct MessageRow: View, Equatable {
                 }
             } else {
                 HStack(alignment: .bottom, spacing: 4) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: Self.blockSpacing * textZoom) {
                         ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                             segmentView(segment)
                         }
@@ -1201,9 +1201,12 @@ struct MessageRow: View, Equatable {
                 userNames: userNames, currentUserId: currentUserId
             )
         case .ulist(let items):
-            listView(items.map { (marker: "•", text: $0) })
+            listView(items.map { (marker: "•", text: $0) }, bulleted: true)
         case .olist(let start, let items):
-            listView(items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) })
+            listView(
+                items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) },
+                bulleted: false
+            )
         case .hr:
             Rectangle()
                 .fill(MC.hairline)
@@ -1218,13 +1221,22 @@ struct MessageRow: View, Equatable {
     /// normal inline pass on each item — mentions and `**bold**` still work
     /// inside items. Markers are right-aligned in a fixed column so multi-digit
     /// numbers keep their text edges lined up.
-    private func listView(_ items: [(marker: String, text: String)]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    ///
+    /// Spacing and marker weight come from web (#387): a `list-disc` item is a
+    /// 21px line box with `space-y-0.5` between items — a 23px pitch on a 14px
+    /// font, which at our 13pt body is `bodyLineHeight + listSpacing`. The disc
+    /// is drawn **bold at body size**, not larger: the marker shares the row's
+    /// baseline alignment, so a bigger font would make the row itself taller
+    /// and leave bullet lists looser than numbered ones. Bold widens the glyph
+    /// to about web's disc without touching the line box. Markers take the text
+    /// colour, as web's `currentColor` ones do, instead of the softer ink.
+    private func listView(_ items: [(marker: String, text: String)], bulleted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Self.listSpacing * textZoom) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(item.marker)
-                        .flowFont(.callout)
-                        .foregroundStyle(MC.inkSoft)
+                        .flowFont(.callout, weight: bulleted ? .bold : nil)
+                        .foregroundStyle(MC.ink)
                         .frame(minWidth: 14, alignment: .trailing)
                     paragraphText(item.text)
                 }
@@ -1243,7 +1255,8 @@ struct MessageRow: View, Equatable {
     private func headingText(level: Int, text: String) -> some View {
         let size: CGFloat = level == 1 ? 17 : (level == 2 ? 15.5 : 13)
         let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+            text, names: userNames, currentUserId: currentUserId,
+            scale: textZoom, codeChips: true
         )
         return Text(attributed)
             .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
@@ -1257,12 +1270,23 @@ struct MessageRow: View, Equatable {
             .accessibilityIdentifier("msg.heading")
     }
 
+    /// Body rhythm ported from web (#387), where the message body is
+    /// `text-sm leading-normal` — 14px text on a 1.5 line-height — and blocks
+    /// carry `my-1`. Our body is 13pt, so the same ratio wants ~19.5pt line
+    /// boxes against the ~16pt AppKit draws by default; `lineSpacing` makes up
+    /// the difference. Everything scales with the text zoom, like the fonts do.
+    static let lineSpacing: CGFloat = 3.5
+    static let listSpacing: CGFloat = 6
+    static let blockSpacing: CGFloat = 10
+
     private func paragraphText(_ text: String) -> some View {
         let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+            text, names: userNames, currentUserId: currentUserId,
+            scale: textZoom, codeChips: true
         )
         return Text(attributed)
             .flowFont(.callout)
+            .lineSpacing(Self.lineSpacing * textZoom)
             .textSelection(.enabled)
             // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
             // inside a Text, so linkCursor re-lays the string to find them.
