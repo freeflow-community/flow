@@ -328,6 +328,11 @@ private struct SandboxedHTMLView: NSViewRepresentable {
 /// viewer mints their own. A reload re-mints, and a failed mint loads nothing at
 /// all — see `MiniApp` for the decision and why a top-level web view can do this
 /// when the web client's iframe cannot.
+///
+/// An app is the one thing here that is *not* co-browsed (#380): it broadcasts
+/// no navigation at all, because each viewer is in their own guard session and
+/// re-pointing the artifact from one member's clicks — or from the guard's own
+/// 302 on every open — rewrites the shared url for the whole channel.
 struct LinkArtifactView: View {
     let artifact: Artifact
     @EnvironmentObject private var app: AppState
@@ -423,9 +428,10 @@ struct LinkArtifactView: View {
         case let .failed(message):
             AppMintErrorPane(message: message) { reloadToken += 1 }
         case let .loaded(src):
-            CoBrowserWebView(url: src, reloadToken: reloadToken) { navigated in
+            CoBrowserWebView(url: src, isApp: artifact.isApp == true, reloadToken: reloadToken) { navigated in
                 // A navigation inside the web view (link click or form) — broadcast
                 // it so everyone follows. Typing in the bar goes through navigate().
+                // An app reports nothing here at all (#380): see MiniApp.
                 broadcast(navigated)
             }
         }
@@ -496,6 +502,10 @@ struct LinkArtifactView: View {
         let withScheme = s.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) != nil
             ? s : "https://\(s)"
         guard URL(string: withScheme) != nil else { draft = url; return }
+        // An app's address is fixed: it can't be co-browsed (#380), so there is
+        // no url to move the artifact to and every submit is a reload — which
+        // for an app also means a fresh token.
+        if artifact.isApp == true { reloadToken += 1; draft = url; return }
         // Submitting the url already showing means "reload", not "no-op" — and it
         // also pulls the view back to the shared url after in-page browsing.
         if withScheme == url { reloadToken += 1; draft = url; return }
@@ -503,11 +513,12 @@ struct LinkArtifactView: View {
     }
 
     private func broadcast(_ next: String) {
-        // A minted token belongs to one viewer and is burned on first use, so it
-        // must never become the shared url. It reaches here when the guard
-        // rejects a token: that answers 401 without redirecting, so the web view
-        // commits the url with `?flow_token=…` still on it.
-        guard !MiniApp.carriesToken(next) else { return }
+        // An app is opened, not co-browsed, and a minted token belongs to one
+        // viewer and is burned on first use — neither may become the shared url.
+        // The token arm reaches here when the guard rejects one: that answers
+        // 401 without redirecting, so the web view commits the url with
+        // `?flow_token=…` still on it.
+        guard MiniApp.canBroadcast(next, isApp: artifact.isApp == true) else { return }
         guard next != url else { return }
         Task {
             do {
@@ -570,6 +581,10 @@ private struct AppMintErrorPane: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.white)
+        // Without `.contain`, this identifier swallows the retry button's and the
+        // one affordance on the pane becomes unreachable to VoiceOver and to
+        // the UI tests (measured on iOS during #380 verification).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("artifact.link.appError")
     }
 }
@@ -579,16 +594,20 @@ private struct AppMintErrorPane: View {
 /// our own committed navigations (which echo back through `url`) never reload.
 private struct CoBrowserWebView: NSViewRepresentable {
     let url: String
+    /// An app's navigations are never co-browsed (#380) — the coordinator needs
+    /// to know, because it is what decides whether to report one at all.
+    let isApp: Bool
     /// Any change forces a fresh load of `url`, even when it's already showing.
     let reloadToken: Int
     let onNavigate: (String) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(onNavigate: onNavigate) }
+    func makeCoordinator() -> Coordinator { Coordinator(isApp: isApp, onNavigate: onNavigate) }
 
     func makeNSView(context: Context) -> WKWebView {
         let view = WKWebView(frame: .zero)
         view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
+        context.coordinator.isApp = isApp
         context.coordinator.lastReloadToken = reloadToken
         if let u = URL(string: url) {
             context.coordinator.request(url, on: view, u)
@@ -598,6 +617,7 @@ private struct CoBrowserWebView: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.onNavigate = onNavigate
+        context.coordinator.isApp = isApp
         guard let u = URL(string: url) else { return }
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
@@ -619,6 +639,7 @@ private struct CoBrowserWebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var onNavigate: (String) -> Void
+        var isApp: Bool
         weak var webView: WKWebView?
         var lastLoaded: String?
         /// The last url we *asked* the web view to load, which is not always what
@@ -639,13 +660,18 @@ private struct CoBrowserWebView: NSViewRepresentable {
             ownNavigation = view.load(URLRequest(url: resolved))
         }
 
-        init(onNavigate: @escaping (String) -> Void) { self.onNavigate = onNavigate }
+        init(isApp: Bool, onNavigate: @escaping (String) -> Void) {
+            self.isApp = isApp
+            self.onNavigate = onNavigate
+        }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             guard let s = webView.url?.absoluteString else { return }
             let isOwnLoad = navigation != nil && navigation === ownNavigation
             if isOwnLoad { ownNavigation = nil }
-            guard MiniApp.isMemberNavigation(committed: s, isOwnLoad: isOwnLoad, lastLoaded: lastLoaded)
+            guard MiniApp.isMemberNavigation(
+                committed: s, isApp: isApp, isOwnLoad: isOwnLoad, lastLoaded: lastLoaded
+            )
             else {
                 // Still remember where our own load landed, so a later update
                 // carrying that url doesn't re-request it.
