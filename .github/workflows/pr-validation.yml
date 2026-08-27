@@ -2,6 +2,15 @@ name: Apple client validation
 
 on:
   pull_request:
+  # PR branches can only restore caches created on the base branch, so run on
+  # main too (path-filtered) — that run is what seeds the dependency caches
+  # every PR restores from.
+  push:
+    branches: [main]
+    paths:
+      - 'apps/macos/**'
+      - 'apps/ios/**'
+      - '.github/workflows/pr-validation.yml'
   workflow_dispatch:
 
 concurrency:
@@ -12,7 +21,7 @@ permissions:
   contents: read
 
 jobs:
-  apple-clients:
+  macos-client:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -24,11 +33,32 @@ jobs:
           swift --version
           test "$(xcodebuild -version | head -n 1 | awk '{print $2}' | cut -d. -f1)" = "26"
 
+      # Compiled dependencies (GRDB, Sparkle, LiveKit) dominate the build
+      # time and rarely change; the key busts only when the pins do.
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: apps/macos/.build
+          key: macos-swiftpm-${{ hashFiles('apps/macos/Package.resolved') }}
+          restore-keys: macos-swiftpm-
+
       - name: Compile macOS client and run hermetic tests
         working-directory: apps/macos
         # LiveAPITests intentionally targets a developer's server on
         # 127.0.0.1:8787. Every deterministic unit/cache test runs here.
         run: swift test --skip LiveAPITests
+
+  ios-client:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Xcode 26 toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          test "$(xcodebuild -version | head -n 1 | awk '{print $2}' | cut -d. -f1)" = "26"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -36,6 +66,16 @@ jobs:
       - name: Generate iOS project
         working-directory: apps/ios
         run: xcodegen generate
+
+      # Derived data holds the fetched + compiled packages (LiveKit's binary
+      # WebRTC framework is the big one). project.yml carries the version
+      # requirements, so it is the closest thing to a lockfile here.
+      - name: Cache derived data
+        uses: actions/cache@v4
+        with:
+          path: apps/ios/.build
+          key: ios-deriveddata-${{ hashFiles('apps/ios/project.yml') }}
+          restore-keys: ios-deriveddata-
 
       - name: Compile iOS client and run hermetic tests
         working-directory: apps/ios
