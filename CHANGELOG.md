@@ -267,6 +267,11 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The **hover ⋯ menu on sidebar rows** (#399) ships on web and macOS and not on
+  iOS, for the same reason as the topic tooltip below: a touch client has no
+  hover to reveal it on. iOS reaches channel options from the channel screen
+  instead (`ChannelOptionsSheet`), so nothing is out of reach; its sidebar
+  long-press stays the one-item Invite menu it is today. Not a gap to close.
 - The **channel topic tooltip** (#392) ships on web and macOS and not on iOS —
   the issue scoped it that way, because a touch client has no hover to hang it
   on. iOS already shows the topic under the channel name in the header, so
