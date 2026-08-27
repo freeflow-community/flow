@@ -48,6 +48,17 @@ export interface Selection {
   focusMessageId: string | null;
   /** Admin panel pinned into the channel list (admins only; per-device). */
   adminPanelOpen: boolean;
+  /** Is there a previous / next view in this session's visit history (#386)?
+   * Drives the enabled state of the workspace header's back and forward
+   * buttons. */
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** Return to the previously viewed channel/view; no-op at the start of the
+   * history. Behaves exactly like clicking that channel, minus recording a
+   * new visit. */
+  goBack(): void;
+  /** Re-advance after a `goBack`; no-op with an empty forward branch. */
+  goForward(): void;
   selectWorkspace(id: string | null): void;
   /** Switch channels. The channel being left remembers its open thread and the
    * one being entered reopens whatever it had, so a thread survives a detour

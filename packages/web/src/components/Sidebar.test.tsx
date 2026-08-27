@@ -1,7 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { ActivityBell, ActivitySpinner, nearestScrollDelta, nestChannels, splitAgents } from './Sidebar';
+import {
+  ActivityBell,
+  ActivitySpinner,
+  NavButton,
+  nearestScrollDelta,
+  nestChannels,
+  splitAgents,
+} from './Sidebar';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
 // child whose parent isn't in the list must still be rendered, or you lose a
@@ -218,5 +225,33 @@ describe('ActivityBell', () => {
     const html = renderToStaticMarkup(<ActivityBell active unread={0} onOpen={() => {}} />);
     expect(html).toContain('aria-current="page"');
     expect(html).toContain('bg-white');
+  });
+});
+
+describe('NavButton', () => {
+  it('is labelled Back / Forward rather than a bare chevron', () => {
+    const back = renderToStaticMarkup(<NavButton dir="back" enabled onClick={() => {}} />);
+    expect(back).toContain('aria-label="Back"');
+    expect(back).toContain('title="Back"');
+    const fwd = renderToStaticMarkup(<NavButton dir="forward" enabled onClick={() => {}} />);
+    expect(fwd).toContain('aria-label="Forward"');
+    expect(fwd).toContain('title="Forward"');
+  });
+
+  it('points the chevron the way it navigates', () => {
+    expect(renderToStaticMarkup(<NavButton dir="back" enabled onClick={() => {}} />)).toContain('15 18 9 12 15 6');
+    expect(renderToStaticMarkup(<NavButton dir="forward" enabled onClick={() => {}} />)).toContain('9 18 15 12 9 6');
+  });
+
+  it('is dimmed and non-interactive at the end of the history', () => {
+    const html = renderToStaticMarkup(<NavButton dir="back" enabled={false} onClick={() => {}} />);
+    expect(html).toContain('disabled');
+    expect(html).toContain('text-white/25');
+  });
+
+  it('is live and hoverable when there is somewhere to go', () => {
+    const html = renderToStaticMarkup(<NavButton dir="forward" enabled onClick={() => {}} />);
+    expect(html).not.toContain('disabled');
+    expect(html).toContain('hover:bg-white/10');
   });
 });

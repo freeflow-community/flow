@@ -374,11 +374,39 @@ struct SidebarView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 2) {
             workspaceMenu
             Spacer()
+            navButton(back: true)
+            navButton(back: false)
             activityBell
         }
+    }
+
+    /// Back / forward over this session's channel visit history (#386). They sit
+    /// beside the Activity bell because both are window-level navigation rather
+    /// than rows in the channel list. Disabled — and dimmed — at whichever end
+    /// of the history they're at, which on a fresh session is both.
+    private func navButton(back: Bool) -> some View {
+        let enabled = back ? win.canGoBack : win.canGoForward
+        let label = back ? "Back" : "Forward"
+        return Button {
+            if back { win.goBack() } else { win.goForward() }
+        } label: {
+            Image(systemName: back ? "chevron.left" : "chevron.right")
+                .flowFont(size: 13, weight: .semibold)
+                .foregroundStyle(.white.opacity(enabled ? 0.7 : 0.25))
+                .frame(width: 20, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        // On the button rather than in a menu: it is per-window (each ⌘N window
+        // has its own history), and a disabled button swallows nothing.
+        .keyboardShortcut(back ? "[" : "]", modifiers: .command)
+        .help(back ? "Back (⌘[)" : "Forward (⌘])")
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(back ? "sidebar.navBack" : "sidebar.navForward")
     }
 
     /// Invite your Agent (phase 15, web parity): pinned above the profile
