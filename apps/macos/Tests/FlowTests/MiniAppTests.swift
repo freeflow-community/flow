@@ -64,17 +64,47 @@ final class MiniAppTests: XCTestCase {
         let asked = "https://tunnel.example/?flow_token=\(token)"
         XCTAssertFalse(
             MiniApp.isMemberNavigation(
-                committed: "https://tunnel.example/", isOwnLoad: true, lastLoaded: asked
+                committed: "https://tunnel.example/", isApp: true, isOwnLoad: true, lastLoaded: asked
             )
         )
     }
 
-    func testAClickInsideTheAppIsAMemberNavigation() {
-        XCTAssertTrue(
+    /// #380, the headline: the guard's 302 lands on a url nobody asked for, and
+    /// on a *plain link* that is indistinguishable from a click — so `isApp`
+    /// has to answer it on its own, without leaning on own-load tracking that a
+    /// second client might implement differently.
+    func testTheAppGuardRedirectIsNotBroadcastEvenIfItIsNotRecognisedAsOurOwnLoad() {
+        XCTAssertFalse(
+            MiniApp.isMemberNavigation(
+                committed: "https://tunnel.example/",
+                isApp: true,
+                isOwnLoad: false,
+                lastLoaded: "https://tunnel.example/?flow_token=\(token)"
+            )
+        )
+    }
+
+    func testAClickInsideAnAppIsNeverCoBrowsed() {
+        // A member clicking around inside an app is browsing *their* session:
+        // nobody else can be moved there, and re-pointing the artifact would
+        // rewrite the shared url for the whole channel.
+        XCTAssertFalse(
             MiniApp.isMemberNavigation(
                 committed: "https://tunnel.example/board/7",
+                isApp: true,
                 isOwnLoad: false,
                 lastLoaded: "https://tunnel.example/"
+            )
+        )
+    }
+
+    func testAClickInsideAPlainLinkIsAMemberNavigation() {
+        XCTAssertTrue(
+            MiniApp.isMemberNavigation(
+                committed: "https://example.com/board/7",
+                isApp: false,
+                isOwnLoad: false,
+                lastLoaded: "https://example.com/"
             )
         )
     }
@@ -83,6 +113,7 @@ final class MiniAppTests: XCTestCase {
         XCTAssertFalse(
             MiniApp.isMemberNavigation(
                 committed: "https://example.com/page",
+                isApp: false,
                 isOwnLoad: false,
                 lastLoaded: "https://example.com/page"
             )
@@ -95,8 +126,35 @@ final class MiniAppTests: XCTestCase {
     func testTrailingSlashNormalisationOfOurOwnLoadIsNotBroadcast() {
         XCTAssertFalse(
             MiniApp.isMemberNavigation(
-                committed: "https://example.com/", isOwnLoad: true, lastLoaded: "https://example.com"
+                committed: "https://example.com/", isApp: false, isOwnLoad: true,
+                lastLoaded: "https://example.com"
             )
+        )
+    }
+
+    // MARK: - canBroadcast (#380)
+
+    /// The gate the address bar goes through, which the navigation delegate
+    /// never sees. Both clients call it, so "an app never re-points the shared
+    /// artifact" is one rule rather than two implementations of one.
+    func testAnAppNeverBroadcastsWhateverTheUrlLooksLike() {
+        XCTAssertFalse(MiniApp.canBroadcast("https://tunnel.example/board", isApp: true))
+        XCTAssertFalse(MiniApp.canBroadcast("https://tunnel.example/", isApp: true))
+        XCTAssertFalse(
+            MiniApp.canBroadcast("https://tunnel.example/?flow_token=\(token)", isApp: true)
+        )
+    }
+
+    func testAPlainLinkStillBroadcasts() {
+        XCTAssertTrue(MiniApp.canBroadcast("https://example.com/page", isApp: false))
+        XCTAssertTrue(MiniApp.canBroadcast("https://example.com/?view=grid", isApp: false))
+    }
+
+    func testATokenedUrlIsRefusedEvenOnALinkArtifact() {
+        // Reachable when the guard 401s a burned token: no redirect, so the web
+        // view commits the tokened url.
+        XCTAssertFalse(
+            MiniApp.canBroadcast("https://tunnel.example/?flow_token=\(token)", isApp: false)
         )
     }
 

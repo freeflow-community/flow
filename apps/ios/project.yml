@@ -215,6 +215,31 @@ targets:
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
 
+  # Unit tests, hosted in the app (issue #380). Deliberately *not* a second
+  # copy of the macOS suite: it compiles the very same test files against the
+  # very same shared sources, so a rule both clients depend on — an app never
+  # co-browses, a token is attached the same way — cannot pass on macOS and
+  # quietly rot on iOS. Run it with `xcodebuild test -scheme Flow`; it needs no
+  # server and no fixtures, unlike FlowUITests below.
+  FlowUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ../macos/Tests/FlowTests/MiniAppTests.swift
+      - path: ../macos/Tests/FlowTests/AppTokenTests.swift
+    dependencies:
+      - target: Flow
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.unittests
+        DEVELOPMENT_TEAM: RP5QYMYA4Z
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Flow.app/Flow
+        BUNDLE_LOADER: $(TEST_HOST)
+
   # XCUITest target: taps happen inside the simulator, so iOS UI checks don't
   # need the operator's desktop the way the macOS AX harness does. Runs against
   # a local dev server + `qa-seed.mjs` fixtures — see UITests/README.md.
@@ -240,9 +265,10 @@ schemes:
     build:
       targets:
         Flow: all
+        FlowUnitTests: [test]
         FlowUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
-      targets: [FlowUITests]
+      targets: [FlowUnitTests, FlowUITests]

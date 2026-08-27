@@ -25,14 +25,6 @@ This file keeps two things:
   pass: the app loads as a *top-level* document, so the guard's cookie is
   first-party and ITP has nothing to block (document, subresource and XHR all
   authenticated). The limitation is iframe-specific, not WebKit-wide.
-- Showing an `isApp` artifact **inline in the co-browser** needs the co-browse
-  broadcast suppressed for apps (backlog #380): the guard's 302 to the clean url
-  reads as a user navigation, so the client PATCHes the shared artifact and
-  re-points it for every member (seen on iOS in #373). macOS solved this for its
-  own panel in #372 — `MiniApp.carriesToken` never broadcasts a tokened url, and
-  the committed navigation is compared against the one `load` returned, which
-  tells a redirect apart from a click. Web and iOS open apps out-of-frame today,
-  so nothing is broken; #380 generalises the macOS fix.
 - **Invite to workspace** on the profile popup (#358) landed on web and macOS
   only; iOS was explicitly out of scope for the batch. The server side (#357
   agents, #359 people) is client-agnostic and complete, so closing this is a
@@ -263,6 +255,17 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- Mini apps open **inline on macOS and iOS, in a new tab on web** (#380). The
+  native clients load the app top-level in their co-browser web view, where the
+  guard's cookie is first-party; web's artifact pane is a cross-site iframe,
+  which WebKit blocks (see the frame gap above), so it keeps the #371 new-tab
+  hand-off. Not a gap to close on web until that guard-side change lands.
+- Co-browsing is suppressed for `isApp` artifacts on macOS and iOS (#380) and
+  has no meaning on web, which never framed an app. An app is opened, not
+  co-browsed: each viewer mints their own token into their own guard session, so
+  broadcasting one member's navigation — or the guard's 302 on every open —
+  would re-point the shared artifact for the whole channel. `MiniApp` holds the
+  rule for both native clients and its tests compile into both.
 - Clamping the side panel to the space available, and making image and video
   attachment cards fit the transcript column (#354), are both macOS-only. Web
   has the same fixed-width panel and the same card caps, but flexbox squeezes
