@@ -608,3 +608,18 @@ export interface AgentLoginResponse {
   agentToken: string;
   user: UserDTO;
 }
+
+/** One built-in help topic (#383): a markdown file in `docs/help/`, listed by
+ * `GET /v1/help/topics` in `order` and rendered by each client itself. */
+export interface HelpTopicDTO {
+  slug: string;
+  title: string;
+  order: number;
+}
+
+/** Response of GET /v1/help/pages/:slug — raw markdown, front-matter stripped. */
+export interface HelpPageDTO {
+  slug: string;
+  title: string;
+  markdown: string;
+}

@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Built-in **help docs** (#383) ship on web only. The content and the API are
+  client-agnostic (`docs/help/*.md` behind `GET /v1/help/topics` and
+  `/v1/help/pages/:slug`), so closing the gap is a viewer per client: macOS is
+  #384, iOS has none yet. Web also hides help below the `md` breakpoint, so a
+  phone-width browser window has no way in.
 - Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
   measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
   frame nor sends one already established first-party, and the guard's 302 to
