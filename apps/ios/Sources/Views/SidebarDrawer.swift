@@ -228,8 +228,6 @@ struct SidebarDrawer: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    activityRow
-
                     sectionHeader("Channels") {
                         addButton(id: "channel.create", label: "New channel") {
                             showCreateChannel = true
@@ -300,6 +298,13 @@ struct SidebarDrawer: View {
     // MARK: - Header
 
     private var header: some View {
+        HStack(spacing: 6) {
+            workspaceMenu
+            activityBell
+        }
+    }
+
+    private var workspaceMenu: some View {
         Menu {
             ForEach(workspaces.value) { ws in
                 // The switcher spells the count out (#345): the rail badge is a
@@ -426,34 +431,35 @@ struct SidebarDrawer: View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
 
-    /// The always-present Activity feed row (phase 12) — a virtual, client-only
-    /// entry carrying the notification unread badge.
-    private var activityRow: some View {
+    /// The Activity feed's bell (#385) — fixed in the drawer header rather than
+    /// sitting at the top of the channel list, so it can never scroll out of
+    /// view and the list holds only real channels. Carries the notification
+    /// unread badge and highlights while the feed is the open view.
+    private var activityBell: some View {
         let active = app.showActivity
         let unread = app.notificationUnread
         return Button {
             app.showActivityFeed()
             onSelect()
         } label: {
-            HStack(spacing: 9) {
-                Image(systemName: unread > 0 ? "bell.badge" : "bell")
-                    .font(.system(size: 15))
-                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.6))
-                    .frame(width: 18)
-                Text("Activity")
-                    .font(.system(size: 15, weight: active || unread > 0 ? .semibold : .regular))
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(unread > 0 ? 1 : 0.82))
-                Spacer(minLength: 0)
-                if unread > 0 { unreadBadge(min(unread, 99)) }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 9)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+            Image(systemName: "bell")
+                .font(.system(size: 16))
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 30, height: 28)
+                .background(rowBackground(active))
+                .overlay(alignment: .topTrailing) {
+                    if unread > 0 {
+                        unreadBadge(min(unread, 99))
+                            .offset(x: 6, y: -6)
+                    }
+                }
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Activity")
         .accessibilityIdentifier("sidebar.activity")
+        .accessibilityValue(unread > 0 ? "\(unread) unread" : "read")
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 

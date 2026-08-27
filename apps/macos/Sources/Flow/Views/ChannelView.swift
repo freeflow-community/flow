@@ -312,6 +312,10 @@ struct ChannelView: View {
                         // A topic URL is a real link (#194), so it gets the
                         // hand cursor like any other (#276).
                         .linkCursor(topic, size: 12)
+                        // #392: the header's topic is one truncated line, so
+                        // hovering shows the whole thing — raw text, matching
+                        // the sidebar tooltip and the web client.
+                        .topicHelp(channel.value?.topic)
                         .accessibilityIdentifier("channel.topic")
                 }
             }

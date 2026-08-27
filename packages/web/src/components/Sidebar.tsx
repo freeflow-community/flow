@@ -21,6 +21,7 @@ import { AgentsModal } from './AgentsModal';
 import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
 import { FeaturesModal } from './FeaturesModal';
+import { useHoverTooltip } from './HoverTooltip';
 import StatusFooter from './StatusPicker';
 import { AuthImg } from './Avatar';
 
@@ -376,18 +377,17 @@ export default function Sidebar() {
             </button>
           </div>
         )}
+        <ActivityBell
+          active={sel.channelId === ACTIVITY_VIEW_ID}
+          unread={live.notificationUnread}
+          onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
+        />
       </div>
 
       <div
         data-sidebar-scroll
         className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm"
       >
-        <ActivityRow
-          active={sel.channelId === ACTIVITY_VIEW_ID}
-          unread={live.notificationUnread}
-          onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
-        />
-
         {isAdmin && sel.adminPanelOpen && (
           <AdminRow
             active={sel.channelId === ADMIN_VIEW_ID}
@@ -609,11 +609,12 @@ export default function Sidebar() {
 }
 
 /**
- * The Activity feed's pinned sidebar row (phase 12) — an always-present,
- * virtual client-only entry (no real channel). Selectable like a channel;
- * carries the notification unread badge that used to live on the bell.
+ * The Activity feed's bell (#385) — fixed in the workspace header rather than
+ * sitting at the top of the channel list, so it can never scroll out of view
+ * and the list holds only real channels. Carries the notification unread badge
+ * and shows a selected state while the Activity feed is the open view.
  */
-function ActivityRow({
+export function ActivityBell({
   active,
   unread,
   onOpen,
@@ -623,28 +624,25 @@ function ActivityRow({
   onOpen: () => void;
 }) {
   return (
-    <div
-      className={`mt-1 flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
-        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+    <button
+      data-testid="sidebar-activity"
+      data-unread={unread}
+      data-active={active ? 'true' : 'false'}
+      title="Activity"
+      aria-label="Activity"
+      aria-current={active ? 'page' : undefined}
+      className={`relative ml-1 shrink-0 rounded-lg px-1.5 py-1 text-base leading-none ${
+        active ? 'bg-white' : 'hover:bg-white/10'
       }`}
+      onClick={onOpen}
     >
-      <button
-        data-testid="sidebar-activity"
-        data-unread={unread}
-        className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
-        onClick={onOpen}
-      >
-        <span className={active ? 'opacity-70' : 'text-white/60'}>🔔</span>
-        <span className={`truncate ${active ? 'font-[650]' : unread > 0 ? 'font-[650] text-white' : 'text-white/82'}`}>
-          Activity
+      <span className={active ? 'opacity-70' : 'opacity-75'}>🔔</span>
+      {unread > 0 && (
+        <span className="absolute -top-1 -right-1 rounded-[9px] bg-unread px-[5px] py-px text-[10px] font-bold text-white">
+          {Math.min(unread, 99)}
         </span>
-        {unread > 0 && (
-          <span className="ml-auto rounded-[9px] bg-unread px-[7px] py-px text-[11px] font-bold text-white">
-            {Math.min(unread, 99)}
-          </span>
-        )}
-      </button>
-    </div>
+      )}
+    </button>
   );
 }
 
@@ -839,9 +837,20 @@ function ChannelRow({
   useEffect(() => {
     if (active && rowRef.current) scrollRowIntoView(rowRef.current);
   }, [active]);
+  // #392: the topic on hover, so you can tell what a channel is for without
+  // opening it. The hover target is the whole row, not the few dozen pixels the
+  // name occupies — pointing at a channel means the row, and anchoring to the
+  // row is also what keeps the bubble clear of it. No topic, no tooltip and no
+  // handlers; DMs never have one, so they're inert here.
+  const topicTip = useHoverTooltip(channel.topic, `channel-topic-tooltip-${channel.name ?? channel.id}`);
+  const { ref: tipRef, ...tipHandlers } = topicTip.anchorProps;
   return (
     <div
-      ref={rowRef}
+      ref={(el) => {
+        rowRef.current = el;
+        tipRef(el);
+      }}
+      {...tipHandlers}
       data-nested={nested ? 'true' : undefined}
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${nested ? 'ml-3' : ''} ${
         active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
@@ -884,6 +893,7 @@ function ChannelRow({
       >
         ⋯
       </button>
+      {topicTip.tooltip}
     </div>
   );
 }

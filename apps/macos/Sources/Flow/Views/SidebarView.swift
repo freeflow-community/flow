@@ -135,8 +135,6 @@ struct SidebarView: View {
     private var channelList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
-                activityRow
-
                 sectionHeader("Channels") {
                     Button {
                         showCreateChannel = true
@@ -379,6 +377,7 @@ struct SidebarView: View {
         HStack {
             workspaceMenu
             Spacer()
+            activityBell
         }
     }
 
@@ -485,35 +484,33 @@ struct SidebarView: View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
 
-    /// The always-present Activity feed row (phase 12) — a virtual, client-only
-    /// entry (no real channel). Carries the notification unread badge that used
-    /// to live on the toolbar bell.
-    private var activityRow: some View {
+    /// The Activity feed's bell (#385) — fixed in the workspace header rather
+    /// than sitting at the top of the channel list, so it can never scroll out
+    /// of view and the list holds only real channels. Carries the notification
+    /// unread badge and highlights while the feed is the open view.
+    private var activityBell: some View {
         let active = win.showActivity
         let unread = app.notificationUnread(workspaceId: win.selectedWorkspaceId)
         return Button {
             win.showActivityFeed()
         } label: {
-            HStack(spacing: 9) {
-                Image(systemName: unread > 0 ? "bell.badge" : "bell")
-                    .flowFont(size: 13)
-                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.6))
-                    .frame(width: 14)
-                Text("Activity")
-                    .flowFont(size: 14, weight: active || unread > 0 ? .semibold : .regular)
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(unread > 0 ? 1 : 0.82))
-                Spacer(minLength: 0)
-                if unread > 0 {
-                    unreadBadge(min(unread, 99))
+            Image(systemName: "bell")
+                .flowFont(size: 14)
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 24, height: 22)
+                .background(rowBackground(active))
+                .overlay(alignment: .topTrailing) {
+                    if unread > 0 {
+                        unreadBadge(min(unread, 99))
+                            .offset(x: 6, y: -6)
+                    }
                 }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("Activity")
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Activity")
         .accessibilityIdentifier("sidebar.activity")
         .accessibilityValue(unread > 0 ? "\(unread) unread" : "read")
         .accessibilityAddTraits(active ? [.isSelected] : [])
@@ -524,56 +521,76 @@ struct SidebarView: View {
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
             selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity
         )
-        return Button {
-            win.selectChannel(channel.id)
-        } label: {
-            HStack(spacing: 9) {
-                Group {
-                    if channel.isPrivate {
-                        Image(systemName: "lock")
-                    } else {
-                        Text("#")
+        return SidebarHoverRow { hovering in
+            Button {
+                win.selectChannel(channel.id)
+            } label: {
+                HStack(spacing: 9) {
+                    Group {
+                        if channel.isPrivate {
+                            Image(systemName: "lock")
+                        } else {
+                            Text("#")
+                        }
                     }
+                    .flowFont(size: 14)
+                    .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
+                    .frame(width: 14)
+                    Text(channel.name ?? "")
+                        .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
+                        .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
+                    // An agent working here (#137) — DMs included: talking to an
+                    // agent one-to-one is the common case.
+                    if app.busyChannelIds.contains(channel.id) {
+                        ActivitySpinner(active: active)
+                    }
+                    if channel.notifyLevel == 0 {
+                        Image(systemName: "bell.slash")
+                            .flowFont(.caption2)
+                            .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
+                    }
+                    Spacer(minLength: 0)
+                    // A number means "this needs you" — unread notifications, not
+                    // unread messages (operator ruling 2026-07-26). Messages only
+                    // embolden the row, above.
+                    if channel.unreadNotifications > 0 {
+                        unreadBadge(channel.unreadNotifications)
+                    }
+                    // Room for the hover ⋯ (#399), after the badge as on web.
+                    Color.clear.frame(width: SidebarRowMenuMetrics.width, height: 1)
                 }
-                .flowFont(size: 14)
-                .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
-                .frame(width: 14)
-                Text(channel.name ?? "")
-                    .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
-                // An agent working here (#137) — DMs included: talking to an
-                // agent one-to-one is the common case.
-                if app.busyChannelIds.contains(channel.id) {
-                    ActivitySpinner(active: active)
-                }
-                if channel.notifyLevel == 0 {
-                    Image(systemName: "bell.slash")
-                        .flowFont(.caption2)
-                        .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
-                }
-                Spacer(minLength: 0)
-                // A number means "this needs you" — unread notifications, not
-                // unread messages (operator ruling 2026-07-26). Messages only
-                // embolden the row, above.
-                if channel.unreadNotifications > 0 {
-                    unreadBadge(channel.unreadNotifications)
-                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            // #392: the topic on hover, so you can tell what a channel is for
+            // without opening it. No topic, no tooltip.
+            .topicHelp(channel.topic)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
+            .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
+            .accessibilityAddTraits(active ? [.isSelected] : [])
+            // #399: the same menu the row's right-click opens, on a button you
+            // can see. Overlaid rather than stacked in the HStack so the row
+            // stays one Button — clicking anywhere else still selects.
+            .overlay(alignment: .trailing) {
+                SidebarRowMenu(
+                    active: active,
+                    visible: hovering,
+                    identifier: "sidebar.channelMenu.\(channel.name ?? channel.id)"
+                ) {
+                    channelMenu(channel)
+                }
+                .padding(.trailing, 8)
+            }
+            // Indent outside the background so the pill insets with the row rather
+            // than the label sliding around inside a full-width pill.
+            .padding(.leading, isNested ? 12 : 0)
+            .contextMenu { channelMenu(channel) }
         }
-        .buttonStyle(.plain)
-        // Indent outside the background so the pill insets with the row rather
-        // than the label sliding around inside a full-width pill.
-        .padding(.leading, isNested ? 12 : 0)
         .id(AppState.sidebarRowID(channel.id))
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
-        .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .contextMenu { channelMenu(channel) }
     }
 
     /// `label` overrides the resolved DM title — the Agents section (#361)
@@ -589,69 +606,89 @@ struct SidebarView: View {
         )
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }
-        return Button {
-            win.selectChannel(channel.id)
-        } label: {
-            HStack(spacing: 9) {
-                if channel.kind == "dm" {
-                    // self-DM (no other member): online by definition
-                    presenceDot(online: otherId.map { app.isOnline($0, in: win.selectedWorkspaceId) } ?? true)
-                        .frame(width: 14)
-                } else {
-                    Image(systemName: "person.2")
-                        .flowFont(.caption)
-                        .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
-                        .frame(width: 14)
+        return SidebarHoverRow { hovering in
+            Button {
+                win.selectChannel(channel.id)
+            } label: {
+                HStack(spacing: 9) {
+                    if channel.kind == "dm" {
+                        // self-DM (no other member): online by definition
+                        presenceDot(online: otherId.map { app.isOnline($0, in: win.selectedWorkspaceId) } ?? true)
+                            .frame(width: 14)
+                    } else {
+                        Image(systemName: "person.2")
+                            .flowFont(.caption)
+                            .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
+                            .frame(width: 14)
+                    }
+                    Text(title)
+                        .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
+                        .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
+                        .lineLimit(1)
+                    if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
+                        Text(emoji)
+                            .flowFont(size: 14)
+                            .help(otherStatus?.statusText ?? "")
+                    }
+                    // An agent working here (#137) — DMs included: talking to an
+                    // agent one-to-one is the common case.
+                    if app.busyChannelIds.contains(channel.id) {
+                        ActivitySpinner(active: active)
+                    }
+                    if channel.notifyLevel == 0 {
+                        Image(systemName: "bell.slash")
+                            .flowFont(.caption2)
+                            .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
+                    }
+                    Spacer(minLength: 0)
+                    // A number means "this needs you" — unread notifications, not
+                    // unread messages (operator ruling 2026-07-26). Messages only
+                    // embolden the row, above.
+                    if channel.unreadNotifications > 0 {
+                        unreadBadge(channel.unreadNotifications)
+                    }
+                    // Room for the hover ⋯ (#399), after the badge as on web.
+                    Color.clear.frame(width: SidebarRowMenuMetrics.width, height: 1)
                 }
-                Text(title)
-                    .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
-                    .lineLimit(1)
-                if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
-                    Text(emoji)
-                        .flowFont(size: 14)
-                        .help(otherStatus?.statusText ?? "")
-                }
-                // An agent working here (#137) — DMs included: talking to an
-                // agent one-to-one is the common case.
-                if app.busyChannelIds.contains(channel.id) {
-                    ActivitySpinner(active: active)
-                }
-                if channel.notifyLevel == 0 {
-                    Image(systemName: "bell.slash")
-                        .flowFont(.caption2)
-                        .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
-                }
-                Spacer(minLength: 0)
-                // A number means "this needs you" — unread notifications, not
-                // unread messages (operator ruling 2026-07-26). Messages only
-                // embolden the row, above.
-                if channel.unreadNotifications > 0 {
-                    unreadBadge(channel.unreadNotifications)
-                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            // badge-free id: QA targets DMs by plain member names
+            .accessibilityIdentifier("sidebar.dm.\(title.replacingOccurrences(of: " 🤖", with: ""))")
+            .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
+            .accessibilityAddTraits(active ? [.isSelected] : [])
+            // #399: DMs get the ⋯ too, as on web.
+            .overlay(alignment: .trailing) {
+                SidebarRowMenu(
+                    active: active,
+                    visible: hovering,
+                    identifier: "sidebar.dmMenu.\(title.replacingOccurrences(of: " 🤖", with: ""))"
+                ) {
+                    dmMenu(channel, otherId: otherId)
+                }
+                .padding(.trailing, 8)
+            }
+            .contextMenu { dmMenu(channel, otherId: otherId) }
         }
-        .buttonStyle(.plain)
         .id(AppState.sidebarRowID(channel.id))
-        .accessibilityElement(children: .combine)
-        // badge-free id: QA targets DMs by plain member names
-        .accessibilityIdentifier("sidebar.dm.\(title.replacingOccurrences(of: " 🤖", with: ""))")
-        .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .contextMenu {
-            if channel.kind == "dm" {
-                Button("View Profile") {
-                    profileUserId = otherId ?? app.currentUser?.id
-                }
+    }
+
+    /// The DM row's menu — right-click and the hover ⋯ (#399) both build it, so
+    /// the two entry points can never offer different items.
+    @ViewBuilder
+    private func dmMenu(_ channel: Channel, otherId: String?) -> some View {
+        if channel.kind == "dm" {
+            Button("View Profile") {
+                profileUserId = otherId ?? app.currentUser?.id
             }
-            notifyMenu(channel)
-            if channel.kind == "group_dm" {
-                Button("Leave Conversation", role: .destructive) { leave(channel) }
-            }
+        }
+        notifyMenu(channel)
+        if channel.kind == "group_dm" {
+            Button("Leave Conversation", role: .destructive) { leave(channel) }
         }
     }
 
