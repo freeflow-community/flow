@@ -168,6 +168,20 @@ actor SyncEngine {
         try await api.get("/v1/config")
     }
 
+    /// Built-in help docs (#384). Public endpoints, like /v1/config: the
+    /// content is documentation checked into the repo, so the viewer needs no
+    /// auth dance for prose and works on the sign-in screen's server too.
+    /// Fetched rather than bundled — a help edit reaches installed apps with
+    /// the server deploy, without a release.
+    func helpTopics() async throws -> [HelpTopic] {
+        let response: HelpTopicsResponse = try await api.get("/v1/help/topics")
+        return response.topics
+    }
+
+    func helpPage(slug: String) async throws -> HelpPage {
+        try await api.get("/v1/help/pages/\(slug)")
+    }
+
     /// Passwordless sign-in: ask the server to email a one-time sign-in link.
     /// The server never reveals whether the address has an account (no
     /// enumeration), so a success here just means "the request was accepted" —

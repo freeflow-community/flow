@@ -238,6 +238,8 @@ struct WorkspaceRailView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
+    @State private var showHelp = false
+    @State private var helpHovering = false
 
     /// Rail shade follows the active workspace's palette (violet default).
     private var railColor: Color {
@@ -283,11 +285,31 @@ struct WorkspaceRailView: View {
             .help("All workspaces")
             .accessibilityIdentifier("rail.addWorkspace")
             Spacer()
+            // Built-in help (#384): far lower-left, below the Spacer, where web
+            // puts it at the foot of the same rail.
+            Button {
+                showHelp = true
+            } label: {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(helpHovering ? 0.25 : 0.15))
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        Text("?")
+                            .flowFont(size: 18, weight: .bold)
+                            .foregroundStyle(.white)
+                    )
+            }
+            .buttonStyle(.plain)
+            .onHover { helpHovering = $0 }
+            .help("Help")
+            .accessibilityIdentifier("rail.help")
+            .accessibilityLabel("Help")
         }
         .padding(.vertical, 16)
         .frame(width: 64)
         .frame(maxHeight: .infinity)
         .background(railColor)
+        .sheet(isPresented: $showHelp) { HelpView() }
         .task {
             workspaces.start(db: app.db) { db in
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
