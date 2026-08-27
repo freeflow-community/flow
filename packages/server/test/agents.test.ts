@@ -649,6 +649,35 @@ describe('multi-workspace agents (#357)', () => {
     await expect(auth.authenticate(a.agentToken)).rejects.toMatchObject({ statusCode: 401 });
   });
 
+  it('removal from one workspace leaves channels and DMs in the other workspace untouched', async () => {
+    const a = await registerAgent('ScopedBot');
+    const b = await secondWorkspace();
+    await ag.inviteAgentToWorkspace(a.user.id, b.id, ownerId);
+
+    // Home-workspace state that must survive: a channel membership and a 1:1 DM.
+    const homeChannel = await ch.createChannel(workspaceId, ownerId, `scoped-${Date.now()}`);
+    await ch.addMember(homeChannel.id, ownerId, a.user.id);
+    const homeDm = await ch.createDm(workspaceId, ownerId, [a.user.id]);
+
+    await ag.removeAgent(b.id, a.user.id, ownerId);
+
+    // Channel membership and DM in the home workspace are intact.
+    const kept = await db
+      .select()
+      .from(channelMembers)
+      .where(and(eq(channelMembers.userId, a.user.id), eq(channelMembers.channelId, homeChannel.id)));
+    expect(kept.length).toBe(1);
+    expect((await db.select().from(channels).where(eq(channels.id, homeDm.id))).length).toBe(1);
+
+    // ...while every channel membership in B is gone.
+    const inB = await db
+      .select({ channelId: channelMembers.channelId })
+      .from(channelMembers)
+      .innerJoin(channels, eq(channels.id, channelMembers.channelId))
+      .where(and(eq(channelMembers.userId, a.user.id), eq(channels.workspaceId, b.id)));
+    expect(inB.length).toBe(0);
+  });
+
   it('a sponsor leaving one workspace removes their agent from that workspace only', async () => {
     const sponsor = await registerHuman(`persponsor-${Date.now()}@example.test`, 'PerSponsor');
     await db.insert(workspaceMembers).values({ workspaceId, userId: sponsor.id, role: 'member' });
