@@ -115,7 +115,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app
         DEVELOPMENT_TEAM: RP5QYMYA4Z # App Store signing team (clean 2026-07 account)
-        MARKETING_VERSION: "2.0"
+        MARKETING_VERSION: "2.1"
         # Fallback only. Releases derive the build number from the commit
         # count and pass it to xcodebuild, which outranks this — see
         # apps/ios/tools/release-ios.sh. Do not bump this per upload.
@@ -207,7 +207,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.share
         DEVELOPMENT_TEAM: RP5QYMYA4Z
-        MARKETING_VERSION: "2.0"
+        MARKETING_VERSION: "2.1"
         # Fallback only. Releases derive the build number from the commit
         # count and pass it to xcodebuild, which outranks this — see
         # apps/ios/tools/release-ios.sh. Do not bump this per upload.
