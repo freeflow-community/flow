@@ -135,8 +135,6 @@ struct SidebarView: View {
     private var channelList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
-                activityRow
-
                 sectionHeader("Channels") {
                     Button {
                         showCreateChannel = true
@@ -379,6 +377,7 @@ struct SidebarView: View {
         HStack {
             workspaceMenu
             Spacer()
+            activityBell
         }
     }
 
@@ -485,35 +484,33 @@ struct SidebarView: View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
 
-    /// The always-present Activity feed row (phase 12) — a virtual, client-only
-    /// entry (no real channel). Carries the notification unread badge that used
-    /// to live on the toolbar bell.
-    private var activityRow: some View {
+    /// The Activity feed's bell (#385) — fixed in the workspace header rather
+    /// than sitting at the top of the channel list, so it can never scroll out
+    /// of view and the list holds only real channels. Carries the notification
+    /// unread badge and highlights while the feed is the open view.
+    private var activityBell: some View {
         let active = win.showActivity
         let unread = app.notificationUnread(workspaceId: win.selectedWorkspaceId)
         return Button {
             win.showActivityFeed()
         } label: {
-            HStack(spacing: 9) {
-                Image(systemName: unread > 0 ? "bell.badge" : "bell")
-                    .flowFont(size: 13)
-                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.6))
-                    .frame(width: 14)
-                Text("Activity")
-                    .flowFont(size: 14, weight: active || unread > 0 ? .semibold : .regular)
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(unread > 0 ? 1 : 0.82))
-                Spacer(minLength: 0)
-                if unread > 0 {
-                    unreadBadge(min(unread, 99))
+            Image(systemName: "bell")
+                .flowFont(size: 14)
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 24, height: 22)
+                .background(rowBackground(active))
+                .overlay(alignment: .topTrailing) {
+                    if unread > 0 {
+                        unreadBadge(min(unread, 99))
+                            .offset(x: 6, y: -6)
+                    }
                 }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("Activity")
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Activity")
         .accessibilityIdentifier("sidebar.activity")
         .accessibilityValue(unread > 0 ? "\(unread) unread" : "read")
         .accessibilityAddTraits(active ? [.isSelected] : [])

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { ActivitySpinner, nearestScrollDelta, nestChannels, splitAgents } from './Sidebar';
+import { ActivityBell, ActivitySpinner, nearestScrollDelta, nestChannels, splitAgents } from './Sidebar';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
 // child whose parent isn't in the list must still be rendered, or you lose a
@@ -192,5 +192,31 @@ describe('splitAgents', () => {
     const { agents, rest } = splitAgents([dm('d2', [ME, 'u1'])], [scott], ME);
     expect(agents).toEqual([]);
     expect(rest).toHaveLength(1);
+  });
+});
+
+// Activity moved from a channel-list row to a header bell (#385). What the
+// tests pin is what the row used to carry: the unread badge and the selected
+// state — the parts that would silently vanish in the move.
+describe('ActivityBell', () => {
+  it('is labelled "Activity", not a bare glyph', () => {
+    const html = renderToStaticMarkup(<ActivityBell active={false} unread={0} onOpen={() => {}} />);
+    expect(html).toContain('aria-label="Activity"');
+    expect(html).toContain('title="Activity"');
+  });
+
+  it('badges the unread count, and caps it at 99', () => {
+    expect(renderToStaticMarkup(<ActivityBell active={false} unread={3} onOpen={() => {}} />)).toContain('>3<');
+    expect(renderToStaticMarkup(<ActivityBell active={false} unread={500} onOpen={() => {}} />)).toContain('>99<');
+  });
+
+  it('shows no badge when everything is read', () => {
+    expect(renderToStaticMarkup(<ActivityBell active={false} unread={0} onOpen={() => {}} />)).not.toContain('bg-unread');
+  });
+
+  it('reads as current while the Activity feed is open', () => {
+    const html = renderToStaticMarkup(<ActivityBell active unread={0} onOpen={() => {}} />);
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain('bg-white');
   });
 });
