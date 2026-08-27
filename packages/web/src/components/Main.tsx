@@ -28,6 +28,7 @@ import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
 import HuddleMiniBar from './HuddleMiniBar';
 import { MobileMenuButton } from './MobileMenuButton';
+import { HelpModal } from './HelpModal';
 import { AuthImg } from './Avatar';
 import { RailUnreadBadge } from './RailUnreadBadge';
 
@@ -50,6 +51,9 @@ export default function Main() {
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Built-in help docs (#383) — large layout only, so it closes with the
+  // breakpoint rather than being stranded open on a phone-width window.
+  const [helpOpen, setHelpOpen] = useState(false);
   const socketRef = useRef<SocketClient | null>(null);
   // refs so the socket handler always sees current selection
   const selRef = useRef(sel);
@@ -100,6 +104,10 @@ export default function Main() {
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, []);
+
+  useEffect(() => {
+    if (isMobile) setHelpOpen(false);
+  }, [isMobile]);
 
   // On mobile, picking a channel/artifact from the drawer closes it so the
   // conversation takes the full screen. (Covers every selection path at once.)
@@ -452,7 +460,7 @@ export default function Main() {
               drawerOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'
             }`}
           >
-            <WorkspaceRail />
+            <WorkspaceRail showHelp={!isMobile} onOpenHelp={() => setHelpOpen(true)} />
             <Sidebar />
           </div>
           {isMobile && drawerOpen && (
@@ -486,6 +494,7 @@ export default function Main() {
             )}
           </div>
         </div>
+        {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       </div>
       </HuddleProvider>
      </MobileNavContext.Provider>
@@ -494,7 +503,7 @@ export default function Main() {
 }
 
 /** Design 3a column 1: the 64px violet workspace rail. */
-function WorkspaceRail() {
+function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp: () => void }) {
   const sel = useSelection();
   const workspaces = useWorkspaces();
   const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
@@ -556,6 +565,20 @@ function WorkspaceRail() {
         </button>
         <RailUnreadBadge count={invites} ringColor={railBg} testId="rail-workspace-invites" what="workspace invitations" />
       </div>
+      {/* Built-in help (#383): far lower-left, large layout only. `max-md:hidden`
+          as well as the prop — the class is true the instant the window
+          narrows, before the media-query listener has re-rendered anything. */}
+      {showHelp && (
+        <button
+          data-testid="help-button"
+          title="Help"
+          aria-label="Help"
+          className="mt-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-lg font-bold text-white hover:bg-white/25 max-md:hidden"
+          onClick={onOpenHelp}
+        >
+          ?
+        </button>
+      )}
     </nav>
   );
 }
