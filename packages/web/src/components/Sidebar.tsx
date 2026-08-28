@@ -197,6 +197,22 @@ export default function Sidebar() {
     };
   }, [wsMenuOpen]);
 
+  // Cmd/Ctrl+[ and Cmd/Ctrl+] mirror the header's back/forward buttons (#386).
+  // Skipped while the caret is in a composer or any other text field, where
+  // the browser's own bracket handling belongs to the person typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if (e.key !== '[' && e.key !== ']') return;
+      if (isTextEntry(e.target)) return;
+      e.preventDefault();
+      if (e.key === '[') sel.goBack();
+      else sel.goForward();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [sel]);
+
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
   // Which way out this workspace offers — see lib/workspaceExit, which is
@@ -377,11 +393,15 @@ export default function Sidebar() {
             </button>
           </div>
         )}
-        <ActivityBell
-          active={sel.channelId === ACTIVITY_VIEW_ID}
-          unread={live.notificationUnread}
-          onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
-        />
+        <div className="flex shrink-0 items-center">
+          <NavButton dir="back" enabled={sel.canGoBack} onClick={() => sel.goBack()} />
+          <NavButton dir="forward" enabled={sel.canGoForward} onClick={() => sel.goForward()} />
+          <ActivityBell
+            active={sel.channelId === ACTIVITY_VIEW_ID}
+            unread={live.notificationUnread}
+            onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
+          />
+        </div>
       </div>
 
       <div
@@ -605,6 +625,61 @@ export default function Sidebar() {
       {showFeatures && <FeaturesModal onClose={() => setShowFeatures(false)} />}
       {menuChannel && <ChannelMenu channel={menuChannel} onClose={() => setMenuChannel(null)} />}
     </aside>
+  );
+}
+
+/** Is the keyboard event aimed at somewhere a person is typing? */
+function isTextEntry(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  return (
+    el.tagName === 'INPUT' ||
+    el.tagName === 'TEXTAREA' ||
+    el.tagName === 'SELECT' ||
+    el.isContentEditable
+  );
+}
+
+/**
+ * One of the workspace header's visit-history buttons (#386). Disabled — dimmed
+ * and non-interactive — at whichever end of the history it sits at, which on a
+ * fresh session is both of them.
+ */
+export function NavButton({
+  dir,
+  enabled,
+  onClick,
+}: {
+  dir: 'back' | 'forward';
+  enabled: boolean;
+  onClick: () => void;
+}) {
+  const label = dir === 'back' ? 'Back' : 'Forward';
+  return (
+    <button
+      data-testid={`nav-${dir}`}
+      title={label}
+      aria-label={label}
+      disabled={!enabled}
+      className={`shrink-0 rounded-lg px-1 py-1.5 leading-none ${
+        enabled ? 'text-white/75 hover:bg-white/10' : 'cursor-default text-white/25'
+      }`}
+      onClick={onClick}
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points={dir === 'back' ? '15 18 9 12 15 6' : '9 18 15 12 9 6'} />
+      </svg>
+    </button>
   );
 }
 

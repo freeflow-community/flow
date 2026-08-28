@@ -267,6 +267,12 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- **Channel visit history** with back/forward buttons (#386) is web + macOS
+  only. iOS was out of scope on purpose: the phone navigates a push/pop stack
+  that already has its own back affordance, so a second, differently-scoped
+  history in the header would compete with it rather than complete it. The
+  model (`NavHistory`) is 60 lines and would port, but only alongside a
+  decision about what "back" means on a stack — not a gap to close blindly.
 - The **hover ⋯ menu on sidebar rows** (#399) ships on web and macOS and not on
   iOS, for the same reason as the topic tooltip below: a touch client has no
   hover to reveal it on. iOS reaches channel options from the channel screen
