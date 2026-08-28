@@ -1,7 +1,13 @@
+import AVFoundation
 import Combine
 import Foundation
 import LiveKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// Main-actor app-wide state: auth phase, connection, and ephemeral
 /// (non-persisted) typing/presence maps, shared by every window. What each
@@ -93,6 +99,12 @@ final class AppState: ObservableObject {
     @Published private(set) var huddleConnecting: Bool = false
     /// Muted on join, by decision — the mic is never auto-published.
     @Published private(set) var huddleMuted: Bool = true
+    /// Set when an unmute attempt finds the OS mic permission isn't granted
+    /// (never asked, or previously denied — `ensureDeviceAccess` doesn't say
+    /// which). Drives a dedicated alert with an "Open Settings" action;
+    /// separate from `errorMessage` because that one's alert is a plain "OK"
+    /// everywhere else it's used.
+    @Published var micPermissionBlocked = false
     private var huddleRoom: Room?
     /// channelId -> more history available on the server
     @Published private(set) var hasMore: [String: Bool] = [:]
@@ -675,6 +687,18 @@ final class AppState: ObservableObject {
         guard let room = huddleRoom else { return }
         let next = !huddleMuted
         Task {
+            // Unmuting is the only transition that opens the mic. LiveKit's
+            // SDK never requests OS permission itself (it only exposes this
+            // helper — grepped the vendored source to confirm) — until an app
+            // calls it, macOS/iOS never show the consent prompt AND never
+            // list Flow in the Microphone privacy settings at all, so the
+            // capture just fails with a generic "permission not granted"
+            // every time. Ask first so that either registers Flow properly
+            // (first run) or comes back false immediately, no dead SDK error.
+            if !next, !(await LiveKitSDK.ensureDeviceAccess(for: [.audio])) {
+                micPermissionBlocked = true
+                return
+            }
             do {
                 try await room.localParticipant.setMicrophone(enabled: !next)
                 huddleMuted = next
@@ -685,6 +709,22 @@ final class AppState: ObservableObject {
                 errorMessage = "Couldn't turn on the microphone: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// "Open Settings" action for the mic-permission alert. Deep-links to the
+    /// exact pane on macOS; iOS has no per-permission deep link, so it opens
+    /// Flow's own Settings page, which lists Microphone among its toggles —
+    /// the standard iOS pattern (same one users see in Slack/Zoom).
+    func openMicrophoneSettings() {
+        #if os(macOS)
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+        #else
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+        #endif
     }
 }
 
