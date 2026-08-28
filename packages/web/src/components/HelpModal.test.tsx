@@ -8,7 +8,9 @@ import { HelpViewer } from './HelpModal';
 // tests use the real ones: a formatting change in docs/help that the block
 // renderer can't handle should fail here, not in front of a user.
 const helpDir = path.resolve(process.cwd(), '../../docs/help');
-const read = (slug: string) => readFileSync(path.join(helpDir, `${slug}.md`), 'utf8').replace(/^---[\s\S]*?---\n/, '');
+const read = (slug: string) => readFileSync(path.join(helpDir, `${slug}.md`), 'utf8')
+  .replace(/\r\n?/g, '\n')
+  .replace(/^---\n[\s\S]*?\n---\n?/, '');
 
 const TOPICS = [
   { slug: 'home', title: 'Home', order: 0 },

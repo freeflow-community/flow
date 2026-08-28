@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO, SystemMessageKind, UnfurlDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -6,16 +6,36 @@ import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { decryptBody, encryptBody } from '../crypto/index.js';
 import { requireChannelAccess } from './channels.js';
 import { reactionsForMessages } from './reactions.js';
-import { filesForMessages, validateAttachments, toFileDTO } from './files.js';
-import { computeRecipients, insertNotifications, publishNotifications } from './notifications.js';
+import { filesForMessages, reapFileIfUnreferenced, validateAttachments, toFileDTO } from './files.js';
+import {
+  computeRecipients,
+  insertNotifications,
+  publishNotificationRetirements,
+  publishNotifications,
+} from './notifications.js';
 import { enqueueMessageEvents } from './appEvents.js';
 import { publishEvent, subjectMsg } from '../bus.js';
 import { scheduleForMessage, unfurlsForMessages } from './unfurl/index.js';
+import { requireMembership } from './workspaces.js';
 
-const { messages, channelMembers, messageFiles } = schema;
+const { messages, channelMembers, messageFiles, notifications } = schema;
 
 type MessageRow = typeof messages.$inferSelect;
 export type HydratedMessageRow = MessageRow;
+
+/** Pure authorization rule kept exported so role semantics have a fast unit test. */
+export function mayDeleteMessage(
+  actorId: string,
+  authorId: string,
+  role: 'owner' | 'admin' | 'member',
+  permanently: boolean,
+  isSystem: boolean,
+  allowOwnPermanentDelete = false,
+): boolean {
+  if (isSystem) return false;
+  if (!permanently) return actorId === authorId;
+  return role === 'owner' || role === 'admin' || (allowOwnPermanentDelete && actorId === authorId);
+}
 
 interface DtoExtras {
   reactions?: ReactionAggDTO[] | undefined;
@@ -486,15 +506,16 @@ export async function editMessage(messageId: string, userId: string, body: strin
  * ciphertext, row kept, `deletedAt` set (spec §2) — clients render a tombstone.
  *
  * `hard` fully removes the row (child reactions/files/notifications cascade)
- * and publishes `message.purged` so clients drop it with no tombstone. Used by
- * the agent-bridge for its ephemeral "thinking…" status message, whose whole
- * point is to vanish on completion — a soft delete would leave a stray
- * "This message was deleted" line above the real reply.
+ * and publishes `message.purged` so clients drop it with no tombstone. Owners
+ * and admins may purge any message they can see. Session-authenticated agent
+ * identities may purge their own ephemeral status rows for bridge compatibility; ordinary
+ * members cannot turn their own soft deletes into permanent deletes. Purging a
+ * root removes its complete thread, while purging one reply repairs the rollup.
  */
 export async function deleteMessage(
   messageId: string,
   userId: string,
-  opts?: { hard?: boolean },
+  opts?: { hard?: boolean; allowOwnPermanentDelete?: boolean },
 ): Promise<void> {
   const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
   const row = rows[0];
@@ -503,10 +524,53 @@ export async function deleteMessage(
     throw notFound('message not found');
   }
   const { chan } = await requireChannelAccess(row.channelId, userId);
-  if (row.userId !== userId) throw forbidden('only the author can delete a message');
+  const actor = await requireMembership(chan.workspaceId, userId);
+  if (!mayDeleteMessage(
+    userId,
+    row.userId,
+    actor.role,
+    opts?.hard === true,
+    row.systemKind !== null,
+    opts?.allowOwnPermanentDelete === true,
+  )) {
+    throw forbidden(
+      opts?.hard
+        ? 'only workspace owners, admins, or the authoring automation can permanently delete a message'
+        : 'only the author can delete a message',
+    );
+  }
 
   if (opts?.hard) {
-    await db.transaction(async (tx) => {
+    const purged = await db.transaction(async (tx) => {
+      // Lock the target first. For roots, the self-FK makes concurrent reply
+      // inserts wait and then fail once the root is deleted; the following
+      // query therefore captures every committed row in the thread.
+      const locked = await tx.select().from(messages).where(eq(messages.id, messageId)).for('update');
+      if (!locked[0]) {
+        return {
+          rows: [] as MessageRow[],
+          fileIds: [] as string[],
+          retired: [] as Array<{ id: string; userId: string }>,
+        };
+      }
+      const targetRows = row.threadRootId
+        ? locked
+        : await tx
+            .select()
+            .from(messages)
+            .where(or(eq(messages.id, messageId), eq(messages.threadRootId, messageId)));
+      const targetIds = targetRows.map((m) => m.id);
+      const fileRows = await tx
+        .select({ fileId: messageFiles.fileId })
+        .from(messageFiles)
+        .where(inArray(messageFiles.messageId, targetIds));
+      const retired = await tx
+        .select({ id: notifications.id, userId: notifications.userId })
+        .from(notifications)
+        .where(inArray(notifications.messageId, targetIds));
+
+      // ON DELETE CASCADE removes a root's replies and all message-owned child
+      // rows atomically. A reply delete only touches that reply.
       await tx.delete(messages).where(eq(messages.id, messageId));
       // Fix the root's denormalized rollup if this was a thread reply
       // (participants are computed at query time, so they self-correct). The
@@ -521,14 +585,27 @@ export async function deleteMessage(
           })
           .where(eq(messages.id, row.threadRootId));
       }
+      return {
+        // Replies first and root last keeps older clients' open thread caches
+        // coherent before they receive the event that removes the root.
+        rows: targetRows.sort((a, b) =>
+          a.threadRootId && !b.threadRootId ? -1 : !a.threadRootId && b.threadRootId ? 1 : 0,
+        ),
+        fileIds: [...new Set(fileRows.map((f) => f.fileId))],
+        retired,
+      };
     });
-    publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
-      type: 'message.purged',
-      workspaceId: chan.workspaceId,
-      channelId: row.channelId,
-      ts: new Date().toISOString(),
-      data: toMessageDTO(row),
-    });
+    for (const fileId of purged.fileIds) await reapFileIfUnreferenced(fileId);
+    await publishNotificationRetirements(purged.retired, chan.workspaceId, row.channelId);
+    for (const removed of purged.rows) {
+      publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
+        type: 'message.purged',
+        workspaceId: chan.workspaceId,
+        channelId: row.channelId,
+        ts: new Date().toISOString(),
+        data: toMessageDTO(removed),
+      });
+    }
     return;
   }
 

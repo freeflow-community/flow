@@ -522,6 +522,26 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     }
 }
 
+enum MessageDeleteMode: Equatable {
+    case soft
+    case permanent
+}
+
+/// Shared macOS/iOS affordance policy. The server remains authoritative.
+enum MessageDeletePolicy {
+    static func mode(
+        isMine: Bool,
+        isDeleted: Bool,
+        isSystem: Bool,
+        canPermanentlyDelete: Bool
+    ) -> MessageDeleteMode? {
+        if isSystem { return nil }
+        if canPermanentlyDelete { return .permanent }
+        if isMine && !isDeleted { return .soft }
+        return nil
+    }
+}
+
 /// A personal bookmark of a file shared in chat (server ArtifactDTO, phase 9).
 /// Not cached in GRDB: the list is small and per-workspace, so it's fetched
 /// on demand and held in AppState (same treatment as notifications).

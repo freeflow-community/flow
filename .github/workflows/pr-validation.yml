@@ -1,0 +1,122 @@
+name: Apple client validation
+
+on:
+  pull_request:
+  # PR branches can only restore caches created on the base branch, so run on
+  # main too (path-filtered) — that run is what seeds the dependency caches
+  # every PR restores from.
+  push:
+    branches: [main]
+    paths:
+      - 'apps/macos/**'
+      - 'apps/ios/**'
+      - '.github/workflows/pr-validation.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: apple-client-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Decide which clients a PR can actually affect, so server/web/bridge/docs
+  # PRs skip the expensive mac runners. Skipped jobs still report (as
+  # "skipped", which counts as passing) — unlike a workflow-level paths
+  # filter, this stays compatible with required checks. The iOS app compiles
+  # shared sources out of apps/macos/, so the ios filter must include both
+  # trees.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      macos: ${{ steps.filter.outputs.macos }}
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            macos:
+              - 'apps/macos/**'
+              - '.github/workflows/pr-validation.yml'
+            ios:
+              - 'apps/ios/**'
+              - 'apps/macos/**'
+              - '.github/workflows/pr-validation.yml'
+
+  macos-client:
+    needs: changes
+    # push-to-main and manual runs are already path-gated by the trigger (or
+    # deliberate); only PRs consult the filter.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.macos == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Xcode 26 toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          test "$(xcodebuild -version | head -n 1 | awk '{print $2}' | cut -d. -f1)" = "26"
+
+      # Compiled dependencies (GRDB, Sparkle, LiveKit) dominate the build
+      # time and rarely change; the key busts only when the pins do.
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: apps/macos/.build
+          key: macos-swiftpm-${{ hashFiles('apps/macos/Package.resolved') }}
+          restore-keys: macos-swiftpm-
+
+      - name: Compile macOS client and run hermetic tests
+        working-directory: apps/macos
+        # LiveAPITests intentionally targets a developer's server on
+        # 127.0.0.1:8787. Every deterministic unit/cache test runs here.
+        run: swift test --skip LiveAPITests
+
+  ios-client:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Xcode 26 toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          test "$(xcodebuild -version | head -n 1 | awk '{print $2}' | cut -d. -f1)" = "26"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate iOS project
+        working-directory: apps/ios
+        run: xcodegen generate
+
+      # Derived data holds the fetched + compiled packages (LiveKit's binary
+      # WebRTC framework is the big one). project.yml carries the version
+      # requirements, so it is the closest thing to a lockfile here.
+      - name: Cache derived data
+        uses: actions/cache@v4
+        with:
+          path: apps/ios/.build
+          key: ios-deriveddata-${{ hashFiles('apps/ios/project.yml') }}
+          restore-keys: ios-deriveddata-
+
+      - name: Compile iOS client and run hermetic tests
+        working-directory: apps/ios
+        run: >-
+          xcodebuild
+          -project FlowiOS.xcodeproj
+          -scheme Flow
+          -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17'
+          -derivedDataPath .build
+          -only-testing:FlowUnitTests
+          CODE_SIGNING_ALLOWED=NO
+          test

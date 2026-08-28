@@ -51,6 +51,7 @@ struct ActivityFeedView: View {
         // 0, which settles here.
         .task(id: FeedKey(
             unread: app.notificationUnread(workspaceId: win.selectedWorkspaceId),
+            revision: app.notificationRevision,
             workspaceId: win.selectedWorkspaceId
         )) {
             defer { loading = false }
@@ -86,6 +87,7 @@ struct ActivityFeedView: View {
     /// workspace is a different feed).
     private struct FeedKey: Equatable {
         let unread: Int
+        let revision: Int
         let workspaceId: String?
     }
 

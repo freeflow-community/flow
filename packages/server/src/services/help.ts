@@ -25,14 +25,17 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 /** Minimal front-matter: a leading `---` block of `key: value` lines. Only
  * `title` and `order` are read; everything else is ignored. */
 export function parseFrontMatter(source: string): { meta: Record<string, string>; body: string } {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(source);
-  if (!match) return { meta: {}, body: source };
+  // Markdown parsing is line-oriented. Normalize files at this boundary so
+  // checked-out Windows docs render exactly like their LF counterparts.
+  const normalized = source.replace(/\r\n?/g, '\n');
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized);
+  if (!match) return { meta: {}, body: normalized };
   const meta: Record<string, string> = {};
-  for (const line of match[1]!.split(/\r?\n/)) {
+  for (const line of match[1]!.split('\n')) {
     const kv = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line.trim());
     if (kv) meta[kv[1]!.toLowerCase()] = kv[2]!.trim().replace(/^["']|["']$/g, '');
   }
-  return { meta, body: source.slice(match[0].length) };
+  return { meta, body: normalized.slice(match[0].length) };
 }
 
 function readTopic(slug: string): { topic: HelpTopicDTO; body: string } | null {

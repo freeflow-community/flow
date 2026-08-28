@@ -108,6 +108,25 @@ final class WindowStateTests: XCTestCase {
     }
 
     @MainActor
+    func testPermanentRootDeleteClosesThatThreadInEveryMatchingWindow() {
+        let (app, w1, w2) = makeAppWithTwoWindows()
+        w1.openThread("t1")
+        w2.openThread("t2")
+        let root = Message(
+            id: "t1", channelId: "c1", userId: "bot", threadRootId: nil,
+            clientMsgId: "cm1", body: "bot output", createdAt: "2026-08-27T00:00:00Z",
+            editedAt: nil, deletedAt: nil, replyCount: 2, lastReplyAt: nil,
+            systemKind: nil, pending: false
+        )
+
+        app.messagePermanentlyDeleted(root)
+
+        XCTAssertNil(w1.openThreadRootId)
+        XCTAssertEqual(w2.openThreadRootId, "t2")
+        XCTAssertEqual(app.notificationRevision, 1)
+    }
+
+    @MainActor
     func testSignOutClearsEveryWindow() {
         let (app, w1, w2) = makeAppWithTwoWindows()
         w1.selectWorkspace("ws1")

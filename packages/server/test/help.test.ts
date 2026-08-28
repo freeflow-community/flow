@@ -16,6 +16,7 @@ import path from 'node:path';
 process.env.FLOW_DATA_KEY ??= randomBytes(32).toString('base64');
 
 const { buildApp } = await import('../src/app.js');
+const { parseFrontMatter } = await import('../src/services/help.js');
 
 beforeEach(() => {
   process.env.LOG_LEVEL = 'silent';
@@ -27,6 +28,14 @@ async function get(url: string) {
   await app.close();
   return res;
 }
+
+describe('parseFrontMatter', () => {
+  it('normalizes Windows line endings before clients render markdown', () => {
+    const parsed = parseFrontMatter('---\r\ntitle: Windows\r\norder: 1\r\n---\r\n# Heading\r\n\r\n- item\r\n');
+    expect(parsed.meta).toEqual({ title: 'Windows', order: '1' });
+    expect(parsed.body).toBe('# Heading\n\n- item\n');
+  });
+});
 
 describe('GET /v1/help/topics', () => {
   it('lists the seed topics in sidebar order, Home first', async () => {

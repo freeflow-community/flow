@@ -767,7 +767,13 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     // ?purge=true fully removes the row (no tombstone); default is a soft delete.
     const { purge } = req.query as { purge?: string };
-    await msg.deleteMessage(id, req.user.id, { hard: purge === 'true' || purge === '1' });
+    await msg.deleteMessage(id, req.user.id, {
+      hard: purge === 'true' || purge === '1',
+      // The bridge's agent status row must vanish on completion. App bots use
+      // the separate Slack-compatible auth surface; session-authenticated
+      // human authors stay on the soft-delete path unless they are owner/admin.
+      allowOwnPermanentDelete: req.user.isAgent,
+    });
     return { ok: true };
   });
 

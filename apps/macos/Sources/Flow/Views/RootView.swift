@@ -85,7 +85,12 @@ private struct WindowKeyObserver: NSViewRepresentable {
             observer = NotificationCenter.default.addObserver(
                 forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
             ) { [weak self] _ in
-                self?.onKey?()
+                // Delivery is pinned to the main queue above, but
+                // NotificationCenter's callback is `@Sendable`; make that
+                // runtime guarantee explicit to Swift 6's actor checker.
+                MainActor.assumeIsolated {
+                    self?.onKey?()
+                }
             }
         }
     }
