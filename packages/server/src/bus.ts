@@ -43,6 +43,12 @@ export function subjectArtifact(workspaceId: string, channelId: string): string 
 export function subjectIndicator(workspaceId: string, channelId: string): string {
   return `ws.${workspaceId}.chan.${channelId}.indicator`;
 }
+/** Per-channel emoji stream (#396). Same shape and reasoning as
+ * subjectIndicator — the emoji is a channel-scoped property, so routing it
+ * per channel lets visible() keep a private channel's decoration private. */
+export function subjectChannelEmoji(workspaceId: string, channelId: string): string {
+  return `ws.${workspaceId}.chan.${channelId}.emoji`;
+}
 /** Per-channel voice-huddle stream (Phase 1). Same shape and reasoning as
  * subjectIndicator: under the workspace wildcard so the gateway forwards it,
  * not a `.meta` subject, and channel-scoped so visible() handles privacy. */

@@ -272,6 +272,12 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The **channel emoji** (#396) draws on web and macOS and not on iOS, which
+  renders nothing in that slot today: it has no channel indicator either, so
+  adding the emoji alone would build the slot for half its tenants. The server
+  and the `channel.emoji` event are client-agnostic and the field already rides
+  the channel payload, so iOS picks both up together whenever that slot is
+  built. Not a gap to close on its own.
 - **Channel visit history** with back/forward buttons (#386) is web + macOS
   only. iOS was out of scope on purpose: the phone navigates a push/pop stack
   that already has its own back affordance, so a second, differently-scoped

@@ -534,6 +534,21 @@ struct SidebarView: View {
         }
     }
 
+    /// The one slot at the end of a channel label, and its two tenants (#396).
+    /// The spinner is a claim about right now, so it wins while it is up; the
+    /// channel's emoji is decoration and comes back the moment it clears. Never
+    /// both — together they'd read as one confused status.
+    @ViewBuilder
+    private func activitySlot(_ channel: Channel, active: Bool) -> some View {
+        if app.busyChannelIds.contains(channel.id) {
+            ActivitySpinner(active: active)
+        } else if let emoji = channel.emoji, !emoji.isEmpty {
+            Text(emoji)
+                .flowFont(size: 13)
+                .accessibilityHidden(true)
+        }
+    }
+
     private func rowBackground(_ active: Bool) -> some View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
@@ -593,11 +608,10 @@ struct SidebarView: View {
                     Text(channel.name ?? "")
                         .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
                         .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
-                    // An agent working here (#137) — DMs included: talking to an
-                    // agent one-to-one is the common case.
-                    if app.busyChannelIds.contains(channel.id) {
-                        ActivitySpinner(active: active)
-                    }
+                    // An agent working here (#137), or the channel's own emoji
+                    // (#396) — DMs included: talking to an agent one-to-one is
+                    // the common case.
+                    activitySlot(channel, active: active)
                     if channel.notifyLevel == 0 {
                         Image(systemName: "bell.slash")
                             .flowFont(.caption2)
@@ -684,11 +698,10 @@ struct SidebarView: View {
                             .flowFont(size: 14)
                             .help(otherStatus?.statusText ?? "")
                     }
-                    // An agent working here (#137) — DMs included: talking to an
-                    // agent one-to-one is the common case.
-                    if app.busyChannelIds.contains(channel.id) {
-                        ActivitySpinner(active: active)
-                    }
+                    // An agent working here (#137), or the channel's own emoji
+                    // (#396) — DMs included: talking to an agent one-to-one is
+                    // the common case.
+                    activitySlot(channel, active: active)
                     if channel.notifyLevel == 0 {
                         Image(systemName: "bell.slash")
                             .flowFont(.caption2)

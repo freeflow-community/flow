@@ -53,6 +53,9 @@ export function toChannelDTO(
     notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
     parentId: c.parentId,
   };
+  // Read straight off the row, unlike indicator/huddle below: the emoji (#396)
+  // is a column, so every DTO path already has it and no caller has to pass it.
+  if (c.emoji) dto.emoji = c.emoji;
   if (opts.memberIds) dto.memberIds = opts.memberIds;
   // Only sent when something is actually showing: absent means "no spinner",
   // and every other DTO path (create, patch, join…) leaves it out entirely.

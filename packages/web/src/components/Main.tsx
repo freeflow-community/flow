@@ -4,6 +4,7 @@ import { sidebarColor } from '@flow/shared';
 import type {
   ArtifactDTO,
   ChannelDTO,
+  ChannelEmojiData,
   ChannelIndicatorData,
   Event,
   HuddleUpdatedData,
@@ -13,7 +14,7 @@ import type {
   PresenceData,
 } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
-import { applyHuddle, applyIndicator } from '../lib/channelCache';
+import { applyChannelEmoji, applyHuddle, applyIndicator } from '../lib/channelCache';
 import { api, getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
@@ -236,6 +237,15 @@ export default function Main() {
         const d = event.data as ChannelIndicatorData;
         qc.setQueryData<{ channels: ChannelDTO[] }>(['channels', event.workspaceId], (old) =>
           old ? { channels: applyIndicator(old.channels, d) } : old,
+        );
+        break;
+      }
+      case 'channel.emoji': {
+        // Same patch-don't-invalidate reasoning as channel.indicator (#396):
+        // one glyph on one row must never cost the sidebar a refetch.
+        const d = event.data as ChannelEmojiData;
+        qc.setQueryData<{ channels: ChannelDTO[] }>(['channels', event.workspaceId], (old) =>
+          old ? { channels: applyChannelEmoji(old.channels, d) } : old,
         );
         break;
       }

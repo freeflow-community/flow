@@ -326,6 +326,11 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// draws this channel indented under it. nil for a top-level channel.
     var parentId: String?
     var memberIds: [String]? // dm/group_dm only
+    /// Channel emoji (#396) — the persistent glyph drawn after the name in the
+    /// sidebar. Unlike the activity spinner it shares that slot with, this one
+    /// belongs on the cached row: it is a server column, so a relaunch showing
+    /// yesterday's emoji is showing the truth. nil = none.
+    var emoji: String?
 
     var isDM: Bool { kind != "standard" }
 
@@ -340,7 +345,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
         case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
-        case unreadThreadRootIds, notifyLevel, parentId, memberIds
+        case unreadThreadRootIds, notifyLevel, parentId, memberIds, emoji
     }
 
     init(
@@ -348,7 +353,8 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         isPrivate: Bool, createdBy: String, createdAt: String, archivedAt: String?,
         isMember: Bool, lastReadMsgId: String?, unreadCount: Int, unreadNotifications: Int = 0,
         unreadThreadRootIds: [String]? = nil,
-        notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil
+        notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil,
+        emoji: String? = nil
     ) {
         self.id = id
         self.workspaceId = workspaceId
@@ -367,6 +373,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.notifyLevel = notifyLevel
         self.parentId = parentId
         self.memberIds = memberIds
+        self.emoji = emoji
     }
 
     init(from decoder: Decoder) throws {
@@ -388,6 +395,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         notifyLevel = try c.decodeIfPresent(Int.self, forKey: .notifyLevel) ?? 1
         parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
         memberIds = try c.decodeIfPresent([String].self, forKey: .memberIds)
+        emoji = try c.decodeIfPresent(String.self, forKey: .emoji)
     }
 }
 
@@ -680,6 +688,13 @@ struct ChannelsResponse: Decodable, Sendable {
 struct ChannelIndicatorData: Decodable, Sendable {
     let channelId: String
     let state: String?
+}
+
+/// `channel.emoji` payload (#396): the channel's emoji after a change, nil when
+/// it was cleared. Sent only on a real change.
+struct ChannelEmojiData: Decodable, Sendable {
+    let channelId: String
+    let emoji: String?
 }
 
 /// One participant in a channel's live voice huddle (Phase 1: audio-only).
@@ -1031,6 +1046,7 @@ enum EventPayload: Sendable {
     case typing(TypingData)
     case presence(PresenceData)
     case channelIndicator(ChannelIndicatorData)
+    case channelEmoji(ChannelEmojiData)
     case huddleUpdated(HuddleUpdatedData)
     case channel(Channel)
     case channelUpdated(Channel)
@@ -1076,6 +1092,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .presence(try c.decode(PresenceData.self, forKey: .data))
         case "channel.indicator":
             payload = .channelIndicator(try c.decode(ChannelIndicatorData.self, forKey: .data))
+        case "channel.emoji":
+            payload = .channelEmoji(try c.decode(ChannelEmojiData.self, forKey: .data))
         case "huddle.updated":
             payload = .huddleUpdated(try c.decode(HuddleUpdatedData.self, forKey: .data))
         case "channel.created":

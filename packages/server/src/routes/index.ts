@@ -37,6 +37,7 @@ import {
   RedeemAgentInviteBody,
   RedeemJoinLinkBody,
   SendMessageBody,
+  SetChannelEmojiBody,
   SetChannelIndicatorBody,
   SetMemberRoleBody,
   SetNotifyLevelBody,
@@ -67,6 +68,7 @@ import { listIdentities } from '../services/oauthAccounts.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
 import * as ci from '../services/channelIndicators.js';
+import * as ce from '../services/channelEmoji.js';
 import * as hd from '../services/huddles.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
@@ -692,6 +694,15 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = parse(SetChannelIndicatorBody, req.body);
     return ci.setChannelIndicator(id, req.user.id, body.state, body.ttlSeconds);
+  });
+
+  // Channel emoji (#396): a persistent glyph after the channel's name, drawn in
+  // the same sidebar slot as the indicator above and its opposite in kind — a
+  // column, not a TTL'd claim. `{ "emoji": null }` (or "") clears it.
+  app.put('/v1/channels/:id/emoji', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SetChannelEmojiBody, req.body);
+    return ce.setChannelEmoji(id, req.user.id, body.emoji);
   });
 
   // Voice huddle (Phase 1, LiveKit Cloud): ambient, audio-only, channel-scoped.

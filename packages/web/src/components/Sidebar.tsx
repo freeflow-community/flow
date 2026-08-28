@@ -1072,7 +1072,18 @@ function ChannelRow({
         >
           {label}
         </span>
-        {channel.indicator && <ActivitySpinner active={active} />}
+        {/* One slot, two tenants (#396): the spinner is a claim about right now,
+            so it wins while it's up; the emoji is decoration and comes back the
+            moment it clears. Never both — they'd read as one confused status. */}
+        {channel.indicator ? (
+          <ActivitySpinner active={active} />
+        ) : (
+          channel.emoji && (
+            <span data-testid="channel-emoji" className="shrink-0 text-sm leading-none">
+              {channel.emoji}
+            </span>
+          )
+        )}
         {statusEmoji && (
           <span className="ml-0.5 shrink-0 text-sm" title={statusTitle}>{statusEmoji}</span>
         )}

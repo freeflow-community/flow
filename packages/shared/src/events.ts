@@ -22,6 +22,7 @@ export type EventType =
   | 'channel.updated' // rename / topic change (ui_nits item 5)
   | 'channel.archived'
   | 'channel.indicator' // per-channel subject: the activity spinner turned on/off (#137)
+  | 'channel.emoji' // per-channel subject: the persistent channel emoji changed (#396)
   | 'huddle.updated' // per-channel subject: voice huddle roster changed (Phase 1)
   | 'member.joined'
   | 'member.left'
@@ -69,6 +70,17 @@ export interface TypingData {
 export interface ChannelIndicatorData {
   channelId: string;
   state: ChannelIndicatorState | null;
+}
+
+/**
+ * A channel's emoji after a change (#396). `emoji: null` means it was cleared.
+ * Published only on a real change, on the same per-channel subject shape as
+ * ChannelIndicatorData — so the gateway's visibility filter keeps a private
+ * channel's decoration private too.
+ */
+export interface ChannelEmojiData {
+  channelId: string;
+  emoji: string | null;
 }
 
 /**

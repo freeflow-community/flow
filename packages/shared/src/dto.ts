@@ -231,6 +231,14 @@ export interface ChannelDTO {
    */
   indicator?: ChannelIndicatorState | null;
   /**
+   * Channel emoji (#396) — one persistent glyph clients draw after the name in
+   * the sidebar, the same slot as the indicator. The opposite of the indicator
+   * in every other way: a real column, set deliberately, with no TTL and no
+   * setter to disconnect. Absent or null means none; `channel.emoji` events
+   * carry every change after load.
+   */
+  emoji?: string | null;
+  /**
    * Live voice huddle participants (Phase 1) — ambient, per-channel audio call.
    * Transient server state, never a DB column (see `huddles.ts`): LiveKit is
    * the source of truth, this is a cache of it. Present on the channel list so

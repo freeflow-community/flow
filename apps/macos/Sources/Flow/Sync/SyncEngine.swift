@@ -1762,6 +1762,14 @@ actor SyncEngine {
             await appState?.channelIndicatorReceived(
                 channelId: ind.channelId, busy: ind.state != nil)
 
+        case .channelEmoji(let e):
+            // A column, not a claim about now (#396) — so it lands in the cache
+            // rather than in AppState next to busyChannelIds, and the sidebar's
+            // observation of the channel table redraws the row.
+            try? await db.writer.write { db in
+                try db.execute(sql: "UPDATE channel SET emoji = ? WHERE id = ?", arguments: [e.emoji, e.channelId])
+            }
+
         case .huddleUpdated(let d):
             await appState?.huddleUpdated(channelId: d.channelId, participants: d.participants)
 

@@ -128,6 +128,16 @@ export class FlowApi {
     });
   }
 
+  /**
+   * Channel emoji (#396): the persistent glyph after a channel's name. Nothing
+   * like the indicator above despite sharing that sidebar slot — this is a
+   * stored channel property, so it stays until someone changes it. `null`
+   * clears it.
+   */
+  setChannelEmoji(channelId: string, emoji: string | null): Promise<{ emoji: string | null }> {
+    return this.req('PUT', `/v1/channels/${channelId}/emoji`, { emoji });
+  }
+
   listMessages(channelId: string, limit = 50, before?: string): Promise<MessagePage> {
     return this.req('GET', `/v1/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ''}`);
   }
