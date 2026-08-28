@@ -3,10 +3,19 @@ import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
-import { fileGlyph } from '../lib/fileKind';
+import { artifactGlyph } from '../lib/fileKind';
 import { workspaceExit } from '../lib/workspaceExit';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
-import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
+import {
+  useAppArtifacts,
+  useArtifacts,
+  useChannels,
+  useDisplayNameMap,
+  useMemberMap,
+  useMembers,
+  useNameMap,
+  useWorkspaces,
+} from '../hooks';
 import {
   ChannelMenu,
   CreateChannelModal,
@@ -107,6 +116,29 @@ export function dmTitle(c: ChannelDTO, names: Record<string, string>, me: string
 
 /** Agents section: collapsed or not, remembered per device (like the width). */
 const AGENTS_COLLAPSED_KEY = 'flow.sidebarAgentsCollapsed';
+/** Apps section (#394): same per-device collapse memory as Agents. */
+const APPS_COLLAPSED_KEY = 'flow.sidebarAppsCollapsed';
+
+/** A row in the Apps section: the app plus the channel that hosts it. */
+export type AppEntry = { artifact: ArtifactDTO; channel: ChannelDTO };
+
+/**
+ * The Apps section (#394): every mini app in the workspace the server let us
+ * see — apps in public channels count whether or not we've joined them, which
+ * is the whole point (a Task Board in #factory is discoverable from anywhere).
+ *
+ * The server already applied the visibility rule, so all this does is attach
+ * each app to its host channel for the label. An app whose channel isn't in the
+ * local list is dropped rather than rendered channel-less: without the channel
+ * there is nothing to join and nowhere to open.
+ */
+export function appEntries(apps: ArtifactDTO[], channels: ChannelDTO[]): AppEntry[] {
+  const byId = new Map(channels.map((c) => [c.id, c]));
+  return apps.flatMap((artifact) => {
+    const channel = byId.get(artifact.channelId);
+    return channel ? [{ artifact, channel }] : [];
+  });
+}
 
 export type AgentEntry = { member: WorkspaceMemberDTO; channel?: ChannelDTO };
 
@@ -152,6 +184,7 @@ export default function Sidebar() {
   const workspaces = useWorkspaces();
   const channels = useChannels(sel.workspaceId);
   const artifacts = useArtifacts(sel.workspaceId);
+  const appArtifacts = useAppArtifacts(sel.workspaceId);
   const members = useMembers(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
@@ -172,6 +205,9 @@ export default function Sidebar() {
   const [width, setWidth] = useState(storedWidth);
   const [agentsCollapsed, setAgentsCollapsed] = useState(
     () => localStorage.getItem(AGENTS_COLLAPSED_KEY) === '1',
+  );
+  const [appsCollapsed, setAppsCollapsed] = useState(
+    () => localStorage.getItem(APPS_COLLAPSED_KEY) === '1',
   );
   const dragRef = useRef<{ x: number; w: number } | null>(null);
   const wsMenuRef = useRef<HTMLDivElement>(null);
@@ -196,6 +232,22 @@ export default function Sidebar() {
       document.removeEventListener('keydown', onKey);
     };
   }, [wsMenuOpen]);
+
+  // Cmd/Ctrl+[ and Cmd/Ctrl+] mirror the header's back/forward buttons (#386).
+  // Skipped while the caret is in a composer or any other text field, where
+  // the browser's own bracket handling belongs to the person typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if (e.key !== '[' && e.key !== ']') return;
+      if (isTextEntry(e.target)) return;
+      e.preventDefault();
+      if (e.key === '[') sel.goBack();
+      else sel.goForward();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [sel]);
 
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
@@ -270,6 +322,28 @@ export default function Sidebar() {
     else artifactsByChannel.set(a.channelId, [a]);
   }
   const browsable = all.filter((c) => !c.isMember && !c.isPrivate && c.kind === 'standard');
+  // Apps (#394): workspace-wide mini-app discovery. Server-ordered by name.
+  const apps = appEntries(appArtifacts.data ?? [], all);
+  /**
+   * One click = land in the app. A public channel we haven't joined is joined
+   * first, and we wait for the refetch before switching: the side panel builds
+   * its tabs from the *member* artifact list, so opening early would show a
+   * panel with nothing in it and immediately close itself again.
+   */
+  const openApp = async ({ artifact, channel }: AppEntry) => {
+    if (!channel.isMember) {
+      try {
+        await api('POST', `/v1/channels/${channel.id}/join`);
+      } catch {
+        return; // the channel went private/archived under us — leave the user put
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] }),
+        qc.invalidateQueries({ queryKey: ['artifacts', sel.workspaceId] }),
+      ]);
+    }
+    sel.openArtifactIn(channel.id, artifact.id);
+  };
   // Agents live in their own section between Channels and Direct messages
   // (#361) — every workspace agent, with or without an existing DM. The ones
   // that have a DM take it with them, so nobody is listed twice.
@@ -377,11 +451,15 @@ export default function Sidebar() {
             </button>
           </div>
         )}
-        <ActivityBell
-          active={sel.channelId === ACTIVITY_VIEW_ID}
-          unread={live.notificationUnread}
-          onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
-        />
+        <div className="flex shrink-0 items-center">
+          <NavButton dir="back" enabled={sel.canGoBack} onClick={() => sel.goBack()} />
+          <NavButton dir="forward" enabled={sel.canGoForward} onClick={() => sel.goForward()} />
+          <ActivityBell
+            active={sel.channelId === ACTIVITY_VIEW_ID}
+            unread={live.notificationUnread}
+            onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
+          />
+        </div>
       </div>
 
       <div
@@ -413,6 +491,32 @@ export default function Sidebar() {
             ))}
           </div>
         ))}
+
+        {/* Apps (#394): every mini app in the workspace, including ones in public
+            channels this user hasn't joined — clicking joins, then opens the app.
+            Collapsible, and absent entirely when there is nothing to list. */}
+        {apps.length > 0 && (
+          <>
+            <SectionHeader
+              label="Apps"
+              collapsed={appsCollapsed}
+              onToggle={() => {
+                const next = !appsCollapsed;
+                setAppsCollapsed(next);
+                localStorage.setItem(APPS_COLLAPSED_KEY, next ? '1' : '0');
+              }}
+            />
+            {!appsCollapsed &&
+              apps.map((entry) => (
+                <AppRow
+                  key={entry.artifact.id}
+                  entry={entry}
+                  channelLabel={channelLabel(entry.channel, displayNames, auth.user.id)}
+                  onOpen={() => void openApp(entry)}
+                />
+              ))}
+          </>
+        )}
 
         {/* Agents (#361): one row per workspace agent, above Direct messages.
             Collapsible, and hidden entirely in a workspace with no agents. */}
@@ -608,6 +712,61 @@ export default function Sidebar() {
   );
 }
 
+/** Is the keyboard event aimed at somewhere a person is typing? */
+function isTextEntry(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  return (
+    el.tagName === 'INPUT' ||
+    el.tagName === 'TEXTAREA' ||
+    el.tagName === 'SELECT' ||
+    el.isContentEditable
+  );
+}
+
+/**
+ * One of the workspace header's visit-history buttons (#386). Disabled — dimmed
+ * and non-interactive — at whichever end of the history it sits at, which on a
+ * fresh session is both of them.
+ */
+export function NavButton({
+  dir,
+  enabled,
+  onClick,
+}: {
+  dir: 'back' | 'forward';
+  enabled: boolean;
+  onClick: () => void;
+}) {
+  const label = dir === 'back' ? 'Back' : 'Forward';
+  return (
+    <button
+      data-testid={`nav-${dir}`}
+      title={label}
+      aria-label={label}
+      disabled={!enabled}
+      className={`shrink-0 rounded-lg px-1 py-1.5 leading-none ${
+        enabled ? 'text-white/75 hover:bg-white/10' : 'cursor-default text-white/25'
+      }`}
+      onClick={onClick}
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points={dir === 'back' ? '15 18 9 12 15 6' : '9 18 15 12 9 6'} />
+      </svg>
+    </button>
+  );
+}
+
 /**
  * The Activity feed's bell (#385) — fixed in the workspace header rather than
  * sitting at the top of the channel list, so it can never scroll out of view
@@ -694,6 +853,46 @@ function AdminRow({
 /** An artifact row (phase 13): nested under its channel; selectable opens the
  * side panel; hover ✕ DELETES the shared artifact (and its own file, if the
  * artifact owns it — server-side). */
+/** How an app row names its host channel: `#name` for a channel, the member
+ * names for a DM (an app can be pinned in one). */
+export function channelLabel(c: ChannelDTO, names: Record<string, string>, me: string): string {
+  return c.kind === 'standard' ? `#${c.name ?? ''}` : dmTitle(c, names, me);
+}
+
+/**
+ * An Apps-section row: the app's name over its host channel in muted text —
+ * two channels can host same-named apps, and for a channel you haven't joined
+ * the channel *is* the context. Not nested like an artifact row: this list is
+ * flat, and the channel is named rather than implied by indentation.
+ */
+function AppRow({
+  entry,
+  channelLabel: channelName,
+  onOpen,
+}: {
+  entry: AppEntry;
+  channelLabel: string;
+  onOpen: () => void;
+}) {
+  const sel = useSelection();
+  const { artifact, channel } = entry;
+  const active = sel.artifactId === artifact.id && sel.channelId === channel.id;
+  return (
+    <button
+      data-testid={`sidebar-app-${artifact.name}`}
+      title={`${artifact.name} — ${channelName}`}
+      className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[5px] text-left hover:bg-white/10"
+      onClick={onOpen}
+    >
+      <span className={active ? 'text-white' : 'text-white/60'}>🧩</span>
+      <span className="flex min-w-0 flex-col leading-tight">
+        <span className={`truncate ${active ? 'font-bold text-white' : 'text-white/82'}`}>{artifact.name}</span>
+        <span className="truncate text-[11px] text-white/45">{channelName}</span>
+      </span>
+    </button>
+  );
+}
+
 function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
   const sel = useSelection();
   const qc = useQueryClient();
@@ -707,7 +906,7 @@ function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={() => sel.selectArtifact(artifact.id)}
       >
-        <span className={active ? 'text-white' : 'text-white/60'}>{fileGlyph(artifact.file)}</span>
+        <span className={active ? 'text-white' : 'text-white/60'}>{artifactGlyph(artifact)}</span>
         <span className={`truncate ${active ? 'font-bold text-white' : 'text-white/82'}`}>{artifact.name}</span>
       </button>
       <button

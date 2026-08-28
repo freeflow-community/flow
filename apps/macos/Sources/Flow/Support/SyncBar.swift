@@ -7,32 +7,41 @@ import SwiftUI
 /// look and the timing are defined once here rather than twice in the views.
 /// The web client mirrors the same two numbers in `useSyncBar`.
 
+/// The two shipped timing numbers. (A caseless enum rather than statics on
+/// SyncIndicator only because generic types cannot hold stored statics.)
+enum SyncBarTiming {
+    /// Syncing must last this long before anything is drawn.
+    static let showDelay: Duration = .milliseconds(250)
+    /// Once drawn, the bar stays at least this long.
+    static let minimumVisible: Duration = .milliseconds(500)
+}
+
 /// Turns "is the app syncing right now" into "should a bar be on screen",
 /// applying a show-delay and a minimum visible duration.
 ///
 /// Both numbers exist for the same reason: a reconnect that resolves in 200 ms
 /// should draw nothing at all, and one that resolves in 300 ms should not flash
-/// a bar for 50 ms. Kept out of the view so it can be tested without one.
+/// a bar for 50 ms. Kept out of the view so it can be tested without one, and
+/// generic over the clock so tests drive a virtual one instead of racing real
+/// timers.
 @MainActor
-final class SyncIndicator: ObservableObject {
-    /// Syncing must last this long before anything is drawn.
-    static let showDelay: Duration = .milliseconds(250)
-    /// Once drawn, the bar stays at least this long.
-    static let minimumVisible: Duration = .milliseconds(500)
-
+final class SyncIndicator<C: Clock>: ObservableObject where C.Duration == Duration {
     @Published private(set) var visible = false
 
+    private let clock: C
     private let showDelay: Duration
     private let minimumVisible: Duration
     /// The one in-flight show-or-hide. Cancelled on every state change, so the
     /// latest input always wins.
     private var pending: Task<Void, Never>?
-    private var shownAt: ContinuousClock.Instant?
+    private var shownAt: C.Instant?
 
     init(
-        showDelay: Duration = SyncIndicator.showDelay,
-        minimumVisible: Duration = SyncIndicator.minimumVisible
+        clock: C,
+        showDelay: Duration = SyncBarTiming.showDelay,
+        minimumVisible: Duration = SyncBarTiming.minimumVisible
     ) {
+        self.clock = clock
         self.showDelay = showDelay
         self.minimumVisible = minimumVisible
     }
@@ -46,20 +55,21 @@ final class SyncIndicator: ObservableObject {
             guard !visible else { return }  // already up — and a hide just got cancelled
             pending = Task { [weak self] in
                 guard let self else { return }
-                try? await Task.sleep(for: self.showDelay)
+                try? await self.clock.sleep(for: self.showDelay)
                 guard !Task.isCancelled else { return }
                 self.visible = true
-                self.shownAt = ContinuousClock.now
+                self.shownAt = self.clock.now
             }
         } else {
             guard visible else { return }  // never made it on screen — nothing to hide
-            let elapsed = shownAt.map { ContinuousClock.now - $0 } ?? .zero
+            let elapsed = shownAt.map { $0.duration(to: clock.now) } ?? .zero
             let remaining = minimumVisible - elapsed
             guard remaining > .zero else { return hide() }
             pending = Task { [weak self] in
-                try? await Task.sleep(for: remaining)
+                guard let self else { return }
+                try? await self.clock.sleep(for: remaining)
                 guard !Task.isCancelled else { return }
-                self?.hide()
+                self.hide()
             }
         }
     }
@@ -70,11 +80,15 @@ final class SyncIndicator: ObservableObject {
     }
 }
 
+extension SyncIndicator where C == ContinuousClock {
+    convenience init() { self.init(clock: ContinuousClock()) }
+}
+
 /// A 2pt indeterminate bar, drawn only while `syncing` holds long enough to be
 /// worth showing. Sits under a channel header; occupies no height when idle.
 struct SyncBar: View {
     let syncing: Bool
-    @StateObject private var indicator = SyncIndicator()
+    @StateObject private var indicator = SyncIndicator<ContinuousClock>()
 
     var body: some View {
         Group {

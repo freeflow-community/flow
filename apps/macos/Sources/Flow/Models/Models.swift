@@ -583,9 +583,10 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
 
     var isLink: Bool { kind == "link" }
 
-    /// Sidebar/tab glyph: the backing file's kind glyph, or a link glyph for
-    /// link artifacts (which have no file).
-    var glyph: String { file?.artifactGlyph ?? "🔗" }
+    /// Sidebar/tab glyph: a puzzle piece for a mini app (#394), otherwise the
+    /// backing file's kind glyph, or a link glyph for plain link artifacts
+    /// (which have no file).
+    var glyph: String { isApp == true ? "🧩" : (file?.artifactGlyph ?? "🔗") }
 }
 
 /// Workspace membership (local cache of GET /workspaces/:id/members).

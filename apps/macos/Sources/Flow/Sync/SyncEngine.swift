@@ -301,6 +301,7 @@ actor SyncEngine {
             await refreshChannels(workspaceId: ws)
             await refreshMembers(workspaceId: ws)
             await refreshArtifacts(workspaceId: ws)
+            await refreshAppArtifacts(workspaceId: ws)
         }
         for ch in await appState?.openChannelIds ?? [] {
             await backfillChannel(ch)
@@ -373,6 +374,7 @@ actor SyncEngine {
         await refreshChannels(workspaceId: id)
         await refreshMembers(workspaceId: id)
         await refreshArtifacts(workspaceId: id)
+        await refreshAppArtifacts(workspaceId: id)
         // Reconcile the rail badges (#345) against the server at the same beat
         // the channel counts are refreshed — the running totals are kept by
         // local arithmetic between refreshes, and this is where they settle up.
@@ -1214,6 +1216,18 @@ actor SyncEngine {
         await appState?.setArtifacts(resp.artifacts, workspaceId: workspaceId)
     }
 
+    /// Fetches every mini app this user may see in a workspace (#394) — apps in
+    /// public channels whether or not they've joined, plus apps in their private
+    /// channels — and publishes them for the sidebar's Apps section. A silent
+    /// failure leaves the previous list in place, which is also what a server
+    /// predating the endpoint gets: no section rather than an error.
+    func refreshAppArtifacts(workspaceId: String) async {
+        guard let resp: ArtifactsResponse = try? await api.get(
+            "/v1/workspaces/\(workspaceId)/app-artifacts"
+        ) else { return }
+        await appState?.setAppArtifacts(resp.artifacts, workspaceId: workspaceId)
+    }
+
     /// Pins a file as a shared artifact in a channel (idempotent per
     /// channel+file for pins, server-enforced) and refreshes the sidebar list.
     func createArtifact(channelId: String, fileId: String, name: String? = nil) async throws -> Artifact {
@@ -1930,6 +1944,7 @@ actor SyncEngine {
             }
             if await appState?.isWorkspaceOpen(event.workspaceId) == true {
                 await refreshArtifacts(workspaceId: event.workspaceId)
+                await refreshAppArtifacts(workspaceId: event.workspaceId)
                 // Auto-open an agent-created artifact for whoever is viewing its
                 // channel — the user who asked the agent to make it. Gated on
                 // ownsFile (agent-generated) so a human pin never steals focus.

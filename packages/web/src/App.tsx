@@ -4,6 +4,17 @@ import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/sha
 import { api, blobUrl, getToken, setToken } from './lib/api';
 import { clearJoinToken, parseJoinPath, readJoinToken, stashJoinToken } from './lib/joinLink';
 import { createThreadMemory } from './lib/threadMemory';
+import {
+  backTarget,
+  canGoBack,
+  canGoForward,
+  emptyNavHistory,
+  forgetNav,
+  forwardTarget,
+  pushNav,
+  stepNav,
+  type NavHistory,
+} from './lib/navHistory';
 import { ADMIN_VIEW_ID, AuthContext, SelectionContext } from './state';
 import AuthScreen from './components/AuthScreen';
 import JoinScreen from './components/JoinScreen';
@@ -75,6 +86,9 @@ export default function App() {
   // (issue #89). In state for a stable identity across renders only — it's
   // mutable and never renders anything by itself; `threadRootId` still does.
   const [threadMemory] = useState(createThreadMemory);
+  // Browser-style visit history over the main pane (issue #386) — what the
+  // header's back/forward buttons walk. Per-session and per-workspace.
+  const [nav, setNav] = useState<NavHistory>(emptyNavHistory);
   // Admin panel pinned into the sidebar (per-device, admins only at render).
   const [adminPanelOpen, setAdminPanelOpen] = useState<boolean>(
     () => localStorage.getItem(ADMIN_PANEL_KEY) === '1',
@@ -168,10 +182,36 @@ export default function App() {
     setArtifactId(null);
     setThreadRootId(null);
     threadMemory.clear();
+    setNav(emptyNavHistory);
     setAdminPanelOpen(false);
     localStorage.removeItem(ADMIN_PANEL_KEY);
     qc.clear();
   }, [qc, threadMemory]);
+
+  // Switch the main pane to a view, with all the usual channel-switch
+  // side-effects (park/restore the open thread, close the side panel, drop the
+  // edit and scroll targets) but WITHOUT recording a visit. `selectChannel`
+  // records; back/forward replay, so they must not.
+  const showChannel = (id: string | null) => {
+    // Deselecting entirely only happens when the active channel goes away
+    // (left or archived) — there's nothing to come back to, so drop its thread
+    // instead of parking it.
+    threadMemory.remember(channelId, id === null ? null : threadRootId);
+    setChannelId(id);
+    setArtifactId(null);
+    // Files are per-channel: the tab doesn't follow you to the next one.
+    setFilesOpen(false);
+    setThreadRootId(threadMemory.recall(id));
+    setEditingMessageId(null);
+    setFocusMessageId(null);
+  };
+
+  const step = (delta: -1 | 1) => {
+    const target = delta === -1 ? backTarget(nav) : forwardTarget(nav);
+    if (!target) return;
+    setNav((h) => stepNav(h, delta));
+    showChannel(target);
+  };
 
   if (booting) {
     return <div className="flex h-full items-center justify-center text-faint">Loading…</div>;
@@ -230,11 +270,17 @@ export default function App() {
           editingMessageId,
           focusMessageId,
           adminPanelOpen,
+          canGoBack: canGoBack(nav),
+          canGoForward: canGoForward(nav),
+          goBack: () => step(-1),
+          goForward: () => step(1),
           selectWorkspace: (id) => {
             setWorkspaceId(id);
             if (id) localStorage.setItem(ACTIVE_WS_KEY, id);
             else localStorage.removeItem(ACTIVE_WS_KEY);
             threadMemory.clear();
+            // The other workspace's channels aren't reachable from here.
+            setNav(emptyNavHistory);
             setChannelId(null);
             setArtifactId(null);
             setFilesOpen(false);
@@ -246,18 +292,11 @@ export default function App() {
           // channel we're leaving remembers it, and the one we're entering gets
           // whatever it had open (issue #89).
           selectChannel: (id) => {
-            // Deselecting entirely only happens when the active channel goes
-            // away (left or archived) — there's nothing to come back to, so
-            // drop its thread instead of parking it.
-            if (id === null) threadMemory.remember(channelId, null);
-            else threadMemory.remember(channelId, threadRootId);
-            setChannelId(id);
-            setArtifactId(null);
-            // Files are per-channel: the tab doesn't follow you to the next one.
-            setFilesOpen(false);
-            setThreadRootId(threadMemory.recall(id));
-            setEditingMessageId(null);
-            setFocusMessageId(null);
+            showChannel(id);
+            // A deselection means the channel is gone (left or archived), so it
+            // leaves the history too rather than becoming a dead back target.
+            if (id) setNav((h) => pushNav(h, id));
+            else if (channelId) setNav((h) => forgetNav(h, channelId));
           },
           // Open/activate an artifact tab in the side panel. The thread tab (if
           // any) stays open — they're tabs in the same panel (phase 13).
@@ -276,8 +315,24 @@ export default function App() {
                 threadMemory.remember(channelId, threadRootId);
                 setChannelId(a.channelId);
                 setThreadRootId(threadMemory.recall(a.channelId));
+                setNav((h) => pushNav(h, a.channelId));
               }
             }
+          },
+          // Channel + artifact in one action (#394). Same park-and-restore as an
+          // ordinary channel switch; the artifact id is given rather than looked
+          // up, because an app opened from the Apps section can live in a channel
+          // that only just became visible to this client.
+          openArtifactIn: (chanId, id) => {
+            if (chanId !== channelId) {
+              threadMemory.remember(channelId, threadRootId);
+              setChannelId(chanId);
+              setThreadRootId(threadMemory.recall(chanId));
+            }
+            setArtifactId(id);
+            setFilesOpen(false);
+            setEditingMessageId(null);
+            setFocusMessageId(null);
           },
           // Open a thread and make its tab the visible one (artifacts stay as tabs).
           openThread: (id) => {
@@ -317,6 +372,7 @@ export default function App() {
             threadMemory.remember(toChannelId, toThreadRootId ?? null);
             setEditingMessageId(null);
             setFocusMessageId(messageId);
+            setNav((h) => pushNav(h, toChannelId));
           },
           clearFocusMessage: () => setFocusMessageId(null),
           openAdminPanel: () => {
@@ -326,12 +382,15 @@ export default function App() {
             setChannelId(ADMIN_VIEW_ID);
             setThreadRootId(null);
             setEditingMessageId(null);
+            setNav((h) => pushNav(h, ADMIN_VIEW_ID));
           },
           closeAdminPanel: () => {
             setAdminPanelOpen(false);
             localStorage.removeItem(ADMIN_PANEL_KEY);
             // If it's the active view, fall back to a channel (effect picks #general).
             setChannelId((cur) => (cur === ADMIN_VIEW_ID ? null : cur));
+            // Unpinned: back must not walk into a panel that is no longer there.
+            setNav((h) => forgetNav(h, ADMIN_VIEW_ID));
           },
         }}
       >

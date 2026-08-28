@@ -48,6 +48,17 @@ export interface Selection {
   focusMessageId: string | null;
   /** Admin panel pinned into the channel list (admins only; per-device). */
   adminPanelOpen: boolean;
+  /** Is there a previous / next view in this session's visit history (#386)?
+   * Drives the enabled state of the workspace header's back and forward
+   * buttons. */
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** Return to the previously viewed channel/view; no-op at the start of the
+   * history. Behaves exactly like clicking that channel, minus recording a
+   * new visit. */
+  goBack(): void;
+  /** Re-advance after a `goBack`; no-op with an empty forward branch. */
+  goForward(): void;
   selectWorkspace(id: string | null): void;
   /** Switch channels. The channel being left remembers its open thread and the
    * one being entered reopens whatever it had, so a thread survives a detour
@@ -57,6 +68,11 @@ export interface Selection {
   /** Open/activate an artifact tab (null just clears the active artifact — e.g.
    * when the shown artifact is deleted; the thread tab, if any, stays). */
   selectArtifact(id: string | null): void;
+  /** Open a channel *and* an artifact tab in it in one action (#394): what the
+   * sidebar's Apps section does, where the app's channel is often not the
+   * current one and may have only just been joined — so the artifact cannot be
+   * looked up in the member-artifact cache the way `selectArtifact` does. */
+  openArtifactIn(channelId: string, artifactId: string): void;
   /** Open (or close) the channel Files tab in the side panel. */
   openFiles(open: boolean): void;
   openThread(id: string | null): void;

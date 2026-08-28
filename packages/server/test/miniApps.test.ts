@@ -268,3 +268,69 @@ describe('rotating the secret', () => {
     await expect(ar.rotateArtifactAppSecret(plain.id, aliceId)).rejects.toMatchObject({ code: 'not_an_app' });
   });
 });
+
+// #394: the workspace-wide app listing behind the sidebar's "Apps" section.
+// Wider than listArtifacts on purpose — a public channel's app is public, so it
+// is discoverable before you join. Private channels stay member-only.
+describe('listAppArtifacts (workspace-wide app discovery)', () => {
+  let privateChannelId = '';
+  let publicApp = '';
+  let privateApp = '';
+  let archivedApp = '';
+  let plainLink = '';
+
+  beforeAll(async () => {
+    // #apps is public and loner is deliberately NOT a member of it.
+    publicApp = (await newApp(aliceId, 'https://public-app.example.com/')).id;
+    await ar.renameArtifact(publicApp, aliceId, 'Task Board');
+
+    const priv = await ch.createChannel(workspaceId, aliceId, `secrets-${randomUUID().slice(0, 8)}`, undefined, true);
+    privateChannelId = priv.id;
+    await ch.addMember(privateChannelId, aliceId, bobId);
+    const pa = await ar.createArtifact(aliceId, privateChannelId, { url: 'https://private-app.example.com/', app: true });
+    privateApp = pa.id;
+    await ar.renameArtifact(privateApp, aliceId, 'Secret Board');
+
+    const archived = await ch.createChannel(workspaceId, aliceId, `attic-${randomUUID().slice(0, 8)}`);
+    const aa = await ar.createArtifact(aliceId, archived.id, { url: 'https://archived-app.example.com/', app: true });
+    archivedApp = aa.id;
+    await ch.archiveChannel(archived.id, aliceId);
+
+    plainLink = (await ar.createArtifact(aliceId, channelId, { url: 'https://not-an-app.example.com/' })).id;
+  });
+
+  it('lists a public channel’s app for someone who has not joined it', async () => {
+    const ids = (await ar.listAppArtifacts(workspaceId, lonerId)).map((a) => a.id);
+    expect(ids).toContain(publicApp);
+  });
+
+  it('hides a private channel’s app from a non-member and shows it to a member', async () => {
+    expect((await ar.listAppArtifacts(workspaceId, lonerId)).map((a) => a.id)).not.toContain(privateApp);
+    expect((await ar.listAppArtifacts(workspaceId, bobId)).map((a) => a.id)).toContain(privateApp);
+  });
+
+  it('lists only apps, and never one in an archived channel', async () => {
+    const list = await ar.listAppArtifacts(workspaceId, aliceId);
+    expect(list.every((a) => a.isApp)).toBe(true);
+    const ids = list.map((a) => a.id);
+    expect(ids).not.toContain(plainLink);
+    expect(ids).not.toContain(archivedApp);
+  });
+
+  it('never leaks an app secret', async () => {
+    const list = await ar.listAppArtifacts(workspaceId, aliceId);
+    expect(JSON.stringify(list)).not.toContain('appSecret');
+  });
+
+  it('orders by app name so the section is stable across reloads', async () => {
+    const names = (await ar.listAppArtifacts(workspaceId, aliceId)).map((a) => a.name);
+    const sorted = [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    expect(names).toEqual(sorted);
+    expect(names).toContain('Task Board');
+  });
+
+  it('rejects a caller who is not in the workspace', async () => {
+    const outsiderId = await registerHuman('outsider@example.test', 'Outsider');
+    await expect(ar.listAppArtifacts(workspaceId, outsiderId)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});

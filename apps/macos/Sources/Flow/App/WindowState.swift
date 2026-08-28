@@ -24,6 +24,10 @@ final class WindowState: ObservableObject {
     /// Jump-to-message target (phase 12): a message id the channel/thread view
     /// should scroll to and flash after navigation. Cleared once reached.
     @Published var focusMessageId: String?
+    /// This session's visit history over the main pane (issue #386) — what the
+    /// header's back/forward buttons walk. Per-window, like the selection it
+    /// records, and reset on workspace switch and sign-out.
+    @Published private(set) var nav = NavHistory()
 
     /// channelId -> the thread that was open there (issue #89). The open thread
     /// lives in the single `openThreadRootId` slot, so switching channels would
@@ -51,6 +55,7 @@ final class WindowState: ObservableObject {
         selectedArtifactId = nil
         filesOpen = false
         showActivity = false
+        nav = NavHistory() // the other workspace's channels aren't reachable from here
         // Active workspace survives relaunch (phase 3.5 fixes). Shared across
         // windows on purpose: the *last* pick is what a fresh window starts on.
         if let id {
@@ -96,14 +101,54 @@ final class WindowState: ObservableObject {
     }
 
     func selectChannel(_ id: String?) {
-        // Selecting a channel always closes an open artifact panel or the
-        // activity feed — even when it's the same channel that's behind them.
-        selectedArtifactId = nil
-        // Files are per-channel: the tab doesn't follow you to the next one.
-        filesOpen = false
-        showActivity = false
-        guard id != selectedChannelId else { return }
-        switchChannel(to: id)
+        guard let id else {
+            // Deselection only happens when the channel goes away — nothing to
+            // record, and `channelBecameUnavailable` clears its history entries.
+            selectedArtifactId = nil
+            filesOpen = false
+            showActivity = false
+            if selectedChannelId != nil { switchChannel(to: nil) }
+            return
+        }
+        // Picking a channel is a visit; back/forward replay one, so they go
+        // through `show(_:)` directly and record nothing (issue #386).
+        nav.record(.channel(id))
+        show(.channel(id))
+    }
+
+    /// Put a view on the main pane, without recording a visit.
+    private func show(_ view: NavView) {
+        switch view {
+        case .activity:
+            selectedArtifactId = nil
+            filesOpen = false
+            showActivity = true
+        case .channel(let id):
+            // Selecting a channel always closes an open artifact panel or the
+            // activity feed — even when it's the same channel that's behind them.
+            selectedArtifactId = nil
+            // Files are per-channel: the tab doesn't follow you to the next one.
+            filesOpen = false
+            showActivity = false
+            guard id != selectedChannelId else { return }
+            switchChannel(to: id)
+        }
+    }
+
+    // MARK: - Visit history (issue #386)
+
+    var canGoBack: Bool { nav.canGoBack }
+    var canGoForward: Bool { nav.canGoForward }
+
+    /// Return to the previously viewed channel or feed.
+    func goBack() { step(-1) }
+    /// Re-advance after a `goBack`.
+    func goForward() { step(1) }
+
+    private func step(_ delta: Int) {
+        guard let target = nav.target(delta) else { return }
+        nav.step(delta)
+        show(target)
     }
 
     /// Park the leaving channel's open thread, select `id`, and restore whatever
@@ -142,6 +187,7 @@ final class WindowState: ObservableObject {
 
     func channelBecameUnavailable(_ channelId: String) {
         openThreadByChannel.removeValue(forKey: channelId) // nothing to come back to
+        nav.forget(.channel(channelId)) // and back must not walk into it either
         if Self.lastChannelId == channelId { Self.lastChannelId = nil } // don't reopen it next launch
         if selectedChannelId == channelId {
             selectedChannelId = nil
@@ -225,6 +271,7 @@ final class WindowState: ObservableObject {
                 // Same park-and-restore as an ordinary channel switch, or the
                 // Thread tab would keep showing the *previous* channel's thread
                 // over this channel's conversation (issue #89).
+                nav.record(.channel(a.channelId))
                 switchChannel(to: a.channelId)
             }
         }
@@ -259,14 +306,30 @@ final class WindowState: ObservableObject {
         artifacts().filter { $0.channelId == channelId }
     }
 
+    /// This window's workspace's mini apps (#394), in server order.
+    func appArtifacts() -> [Artifact] {
+        app.appArtifacts(workspaceId: selectedWorkspaceId)
+    }
+
+    /// Open a channel *and* an artifact tab in it in one action (#394) — what
+    /// the Apps section does. `selectArtifact` can't serve here: it finds the
+    /// artifact's channel by looking it up in the member-artifact list, which by
+    /// definition does not hold an app from a channel this user has only just
+    /// joined (or is about to).
+    func openArtifact(_ artifactId: String, inChannel channelId: String) {
+        showActivity = false
+        filesOpen = false
+        if channelId != selectedChannelId { switchChannel(to: channelId) }
+        selectedArtifactId = artifactId
+    }
+
     // MARK: - Activity
 
     /// Show the Activity feed (phase 12). Like opening an artifact it covers the
     /// content pane while the channel selection stays put behind it.
     func showActivityFeed() {
-        selectedArtifactId = nil
-        filesOpen = false
-        showActivity = true
+        nav.record(.activity)
+        show(.activity)
     }
 
     /// Activity-feed navigation: jump to a notification's channel (and thread),
@@ -309,5 +372,6 @@ final class WindowState: ObservableObject {
         filesOpen = false
         showActivity = false
         focusMessageId = nil
+        nav = NavHistory()
     }
 }

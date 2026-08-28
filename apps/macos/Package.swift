@@ -14,6 +14,10 @@ let package = Package(
         // XCFramework, same embedding problem as Sparkle — tools/make-app.sh
         // extends the same treatment to it.
         .package(url: "https://github.com/livekit/client-sdk-swift.git", from: "2.0.0"),
+        // Test-only: TestClock, so timing state machines (SyncIndicator) are
+        // tested against a virtual clock instead of racing real timers on a
+        // loaded CI runner.
+        .package(url: "https://github.com/pointfreeco/swift-clocks", from: "1.0.0"),
     ],
     targets: [
         .executableTarget(
@@ -33,7 +37,10 @@ let package = Package(
         ),
         .testTarget(
             name: "FlowTests",
-            dependencies: ["Flow"]
+            dependencies: [
+                "Flow",
+                .product(name: "Clocks", package: "swift-clocks"),
+            ]
         ),
     ]
 )
