@@ -169,6 +169,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'set_channel_emoji',
+    description:
+      "Set the small emoji shown after a channel's name in the sidebar — a persistent status glyph (🚧 building, " +
+      '✅ done, 🔥 incident) that stays until someone changes or clears it. This is decoration, not activity: ' +
+      'it is NOT the temporary spinner set_channel_indicator shows while you work, and it does not lapse on its own. ' +
+      'Pass an empty emoji (or omit it) to clear. You must be a member of the channel.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        emoji: {
+          type: 'string',
+          description: 'One emoji, e.g. "🔥". Empty string clears it. Anything but a single emoji is rejected.',
+        },
+        channelId: { type: 'string', description: 'Channel id (default: current conversation).' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'leave_channel',
     description: 'Leave a channel by id.',
     inputSchema: {
@@ -504,6 +523,13 @@ export async function runMcpServer(): Promise<void> {
         // than the per-turn one the reporter keeps alive.
         await api.setChannelIndicator(target, state, MANUAL_INDICATOR_TTL_SECONDS);
         return toolText(state === 'busy' ? 'channel marked busy' : 'channel indicator cleared');
+      }
+      case 'set_channel_emoji': {
+        const target = args.channelId ? String(args.channelId) : channelId;
+        const emoji = typeof args.emoji === 'string' ? args.emoji.trim() : '';
+        // Empty means clear, so it goes over the wire as null rather than ''.
+        const res = await api.setChannelEmoji(target, emoji || null);
+        return toolText(res.emoji ? `channel emoji set to ${res.emoji}` : 'channel emoji cleared');
       }
       case 'create_channel': {
         const name = String(args.name ?? '').trim();

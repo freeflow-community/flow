@@ -219,6 +219,10 @@ export const channels = pgTable(
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     // Sub-channels (#118) — one level deep, enforced in the service.
     parentId: uuid('parent_id').references((): AnyPgColumn => channels.id, { onDelete: 'set null' }),
+    // Channel emoji (#396) — one persistent glyph drawn after the name in the
+    // sidebar. Null = none. Unlike the activity indicator it shares that slot
+    // with, this is a column: it outlives the process that set it.
+    emoji: text('emoji'),
   },
   (t) => [
     uniqueIndex().on(t.workspaceId, t.name),

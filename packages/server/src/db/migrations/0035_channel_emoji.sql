@@ -1,0 +1,12 @@
+-- Agent-settable channel emoji (#396): a small persistent glyph clients draw
+-- after the channel's name in the sidebar (🚧 building, ✅ done, 🔥 incident).
+--
+-- A column, unlike the activity indicator (#137) it shares that slot with: the
+-- spinner is a claim about right now and lives in memory with a TTL, while this
+-- is a decoration someone set on purpose and must survive a restart until
+-- someone changes or clears it. NULL means no emoji.
+--
+-- Validation (one RGI emoji grapheme) belongs to the write path, not a CHECK:
+-- the Unicode emoji set moves with the runtime, and a constraint frozen at
+-- migration time would start rejecting rows the client can render.
+ALTER TABLE channels ADD COLUMN emoji text;

@@ -251,6 +251,38 @@ export const SetChannelIndicatorBody = z.object({
 });
 export type SetChannelIndicatorBody = z.infer<typeof SetChannelIndicatorBody>;
 
+/**
+ * One emoji, as a channel's decoration is allowed to be (#396).
+ *
+ * `\p{RGI_Emoji}` is the Unicode "recommended for general interchange" set, so
+ * ZWJ sequences (👩🏽‍🚀) and skin-tone modifiers count as the single grapheme they
+ * render as, while two emoji, an emoji plus text, or plain text do not. Asking
+ * the runtime rather than hand-rolling a code-point range means the rule tracks
+ * whatever Unicode version is actually rendering the glyph.
+ */
+const SINGLE_EMOJI_RE = /^\p{RGI_Emoji}$/v;
+
+export function isSingleEmoji(value: string): boolean {
+  return SINGLE_EMOJI_RE.test(value);
+}
+
+/**
+ * PUT /v1/channels/:id/emoji (#396) — the persistent glyph after a channel's
+ * name. Null, absent or empty all mean "clear it"; anything else must be one
+ * emoji. Note this is not the transient activity spinner (SetChannelIndicatorBody).
+ */
+export const SetChannelEmojiBody = z.object({
+  emoji: z
+    .string()
+    .max(64) // a ZWJ sequence is long; arbitrary text is not welcome at any length
+    .nullable()
+    .optional()
+    .refine((v) => v === undefined || v === null || v === '' || isSingleEmoji(v), {
+      message: 'must be a single emoji (or empty to clear)',
+    }),
+});
+export type SetChannelEmojiBody = z.infer<typeof SetChannelEmojiBody>;
+
 export const SetNotifyLevelBody = z.object({
   level: z.union([z.literal(0), z.literal(1), z.literal(2)]), // 0=mute 1=mentions 2=all
 });

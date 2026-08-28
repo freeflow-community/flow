@@ -267,6 +267,12 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The **channel emoji** (#396) draws on web and macOS and not on iOS, which
+  renders nothing in that slot today: it has no channel indicator either, so
+  adding the emoji alone would build the slot for half its tenants. The server
+  and the `channel.emoji` event are client-agnostic and the field already rides
+  the channel payload, so iOS picks both up together whenever that slot is
+  built. Not a gap to close on its own.
 - The **hover ⋯ menu on sidebar rows** (#399) ships on web and macOS and not on
   iOS, for the same reason as the topic tooltip below: a touch client has no
   hover to reveal it on. iOS reaches channel options from the channel screen

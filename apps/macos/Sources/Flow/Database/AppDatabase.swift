@@ -247,6 +247,15 @@ struct AppDatabase: Sendable {
                 t.add(column: "unreadCount", .integer)
             }
         }
+        // Channel emoji (#396): the persistent glyph after a channel's name.
+        // Cached like any other server column — unlike the activity spinner it
+        // shares that sidebar slot with, which is deliberately never persisted.
+        // Nil on a cached row until the next channel list or event arrives.
+        migrator.registerMigration("v19") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "emoji", .text)
+            }
+        }
         try migrator.migrate(writer)
     }
 

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ChannelDTO, HuddleParticipantDTO } from '@flow/shared';
-import { applyHuddle, applyIndicator } from './channelCache';
+import { applyChannelEmoji, applyHuddle, applyIndicator } from './channelCache';
 
 const chan = (
   id: string,
   indicator?: ChannelDTO['indicator'],
   huddleParticipants?: HuddleParticipantDTO[],
+  emoji?: string | null,
 ): ChannelDTO => ({
   id,
   workspaceId: 'w1',
@@ -25,6 +26,7 @@ const chan = (
   parentId: null,
   ...(indicator !== undefined ? { indicator } : {}),
   ...(huddleParticipants !== undefined ? { huddleParticipants } : {}),
+  ...(emoji !== undefined ? { emoji } : {}),
 });
 
 describe('applyIndicator', () => {
@@ -93,5 +95,36 @@ describe('applyHuddle', () => {
     const original = chan('a');
     applyHuddle([original], { channelId: 'a', participants: [alice] });
     expect(original.huddleParticipants ?? []).toEqual([]);
+  });
+});
+
+describe('applyChannelEmoji', () => {
+  it('sets the emoji on the named channel only', () => {
+    const out = applyChannelEmoji([chan('a'), chan('b')], { channelId: 'a', emoji: '🔥' });
+    expect(out.map((c) => c.emoji ?? null)).toEqual(['🔥', null]);
+  });
+
+  it('replaces one emoji with another, and clears on null', () => {
+    const set = applyChannelEmoji([chan('a', undefined, undefined, '🚧')], { channelId: 'a', emoji: '✅' });
+    expect(set[0]!.emoji).toBe('✅');
+    expect(applyChannelEmoji(set, { channelId: 'a', emoji: null })[0]!.emoji).toBeNull();
+  });
+
+  it('keeps the same array when the channel is unknown', () => {
+    const list = [chan('a')];
+    expect(applyChannelEmoji(list, { channelId: 'gone', emoji: '🔥' })).toBe(list);
+  });
+
+  it('keeps the same array when the emoji already matches', () => {
+    const list = [chan('a', undefined, undefined, '🔥')];
+    expect(applyChannelEmoji(list, { channelId: 'a', emoji: '🔥' })).toBe(list);
+    const none = [chan('a')];
+    expect(applyChannelEmoji(none, { channelId: 'a', emoji: null })).toBe(none);
+  });
+
+  it('does not mutate the channel it replaces', () => {
+    const original = chan('a');
+    applyChannelEmoji([original], { channelId: 'a', emoji: '🔥' });
+    expect(original.emoji ?? null).toBeNull();
   });
 });
