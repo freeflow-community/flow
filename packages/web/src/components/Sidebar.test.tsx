@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
+import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import {
   ActivityBell,
   ActivitySpinner,
+  appEntries,
+  channelLabel,
   NavButton,
   nearestScrollDelta,
   nestChannels,
@@ -253,5 +255,56 @@ describe('NavButton', () => {
     const html = renderToStaticMarkup(<NavButton dir="forward" enabled onClick={() => {}} />);
     expect(html).not.toContain('disabled');
     expect(html).toContain('hover:bg-white/10');
+  });
+});
+
+// Apps section (#394): the sidebar attaches each app the server returned to its
+// host channel, which is where the row's muted secondary label comes from.
+const app = (id: string, name: string, channelId: string): ArtifactDTO => ({
+  id,
+  workspaceId: 'w1',
+  channelId,
+  kind: 'link',
+  fileId: null,
+  url: 'https://app.example.com/',
+  name,
+  ownsFile: false,
+  isApp: true,
+  createdAt: '2026-08-27T00:00:00Z',
+  updatedAt: '2026-08-27T00:00:00Z',
+  file: null,
+});
+
+describe('appEntries', () => {
+  it('pairs each app with its host channel, keeping the server order', () => {
+    const channels = [chan('factory'), chan('general')];
+    const entries = appEntries([app('a1', 'Task Board', 'factory'), app('a2', 'Zoo', 'general')], channels);
+    expect(entries.map((e) => [e.artifact.name, e.channel.id])).toEqual([
+      ['Task Board', 'factory'],
+      ['Zoo', 'general'],
+    ]);
+  });
+
+  it('lists an app from a public channel this user has not joined', () => {
+    // The whole point of the section: #factory is public and unjoined, and its
+    // Task Board still shows up (clicking it joins).
+    const unjoined = { ...chan('factory'), isMember: false };
+    const entries = appEntries([app('a1', 'Task Board', 'factory')], [unjoined]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.channel.isMember).toBe(false);
+  });
+
+  it('drops an app whose channel is not in the local list', () => {
+    // No channel means nothing to join and nowhere to open — a channel-less row
+    // would be a dead end, so it is left out rather than rendered.
+    expect(appEntries([app('a1', 'Ghost', 'gone')], [chan('general')])).toEqual([]);
+  });
+});
+
+describe('channelLabel', () => {
+  it('names a channel with a hash and a DM by its members', () => {
+    expect(channelLabel(chan('factory'), {}, 'me')).toBe('#factory');
+    const dm: ChannelDTO = { ...chan('d1'), kind: 'dm', name: null, memberIds: ['me', 'u2'] };
+    expect(channelLabel(dm, { u2: 'Prism' }, 'me')).toBe('Prism');
   });
 });

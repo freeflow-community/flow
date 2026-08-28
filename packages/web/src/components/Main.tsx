@@ -274,6 +274,7 @@ export default function Main() {
           qc.removeQueries({ queryKey: ['channels', event.workspaceId] });
           qc.removeQueries({ queryKey: ['members', event.workspaceId] });
           qc.removeQueries({ queryKey: ['artifacts', event.workspaceId] });
+          qc.removeQueries({ queryKey: ['app-artifacts', event.workspaceId] });
           void qc.invalidateQueries({ queryKey: ['workspaces'] });
           break;
         }
@@ -314,6 +315,8 @@ export default function Main() {
         // per-channel shared artifacts (phase 13): keep the sidebar list fresh;
         // a deletion of the open artifact closes the side panel
         void qc.invalidateQueries({ queryKey: ['artifacts', event.workspaceId] });
+        // …and the workspace-wide app list behind the sidebar's Apps section (#394).
+        void qc.invalidateQueries({ queryKey: ['app-artifacts', event.workspaceId] });
         const a = event.data as ArtifactDTO;
         if (event.type === 'artifact.deleted' && cur.artifactId === a.id) cur.selectArtifact(null);
         // Co-browsing: an updated link artifact's url must reach every viewer

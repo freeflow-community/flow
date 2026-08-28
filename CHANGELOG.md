@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Apps section in the left nav** (#394) landed on web and macOS only; iOS was
+  explicitly out of scope for the issue. The server query
+  (`GET /v1/workspaces/:id/app-artifacts`) is client-agnostic and complete, so
+  closing the gap is an iOS sidebar section over it plus the join-then-open tap
+  — the same shape as `AppsSection` on macOS.
 - Built-in **help docs** (#383) ship on web and macOS (#384); **iOS has no help
   viewer**. The content and the API are client-agnostic (`docs/help/*.md` behind
   `GET /v1/help/topics` and `/v1/help/pages/:slug`), so closing the gap is one

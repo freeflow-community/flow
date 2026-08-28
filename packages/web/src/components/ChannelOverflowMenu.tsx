@@ -6,7 +6,7 @@
 // to the same things, and the only one on iOS.
 import { useEffect, useRef } from 'react';
 import type { ArtifactDTO } from '@flow/shared';
-import { fileGlyph } from '../lib/fileKind';
+import { artifactGlyph } from '../lib/fileKind';
 
 export default function ChannelOverflowMenu({
   artifacts,
@@ -97,7 +97,7 @@ export default function ChannelOverflowMenu({
             className={item}
             onClick={() => { onClose(); onOpenArtifact(a.id); }}
           >
-            <span aria-hidden>{fileGlyph(a.file)}</span>
+            <span aria-hidden>{artifactGlyph(a)}</span>
             <span className="truncate">{a.name}</span>
           </button>
         ))

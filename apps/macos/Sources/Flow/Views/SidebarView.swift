@@ -41,6 +41,8 @@ struct SidebarView: View {
     @State private var ensuredSelfDmWs: String?
     /// Agents section collapsed? Remembered per device, like the web sidebar's.
     @AppStorage("flow.sidebarAgentsCollapsed") private var agentsCollapsed = false
+    /// Apps section (#394) collapsed? Same per-device memory as Agents.
+    @AppStorage("flow.sidebarAppsCollapsed") private var appsCollapsed = false
 
     private var currentWorkspace: Workspace? {
         workspaces.value.first { $0.id == win.selectedWorkspaceId }
@@ -121,6 +123,12 @@ struct SidebarView: View {
             }
     }
 
+    /// Mini apps (#394) paired with their host channels, in the server's order
+    /// (alphabetical by app name).
+    private var appEntries: [AppsSection.Entry] {
+        AppsSection.entries(apps: win.appArtifacts(), channels: channels.value)
+    }
+
     private var browsableChannels: [Channel] {
         channels.value.filter { !$0.isMember && !$0.isPrivate && !$0.isDM }
     }
@@ -149,6 +157,24 @@ struct SidebarView: View {
                 ForEach(joinedChannels, id: \.channel.id) { row in
                     channelWithArtifacts(row.channel) {
                         channelRow(row.channel, isNested: row.isNested)
+                    }
+                }
+
+                // Apps (#394): every mini app in the workspace, including ones
+                // in public channels this user has not joined — clicking joins,
+                // then opens the app. Absent entirely when there is nothing to
+                // list, like Agents and Browse.
+                let apps = appEntries
+                if !apps.isEmpty {
+                    sectionHeader("Apps", collapsed: appsCollapsed) {
+                        appsCollapsed.toggle()
+                    } action: {
+                        EmptyView()
+                    }
+                    if !appsCollapsed {
+                        ForEach(apps) { entry in
+                            appRow(entry)
+                        }
                     }
                 }
 
@@ -729,6 +755,63 @@ struct SidebarView: View {
         row()
         ForEach(win.artifacts(inChannel: channel.id)) { artifact in
             ArtifactSidebarRow(artifact: artifact)
+        }
+    }
+
+    /// An Apps-section row: the app's name over its host channel in muted text.
+    /// Two channels can host same-named apps, and for a channel you haven't
+    /// joined the channel *is* the context — so it is named, not implied.
+    private func appRow(_ entry: AppsSection.Entry) -> some View {
+        let label = AppsSection.channelLabel(
+            entry.channel, userNames: userNames.value, currentUserId: app.currentUser?.id
+        )
+        let active = win.selectedArtifactId == entry.artifact.id
+            && win.selectedChannelId == entry.channel.id
+        return Button {
+            openApp(entry)
+        } label: {
+            HStack(spacing: 9) {
+                Text("🧩")
+                    .flowFont(size: 12)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(entry.artifact.name)
+                        .flowFont(size: 14, weight: active ? .bold : .regular)
+                        .foregroundStyle(.white.opacity(active ? 1 : 0.82))
+                        .lineLimit(1)
+                    Text(label)
+                        .flowFont(size: 11)
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(entry.artifact.name) — \(label)")
+        .accessibilityIdentifier("sidebar.app.\(entry.artifact.name)")
+    }
+
+    /// One click = land in the app. A public channel we have not joined is
+    /// joined first, and we wait for the artifact refresh before opening: the
+    /// side panel builds its tabs from the *member* artifact list, so opening
+    /// early would show a panel with nothing in it.
+    private func openApp(_ entry: AppsSection.Entry) {
+        guard !entry.channel.isMember else {
+            win.openArtifact(entry.artifact.id, inChannel: entry.channel.id)
+            return
+        }
+        Task {
+            do {
+                let joined = try await app.engine.joinChannel(entry.channel.id)
+                await app.engine.refreshArtifacts(workspaceId: joined.workspaceId)
+                win.openArtifact(entry.artifact.id, inChannel: joined.id)
+            } catch {
+                app.showError(error.localizedDescription)
+            }
         }
     }
 

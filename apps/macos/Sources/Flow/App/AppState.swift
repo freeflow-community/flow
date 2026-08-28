@@ -61,6 +61,12 @@ final class AppState: ObservableObject {
     /// member of, newest first. Keyed by workspace because two windows can
     /// show two workspaces at once; each window reads its own slice.
     @Published private(set) var artifactsByWorkspace: [String: [Artifact]] = [:]
+    /// Mini apps per workspace (#394) — every app the server lets this user see,
+    /// including ones in public channels they have not joined. A separate map
+    /// from `artifactsByWorkspace` on purpose: that list is "artifacts in my
+    /// channels" and drives the nested sidebar rows, this one is workspace-wide
+    /// discovery and drives the Apps section. Server-ordered by app name.
+    @Published private(set) var appArtifactsByWorkspace: [String: [Artifact]] = [:]
     @Published private(set) var connection: Connection = .connecting
     /// How many catch-up passes are in flight (#234). A *count*, not a flag:
     /// a second reconnect can start while the first backfill is still paging,
@@ -250,6 +256,7 @@ final class AppState: ObservableObject {
         if case .signedOut = p {
             windows.forEach { $0.clearForSignOut() }
             artifactsByWorkspace = [:]
+            appArtifactsByWorkspace = [:]
         }
     }
 
@@ -265,6 +272,7 @@ final class AppState: ObservableObject {
         phase = .signedOut
         windows.forEach { $0.clearForSignOut() }
         artifactsByWorkspace = [:]
+        appArtifactsByWorkspace = [:]
         presenceByWorkspace = [:]
         typing = [:]
         busyChannelIds = []
@@ -409,6 +417,16 @@ final class AppState: ObservableObject {
 
     func setArtifacts(_ list: [Artifact], workspaceId: String) {
         artifactsByWorkspace[workspaceId] = list
+    }
+
+    func setAppArtifacts(_ list: [Artifact], workspaceId: String) {
+        appArtifactsByWorkspace[workspaceId] = list
+    }
+
+    /// A workspace's visible mini apps (#394), in server order; empty when none
+    /// loaded or the server predates the endpoint.
+    func appArtifacts(workspaceId: String?) -> [Artifact] {
+        workspaceId.flatMap { appArtifactsByWorkspace[$0] } ?? []
     }
 
     /// A workspace's visible artifacts (newest first); empty when none loaded.

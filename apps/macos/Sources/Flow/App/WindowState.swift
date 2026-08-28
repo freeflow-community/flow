@@ -306,6 +306,23 @@ final class WindowState: ObservableObject {
         artifacts().filter { $0.channelId == channelId }
     }
 
+    /// This window's workspace's mini apps (#394), in server order.
+    func appArtifacts() -> [Artifact] {
+        app.appArtifacts(workspaceId: selectedWorkspaceId)
+    }
+
+    /// Open a channel *and* an artifact tab in it in one action (#394) — what
+    /// the Apps section does. `selectArtifact` can't serve here: it finds the
+    /// artifact's channel by looking it up in the member-artifact list, which by
+    /// definition does not hold an app from a channel this user has only just
+    /// joined (or is about to).
+    func openArtifact(_ artifactId: String, inChannel channelId: String) {
+        showActivity = false
+        filesOpen = false
+        if channelId != selectedChannelId { switchChannel(to: channelId) }
+        selectedArtifactId = artifactId
+    }
+
     // MARK: - Activity
 
     /// Show the Activity feed (phase 12). Like opening an artifact it covers the

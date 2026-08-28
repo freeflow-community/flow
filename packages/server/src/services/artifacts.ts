@@ -16,7 +16,7 @@
 // channel. Events ride a per-channel subject; the gateway's visible() filter
 // gates them by channel membership, so private channels stay private.
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, isNotNull, or } from 'drizzle-orm';
 import type { AppArtifactSecretDTO, AppTokenDTO, ArtifactDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -25,9 +25,10 @@ import { decryptBody, encryptBody } from '../crypto/index.js';
 import { mintAppToken } from '../lib/appToken.js';
 import { reapFileIfUnreferenced, requireFileAccess, toFileDTO } from './files.js';
 import { requireChannelAccess } from './channels.js';
+import { requireMembership } from './workspaces.js';
 import { publishEvent, subjectArtifact } from '../bus.js';
 
-const { artifacts, files, channelMembers, users, workspaceMembers } = schema;
+const { artifacts, channels, files, channelMembers, users, workspaceMembers } = schema;
 
 type ArtifactRow = typeof artifacts.$inferSelect;
 type FileRow = typeof files.$inferSelect;
@@ -227,6 +228,48 @@ export async function listArtifacts(workspaceId: string, userId: string): Promis
   return rows
     .filter((r) => r.a.kind === 'link' || (r.f !== null && r.f.deletedAt === null))
     .map((r) => toArtifactDTO(r.a, r.f));
+}
+
+/**
+ * Mini apps across the whole workspace (#394) — what the sidebar's "Apps"
+ * section lists. Deliberately wider than `listArtifacts`: a *public* channel's
+ * app is public, so it is listed whether or not the caller has joined (clicking
+ * it joins them). Private channels contribute only the ones the caller is
+ * already in, so this introduces no new permission model — it is exactly the
+ * visibility rule `listChannels` already uses, applied to app artifacts.
+ *
+ * Ordered by app name (case-insensitive, like the sidebar's other lists) then
+ * channel id, so two same-named apps in different channels keep a stable
+ * relative position across reloads. Sorted here rather than in SQL so every
+ * client agrees on the order without depending on the database collation.
+ */
+export async function listAppArtifacts(workspaceId: string, userId: string): Promise<ArtifactDTO[]> {
+  await requireMembership(workspaceId, userId);
+  const memberChannels = db
+    .select({ id: channelMembers.channelId })
+    .from(channelMembers)
+    .where(eq(channelMembers.userId, userId));
+  const rows = await db
+    .select({ a: artifacts, f: files })
+    .from(artifacts)
+    .innerJoin(channels, eq(channels.id, artifacts.channelId))
+    .leftJoin(files, eq(files.id, artifacts.fileId))
+    .where(
+      and(
+        eq(artifacts.workspaceId, workspaceId),
+        isNotNull(artifacts.appSecret), // isApp
+        isNull(channels.archivedAt),
+        or(eq(channels.isPrivate, false), inArray(artifacts.channelId, memberChannels)),
+      ),
+    )
+    .orderBy(asc(artifacts.name));
+  return rows
+    .map((r) => toArtifactDTO(r.a, r.f))
+    .sort(
+      (a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
+        a.channelId.localeCompare(b.channelId),
+    );
 }
 
 async function requireArtifactMember(artifactId: string, userId: string): Promise<{ a: ArtifactRow; f: FileRow | null }> {

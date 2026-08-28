@@ -142,6 +142,21 @@ export function useArtifacts(workspaceId: string | null) {
   });
 }
 
+/**
+ * Every mini app I'm allowed to see in this workspace (#394) — apps in public
+ * channels whether or not I've joined them, plus apps in private channels I'm
+ * in. Powers the sidebar's "Apps" section; the host channel is resolved against
+ * the channel list, which already carries public channels I'm not a member of.
+ */
+export function useAppArtifacts(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ['app-artifacts', workspaceId],
+    queryFn: () => api<{ artifacts: ArtifactDTO[] }>('GET', `/v1/workspaces/${workspaceId}/app-artifacts`),
+    select: (d) => d.artifacts,
+    enabled: workspaceId !== null,
+  });
+}
+
 /** Slack-compat apps for a workspace (phase4.md §1). Admin-only endpoint. */
 export function useApps(workspaceId: string | null) {
   return useQuery({

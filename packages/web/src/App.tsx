@@ -319,6 +319,21 @@ export default function App() {
               }
             }
           },
+          // Channel + artifact in one action (#394). Same park-and-restore as an
+          // ordinary channel switch; the artifact id is given rather than looked
+          // up, because an app opened from the Apps section can live in a channel
+          // that only just became visible to this client.
+          openArtifactIn: (chanId, id) => {
+            if (chanId !== channelId) {
+              threadMemory.remember(channelId, threadRootId);
+              setChannelId(chanId);
+              setThreadRootId(threadMemory.recall(chanId));
+            }
+            setArtifactId(id);
+            setFilesOpen(false);
+            setEditingMessageId(null);
+            setFocusMessageId(null);
+          },
           // Open a thread and make its tab the visible one (artifacts stay as tabs).
           openThread: (id) => {
             setThreadRootId(id);
