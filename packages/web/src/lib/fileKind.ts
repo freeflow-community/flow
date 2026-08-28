@@ -46,6 +46,13 @@ export function isHtmlFile(file: FileKindInput): boolean {
 }
 
 /** Sidebar glyph for an artifact row. */
+/** Sidebar/tab glyph for an artifact: a puzzle piece for a mini app (#394),
+ * otherwise its backing file's kind glyph (or the link glyph for a plain link
+ * pin). Mirrored by `Artifact.glyph` in the macOS client. */
+export function artifactGlyph(artifact: { isApp: boolean; file: FileDTO | null }): string {
+  return artifact.isApp ? '🧩' : fileGlyph(artifact.file);
+}
+
 export function fileGlyph(file: FileDTO | null): string {
   if (!file) return '🔗'; // link artifact (no backing file)
   if (isImageFile(file)) return '🖼️';

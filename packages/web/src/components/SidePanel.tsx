@@ -4,7 +4,7 @@
 // the active tab's body (ThreadPanel embedded, or an ArtifactBody). Threads and
 // artifacts coexist; the tab strip picks which one shows.
 import { useRef, useState } from 'react';
-import { fileGlyph } from '../lib/fileKind';
+import { artifactGlyph } from '../lib/fileKind';
 import { useMobileNav, useSelection } from '../state';
 import { useArtifacts } from '../hooks';
 import ThreadPanel from './ThreadPanel';
@@ -90,7 +90,7 @@ export default function SidePanel() {
             <PanelTab
               key={a.id}
               testid={`side-tab-artifact-${a.name}`}
-              icon={fileGlyph(a.file)}
+              icon={artifactGlyph(a)}
               label={a.name}
               active={!sel.filesOpen && sel.artifactId === a.id}
               onClick={() => sel.selectArtifact(a.id)}

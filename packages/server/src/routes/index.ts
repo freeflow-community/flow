@@ -932,6 +932,14 @@ export function registerRoutes(app: FastifyInstance): void {
     return { artifacts: await ar.listArtifacts(id, req.user.id) };
   });
 
+  // Mini apps across the workspace (#394) — the sidebar's "Apps" section. Wider
+  // than the list above: apps in *public* channels are listed whether or not the
+  // caller has joined one, which is what makes them discoverable.
+  app.get('/v1/workspaces/:id/app-artifacts', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { artifacts: await ar.listAppArtifacts(id, req.user.id) };
+  });
+
   // rename and/or re-point at a new file (the agent "update" path)
   app.patch('/v1/artifacts/:id', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };

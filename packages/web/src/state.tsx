@@ -68,6 +68,11 @@ export interface Selection {
   /** Open/activate an artifact tab (null just clears the active artifact — e.g.
    * when the shown artifact is deleted; the thread tab, if any, stays). */
   selectArtifact(id: string | null): void;
+  /** Open a channel *and* an artifact tab in it in one action (#394): what the
+   * sidebar's Apps section does, where the app's channel is often not the
+   * current one and may have only just been joined — so the artifact cannot be
+   * looked up in the member-artifact cache the way `selectArtifact` does. */
+  openArtifactIn(channelId: string, artifactId: string): void;
   /** Open (or close) the channel Files tab in the side panel. */
   openFiles(open: boolean): void;
   openThread(id: string | null): void;
