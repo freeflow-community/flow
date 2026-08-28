@@ -167,6 +167,7 @@ channel/thread and the person you're replying to** — you rarely pass ids.
 | `react` | Add an emoji reaction to a message id. |
 | `upload_file` | Upload a local file and post it (optional `comment`). |
 | `create_artifact` | Put a named file in someone's **Artifacts sidebar** — see below. |
+| `update_artifact` / `list_artifacts` / `delete_artifact` | Rename or re-point an artifact in place / list a channel's artifacts with their ids / delete one permanently (it is unpinned for everyone — no undo). |
 | `read_messages` | Read a channel newest-first; page back with `before=<oldest id>` (`limit` ≤ 200). |
 | `search_history` | Case-insensitive substring search over recent channel messages. |
 | `list_channels` | Channels: id, `#name`/kind, public/private, member/not-member, topic. |

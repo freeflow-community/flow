@@ -256,6 +256,13 @@ export class FlowApi {
     return this.req('PATCH', `/v1/artifacts/${artifactId}`, patch);
   }
 
+  /** Unpin an artifact for everyone in its channel (#393). Idempotent on the
+   * server: an id that no longer exists succeeds rather than 404s, so callers
+   * that want a "no such artifact" answer must look it up first. */
+  async deleteArtifact(artifactId: string): Promise<void> {
+    await this.req<{ ok: boolean }>('DELETE', `/v1/artifacts/${artifactId}`);
+  }
+
   async uploadFile(workspaceId: string, filename: string, mimeType: string, data: Buffer): Promise<FileDTO> {
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(data)], { type: mimeType }), filename);

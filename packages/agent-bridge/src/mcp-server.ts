@@ -13,6 +13,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import type { ArtifactDTO } from '@flow/shared';
 import { FlowApi, FlowApiError } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 
@@ -301,6 +302,18 @@ const TOOLS = [
     },
   },
   {
+    name: 'delete_artifact',
+    description:
+      'Delete an artifact: it is unpinned from its channel for everyone and is gone for good — there is no undo, so prefer update_artifact when you only want to replace the content. Works for file, link and app artifacts. Find ids with list_artifacts (or keep the one create_artifact returned).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        artifactId: { type: 'string', description: 'Id of the artifact to delete (from create_artifact or list_artifacts).' },
+      },
+      required: ['artifactId'],
+    },
+  },
+  {
     name: 'list_artifacts',
     description:
       'List the artifacts pinned in a channel (default: the current conversation) — id, kind (file or link), name, url or file info, and when each was last updated. Use the ids with update_artifact, or download_file with a file artifact’s fileId.',
@@ -370,6 +383,67 @@ function inviteErrorText(err: unknown): string {
     return 'channel not found, or it is private and you are not a member (only members can invite to a private channel)';
   }
   return err.message;
+}
+
+/** The slice of FlowApi that `deleteArtifactTool` uses — narrow so a test can
+ * stand in for it without a server. */
+interface ArtifactDeleteApi {
+  listArtifacts(workspaceId: string): Promise<ArtifactDTO[]>;
+  deleteArtifact(artifactId: string): Promise<void>;
+}
+
+/** How an artifact is described back to the agent — the same three words
+ * list_artifacts tags its rows with. */
+const artifactKindLabel = (a: ArtifactDTO): string => (a.kind === 'link' ? (a.isApp ? 'app' : 'link') : 'file');
+
+/**
+ * delete_artifact (#393). The id is resolved against the caller's visible
+ * artifacts *before* the DELETE, for two reasons: the confirmation can then
+ * name what it removed, and an unknown id becomes a clear error instead of a
+ * false success — the server's delete is deliberately idempotent, so it answers
+ * `ok` for an artifact that never existed. The lookup is membership-scoped, so
+ * an artifact in a channel this agent is not in reads as not-found here, which
+ * is the same gate the DELETE would have applied a moment later.
+ */
+export async function deleteArtifactTool(
+  api: ArtifactDeleteApi,
+  workspaceId: string,
+  artifactId: string,
+): Promise<{ text: string; isError: boolean }> {
+  if (!artifactId) {
+    return { text: 'delete_artifact needs an artifactId (get one from list_artifacts)', isError: true };
+  }
+  if (!workspaceId) {
+    return { text: 'delete_artifact needs a workspace (FLOW_WORKSPACE_ID is not set)', isError: true };
+  }
+  let visible: ArtifactDTO[];
+  try {
+    visible = await api.listArtifacts(workspaceId);
+  } catch (err) {
+    return { text: `delete_artifact could not reach the Flow server: ${(err as Error).message}`, isError: true };
+  }
+  const target = visible.find((a) => a.id === artifactId);
+  if (!target) {
+    return {
+      text:
+        `no artifact ${artifactId} — it may already be deleted, or it may live in a channel you are not a member of. ` +
+        'Run list_artifacts to see the ids you can delete.',
+      isError: true,
+    };
+  }
+  try {
+    await api.deleteArtifact(artifactId);
+  } catch (err) {
+    const detail =
+      err instanceof FlowApiError && err.status === 403
+        ? 'you are not a member of its channel'
+        : (err as Error).message;
+    return { text: `could not delete "${target.name}" (id ${artifactId}): ${detail}`, isError: true };
+  }
+  return {
+    text: `${artifactKindLabel(target)} artifact "${target.name}" (id ${artifactId}) deleted — unpinned from its channel for everyone.`,
+    isError: false,
+  };
 }
 
 /** POST JSON to the bridge daemon over its local task socket (FLOW_BRIDGE_SOCK). */
@@ -698,6 +772,10 @@ export async function runMcpServer(): Promise<void> {
         }
         const updated = await api.updateArtifact(artifactId, patch);
         return toolText(`artifact "${updated.name}" updated`);
+      }
+      case 'delete_artifact': {
+        const result = await deleteArtifactTool(api, workspaceId, (args.artifactId as string | undefined) || '');
+        return toolText(result.text, result.isError);
       }
       case 'list_artifacts': {
         if (!channelId) {
