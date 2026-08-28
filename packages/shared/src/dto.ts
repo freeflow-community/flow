@@ -212,6 +212,14 @@ export interface ChannelDTO {
    * Empty for a non-member, and cleared for a thread once you open it.
    */
   unreadThreadRootIds: string[];
+  /**
+   * Where this channel's *oldest* unread lives, when it's a thread reply
+   * (#327) — clients open the channel and that thread, scrolled to `replyId`,
+   * so unreads that exist only inside a thread are reachable in one click.
+   * Absent when the oldest unread is a top-level message (the main timeline
+   * already shows it) and when there are no unreads at all.
+   */
+  oldestUnreadThreadReply?: { rootId: string; replyId: string } | null;
   notifyLevel: NotifyLevel;
   /**
    * Parent channel (#118) — set at creation, one level deep, so clients can
