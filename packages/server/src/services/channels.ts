@@ -29,6 +29,7 @@ export function toChannelDTO(
     unreadCount?: number | undefined;
     unreadNotifications?: number | undefined;
     unreadThreadRootIds?: string[] | undefined;
+    oldestUnreadThreadReply?: { rootId: string; replyId: string } | null | undefined;
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
     indicator?: ChannelIndicatorState | null | undefined;
@@ -55,6 +56,9 @@ export function toChannelDTO(
   };
   // Read straight off the row, unlike indicator/huddle below: the emoji (#396)
   // is a column, so every DTO path already has it and no caller has to pass it.
+  // Only sent when there is actually a thread to open (#327): absent means
+  // "the main timeline is where the unreads are", which is every other path.
+  if (opts.oldestUnreadThreadReply) dto.oldestUnreadThreadReply = opts.oldestUnreadThreadReply;
   if (c.emoji) dto.emoji = c.emoji;
   if (opts.memberIds) dto.memberIds = opts.memberIds;
   // Only sent when something is actually showing: absent means "no spinner",
@@ -311,8 +315,10 @@ export async function listChannels(workspaceId: string, userId: string): Promise
   // unread dot from this, so a thread reply that needs you is visible in the
   // transcript and not only in the sidebar number. One grouped query over the
   // same unread rows; thread notifications are few, so the lists stay short.
+  // The reply id rides along (#327) so the same rows answer "which thread holds
+  // the oldest unread reply" — ids are UUIDv7, so oldest-first is id order.
   const threadRootRows = await db
-    .selectDistinct({ channelId: notifications.channelId, rootId: messages.threadRootId })
+    .select({ channelId: notifications.channelId, rootId: messages.threadRootId, replyId: messages.id })
     .from(notifications)
     .innerJoin(messages, eq(messages.id, notifications.messageId))
     .where(
@@ -321,11 +327,17 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         isNull(notifications.readAt),
         sql`${messages.threadRootId} IS NOT NULL`,
       ),
-    );
+    )
+    .orderBy(asc(messages.id));
   const threadRootsByChannel = new Map<string, string[]>();
+  const oldestUnreadReplyByChannel = new Map<string, { rootId: string; replyId: string }>();
   for (const r of threadRootRows) {
     if (!r.rootId) continue;
-    threadRootsByChannel.set(r.channelId, [...(threadRootsByChannel.get(r.channelId) ?? []), r.rootId]);
+    const seen = threadRootsByChannel.get(r.channelId) ?? [];
+    if (!seen.includes(r.rootId)) threadRootsByChannel.set(r.channelId, [...seen, r.rootId]);
+    if (!oldestUnreadReplyByChannel.has(r.channelId)) {
+      oldestUnreadReplyByChannel.set(r.channelId, { rootId: r.rootId, replyId: r.replyId });
+    }
   }
 
   // Live activity spinners (#137) — in-memory, so this is a map lookup, not a
@@ -339,6 +351,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
   const result: ChannelDTO[] = [];
   for (const r of visible) {
     let unreadCount = 0;
+    let oldestUnreadTopLevel: string | null = null;
     if (r.isMember) {
       // System lines (join/leave) never contribute to unread — they're courtesy
       // notices, not messages you need to catch up on. Neither do your own
@@ -352,9 +365,24 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         ne(messages.userId, userId),
       );
       const cond = r.lastReadMsgId ? and(base, gt(messages.id, r.lastReadMsgId)) : base;
-      const cnt = await db.select({ n: sql<number>`count(*)::int` }).from(messages).where(cond);
+      const cnt = await db
+        // min() has no uuid overload, so the id goes through text — the hex
+        // representation sorts the same way the uuid does.
+        .select({ n: sql<number>`count(*)::int`, oldest: sql<string | null>`min(${messages.id}::text)` })
+        .from(messages)
+        .where(cond);
       unreadCount = cnt[0]?.n ?? 0;
+      oldestUnreadTopLevel = cnt[0]?.oldest ?? null;
     }
+    // Auto-open target (#327): only when the channel's oldest unread is a reply.
+    // An older unread top-level message means the main timeline already shows
+    // the user what they missed, so the thread waits its turn (its chip keeps
+    // the unread dot either way).
+    const oldestReply = r.isMember ? (oldestUnreadReplyByChannel.get(r.c.id) ?? null) : null;
+    const oldestUnreadThreadReply =
+      oldestReply && (!oldestUnreadTopLevel || oldestReply.replyId < oldestUnreadTopLevel)
+        ? oldestReply
+        : null;
     result.push(
       toChannelDTO(r.c, {
         isMember: r.isMember,
@@ -362,6 +390,7 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         unreadCount,
         unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
         unreadThreadRootIds: r.isMember ? (threadRootsByChannel.get(r.c.id) ?? []) : [],
+        oldestUnreadThreadReply,
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
         indicator: indicators.get(r.c.id) ?? null,

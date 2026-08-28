@@ -217,3 +217,81 @@ describe('threads on system messages', () => {
     expect(after?.unreadThreadRootIds).toEqual([]);
   });
 });
+
+// #327: when a channel's unreads live only inside a thread, the sidebar row is
+// the only sign of them — the main timeline looks unchanged. The channel list
+// says which thread to open (and where in it), so one click lands on the unread.
+describe('oldest unread inside a thread', () => {
+  let chanId = '';
+
+  // A fresh channel and a clean inbox per case: earlier tests in this file
+  // leave bob both notifications and unread messages.
+  beforeEach(async () => {
+    const c = await ch.createChannel(workspaceId, aliceId, `t327-${randomUUID().slice(0, 8)}`);
+    chanId = c.id;
+    await ch.addMember(chanId, aliceId, bobId);
+    await db.delete(notifications).where(eq(notifications.userId, bobId));
+  });
+
+  async function forBob() {
+    return (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === chanId);
+  }
+
+  it('points at the thread when every unread is a reply', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'bobs root');
+    const reply = await msg.sendMessage(chanId, aliceId, randomUUID(), 'first reply', root.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'second reply', root.id);
+
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(0); // nothing new in the main timeline
+    expect(c?.oldestUnreadThreadReply).toEqual({ rootId: root.id, replyId: reply.id });
+  });
+
+  it('stays quiet when the oldest unread is a top-level message', async () => {
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'top-level news');
+
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(1);
+    expect(c?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('stays quiet with no unreads at all', async () => {
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(0);
+    expect(c?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('lets the main timeline win when an unread top-level message is older', async () => {
+    // alice's root is itself unread for bob; his reply makes him a participant
+    // so alice's later reply notifies him.
+    const root = await msg.sendMessage(chanId, aliceId, randomUUID(), 'alices root');
+    await msg.sendMessage(chanId, bobId, randomUUID(), 'bob joins the thread', root.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'alice replies back', root.id);
+
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(1); // the root is still unread in the timeline
+    expect(c?.unreadThreadRootIds).toEqual([root.id]); // the chip keeps its dot
+    expect(c?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('picks the thread holding the oldest unread when several have replies', async () => {
+    const first = await msg.sendMessage(chanId, bobId, randomUUID(), 'first root');
+    const second = await msg.sendMessage(chanId, bobId, randomUUID(), 'second root');
+    const oldest = await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply in first', first.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply in second', second.id);
+
+    const c = await forBob();
+    expect(c?.oldestUnreadThreadReply).toEqual({ rootId: first.id, replyId: oldest.id });
+    // the other thread keeps its own unread indicator
+    expect(c?.unreadThreadRootIds).toEqual(expect.arrayContaining([first.id, second.id]));
+  });
+
+  it('clears once the thread has been read', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'bobs root');
+    const reply = await msg.sendMessage(chanId, aliceId, randomUUID(), 'a reply', root.id);
+    expect((await forBob())?.oldestUnreadThreadReply).toEqual({ rootId: root.id, replyId: reply.id });
+
+    await ch.markRead(chanId, bobId, reply.id, root.id); // opening the thread
+    expect((await forBob())?.oldestUnreadThreadReply).toBeUndefined();
+  });
+});

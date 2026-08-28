@@ -9,8 +9,10 @@ import {
   NavButton,
   nearestScrollDelta,
   nestChannels,
+  openChannelFromSidebar,
   splitAgents,
 } from './Sidebar';
+import type { Selection } from '../state';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
 // child whose parent isn't in the list must still be rendered, or you lose a
@@ -306,5 +308,52 @@ describe('channelLabel', () => {
     expect(channelLabel(chan('factory'), {}, 'me')).toBe('#factory');
     const dm: ChannelDTO = { ...chan('d1'), kind: 'dm', name: null, memberIds: ['me', 'u2'] };
     expect(channelLabel(dm, { u2: 'Prism' }, 'me')).toBe('Prism');
+  });
+});
+
+
+// #327: a channel whose unreads are all inside a thread looks unchanged when
+// you click it, so clicking opens the thread too.
+describe('openChannelFromSidebar', () => {
+  const selection = (channelId: string | null) => {
+    const calls: string[] = [];
+    const sel = {
+      channelId,
+      selectChannel: (id: string | null) => calls.push(`select:${id}`),
+      jumpToMessage: (c: string, m: string, root?: string | null) => calls.push(`jump:${c}:${m}:${root}`),
+    } as unknown as Selection;
+    return { sel, calls };
+  };
+  const withUnreadThread = (id: string): ChannelDTO => ({
+    ...chan(id),
+    unreadNotifications: 2,
+    unreadThreadRootIds: ['root1'],
+    oldestUnreadThreadReply: { rootId: 'root1', replyId: 'reply1' },
+  });
+
+  it('opens the thread holding the oldest unread reply', () => {
+    const { sel, calls } = selection('other');
+    openChannelFromSidebar(sel, withUnreadThread('alpha'));
+    expect(calls).toEqual(['jump:alpha:reply1:root1']);
+  });
+
+  it('is a plain channel switch when the oldest unread is top-level', () => {
+    const { sel, calls } = selection('other');
+    openChannelFromSidebar(sel, { ...chan('alpha'), unreadCount: 3 });
+    expect(calls).toEqual(['select:alpha']);
+  });
+
+  it('is a plain channel switch with no unreads at all', () => {
+    const { sel, calls } = selection('other');
+    openChannelFromSidebar(sel, chan('alpha'));
+    expect(calls).toEqual(['select:alpha']);
+  });
+
+  it('does not yank a thread open in the channel you are already in', () => {
+    // Replies landing while you sit in a channel keep it as the auto-open
+    // target; re-clicking its row must not throw the panel open under you.
+    const { sel, calls } = selection('alpha');
+    openChannelFromSidebar(sel, withUnreadThread('alpha'));
+    expect(calls).toEqual(['select:alpha']);
   });
 });

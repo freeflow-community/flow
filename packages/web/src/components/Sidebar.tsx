@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { artifactGlyph } from '../lib/fileKind';
 import { workspaceExit } from '../lib/workspaceExit';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
+import type { Selection } from '../state';
 import {
   useAppArtifacts,
   useArtifacts,
@@ -994,6 +995,23 @@ export function ActivitySpinner({ active }: { active: boolean }) {
   );
 }
 
+/**
+ * Opening a channel from the sidebar (#327). A channel whose unreads all live
+ * inside a thread looks unchanged when you click it — the main timeline has
+ * nothing new in it — so when the server says the oldest unread is a reply,
+ * open the channel *and* that thread, landing on the first unread reply.
+ * Everything else is the plain channel switch it has always been.
+ *
+ * Deliberately tied to the click and not to render: re-entering a channel you
+ * are already in, and replies arriving while you sit in it, must not yank the
+ * thread panel open under you.
+ */
+export function openChannelFromSidebar(sel: Selection, channel: ChannelDTO): void {
+  const jump = channel.oldestUnreadThreadReply;
+  if (jump && sel.channelId !== channel.id) sel.jumpToMessage(channel.id, jump.replyId, jump.rootId);
+  else sel.selectChannel(channel.id);
+}
+
 function ChannelRow({
   channel,
   label,
@@ -1060,7 +1078,7 @@ function ChannelRow({
         data-unread={channel.unreadCount}
         data-notifications={notifications}
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
-        onClick={() => sel.selectChannel(channel.id)}
+        onClick={() => openChannelFromSidebar(sel, channel)}
       >
         {leading ?? (
           <span className={active ? 'opacity-60' : 'text-white/60'}>{channel.isPrivate ? '🔒' : '#'}</span>
