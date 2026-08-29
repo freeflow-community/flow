@@ -31,5 +31,18 @@ struct RootView: View {
         } message: {
             Text(app.errorMessage ?? "")
         }
+        // Voice huddle (Phase 1): unmuting with no OS mic permission. Its own
+        // alert (not the generic one above) because this is the one place an
+        // action button — jumping straight to Flow's Settings page — actually
+        // helps. Port of the macOS RootView alert.
+        .alert(
+            "Microphone Access Needed",
+            isPresented: $app.micPermissionBlocked
+        ) {
+            Button("Open Settings") { app.openMicrophoneSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Flow needs microphone access to talk in a huddle. Enable it in Settings → Flow → Microphone.")
+        }
     }
 }

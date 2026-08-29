@@ -48,6 +48,19 @@ struct RootView: View {
         } message: {
             Text(app.errorMessage ?? "")
         }
+        // Voice huddle (Phase 1): unmuting with no OS mic permission. Its own
+        // alert (not the generic one above) because this is the one place an
+        // action button — jumping straight to the Microphone privacy pane —
+        // actually helps.
+        .alert(
+            "Microphone Access Needed",
+            isPresented: $app.micPermissionBlocked
+        ) {
+            Button("Open Settings") { app.openMicrophoneSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Flow needs microphone access to talk in a huddle. Enable it in System Settings → Privacy & Security → Microphone.")
+        }
     }
 }
 
