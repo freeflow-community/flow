@@ -89,6 +89,8 @@ declare module 'fastify' {
   interface FastifyRequest {
     user: UserDTO;
     bearerToken: string;
+    /** How the bearer token authenticated — a client session or an agent/bot token (#415). */
+    authKind: auth.AuthKind;
   }
 }
 
@@ -106,7 +108,9 @@ async function requireAuth(req: FastifyRequest): Promise<void> {
   if (!header?.startsWith('Bearer ')) throw unauthorized('missing bearer token');
   const token = header.slice('Bearer '.length).trim();
   req.bearerToken = token;
-  req.user = await auth.authenticate(token);
+  const authed = await auth.authenticateWithKind(token);
+  req.user = authed.user;
+  req.authKind = authed.kind;
 }
 
 /** Read a single multipart file part into a buffer (20 MB cap enforced by the plugin). */
@@ -764,6 +768,10 @@ export function registerRoutes(app: FastifyInstance): void {
       body.threadRootId,
       body.fileIds,
       body.mentions,
+      // #415: an API-posted `@Name` becomes a real mention. On by default for
+      // agent/bot tokens only — the composer resolves its own mentions, and a
+      // client session posting raw `@Name` meant it literally.
+      { expandMentions: body.expandMentions ?? req.authKind === 'agent' },
     );
     return reply.status(201).send(dto);
   });

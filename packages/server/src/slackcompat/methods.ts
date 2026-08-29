@@ -222,7 +222,10 @@ async function chatPostMessage({ auth, args }: MethodCtx): Promise<Record<string
   if (text.trim() === '' && !threadTs) throw new SlackApiError('no_text');
   let threadRootId: string | undefined;
   if (threadTs) threadRootId = await requireMessageId(channelId, threadTs, 'message_not_found');
-  const dto = await msg.sendMessage(channelId, auth.botUser.id, newId(), mrkdwnToMarkdown(text), threadRootId);
+  // bot auth, so `@Name` in the text expands to a real mention (#415)
+  const dto = await msg.sendMessage(channelId, auth.botUser.id, newId(), mrkdwnToMarkdown(text), threadRootId, undefined, undefined, {
+    expandMentions: true,
+  });
   return { channel: channelId, ts: tsFromUuid(dto.id), message: toSlackMessage(dto) };
 }
 
