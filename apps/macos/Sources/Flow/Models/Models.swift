@@ -344,6 +344,8 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
 
     /// The secondary half of a thread's title (#417) — what follows the word
     /// "Thread": `in #channel`, or `with <names>` for a DM or group DM.
+    /// iOS-only: it lives here because iOS compiles this file in, and on macOS
+    /// the parent channel is already on screen beside the thread panel.
     func threadParentLabel(
         userNames: [String: String], currentUserId: String?
     ) -> (connector: String, name: String) {

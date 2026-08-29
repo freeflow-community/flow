@@ -4,7 +4,6 @@ import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { artifactGlyph } from '../lib/fileKind';
-import { dmTitle } from '../lib/channelTitle';
 import { workspaceExit } from '../lib/workspaceExit';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import type { Selection } from '../state';
@@ -110,7 +109,11 @@ function storedWidth(): number {
   return Number.isFinite(w) && w > 0 ? clampWidth(w) : DEFAULT_WIDTH;
 }
 
-export { dmTitle };
+export function dmTitle(c: ChannelDTO, names: Record<string, string>, me: string): string {
+  const others = (c.memberIds ?? []).filter((id) => id !== me);
+  if (others.length === 0) return `${names[me] ?? 'You'} (you)`; // persistent self-DM
+  return others.map((id) => names[id] ?? 'Unknown').sort().join(', ');
+}
 
 /** Agents section: collapsed or not, remembered per device (like the width). */
 const AGENTS_COLLAPSED_KEY = 'flow.sidebarAgentsCollapsed';

@@ -280,6 +280,13 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- **Thread titles naming their parent channel** (#417) is iOS-only, by
+  operator ruling: on web and macOS the thread is a side panel with its channel
+  open right beside it, so the title would repeat what the screen already says.
+  The phone pushes the thread over the channel, which is what makes the label
+  worth its space there. `Channel.threadParentLabel` is in the shared model
+  file, so a desktop client that ever needs it has the rule already. Not a gap
+  to close.
 - The **channel emoji** (#396) draws on web and macOS and not on iOS, which
   renders nothing in that slot today: it has no channel indicator either, so
   adding the emoji alone would build the slot for half its tenants. The server

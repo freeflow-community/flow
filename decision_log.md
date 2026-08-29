@@ -1,5 +1,17 @@
 # Decision log
 
+## 2026-08-29 — Thread titles name their parent channel on iOS only (operator)
+
+- The thread title carries its parent conversation ("Thread / in #channel",
+  "Thread / with <name>") **only on iOS**. Ruled after #417 shipped on all
+  three clients: on web and macOS the thread is a side panel with its channel
+  open right next to it, so the label repeats what is already on screen. The
+  phone pushes the thread *over* the channel, and that is what makes the label
+  earn its space.
+- The rule itself (`Channel.threadParentLabel`) stays in the shared model file
+  rather than in the iOS view, so a desktop surface that ever loses the
+  side-by-side layout has it to hand.
+
 ## 2026-08-27 — Permanent message deletion is an owner/admin moderation power (operator)
 
 - Workspace `owner` and `admin` roles may permanently delete any non-system
