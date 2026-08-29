@@ -3,10 +3,11 @@
 // width + left-edge resizer, the tab strip, and the panel close — and renders
 // the active tab's body (ThreadPanel embedded, or an ArtifactBody). Threads and
 // artifacts coexist; the tab strip picks which one shows.
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { artifactGlyph } from '../lib/fileKind';
-import { useMobileNav, useSelection } from '../state';
-import { useArtifacts } from '../hooks';
+import { threadParentLabel } from '../lib/channelTitle';
+import { useAuth, useMobileNav, useSelection } from '../state';
+import { useArtifacts, useChannels, useDisplayNameMap } from '../hooks';
 import ThreadPanel from './ThreadPanel';
 import ArtifactBody from './ArtifactView';
 import FilesPanel from './FilesPanel';
@@ -21,7 +22,10 @@ function storedWidth(): number {
 
 export default function SidePanel() {
   const sel = useSelection();
+  const auth = useAuth();
   const artifacts = useArtifacts(sel.workspaceId);
+  const channels = useChannels(sel.workspaceId);
+  const displayNames = useDisplayNameMap(sel.workspaceId);
   const [width, setWidth] = useState(storedWidth);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
   const { isMobile } = useMobileNav();
@@ -30,6 +34,18 @@ export default function SidePanel() {
   // channel, so you can switch to any of them.
   const channelArtifacts = (artifacts.data ?? []).filter((a) => a.channelId === sel.channelId);
   const threadActive = !sel.artifactId && !sel.filesOpen && !!sel.threadRootId;
+
+  // The thread tab says which conversation the thread belongs to (#417) —
+  // "Thread in #factory" / "Thread with Ada". The name is its own tap target:
+  // it goes to the parent channel, and on mobile (where the panel covers the
+  // channel full-screen) that means getting the panel out of the way too.
+  const parentChannel = (channels.data ?? []).find((c) => c.id === sel.channelId);
+  const parent = threadParentLabel(parentChannel, displayNames, auth.user.id);
+  const goToParent = () => {
+    if (!sel.channelId) return;
+    sel.selectChannel(sel.channelId);
+    if (isMobile) sel.closeSidePanel();
+  };
 
   return (
     <aside
@@ -71,6 +87,24 @@ export default function SidePanel() {
               testid="side-tab-thread"
               icon="💬"
               label="Thread"
+              suffix={
+                parent && (
+                  <>
+                    <span className="shrink-0 text-muted">{parent.connector}</span>
+                    <button
+                      data-testid="side-tab-thread-parent"
+                      className="truncate rounded text-accent outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
+                      title={`Go to ${parent.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        goToParent();
+                      }}
+                    >
+                      {parent.name}
+                    </button>
+                  </>
+                )
+              }
               active={threadActive}
               onClick={() => sel.showThread()}
               onClose={() => sel.openThread(null)}
@@ -121,6 +155,7 @@ export default function SidePanel() {
 function PanelTab({
   icon,
   label,
+  suffix,
   active,
   onClick,
   onClose,
@@ -128,6 +163,10 @@ function PanelTab({
 }: {
   icon: string;
   label: string;
+  /** Secondary, independently clickable trailing text (the thread's parent
+   * channel, #417). It sits outside the tab's own button — nesting one button
+   * in another is invalid, and the two go to different places. */
+  suffix?: ReactNode;
   active: boolean;
   onClick: () => void;
   onClose?: () => void;
@@ -135,7 +174,7 @@ function PanelTab({
 }) {
   return (
     <div
-      className={`group flex h-8 max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-lg border-b-2 px-2.5 ${
+      className={`group flex h-8 ${suffix ? 'max-w-[280px]' : 'max-w-[180px]'} shrink-0 items-center gap-1.5 rounded-t-lg border-b-2 px-2.5 ${
         active
           ? 'border-accent bg-base font-semibold text-ink'
           : 'border-transparent text-muted hover:bg-base/60 hover:text-ink'
@@ -143,13 +182,22 @@ function PanelTab({
     >
       <button
         data-testid={testid}
-        className="flex min-w-0 items-center gap-1.5 rounded outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
+        className={`flex items-center gap-1.5 rounded outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 ${
+          // With a suffix the tab must give *it* all the squeeze: an unpinned
+          // button compresses below its own text and "Thread" runs into the
+          // connector instead of truncating the channel name.
+          suffix ? 'shrink-0' : 'min-w-0'
+        }`}
         onClick={onClick}
         title={label}
       >
         <span className="shrink-0 text-sm">{icon}</span>
-        <span className="truncate text-[13px]">{label}</span>
+        {/* "Thread" is never truncated — only the channel name after it is. */}
+        <span className={`text-[13px] ${suffix ? 'shrink-0 whitespace-nowrap' : 'truncate'}`}>
+          {label}
+        </span>
       </button>
+      {suffix && <div className="flex min-w-0 items-center gap-1.5 text-[13px]">{suffix}</div>}
       {onClose && (
         <button
           data-testid={`${testid}-close`}

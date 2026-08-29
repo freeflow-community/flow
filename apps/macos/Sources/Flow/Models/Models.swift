@@ -342,6 +342,16 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         return others.map { userNames[$0] ?? "Unknown" }.sorted().joined(separator: ", ")
     }
 
+    /// The secondary half of a thread's title (#417) — what follows the word
+    /// "Thread": `in #channel`, or `with <names>` for a DM or group DM.
+    func threadParentLabel(
+        userNames: [String: String], currentUserId: String?
+    ) -> (connector: String, name: String) {
+        isDM
+            ? ("with", displayTitle(userNames: userNames, currentUserId: currentUserId))
+            : ("in", "#\(name ?? "")")
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
         case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
