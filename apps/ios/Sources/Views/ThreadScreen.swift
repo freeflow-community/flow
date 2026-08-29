@@ -18,6 +18,9 @@ struct ThreadScreen: View {
     @StateObject private var thread = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
     @StateObject private var channelId = DBObserved<String?>(initial: nil)
+    /// The parent channel row, so the nav title can name the conversation this
+    /// thread belongs to (#417).
+    @StateObject private var channel = DBObserved<Channel?>(initial: nil)
     @StateObject private var currentRole = DBObserved<String?>(initial: nil)
     @State private var editingMessage: Message?
     @State private var flashId: String?
@@ -32,6 +35,9 @@ struct ThreadScreen: View {
     /// which this screen has no follow model to ask. Without it the reader is
     /// dragged off the reply they came to see by the next arrival.
     @State private var jumpOwnsScroll = false
+    /// Tapping the parent channel pops back to it — this screen was pushed
+    /// from it, so a pop *is* the navigation (#417).
+    @Environment(\.dismiss) private var dismiss
 
     /// When to re-assert a jump's landing, in nanoseconds from the previous
     /// pass — the channel list's cadence. A `scrollTo` into a `LazyVStack` is
@@ -52,6 +58,39 @@ struct ThreadScreen: View {
 
     private var replies: [Message] {
         thread.value.filter { $0.id != rootId }
+    }
+
+    private var threadParent: (connector: String, name: String)? {
+        channel.value?.threadParentLabel(userNames: userNames, currentUserId: app.currentUser?.id)
+    }
+
+    /// Nav title: "Thread" over the parent channel. The bar is too narrow on a
+    /// phone to run both inline, so the channel is a second line — and its own
+    /// tap target, which is why this is a principal item and not
+    /// `.navigationTitle` + `.navigationSubtitle`.
+    private var navTitle: some View {
+        VStack(spacing: 0) {
+            Text("Thread")
+                .flowFont(size: 15, weight: .semibold)
+                .foregroundStyle(MC.ink)
+            if let parent = threadParent {
+                Button(action: { dismiss() }) {
+                    HStack(spacing: 3) {
+                        Text(parent.connector).foregroundStyle(MC.muted)
+                        Text(parent.name)
+                            .foregroundStyle(MC.accent)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .flowFont(size: 12)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("thread.header.parent")
+                .accessibilityLabel("Go to \(parent.name)")
+            }
+        }
+        .frame(maxWidth: 240)
+        .accessibilityIdentifier("thread.header")
     }
 
     var body: some View {
@@ -162,6 +201,9 @@ struct ThreadScreen: View {
         .background(MC.base)
         .navigationTitle("Thread")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) { navTitle }
+        }
         .task(id: rootId) {
             // No app.openThread here: ChannelScreen's threadRoute onChange owns
             // that record. Writing it from this screen's appearance raced the
@@ -179,6 +221,13 @@ struct ThreadScreen: View {
                 try String.fetchOne(
                     db,
                     sql: "SELECT channelId FROM message WHERE id = ?",
+                    arguments: [rootId]
+                )
+            }
+            channel.start(db: app.db, reset: nil) { db in
+                try Channel.fetchOne(
+                    db,
+                    sql: "SELECT c.* FROM channel c JOIN message m ON m.channelId = c.id WHERE m.id = ?",
                     arguments: [rootId]
                 )
             }
