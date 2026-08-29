@@ -17,8 +17,9 @@ import { enqueueMessageEvents } from './appEvents.js';
 import { publishEvent, subjectMsg } from '../bus.js';
 import { scheduleForMessage, unfurlsForMessages } from './unfurl/index.js';
 import { requireMembership } from './workspaces.js';
+import { expandMentions as expandMentionText } from '../lib/mentionExpansion.js';
 
-const { messages, channelMembers, messageFiles, notifications } = schema;
+const { messages, channelMembers, messageFiles, notifications, users, workspaceMembers } = schema;
 
 type MessageRow = typeof messages.$inferSelect;
 export type HydratedMessageRow = MessageRow;
@@ -138,10 +139,23 @@ async function pinsForMessages(
   return out;
 }
 
+/** Workspace members an API-posted `@Name` can resolve to (#415). */
+async function workspaceMentionCandidates(workspaceId: string): Promise<{ id: string; displayName: string }[]> {
+  return db
+    .select({ id: users.id, displayName: users.displayName })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), isNull(users.deletedAt)));
+}
+
 /**
  * Send message (spec write path): validate → insert (encrypted) + attach files
  * + write notification rows, one transaction → publish. Public channels:
  * auto-join on first post. Idempotent on (channel, clientMsgId).
+ *
+ * `opts.expandMentions` (#415) rewrites `@Display Name` to `<@userId>` before
+ * anything else looks at the body, so an API-posted mention is indistinguishable
+ * from a composer-typed one all the way down.
  */
 export async function sendMessage(
   channelId: string,
@@ -151,6 +165,7 @@ export async function sendMessage(
   threadRootId?: string,
   fileIds?: string[],
   mentions?: string[],
+  opts?: { expandMentions?: boolean },
 ): Promise<MessageDTO> {
   const { chan, isMember } = await requireChannelAccess(channelId, userId);
   if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
@@ -180,7 +195,15 @@ export async function sendMessage(
   }
 
   const attachRows = await validateAttachments(fileIds ?? [], chan.workspaceId, userId);
-  const { recipients, alertContext } = await computeRecipients(chan, userId, body, mentions ?? [], threadRootId);
+
+  let mentionIds = mentions ?? [];
+  if (opts?.expandMentions) {
+    const expanded = expandMentionText(body, await workspaceMentionCandidates(chan.workspaceId));
+    body = expanded.text;
+    if (expanded.userIds.length > 0) mentionIds = [...new Set([...mentionIds, ...expanded.userIds])];
+  }
+
+  const { recipients, alertContext } = await computeRecipients(chan, userId, body, mentionIds, threadRootId);
 
   const id = newId();
   const enc = encryptBody(body);
@@ -233,7 +256,7 @@ export async function sendMessage(
       tx,
       chan,
       { id, userId, body, threadRootId: threadRootId ?? null },
-      mentions ?? [],
+      mentionIds,
     );
   });
 

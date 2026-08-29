@@ -317,11 +317,14 @@ async function authenticateAgentToken(tokenHash: Buffer): Promise<UserDTO | null
 }
 
 /**
- * Validate a bearer token → user. Sessions first (sliding 30-day expiry: when
- * a session is used with < 29 days remaining, extend to 30 — cheap: at most
- * one write/day), then agent tokens (non-expiring, revocable).
+ * How a request authenticated. 'session' is a signed-in client (the composer);
+ * 'agent' is a long-lived agent/bot token, i.e. something posting at the API.
+ * #415 uses the distinction to decide whether to expand `@Name` server-side.
  */
-export async function authenticate(token: string): Promise<UserDTO> {
+export type AuthKind = 'session' | 'agent';
+
+/** Validate a bearer token → user, `authenticate` plus how the token proved it. */
+export async function authenticateWithKind(token: string): Promise<{ user: UserDTO; kind: AuthKind }> {
   const tokenHash = hashToken(token);
   const now = new Date();
   const rows = await db
@@ -333,7 +336,7 @@ export async function authenticate(token: string): Promise<UserDTO> {
   const row = rows[0];
   if (!row) {
     const agentUser = await authenticateAgentToken(tokenHash);
-    if (agentUser) return agentUser;
+    if (agentUser) return { user: agentUser, kind: 'agent' };
     throw unauthorized();
   }
   // Tombstoned users drop their sessions in the same transaction, but a race
@@ -346,7 +349,16 @@ export async function authenticate(token: string): Promise<UserDTO> {
       .set({ expiresAt: new Date(now.getTime() + config.sessionTtlDays * 86400_000) })
       .where(and(eq(sessions.tokenHash, tokenHash), lt(sessions.expiresAt, slideThreshold)));
   }
-  return toUserDTO(row.user);
+  return { user: toUserDTO(row.user), kind: 'session' };
+}
+
+/**
+ * Validate a bearer token → user. Sessions first (sliding 30-day expiry: when
+ * a session is used with < 29 days remaining, extend to 30 — cheap: at most
+ * one write/day), then agent tokens (non-expiring, revocable).
+ */
+export async function authenticate(token: string): Promise<UserDTO> {
+  return (await authenticateWithKind(token)).user;
 }
 
 /**

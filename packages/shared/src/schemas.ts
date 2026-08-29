@@ -302,6 +302,13 @@ export const SendMessageBody = z.object({
   fileIds: z.array(z.string().uuid()).max(10).optional(),
   /** Resolved @-mention user ids (phase2 §4): client resolves names, server validates membership. */
   mentions: z.array(z.string().uuid()).max(50).optional(),
+  /**
+   * Rewrite `@Display Name` in the body to `<@userId>` before storing (#415),
+   * so an API-posted message pings like a composer-typed one. Defaults to true
+   * for agent/bot tokens and false for a client session — the composer already
+   * resolves its own mentions. Set false to store the body verbatim.
+   */
+  expandMentions: z.boolean().optional(),
 });
 export type SendMessageBody = z.infer<typeof SendMessageBody>;
 
