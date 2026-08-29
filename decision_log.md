@@ -1,16 +1,20 @@
 # Decision log
 
-## 2026-08-29 — Thread titles name their parent channel on iOS only (operator)
+## 2026-08-29 — Thread titles name their parent conversation on phone layouts only (operator)
 
 - The thread title carries its parent conversation ("Thread / in #channel",
-  "Thread / with <name>") **only on iOS**. Ruled after #417 shipped on all
-  three clients: on web and macOS the thread is a side panel with its channel
-  open right next to it, so the label repeats what is already on screen. The
-  phone pushes the thread *over* the channel, and that is what makes the label
-  earn its space.
-- The rule itself (`Channel.threadParentLabel`) stays in the shared model file
-  rather than in the iOS view, so a desktop surface that ever loses the
-  side-by-side layout has it to hand.
+  "Thread / with <name>") on **iOS and on web below the `md` breakpoint**, and
+  not on macOS or desktop web. Ruled after #417 first shipped on all three
+  clients.
+- **The line is the layout, not the platform.** Where the thread is a side
+  panel with its channel open beside it, the label repeats what is already two
+  inches to the left. Where the thread covers the channel — the phone's pushed
+  screen, and web's full-screen panel below `md` — nothing else on screen says
+  which conversation this is. macOS has no narrow layout, so it is out by
+  consequence rather than by a separate decision.
+- The rule itself (`threadParentLabel`, in `lib/channelTitle.ts` and on the
+  `Channel` model) stays out of the views, so a desktop surface that ever loses
+  the side-by-side layout has it to hand.
 
 ## 2026-08-27 — Permanent message deletion is an owner/admin moderation power (operator)
 
