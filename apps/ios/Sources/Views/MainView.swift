@@ -57,6 +57,11 @@ struct MainView: View {
             if ProcessInfo.processInfo.environment["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" {
                 app.showActivity = true
             }
+            // QA: FLOW_DEBUG_SHOW_SCHEDULED=1 lands on the Scheduled list, same
+            // screenshot-without-a-tap-tool rationale as the hooks above.
+            if ProcessInfo.processInfo.environment["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" {
+                app.showScheduled = true
+            }
             #endif
         }
         .onChange(of: workspaces.value) { _, list in
@@ -82,6 +87,9 @@ struct MainView: View {
             Group {
                 if app.showActivity {
                     ActivityFeedView(onOpenChannel: { app.selectChannel($0) })
+                } else if app.showScheduled {
+                    // Scheduled list (#424) — same treatment as the feed above.
+                    ScheduledListView(onOpenChannel: { app.selectChannel($0) })
                 } else if let channelId = app.selectedChannelId {
                     ChannelScreen(channelId: channelId, onOpenDrawer: { openDrawer() })
                         .id(channelId)
@@ -141,6 +149,7 @@ struct MainView: View {
         let env = ProcessInfo.processInfo.environment
         if let key = env["FLOW_DEBUG_OPEN_CHANNEL"], !key.isEmpty { return }
         if env["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" { return }
+        if env["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" { return }
         #endif
         guard let id = app.window.restorableLastChannel(from: channels) else { return }
         app.selectChannel(id)
@@ -152,7 +161,7 @@ struct MainView: View {
     // conversations, which is where the interrupt affordance lives, are DMs.
     private func debugAutoOpen(_ channels: [Channel]) {
         #if DEBUG
-        guard app.selectedChannelId == nil, !app.showActivity,
+        guard app.selectedChannelId == nil, !app.showActivity, !app.showScheduled,
               let key = ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_CHANNEL"], !key.isEmpty,
               let ch = channels.first(where: {
                   ($0.name == key || $0.id == key) && $0.workspaceId == app.selectedWorkspaceId

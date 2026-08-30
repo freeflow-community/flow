@@ -590,11 +590,39 @@ struct MessageRow: View, @preconcurrency Equatable {
     }
 
     @State private var showReactionPicker = false
+    /// The badge's tap-for-detail sheet (#424).
+    @State private var showScheduledDetail = false
     @State private var showDeleteConfirm = false
     /// A pending row renders at full strength; it only dims (and shows the
     /// mini spinner) once the send has gone unconfirmed past this window.
     private static let pendingDimDelay: TimeInterval = 3
     @State private var pendingSlow = false
+
+    /// "🕐 SCHEDULED" next to the author name (#424): the scheduler posted this
+    /// message rather than its author typing it just now. Deliberately a badge
+    /// on an otherwise ordinary message — the author, the mentions and the
+    /// notifications are all real, and only the timing was automatic. There is
+    /// no hover on a phone, so the desktop's tooltip becomes a tap.
+    private var scheduledBadge: some View {
+        Button { showScheduledDetail = true } label: {
+            Text("🕐 SCHEDULED")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(MC.accentDeep)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 4).fill(MC.accent.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scheduled message")
+        .accessibilityIdentifier("message.scheduledBadge.\(message.id)")
+        .alert("Posted automatically", isPresented: $showScheduledDetail) {
+            Button("Open Scheduled") { context.onOpenScheduled() }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("This message was posted on a schedule. It runs as \(senderName), "
+                 + "with their permissions.")
+        }
+    }
 
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
@@ -650,6 +678,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                         Text(ISO8601.displayTime(message.createdAt))
                             .font(.system(size: 11))
                             .foregroundStyle(MC.faint)
+                        if message.scheduled { scheduledBadge }
                     }
                 }
 

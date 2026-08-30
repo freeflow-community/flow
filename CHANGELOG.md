@@ -13,15 +13,6 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- **Scheduled messages** (#419/#420) ship with web-only UI; macOS and iOS have
-  neither the Scheduled panel nor the SCHEDULED badge. The server half is
-  client-agnostic and complete — `MessageDTO.scheduled` rides every message
-  payload and WS event, and the whole feature is one REST surface
-  (`/v1/scheduled-messages`) — so closing the gap is two client jobs, and they
-  are independent: the badge alone (read `scheduled` in the message row, and
-  break message grouping on it the way web does) is a small change worth doing
-  first, since without it a native client renders an automatic message as if
-  the author had just typed it. The panel is the larger piece.
 - **Auto-opening the thread that holds a channel's oldest unread** (#327) landed
   on web only. The signal is server-side and already sent to every client
   (`ChannelDTO.oldestUnreadThreadReply`), so closing the gap is client work:
@@ -289,6 +280,14 @@ This file keeps two things:
   state, so this is a pure client port.
 
 ### Deliberate divergences (ruled)
+- The **"Post to" picker in the schedule dialog** scrolls its preselected
+  destination into view on macOS and states it in one `.navigationLink` row on
+  iOS (#424); web leaves its list parked at the top. Opening the dialog from
+  the composer preselects the current conversation, which in a busy workspace
+  is far down the list — so on web the prefill is invisible and reads as "it
+  didn't prefill anything". The native fixes are an improvement web should
+  adopt, not a native quirk; small enough to fold into whatever next touches
+  `ScheduleMessageModal.tsx`.
 - The **workspace avatar in the sidebar header** was web-only and is now gone
   (#422): web drew it beside the workspace name as well as in the left rail,
   while macOS and iOS only ever drew it in the rail. Removing it aligns web

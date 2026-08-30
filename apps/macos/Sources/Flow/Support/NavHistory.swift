@@ -8,6 +8,9 @@ import Foundation
 enum NavView: Equatable {
     case channel(String)
     case activity
+    /// The Scheduled panel (#424) — like the feed, it covers the content pane
+    /// while the channel selection stays put behind it.
+    case scheduled
 }
 
 /// Browser-style visit history over `NavView` — what the workspace header's

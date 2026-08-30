@@ -165,6 +165,9 @@ struct MainView: View {
             // Activity feed (phase 12) — the virtual channel that replaced the
             // bell. Covers the content pane; the channel stays put behind it.
             ActivityFeedView()
+        } else if win.showScheduled {
+            // Scheduled panel (#424) — same treatment as the feed above.
+            ScheduledPanelView()
         } else if let channelId = win.selectedChannelId {
             // Tabbed side panel: Thread, Files (#347) and the channel's
             // artifacts (phase 13). GeometryReader measures the space this

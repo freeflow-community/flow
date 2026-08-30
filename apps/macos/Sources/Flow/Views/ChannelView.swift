@@ -56,7 +56,8 @@ struct ChannelView: View {
                     avatarPaths: app.avatarPaths,
                     agentIds: app.agentIds,
                     onError: { app.showError($0) },
-                    onSelectArtifact: { win.selectArtifact($0) }
+                    onSelectArtifact: { win.selectArtifact($0) },
+                    onOpenScheduled: { win.showScheduledPanel() }
                 ),
                 hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                 isLoadingHistory: app.loadingHistory.contains(channelId),

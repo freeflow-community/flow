@@ -646,6 +646,25 @@ struct MessageRow: View, @preconcurrency Equatable {
     private static let pendingDimDelay: TimeInterval = 3
     @State private var pendingSlow = false
 
+    /// "🕐 SCHEDULED" next to the author name (#424): the scheduler posted this
+    /// message rather than its author typing it just now. Deliberately a badge
+    /// on an otherwise ordinary message — the author, the mentions and the
+    /// notifications are all real, and only the timing was automatic. Clicking
+    /// it opens the Scheduled panel, where the row that posted it lives.
+    private var scheduledBadge: some View {
+        Button(action: context.onOpenScheduled) {
+            Text("🕐 SCHEDULED")
+                .flowFont(size: 10, weight: .bold)
+                .foregroundStyle(MC.accentDeep)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 4).fill(MC.accent.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .help("Posted automatically · runs as \(senderName) · click to open Scheduled")
+        .accessibilityIdentifier("message.scheduledBadge.\(message.id)")
+    }
+
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
     private var deleteMode: MessageDeleteMode? {
@@ -712,6 +731,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                         Text(ISO8601.displayTime(message.createdAt))
                             .flowFont(size: 11)
                             .foregroundStyle(MC.faint)
+                        if message.scheduled { scheduledBadge }
                     }
                 }
 

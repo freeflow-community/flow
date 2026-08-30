@@ -334,6 +334,13 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
 
     var isDM: Bool { kind != "standard" }
 
+    /// The persistent "notes to self" DM — a `dm` channel whose only member is
+    /// you. It is the destination behind the Scheduled panel's "🔒 Just me"
+    /// (#424), and the sidebar's own "Just me" row.
+    func isSelfDm(me: String?) -> Bool {
+        kind == "dm" && (memberIds ?? []).allSatisfy { $0 == me }
+    }
+
     /// Sidebar/header title. DMs render member display names, not `name`.
     func displayTitle(userNames: [String: String], currentUserId: String?) -> String {
         if !isDM { return name ?? "channel" }
@@ -470,6 +477,10 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// message; `body` is the pre-rendered sentence. Rendered as a centered
     /// muted notice with no avatar/header (ui_nits).
     var systemKind: String?
+    /// True when the scheduler posted this row rather than a person typing it
+    /// (#419). Everything else about the message is ordinary — same author,
+    /// same mentions, same notifications; the clients draw a "SCHEDULED" badge.
+    var scheduled: Bool
     /// Local-only: true for optimistic rows not yet confirmed by the server.
     var pending: Bool
     /// Local-only: true once an optimistic row's POST errored out. The row
@@ -481,7 +492,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
         case createdAt, editedAt, deletedAt, pinnedAt, pinnedBy, replyCount, lastReplyAt
-        case replyParticipantUserIds, reactions, files, unfurls, systemKind, pending, failed
+        case replyParticipantUserIds, reactions, files, unfurls, systemKind, scheduled, pending, failed
     }
 
     init(
@@ -491,7 +502,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
-        unfurls: [Unfurl] = [], systemKind: String? = nil, pending: Bool, failed: Bool = false
+        unfurls: [Unfurl] = [], systemKind: String? = nil, scheduled: Bool = false,
+        pending: Bool, failed: Bool = false
     ) {
         self.id = id
         self.channelId = channelId
@@ -511,6 +523,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.files = files
         self.unfurls = unfurls
         self.systemKind = systemKind
+        self.scheduled = scheduled
         self.pending = pending
         self.failed = failed
     }
@@ -535,6 +548,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         files = try c.decodeIfPresent([FileAttachment].self, forKey: .files) ?? []
         unfurls = try c.decodeIfPresent([Unfurl].self, forKey: .unfurls) ?? []
         systemKind = try c.decodeIfPresent(String.self, forKey: .systemKind)
+        scheduled = try c.decodeIfPresent(Bool.self, forKey: .scheduled) ?? false
         pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false
         failed = try c.decodeIfPresent(Bool.self, forKey: .failed) ?? false
     }

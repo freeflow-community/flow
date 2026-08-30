@@ -223,7 +223,8 @@ struct ChannelScreen: View {
                     context: TranscriptContext(
                         engine: app.engine,
                         avatarPaths: app.avatarPaths,
-                        agentIds: app.agentIds
+                        agentIds: app.agentIds,
+                        onOpenScheduled: { app.showScheduledPanel() }
                     ),
                     hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                     isLoadingHistory: app.loadingHistory.contains(channelId),

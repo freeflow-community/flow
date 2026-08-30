@@ -256,6 +256,15 @@ struct AppDatabase: Sendable {
                 t.add(column: "emoji", .text)
             }
         }
+        // Scheduled messages (#424): the badge has to survive a relaunch, so
+        // the flag belongs on the cached row like any other server column.
+        // Defaults false — every message already cached was typed by a person.
+        migrator.registerMigration("v20") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "scheduled", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

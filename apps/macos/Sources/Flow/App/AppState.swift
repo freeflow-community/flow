@@ -49,9 +49,10 @@ final class AppState: ObservableObject {
     /// condition retyped at every call site; `nonisolated` because it touches
     /// no state and the tests are not on the main actor.
     nonisolated static func channelRowHighlighted(
-        rowId: String, selectedChannelId: String?, selectedArtifactId: String?, showActivity: Bool
+        rowId: String, selectedChannelId: String?, selectedArtifactId: String?, showActivity: Bool,
+        showScheduled: Bool = false
     ) -> Bool {
-        selectedChannelId == rowId && selectedArtifactId == nil && !showActivity
+        selectedChannelId == rowId && selectedArtifactId == nil && !showActivity && !showScheduled
     }
 
     /// Scroll identity for a sidebar channel/DM row (#319), so the sidebar can
@@ -199,6 +200,10 @@ final class AppState: ObservableObject {
         get { window.showActivity }
         set { window.showActivity = newValue }
     }
+    var showScheduled: Bool {
+        get { window.showScheduled }
+        set { window.showScheduled = newValue }
+    }
     var focusMessageId: String? {
         get { window.focusMessageId }
         set { window.focusMessageId = newValue }
@@ -216,6 +221,10 @@ final class AppState: ObservableObject {
     func openThread(_ rootId: String?) { window.openThread(rootId) }
     func selectArtifact(_ id: String?) { window.selectArtifact(id) }
     func showActivityFeed() { window.showActivityFeed() }
+    func showScheduledPanel() { window.showScheduledPanel() }
+    func jumpToMessage(channelId: String, messageId: String) {
+        window.jumpToMessage(channelId: channelId, messageId: messageId)
+    }
     func artifacts(inChannel channelId: String) -> [Artifact] { window.artifacts(inChannel: channelId) }
 #endif
 
