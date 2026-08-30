@@ -454,6 +454,10 @@ export interface MessageDTO {
    * render it as a centered, muted notice with no avatar/header. Null = a normal
    * message. */
   systemKind: SystemMessageKind | null;
+  /** True when a scheduled message (#419) posted this row rather than a person
+   * typing it. Everything else about the message is ordinary — same author,
+   * same notifications, same agent mentions; clients draw a "SCHEDULED" badge. */
+  scheduled: boolean;
   /** first (up to) 4 distinct reply authors in thread order — drives the reply-avatar stack */
   replyParticipantUserIds: string[];
   reactions: ReactionAggDTO[];
@@ -638,4 +642,94 @@ export interface HelpPageDTO {
   slug: string;
   title: string;
   markdown: string;
+}
+
+// ---- scheduled messages (#419/#420) ----------------------------
+
+/**
+ * When a scheduled message repeats. Stored as jsonb on the row and echoed
+ * verbatim to clients, which render it with `describeRecurrence` and edit it
+ * with the same preset controls that produced it.
+ *
+ * Presets are kept structured rather than compiled down to cron so a client can
+ * round-trip "every 12 hours starting 6:00 AM" back into its own dropdowns.
+ * `cron` is the advanced escape hatch — a 5-field expression evaluated in the
+ * row's timezone.
+ */
+export type Recurrence =
+  /** Fires once, then disables itself. `at` is an absolute instant. */
+  | { type: 'once'; at: string }
+  /** Every hour at `minute` past. */
+  | { type: 'hourly'; minute: number }
+  /** Every `hours` hours, counted from `anchor` (an absolute instant). */
+  | { type: 'everyNHours'; hours: number; anchor: string }
+  /** Every day at local `hour`:`minute`. */
+  | { type: 'daily'; hour: number; minute: number }
+  /** Every week on `weekday` (0 = Sunday) at local `hour`:`minute`. */
+  | { type: 'weekly'; weekday: number; hour: number; minute: number }
+  /** 5-field cron (`min hour dom mon dow`), evaluated in the row's timezone. */
+  | { type: 'cron'; expression: string };
+
+export type ScheduledRunStatus = 'ok' | 'failed';
+
+/**
+ * One scheduled message. `body` is plaintext (decrypted server-side, exactly
+ * like MessageDTO) and carries the same `<@userId>` mention tokens — a
+ * scheduled body mentioning an agent pings it when it fires.
+ */
+export interface ScheduledMessageDTO {
+  id: string;
+  workspaceId: string;
+  /** Destination conversation: a channel, or the author's self-DM ("Just me"). */
+  channelId: string;
+  authorUserId: string;
+  body: string;
+  recurrence: Recurrence;
+  /** IANA name; occurrences are computed in this zone. */
+  timezone: string;
+  /** Next fire time, or null once a one-shot has run. */
+  nextRunAt: string | null;
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastRunStatus: ScheduledRunStatus | null;
+  /** The message the last successful run posted — what "view output" jumps to. */
+  lastMessageId: string | null;
+  /** Why the last run failed (or why the row was paused). Null when fine. */
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** May the caller edit, pause, run or delete this row (author or admin)? */
+  canManage: boolean;
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function clockLabel(hour: number, minute: number): string {
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`;
+}
+
+/** Human-readable schedule ("Every 12 hours", "Weekly, Mon 9:30 AM") — shared so
+ * every client says it the same way. */
+export function describeRecurrence(r: Recurrence, timezone?: string): string {
+  switch (r.type) {
+    case 'once': {
+      const when = new Date(r.at);
+      const opts: Intl.DateTimeFormatOptions = {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+        ...(timezone ? { timeZone: timezone } : {}),
+      };
+      return `Once, ${when.toLocaleString(undefined, opts)}`;
+    }
+    case 'hourly':
+      return r.minute === 0 ? 'Hourly, on the hour' : `Hourly, at :${String(r.minute).padStart(2, '0')}`;
+    case 'everyNHours':
+      return r.hours === 1 ? 'Every hour' : `Every ${r.hours} hours`;
+    case 'daily':
+      return `Daily at ${clockLabel(r.hour, r.minute)}`;
+    case 'weekly':
+      return `Weekly, ${(WEEKDAYS[r.weekday] ?? 'Sunday').slice(0, 3)} ${clockLabel(r.hour, r.minute)}`;
+    case 'cron':
+      return `Cron: ${r.expression}`;
+  }
 }

@@ -623,3 +623,74 @@ export const PresignUploadBody = z.object({
   sizeBytes: z.number().int().positive(),
 });
 export type PresignUploadBody = z.infer<typeof PresignUploadBody>;
+
+// ---- scheduled messages (#419) ---------------------------------
+
+/** 5-field cron (`min hour dom mon dow`); each field is `*`, a number, a
+ * range, a step, or a comma list of those. Parsed properly server-side — this
+ * only keeps obvious junk out of the column. */
+export const CRON_FIELD_RE = /^(\*|\d+)(-\d+)?(\/\d+)?(,(\*|\d+)(-\d+)?(\/\d+)?)*$/;
+
+export const RecurrenceSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('once'), at: z.string().datetime({ offset: true }) }),
+  z.object({ type: z.literal('hourly'), minute: z.number().int().min(0).max(59) }),
+  z.object({
+    type: z.literal('everyNHours'),
+    hours: z.number().int().min(1).max(24),
+    anchor: z.string().datetime({ offset: true }),
+  }),
+  z.object({
+    type: z.literal('daily'),
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+  }),
+  z.object({
+    type: z.literal('weekly'),
+    weekday: z.number().int().min(0).max(6),
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+  }),
+  z.object({
+    type: z.literal('cron'),
+    expression: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine(
+        (e) => {
+          const fields = e.trim().split(/\s+/);
+          return fields.length === 5 && fields.every((f) => CRON_FIELD_RE.test(f));
+        },
+        { message: 'must be 5 cron fields: min hour dom mon dow' },
+      ),
+  }),
+]);
+export type RecurrenceInput = z.infer<typeof RecurrenceSchema>;
+
+export const CreateScheduledMessageBody = z.object({
+  /** Destination: a channel, or the author's own self-DM for "Just me". */
+  channelId: z.string().uuid(),
+  body: z.string().min(1).max(12000),
+  recurrence: RecurrenceSchema,
+  /** IANA zone. Defaults to the author's profile timezone when omitted. */
+  timezone: z.string().min(1).max(64).optional(),
+});
+export type CreateScheduledMessageBody = z.infer<typeof CreateScheduledMessageBody>;
+
+export const UpdateScheduledMessageBody = z
+  .object({
+    channelId: z.string().uuid().optional(),
+    body: z.string().min(1).max(12000).optional(),
+    recurrence: RecurrenceSchema.optional(),
+    timezone: z.string().min(1).max(64).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .refine((b) => Object.keys(b).length > 0, { message: 'nothing to update' });
+export type UpdateScheduledMessageBody = z.infer<typeof UpdateScheduledMessageBody>;
+
+export const ListScheduledMessagesQuery = z.object({
+  workspaceId: z.string().uuid(),
+  /** Only rows this caller owns. Absent = everything they may see. */
+  mine: z.enum(['true', 'false']).optional(),
+});
+export type ListScheduledMessagesQuery = z.infer<typeof ListScheduledMessagesQuery>;

@@ -45,7 +45,7 @@ function message(over: Partial<MessageDTO> = {}): MessageDTO {
     id: 'm1', channelId: 'c1', userId: 'u-other', threadRootId: null,
     clientMsgId: 'cm1', body: 'bot output', createdAt: '2026-08-27T00:00:00.000Z',
     editedAt: null, deletedAt: null, pinnedAt: null, pinnedBy: null,
-    systemKind: null, replyCount: 0, lastReplyAt: null,
+    systemKind: null, scheduled: false, replyCount: 0, lastReplyAt: null,
     replyParticipantUserIds: [], reactions: [], files: [], unfurls: [],
     ...over,
   };

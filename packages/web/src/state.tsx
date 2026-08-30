@@ -26,6 +26,15 @@ export const ADMIN_VIEW_ID = '__admin__';
  */
 export const ACTIVITY_VIEW_ID = '__activity__';
 
+/**
+ * Sentinel channel id for the Scheduled panel (#420) — the same virtual-view
+ * trick as the Activity feed, opened by the clock next to the bell. Selecting
+ * it renders <ScheduledView>, a workspace-wide list of scheduled messages
+ * rather than a message stream. Being a selection is what makes back/forward
+ * work on it for free.
+ */
+export const SCHEDULED_VIEW_ID = '__scheduled__';
+
 export interface Selection {
   workspaceId: string | null;
   channelId: string | null;

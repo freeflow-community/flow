@@ -69,6 +69,7 @@ function message(over: Partial<MessageDTO> = {}): MessageDTO {
     clientMsgId: 'c-1',
     body: 'hello',
     systemKind: null,
+    scheduled: false,
     createdAt: '2026-07-22T00:00:00Z',
     editedAt: null,
     deletedAt: null,

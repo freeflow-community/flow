@@ -36,6 +36,9 @@ import {
   AgentLoginBody,
   RedeemAgentInviteBody,
   RedeemJoinLinkBody,
+  CreateScheduledMessageBody,
+  ListScheduledMessagesQuery,
+  UpdateScheduledMessageBody,
   SendMessageBody,
   SetChannelEmojiBody,
   SetChannelIndicatorBody,
@@ -84,6 +87,7 @@ import * as help from '../services/help.js';
 import * as ag from '../services/agents.js';
 import * as wi from '../services/workspaceInvites.js';
 import * as ar from '../services/artifacts.js';
+import * as sm from '../services/scheduledMessages.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -970,6 +974,51 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     await ar.deleteArtifact(id, req.user.id);
     return { ok: true };
+  });
+
+  // ---- scheduled messages (#419) ----
+  // A scheduled message is a pending message, so these are message-shaped
+  // endpoints, not job endpoints: create/edit/delete, plus the two verbs a
+  // schedule needs that a message doesn't (pause/resume, run now).
+  app.post('/v1/scheduled-messages', { preHandler: requireAuth }, async (req, reply) => {
+    const body = parse(CreateScheduledMessageBody, req.body);
+    return reply.status(201).send(await sm.createScheduledMessage(req.user.id, body));
+  });
+
+  // Visibility-scoped: rows you authored, plus rows destined for a channel you
+  // are in. `mine=true` is the panel's "Owned by me" filter.
+  app.get('/v1/scheduled-messages', { preHandler: requireAuth }, async (req) => {
+    const q = parse(ListScheduledMessagesQuery, req.query);
+    const scheduledMessages = await sm.listScheduledMessages(q.workspaceId, req.user.id, q.mine === 'true');
+    return { scheduledMessages };
+  });
+
+  app.patch('/v1/scheduled-messages/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.updateScheduledMessage(id, req.user.id, parse(UpdateScheduledMessageBody, req.body));
+  });
+
+  app.delete('/v1/scheduled-messages/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await sm.deleteScheduledMessage(id, req.user.id);
+    return { ok: true };
+  });
+
+  app.post('/v1/scheduled-messages/:id/pause', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.setScheduledMessageEnabled(id, req.user.id, false);
+  });
+
+  app.post('/v1/scheduled-messages/:id/resume', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.setScheduledMessageEnabled(id, req.user.id, true);
+  });
+
+  // Post it now, out of band. The cadence is untouched — this is "send it
+  // again", not "reschedule".
+  app.post('/v1/scheduled-messages/:id/run', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.runScheduledMessageNow(id, req.user.id);
   });
 
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {

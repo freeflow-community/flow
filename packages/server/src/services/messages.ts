@@ -60,6 +60,7 @@ export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
     pinnedAt: extras?.pin?.pinnedAt.toISOString() ?? null,
     pinnedBy: extras?.pin?.pinnedBy ?? null,
     systemKind: (row.systemKind as MessageDTO['systemKind']) ?? null,
+    scheduled: row.scheduled,
     replyCount: row.replyCount,
     lastReplyAt: row.lastReplyAt?.toISOString() ?? null,
     replyParticipantUserIds: extras?.replyParticipants ?? [],
@@ -165,7 +166,7 @@ export async function sendMessage(
   threadRootId?: string,
   fileIds?: string[],
   mentions?: string[],
-  opts?: { expandMentions?: boolean },
+  opts?: { expandMentions?: boolean; scheduled?: boolean },
 ): Promise<MessageDTO> {
   const { chan, isMember } = await requireChannelAccess(channelId, userId);
   if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
@@ -225,6 +226,9 @@ export async function sendMessage(
         encKeyId: enc.encKeyId,
         encScheme: enc.encScheme,
         createdAt: now,
+        // #419: this row was posted by a scheduled message, not typed. Nothing
+        // else on the write path changes — clients render a badge off it.
+        scheduled: opts?.scheduled === true,
       })
       .onConflictDoNothing({ target: [messages.channelId, messages.clientMsgId] })
       .returning();

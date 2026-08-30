@@ -20,6 +20,8 @@ import type {
   NotificationPage,
   OAuthIdentityDTO,
   PendingWorkspaceInviteDTO,
+  Recurrence,
+  ScheduledMessageDTO,
   UserDTO,
   WorkspaceDTO,
   WorkspaceEmojiDTO,
@@ -316,6 +318,7 @@ export function useSendMessage(channelId: string) {
     pinnedAt: null,
     pinnedBy: null,
     systemKind: null,
+    scheduled: false,
     replyCount: 0,
     lastReplyAt: null,
     replyParticipantUserIds: [],
@@ -424,4 +427,62 @@ export function useMe() {
     queryKey: ['me'],
     queryFn: () => api<UserDTO>('GET', '/v1/me'),
   });
+}
+
+/**
+ * Scheduled messages (#420) — the Scheduled panel's list. The server already
+ * scopes it (your rows plus rows destined for channels you're in), so `mine`
+ * is only the "Owned by me" narrowing, and it rides the query key so toggling
+ * the filter swaps to a cached list instead of refetching.
+ */
+export function useScheduledMessages(workspaceId: string | null, mine: boolean) {
+  return useQuery({
+    queryKey: ['scheduledMessages', workspaceId, mine],
+    queryFn: () =>
+      api<{ scheduledMessages: ScheduledMessageDTO[] }>(
+        'GET',
+        `/v1/scheduled-messages?workspaceId=${workspaceId!}${mine ? '&mine=true' : ''}`,
+      ),
+    select: (d) => d.scheduledMessages,
+    enabled: workspaceId !== null,
+  });
+}
+
+export interface ScheduledMessageInput {
+  channelId: string;
+  body: string;
+  recurrence: Recurrence;
+  timezone?: string;
+}
+
+/** Create, edit, delete, pause/resume and run-now, all invalidating the one
+ * list query — every row action updates the panel without a reload. */
+export function useScheduledMessageActions() {
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: ['scheduledMessages'] });
+
+  const create = useMutation({
+    mutationFn: (input: ScheduledMessageInput) =>
+      api<ScheduledMessageDTO>('POST', '/v1/scheduled-messages', input),
+    onSuccess: refresh,
+  });
+  const update = useMutation({
+    mutationFn: ({ id, ...patch }: Partial<ScheduledMessageInput> & { id: string; enabled?: boolean }) =>
+      api<ScheduledMessageDTO>('PATCH', `/v1/scheduled-messages/${id}`, patch),
+    onSuccess: refresh,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api('DELETE', `/v1/scheduled-messages/${id}`),
+    onSuccess: refresh,
+  });
+  const setEnabled = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api<ScheduledMessageDTO>('POST', `/v1/scheduled-messages/${id}/${enabled ? 'resume' : 'pause'}`),
+    onSuccess: refresh,
+  });
+  const runNow = useMutation({
+    mutationFn: (id: string) => api<ScheduledMessageDTO>('POST', `/v1/scheduled-messages/${id}/run`),
+    onSuccess: refresh,
+  });
+  return { create, update, remove, setEnabled, runNow };
 }
