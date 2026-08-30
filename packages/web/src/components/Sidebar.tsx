@@ -4,9 +4,9 @@ import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { artifactGlyph } from '../lib/fileKind';
-import { dmTitle } from '../lib/channelTitle';
+import { dmTitle, isSelfDm as isSelfDmChannel } from '../lib/channelTitle';
 import { workspaceExit } from '../lib/workspaceExit';
-import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, SCHEDULED_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import type { Selection } from '../state';
 import {
   useAppArtifacts,
@@ -309,8 +309,7 @@ export default function Sidebar() {
   );
   // The self-DM ("<you> (you)") is a personal scratchpad — it never carries an
   // unread badge (ui_nits): you can't have unread messages from yourself.
-  const isSelfDm = (c: ChannelDTO) =>
-    c.kind === 'dm' && (c.memberIds ?? []).every((id) => id === auth.user.id);
+  const isSelfDm = (c: ChannelDTO) => isSelfDmChannel(c, auth.user.id);
   // Phase 13: artifacts nest under their channel. Group the (newest-first) list
   // by channelId so each channel row can render its pinned artifacts beneath it.
   const artifactsByChannel = new Map<string, ArtifactDTO[]>();
@@ -452,6 +451,10 @@ export default function Sidebar() {
         <div className="flex shrink-0 items-center">
           <NavButton dir="back" enabled={sel.canGoBack} onClick={() => sel.goBack()} />
           <NavButton dir="forward" enabled={sel.canGoForward} onClick={() => sel.goForward()} />
+          <ScheduledClock
+            active={sel.channelId === SCHEDULED_VIEW_ID}
+            onOpen={() => sel.selectChannel(SCHEDULED_VIEW_ID)}
+          />
           <ActivityBell
             active={sel.channelId === ACTIVITY_VIEW_ID}
             unread={live.notificationUnread}
@@ -771,6 +774,30 @@ export function NavButton({
  * and the list holds only real channels. Carries the notification unread badge
  * and shows a selected state while the Activity feed is the open view.
  */
+/**
+ * The Scheduled panel's entry point (#420) — a clock sitting next to the
+ * Activity bell, because both open a global per-user view rather than a
+ * channel. No badge: a scheduled message that fired is already a message in a
+ * channel, so there is nothing here left unread.
+ */
+export function ScheduledClock({ active, onOpen }: { active: boolean; onOpen: () => void }) {
+  return (
+    <button
+      data-testid="sidebar-scheduled"
+      data-active={active ? 'true' : 'false'}
+      title="Scheduled messages"
+      aria-label="Scheduled messages"
+      aria-current={active ? 'page' : undefined}
+      className={`relative ml-1 shrink-0 rounded-lg px-1.5 py-1 text-base leading-none ${
+        active ? 'bg-white' : 'hover:bg-white/10'
+      }`}
+      onClick={onOpen}
+    >
+      <span className={active ? 'opacity-70' : 'opacity-75'}>🕐</span>
+    </button>
+  );
+}
+
 export function ActivityBell({
   active,
   unread,

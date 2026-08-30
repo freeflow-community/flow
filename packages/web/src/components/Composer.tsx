@@ -9,6 +9,7 @@ import { useChannelMembers, useChannels, useMembers, useSendMessage } from '../h
 import { useQueryClient } from '@tanstack/react-query';
 import { AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
+import { ScheduleMessageModal } from './ScheduleMessageModal';
 
 export default function Composer({
   channelId,
@@ -38,6 +39,8 @@ export default function Composer({
   // Mention-of-non-member CTA (Slack semantics): after sending an @mention of
   // someone outside a standard channel, offer to add them.
   const [missingMentions, setMissingMentions] = useState<string[]>([]);
+  /** The "schedule this instead of sending it" dialog (#420). */
+  const [scheduling, setScheduling] = useState(false);
   const [addedNotice, setAddedNotice] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<FileDTO[]>([]);
@@ -528,6 +531,19 @@ export default function Composer({
           >
             @
           </button>
+          {/* Schedule instead of send (#420): same message, posted later. Only on
+              a channel's main composer — a scheduled message is a top-level
+              post, not a thread reply. */}
+          {!threadRootId && (
+            <button
+              data-testid={`${testPrefix}-schedule`}
+              className="hover:text-ink"
+              title="Schedule this message"
+              onClick={() => setScheduling(true)}
+            >
+              🕐
+            </button>
+          )}
           <button
             data-testid={`${testPrefix}-send`}
             className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
@@ -539,6 +555,16 @@ export default function Composer({
           </button>
         </div>
       </div>
+
+      {scheduling && sel.workspaceId && (
+        <ScheduleMessageModal
+          workspaceId={sel.workspaceId}
+          initialBody={text}
+          initialChannelId={channelId}
+          onSaved={() => setDraft('')}
+          onClose={() => setScheduling(false)}
+        />
+      )}
 
       {showEmoji && (
         <div className="absolute right-[22px] bottom-full z-30 mb-1">

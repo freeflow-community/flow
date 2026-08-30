@@ -5,7 +5,7 @@ import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
-import { useAuth, useSelection } from '../state';
+import { SCHEDULED_VIEW_ID, useAuth, useSelection } from '../state';
 import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
 import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
 import { messageDeleteConfirmation, messageDeleteMode } from '../lib/messagePermissions';
@@ -15,6 +15,7 @@ import { EmojiGlyph } from './CustomEmoji';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
 import { UnfurlCard } from './UnfurlCard';
+import { HoverTooltip } from './HoverTooltip';
 
 /** Remembered scroll position per channel, so switching away and back lands
  * where you left off (ui_nits). Kept module-level (survives the per-channel
@@ -250,7 +251,7 @@ export default function MessageList({
   );
 }
 
-function showsHeader(messages: MessageDTO[], index: number): boolean {
+export function showsHeader(messages: MessageDTO[], index: number): boolean {
   if (index === 0) return true;
   if (startsNewDay(messages, index)) return true;
   const prev = messages[index - 1]!;
@@ -259,6 +260,10 @@ function showsHeader(messages: MessageDTO[], index: number): boolean {
   // re-shows its author header rather than merging into the pre-notice group.
   if (prev.systemKind) return true;
   if (prev.userId !== cur.userId) return true;
+  // A scheduled message always starts its own group (#420). Merged into the
+  // author's own preceding message it would inherit that header — and lose the
+  // badge, which is the one thing saying nobody typed this just now.
+  if (prev.scheduled !== cur.scheduled) return true;
   return new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime() > 300_000;
 }
 
@@ -484,6 +489,7 @@ function MessageRow({
                 </span>
               )}
             </span>
+            {message.scheduled && <ScheduledBadge author={sender} />}
             <span className="text-[11px] text-faint">{displayTime(message.createdAt)}</span>
           </div>
         )}
@@ -1222,5 +1228,29 @@ function ImageLightbox({
         <span className="text-sm text-white/70">Loading…</span>
       )}
     </LightboxShell>
+  );
+}
+
+/**
+ * "🕐 SCHEDULED" next to the author name (#420): this message was posted by
+ * one of their scheduled messages rather than typed just now. It is
+ * deliberately a badge on an otherwise ordinary message — the author, the
+ * mentions and the notifications are all real, and only the timing was
+ * automatic. Clicking it opens the Scheduled panel, where the row that posted
+ * it lives.
+ */
+function ScheduledBadge({ author }: { author: string }) {
+  const sel = useSelection();
+  return (
+    <HoverTooltip text={`Posted automatically · runs as ${author} · click to open Scheduled`}>
+      <button
+        type="button"
+        data-testid="scheduled-badge"
+        className="cursor-pointer rounded bg-accent/10 px-1.5 py-px text-[10px] font-bold tracking-wide text-accent-deep uppercase"
+        onClick={() => sel.selectChannel(SCHEDULED_VIEW_ID)}
+      >
+        🕐 Scheduled
+      </button>
+    </HoverTooltip>
   );
 }

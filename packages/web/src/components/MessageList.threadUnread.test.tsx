@@ -35,6 +35,7 @@ const root = (id: string): MessageDTO => ({
   replyCount: 2,
   lastReplyAt: '2026-08-17T10:05:00Z',
   systemKind: null,
+  scheduled: false,
   replyParticipantUserIds: [],
   reactions: [],
   files: [],

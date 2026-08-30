@@ -17,6 +17,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+import type { Recurrence, ScheduledRunStatus } from '@flow/shared';
 
 const citext = customType<{ data: string }>({ dataType: () => 'citext' });
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
@@ -262,6 +263,9 @@ export const messages = pgTable(
     // Non-null marks a channel event line (join/leave); null = a user message.
     // Excluded from unread counts and never notifies.
     systemKind: text('system_kind'),
+    // #419: posted by a scheduled message rather than typed. Nothing else about
+    // the row differs — clients draw a badge off this.
+    scheduled: boolean('scheduled').notNull().default(false),
   },
   (t) => [
     uniqueIndex().on(t.channelId, t.clientMsgId),
@@ -530,3 +534,39 @@ export const unfurlDomainDenylist = pgTable('unfurl_domain_denylist', {
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Scheduled messages (#419) — a pending message with a recurrence rule. The
+ * body carries the same envelope encryption as `messages`; firing a row means
+ * calling the ordinary send path as `authorUserId`, so the result is an
+ * ordinary message with `scheduled = true`.
+ */
+export const scheduledMessages = pgTable(
+  'scheduled_messages',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    authorUserId: uuid('author_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    body: bytea('body').notNull(),
+    bodyNonce: bytea('body_nonce').notNull(),
+    encKeyId: text('enc_key_id').notNull(),
+    encScheme: smallint('enc_scheme').notNull().default(1),
+    recurrence: jsonb('recurrence').$type<Recurrence>().notNull(),
+    timezone: text('timezone').notNull().default('UTC'),
+    // Null once a one-shot has fired — the row stays for its run history.
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+    enabled: boolean('enabled').notNull().default(true),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+    lastRunStatus: text('last_run_status').$type<ScheduledRunStatus>(),
+    lastMessageId: uuid('last_message_id').references(() => messages.id, { onDelete: 'set null' }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('scheduled_messages_due_idx').on(t.nextRunAt).where(sql`enabled AND next_run_at IS NOT NULL`),
+    index('scheduled_messages_workspace_idx').on(t.workspaceId, t.createdAt.desc()),
+    index('scheduled_messages_author_idx').on(t.authorUserId),
+  ],
+);

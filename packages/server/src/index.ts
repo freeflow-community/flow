@@ -10,6 +10,7 @@ import { purgeExpiredSessions } from './services/auth.js';
 import { startOrphanSweep } from './services/files.js';
 import { startAppEventsWorker } from './services/appEvents.js';
 import { startIndicatorSweeper } from './services/channelIndicators.js';
+import { startScheduler } from './services/scheduledMessages.js';
 import { reconcileHuddlesFromLiveKit } from './services/huddles.js';
 
 async function main(): Promise<void> {
@@ -34,12 +35,17 @@ async function main(): Promise<void> {
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
   startAppEventsWorker(app.log); // Events API outbox drain (phase 4)
   const indicatorSweeper = startIndicatorSweeper(); // retract lapsed channel spinners (#137)
+  // Scheduled messages (#419). The first pass runs immediately, which is also
+  // the catch-up path: a row that came due while the server was down is overdue
+  // now and fires once here — never once per occurrence it missed.
+  const scheduler = startScheduler(app.log);
   // Rebuild the huddle cache from LiveKit's real rooms (decision log 2026-08-20):
   // a restart wipes our in-memory map, but LiveKit's rooms keep running.
   void reconcileHuddlesFromLiveKit().catch((err) => app.log.error({ err }, 'livekit huddle reconciliation failed'));
 
   const shutdown = async () => {
     indicatorSweeper.stop();
+    scheduler.stop();
     gateway.close();
     socketMode.close();
     await app.close();

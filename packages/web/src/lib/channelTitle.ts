@@ -10,6 +10,12 @@ export function dmTitle(c: ChannelDTO, names: Record<string, string>, me: string
   return others.map((id) => names[id] ?? 'Unknown').sort().join(', ');
 }
 
+/** The persistent "notes to self" DM — a `dm` channel whose only member is you.
+ * It is the destination behind the Scheduled panel's "🔒 Just me" (#420). */
+export function isSelfDm(c: ChannelDTO, me: string): boolean {
+  return c.kind === 'dm' && (c.memberIds ?? []).every((id) => id === me);
+}
+
 /** The secondary half of a thread title: `in #channel` or `with <names>`. */
 export type ThreadParent = { connector: 'in' | 'with'; name: string };
 

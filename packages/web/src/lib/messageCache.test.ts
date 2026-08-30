@@ -29,6 +29,7 @@ function msg(over: Partial<MessageDTO> = {}): MessageDTO {
     pinnedAt: null,
     pinnedBy: null,
     systemKind: null,
+    scheduled: false,
     replyCount: 0,
     lastReplyAt: null,
     replyParticipantUserIds: [],
