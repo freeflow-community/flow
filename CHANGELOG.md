@@ -292,6 +292,11 @@ This file keeps two things:
   (#422): web drew it beside the workspace name as well as in the left rail,
   while macOS and iOS only ever drew it in the rail. Removing it aligns web
   with the native clients — nothing to port. Not a gap to close.
+- The **workspace-colored channel banner** is iOS-only (#427). iOS replaced the
+  system navigation bar with a floating header pill (#298) and now fills it with
+  the workspace's `SidebarPalette` gradient; web and macOS draw their channel
+  header as ink on the base surface, with no colored fill to follow the setting.
+  Nothing to port. Not a gap to close.
 - The **channel emoji** (#396) draws on web and macOS and not on iOS, which
   renders nothing in that slot today: it has no channel indicator either, so
   adding the emoji alone would build the slot for half its tenants. The server
