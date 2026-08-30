@@ -24,14 +24,38 @@ struct ScheduleMessageSheet: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
 
-    @State private var body_: String = ""
-    @State private var form = ScheduleForm()
+    /// Seeded from `target` in `init`, never from `load()`. These are the
+    /// fields a person edits, and `load()` runs again every time the sheet's
+    /// view reappears — on iOS that includes returning from the
+    /// `.navigationLink` destination picker, which is how re-seeding them there
+    /// wiped the typed body and reverted the channel just chosen. macOS's
+    /// picker is inline and cannot reappear that way, but the two sheets should
+    /// not differ in how they treat someone's input.
+    @State private var body_: String
+    @State private var form: ScheduleForm
+    @State private var channelId: String
+    /// Read from the local channel cache; safe to refresh at any time.
     @State private var destinations: [ScheduleDestinations.Choice] = []
-    @State private var channelId: String = ""
     @State private var error: String?
     @State private var saving = false
 
     private var existing: ScheduledMessage? { target.existing }
+
+    init(
+        workspaceId: String?,
+        target: ScheduleEditorTarget,
+        onSaved: @escaping (ScheduledMessage) -> Void
+    ) {
+        self.workspaceId = workspaceId
+        self.target = target
+        self.onSaved = onSaved
+        _body_ = State(initialValue: target.initialBody)
+        _form = State(initialValue: ScheduleForm(existing: target.existing))
+        // The preferred destination is known without touching the database; the
+        // channel list only decides whether it is *offered* (and what to fall
+        // back to), which `load()` settles.
+        _channelId = State(initialValue: target.preferredChannelId ?? "")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -225,23 +249,19 @@ struct ScheduleMessageSheet: View {
 
     // MARK: - Load / save
 
+    /// Refresh the destination list. Deliberately the *only* thing this does:
+    /// it can run more than once over one sheet's life, so it must never
+    /// overwrite something the person has entered — see
+    /// `ScheduleDestinations.resolve`.
     private func load() async {
-        if case .creating(let prefill, _) = target { body_ = prefill }
-        if let existing {
-            body_ = existing.body
-            form = ScheduleForm(existing: existing)
-        }
         let channels = (try? await app.db.reader.read { db in
             try Channel.filter(Column("workspaceId") == workspaceId).fetchAll(db)
         }) ?? []
-        destinations = ScheduleDestinations.choices(channels: channels, me: app.currentUser?.id)
-        // Preference order: the row being edited, the conversation the composer
-        // handed over, then "Just me" (the first choice).
-        let preferred: String? = switch target {
-        case .editing(let row): row.channelId
-        case .creating(_, let channelId): channelId
-        }
-        channelId = destinations.first { $0.id == preferred }?.id ?? destinations.first?.id ?? ""
+        let choices = ScheduleDestinations.choices(channels: channels, me: app.currentUser?.id)
+        destinations = choices
+        channelId = ScheduleDestinations.resolve(
+            current: channelId, preferred: target.preferredChannelId, choices: choices
+        )
     }
 
     private func save() async {

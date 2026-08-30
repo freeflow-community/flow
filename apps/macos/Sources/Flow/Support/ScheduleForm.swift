@@ -136,6 +136,27 @@ enum ScheduleEditorTarget: Identifiable, Equatable {
         if case .editing(let row) = self { return row }
         return nil
     }
+
+    /// The body an editor opens with: the row being edited, or whatever the
+    /// composer had typed. Derived from the target, which never changes — so
+    /// the sheet seeds it once at init rather than in an async task that can
+    /// run again and overwrite what the person has since written.
+    var initialBody: String {
+        switch self {
+        case .creating(let body, _): body
+        case .editing(let row): row.body
+        }
+    }
+
+    /// The destination the editor should start on, before the channel list has
+    /// been read: the row's own channel, or the conversation the composer
+    /// handed over. Nil means "no preference — take the first choice".
+    var preferredChannelId: String? {
+        switch self {
+        case .creating(_, let channelId): channelId
+        case .editing(let row): row.channelId
+        }
+    }
 }
 
 /// Destination choices for the "Post to" picker: the author's "🔒 Just me"
@@ -150,6 +171,21 @@ enum ScheduleDestinations {
         let label: String
         /// "Personal" or "Shared" — the little tag on the row.
         let tag: String
+    }
+
+    /// Which destination the picker should show, given what is currently
+    /// selected, what the editor opened wanting, and the choices now available.
+    ///
+    /// Non-destructive by contract: a selection that is still on offer is kept,
+    /// whatever `preferred` says. The channel list is re-read every time the
+    /// sheet's task runs, and on iOS that includes every return from the
+    /// `.navigationLink` destination picker — so a rule that re-applied
+    /// `preferred` here would throw away the channel the person had just
+    /// walked into that picker to choose (#424 follow-up; it did exactly that).
+    static func resolve(current: String, preferred: String?, choices: [Choice]) -> String {
+        if choices.contains(where: { $0.id == current }) { return current }
+        if let preferred, choices.contains(where: { $0.id == preferred }) { return preferred }
+        return choices.first?.id ?? ""
     }
 
     static func choices(channels: [Channel], me: String?) -> [Choice] {
