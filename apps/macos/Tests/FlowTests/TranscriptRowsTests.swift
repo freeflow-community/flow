@@ -13,13 +13,14 @@ final class TranscriptRowsTests: XCTestCase {
         user: String = "u1",
         body: String = "hello",
         at: String,
-        systemKind: String? = nil
+        systemKind: String? = nil,
+        scheduled: Bool = false
     ) -> Message {
         Message(
             id: id, channelId: "c1", userId: user, threadRootId: nil,
             clientMsgId: id, body: body, createdAt: at, editedAt: nil,
             deletedAt: nil, replyCount: 0, lastReplyAt: nil,
-            systemKind: systemKind, pending: false
+            systemKind: systemKind, scheduled: scheduled, pending: false
         )
     }
 
@@ -47,6 +48,37 @@ final class TranscriptRowsTests: XCTestCase {
             msg("m2", at: "2026-08-19T10:05:01Z"),
         ])
         XCTAssertTrue(rows[1].showsHeader)
+    }
+
+    /// A scheduled message landing under something its author had just typed
+    /// must not inherit that header — without a header there is nowhere to draw
+    /// the SCHEDULED badge, so it would read as hand-typed (#424).
+    func testScheduledMessageBreaksTheRunAfterATypedOne() {
+        let rows = TranscriptRowCache().rows(for: [
+            msg("m1", at: "2026-08-19T10:00:00Z"),
+            msg("m2", at: "2026-08-19T10:01:00Z", scheduled: true),
+        ])
+        XCTAssertTrue(rows[1].showsHeader)
+    }
+
+    /// And the other direction: typing right after your own scheduled message
+    /// must not fall under the badged header and look automatic.
+    func testTypedMessageBreaksTheRunAfterAScheduledOne() {
+        let rows = TranscriptRowCache().rows(for: [
+            msg("m1", at: "2026-08-19T10:00:00Z", scheduled: true),
+            msg("m2", at: "2026-08-19T10:01:00Z"),
+        ])
+        XCTAssertTrue(rows[1].showsHeader)
+    }
+
+    /// Two runs of the same schedule still group normally — the break is on a
+    /// *change*, not on the flag being set.
+    func testConsecutiveScheduledMessagesStillGroup() {
+        let rows = TranscriptRowCache().rows(for: [
+            msg("m1", at: "2026-08-19T10:00:00Z", scheduled: true),
+            msg("m2", at: "2026-08-19T10:01:00Z", scheduled: true),
+        ])
+        XCTAssertFalse(rows[1].showsHeader)
     }
 
     func testDifferentAuthorBreaksTheRun() {

@@ -300,6 +300,7 @@ struct SidebarDrawer: View {
     private var header: some View {
         HStack(spacing: 6) {
             workspaceMenu
+            scheduledClock
             activityBell
         }
     }
@@ -463,8 +464,31 @@ struct SidebarDrawer: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
+    /// The Scheduled list's entry point (#424) — a clock beside the Activity
+    /// bell, since both open a workspace-wide view rather than a channel. No
+    /// badge: a scheduled message that fired is already a message in a
+    /// conversation, and that is where it should be noticed.
+    private var scheduledClock: some View {
+        let active = app.showScheduled
+        return Button {
+            app.showScheduledPanel()
+            onSelect()
+        } label: {
+            Image(systemName: "clock")
+                .font(.system(size: 16))
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 30, height: 28)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scheduled messages")
+        .accessibilityIdentifier("sidebar.scheduled")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
     private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
-        let active = app.selectedChannelId == channel.id && !app.showActivity
+        let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
         return Button {
             open(channel.id)
         } label: {
@@ -526,7 +550,7 @@ struct SidebarDrawer: View {
     private func dmRow(_ channel: Channel, label: String? = nil) -> some View {
         let title = label
             ?? channel.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
-        let active = app.selectedChannelId == channel.id && !app.showActivity
+        let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { usersById[$0] }
         return Button {
@@ -737,7 +761,7 @@ struct SidebarDrawer: View {
 
     private func defaultSelectionAndSelfDm(_ chans: [Channel]) {
         guard let wsId = app.selectedWorkspaceId, !chans.isEmpty else { return }
-        if app.selectedChannelId == nil && !app.showActivity {
+        if app.selectedChannelId == nil && !app.showActivity && !app.showScheduled {
             let target = chans.first { $0.isMember && $0.name == "general" }
                 ?? chans.first { $0.isMember && !$0.isDM }
             if let target { app.selectChannel(target.id) }

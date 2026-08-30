@@ -405,6 +405,7 @@ struct SidebarView: View {
             Spacer()
             navButton(back: true)
             navButton(back: false)
+            scheduledClock
             activityBell
         }
     }
@@ -585,10 +586,34 @@ struct SidebarView: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
+    /// The Scheduled panel's entry point (#424) — a clock beside the Activity
+    /// bell, since both open a workspace-wide view rather than a channel. No
+    /// badge: a scheduled message that fired is already a message in a
+    /// conversation, and that is where it should be noticed.
+    private var scheduledClock: some View {
+        let active = win.showScheduled
+        return Button {
+            win.showScheduledPanel()
+        } label: {
+            Image(systemName: "clock")
+                .flowFont(size: 14)
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 24, height: 22)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Scheduled messages")
+        .accessibilityLabel("Scheduled messages")
+        .accessibilityIdentifier("sidebar.scheduled")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
     private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
-            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity
+            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
+            showScheduled: win.showScheduled
         )
         return SidebarHoverRow { hovering in
             Button {
@@ -670,7 +695,8 @@ struct SidebarView: View {
         )
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
-            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity
+            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
+            showScheduled: win.showScheduled
         )
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }

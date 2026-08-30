@@ -21,6 +21,9 @@ struct ComposerView: View {
     @State private var suppressedToken: String?
     @State private var dropTargeted = false
     @State private var missingMentions: [MentionMiss] = []
+    /// Open schedule sheet (#424) — set by the clock below, carrying whatever
+    /// is typed and this conversation as the destination.
+    @State private var scheduling: ScheduleEditorTarget?
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
 
     var body: some View {
@@ -83,6 +86,20 @@ struct ComposerView: View {
                 .help("Insert emoji")
                 .accessibilityIdentifier(threadRootId == nil ? "composer.emoji" : "thread.composer.emoji")
 
+                // Schedule instead of send (#424): same message, posted later.
+                // Only on a channel's main composer — a scheduled message is a
+                // top-level post, not a thread reply.
+                if threadRootId == nil {
+                    Button {
+                        scheduling = .creating(body: text, channelId: channelId)
+                    } label: {
+                        Image(systemName: "clock")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Schedule this message")
+                    .accessibilityIdentifier("composer.schedule")
+                }
+
                 Button(action: send) {
                     Image(systemName: "paperplane.fill")
                         .flowFont(size: 12)
@@ -106,6 +123,12 @@ struct ComposerView: View {
                         .strokeBorder(dropTargeted ? MC.accent : MC.hairline2, lineWidth: 1)
                 )
         )
+        .sheet(item: $scheduling) { target in
+            ScheduleMessageSheet(workspaceId: workspaceId, target: target) { _ in
+                text = "" // it's scheduled now; leaving the draft would double-post it
+            }
+            .environmentObject(app)
+        }
         // Clicking anywhere on the card (padding, whitespace) focuses the
         // input; buttons and the text view keep their own click handling.
         .contentShape(RoundedRectangle(cornerRadius: 12))

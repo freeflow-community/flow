@@ -114,7 +114,8 @@ struct ThreadScreen: View {
                                 context: TranscriptContext(
                                     engine: app.engine,
                                     avatarPaths: app.avatarPaths,
-                                    agentIds: app.agentIds
+                                    agentIds: app.agentIds,
+                                    onOpenScheduled: { app.showScheduledPanel() }
                                 ),
                                 showHeader: true,
                                 showThreadAffordances: false,

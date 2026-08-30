@@ -21,6 +21,10 @@ final class WindowState: ObservableObject {
     /// Activity feed (phase 12) — covers the content pane; the selected channel
     /// stays put behind it so picking a channel returns to a conversation.
     @Published var showActivity: Bool = false
+    /// Scheduled panel (#424) — the same treatment as the Activity feed: it
+    /// covers the content pane, the channel stays selected behind it, and it is
+    /// workspace-wide rather than per-channel.
+    @Published var showScheduled: Bool = false
     /// Jump-to-message target (phase 12): a message id the channel/thread view
     /// should scroll to and flash after navigation. Cleared once reached.
     @Published var focusMessageId: String?
@@ -55,6 +59,7 @@ final class WindowState: ObservableObject {
         selectedArtifactId = nil
         filesOpen = false
         showActivity = false
+        showScheduled = false
         nav = NavHistory() // the other workspace's channels aren't reachable from here
         // Active workspace survives relaunch (phase 3.5 fixes). Shared across
         // windows on purpose: the *last* pick is what a fresh window starts on.
@@ -107,6 +112,7 @@ final class WindowState: ObservableObject {
             selectedArtifactId = nil
             filesOpen = false
             showActivity = false
+            showScheduled = false
             if selectedChannelId != nil { switchChannel(to: nil) }
             return
         }
@@ -122,14 +128,22 @@ final class WindowState: ObservableObject {
         case .activity:
             selectedArtifactId = nil
             filesOpen = false
+            showScheduled = false
             showActivity = true
+        case .scheduled:
+            selectedArtifactId = nil
+            filesOpen = false
+            showActivity = false
+            showScheduled = true
         case .channel(let id):
-            // Selecting a channel always closes an open artifact panel or the
-            // activity feed — even when it's the same channel that's behind them.
+            // Selecting a channel always closes an open artifact panel, the
+            // activity feed or the Scheduled panel — even when it's the same
+            // channel that's behind them.
             selectedArtifactId = nil
             // Files are per-channel: the tab doesn't follow you to the next one.
             filesOpen = false
             showActivity = false
+            showScheduled = false
             guard id != selectedChannelId else { return }
             switchChannel(to: id)
         }
@@ -204,7 +218,7 @@ final class WindowState: ObservableObject {
     /// `channels` is the caller's already-observed list rather than a fresh
     /// query, so restoring costs nothing beyond a lookup.
     func restorableLastChannel(from channels: [Channel]) -> String? {
-        guard selectedChannelId == nil, !showActivity,
+        guard selectedChannelId == nil, !showActivity, !showScheduled,
               let saved = Self.lastChannelId,
               let channel = channels.first(where: { $0.id == saved }),
               channel.isMember, channel.archivedAt == nil,
@@ -241,6 +255,7 @@ final class WindowState: ObservableObject {
         if open {
             selectedArtifactId = nil
             showActivity = false
+            showScheduled = false
         }
     }
 
@@ -266,6 +281,7 @@ final class WindowState: ObservableObject {
     func selectArtifact(_ id: String?) {
         if let id {
             showActivity = false
+            showScheduled = false
             filesOpen = false
             if let a = artifacts().first(where: { $0.id == id }), a.channelId != selectedChannelId {
                 // Same park-and-restore as an ordinary channel switch, or the
@@ -318,6 +334,7 @@ final class WindowState: ObservableObject {
     /// joined (or is about to).
     func openArtifact(_ artifactId: String, inChannel channelId: String) {
         showActivity = false
+        showScheduled = false
         filesOpen = false
         if channelId != selectedChannelId { switchChannel(to: channelId) }
         selectedArtifactId = artifactId
@@ -330,6 +347,25 @@ final class WindowState: ObservableObject {
     func showActivityFeed() {
         nav.record(.activity)
         show(.activity)
+    }
+
+    // MARK: - Scheduled (#424)
+
+    /// Show the Scheduled panel — the workspace-wide list behind the sidebar
+    /// header's clock. Same shape as `showActivityFeed`: a recorded visit that
+    /// back/forward can walk.
+    func showScheduledPanel() {
+        nav.record(.scheduled)
+        show(.scheduled)
+    }
+
+    /// Jump to a specific message in a channel of the current workspace — what
+    /// the Scheduled panel's "view output" does. The same navigation an
+    /// Activity row performs, minus the notification.
+    func jumpToMessage(channelId: String, messageId: String) {
+        selectChannel(channelId)
+        openThread(nil) // a scheduled message is always a top-level post
+        focusMessageId = messageId
     }
 
     /// Activity-feed navigation: jump to a notification's channel (and thread),
@@ -371,6 +407,7 @@ final class WindowState: ObservableObject {
         selectedArtifactId = nil
         filesOpen = false
         showActivity = false
+        showScheduled = false
         focusMessageId = nil
         nav = NavHistory()
     }

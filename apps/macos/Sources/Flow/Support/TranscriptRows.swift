@@ -40,6 +40,8 @@ struct TranscriptContext: Equatable {
     var onError: (String) -> Void = { _ in }
     /// Open a just-created artifact in the side panel (macOS only).
     var onSelectArtifact: (String) -> Void = { _ in }
+    /// Open the Scheduled panel — what the SCHEDULED badge does (#424).
+    var onOpenScheduled: () -> Void = {}
 
     static func == (a: Self, b: Self) -> Bool {
         a.engine === b.engine
@@ -111,8 +113,9 @@ final class TranscriptRowCache {
 /// `MessageListView`s carried as `showsHeader(at:)` / `startsNewDay(at:)`.
 enum TranscriptRows {
     /// The author header is shown when a run of messages breaks: first row,
-    /// new day, after a system line, a different sender, unparseable dates,
-    /// or more than 5 minutes since the previous message.
+    /// new day, after a system line, a different sender, a change in whether
+    /// the scheduler posted it, unparseable dates, or more than 5 minutes since
+    /// the previous message.
     static func showsHeader(
         prev: Message?, prevDate: Date?, message: Message, date: Date?, startsNewDay: Bool
     ) -> Bool {
@@ -120,6 +123,11 @@ enum TranscriptRows {
         if startsNewDay { return true }
         if prev.systemKind != nil { return true }
         if prev.userId != message.userId { return true }
+        // A scheduled message always starts its own group (#424). Merged into
+        // the run above it, it would inherit that header and render with *no*
+        // badge — reading exactly like something its author typed just now.
+        // The web client hit this bug and fixed it the same way.
+        if prev.scheduled != message.scheduled { return true }
         guard let prevDate, let date else { return true }
         return date.timeIntervalSince(prevDate) > 300
     }

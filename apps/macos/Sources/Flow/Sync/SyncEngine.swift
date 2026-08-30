@@ -1467,6 +1467,57 @@ actor SyncEngine {
         return u
     }
 
+    // MARK: - Scheduled messages (#424)
+
+    // Message-shaped, not job-shaped: create/edit/delete, plus the two verbs a
+    // schedule needs that a message doesn't (pause/resume, run now). Every call
+    // returns the server's updated row, so a caller can settle one row in place
+    // instead of reloading the list — which is what makes pause/resume and
+    // run-now feel immediate.
+
+    /// Everything this user may see in a workspace: rows they authored, plus
+    /// rows destined for a channel they're in. `mine` is the panel's "Owned by
+    /// me" filter, applied server-side.
+    func fetchScheduledMessages(workspaceId: String, mine: Bool) async throws -> [ScheduledMessage] {
+        let query = [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+            URLQueryItem(name: "mine", value: mine ? "true" : "false"),
+        ]
+        let resp: ScheduledMessagesResponse = try await api.get("/v1/scheduled-messages", query: query)
+        return resp.scheduledMessages
+    }
+
+    func createScheduledMessage(
+        channelId: String, body: String, recurrence: Recurrence, timezone: String
+    ) async throws -> ScheduledMessage {
+        try await api.post(
+            "/v1/scheduled-messages",
+            body: CreateScheduledMessageBody(
+                channelId: channelId, body: body, recurrence: recurrence, timezone: timezone
+            )
+        )
+    }
+
+    func updateScheduledMessage(
+        id: String, patch: UpdateScheduledMessageBody
+    ) async throws -> ScheduledMessage {
+        try await api.patch("/v1/scheduled-messages/\(id)", body: patch)
+    }
+
+    func deleteScheduledMessage(id: String) async throws {
+        let _: OkResponse = try await api.delete("/v1/scheduled-messages/\(id)")
+    }
+
+    func setScheduledMessageEnabled(id: String, enabled: Bool) async throws -> ScheduledMessage {
+        try await api.post("/v1/scheduled-messages/\(id)/\(enabled ? "resume" : "pause")")
+    }
+
+    /// Post it now, out of band. The cadence is untouched — this is "send it
+    /// again", not "reschedule".
+    func runScheduledMessageNow(id: String) async throws -> ScheduledMessage {
+        try await api.post("/v1/scheduled-messages/\(id)/run")
+    }
+
     // MARK: - Notifications (phase2.md §4)
 
     /// Activity is a row inside a workspace, so the feed is scoped to one —

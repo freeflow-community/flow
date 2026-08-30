@@ -24,6 +24,9 @@ struct ComposerView: View {
     @State private var showFilePicker = false
     @State private var showCamera = false
     @State private var photoSelection: [PhotosPickerItem] = []
+    /// Open schedule sheet (#424) — set from the composer's `+` menu, carrying
+    /// whatever is typed and this conversation as the destination.
+    @State private var scheduling: ScheduleEditorTarget?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,6 +54,17 @@ struct ComposerView: View {
                         showFilePicker = true
                     } label: {
                         Label("Files", systemImage: "folder")
+                    }
+                    // Schedule instead of send (#424): same message, posted
+                    // later. The `+` menu is this composer's accessory idiom,
+                    // and it's main-composer only — a scheduled message is a
+                    // top-level post, not a thread reply.
+                    if threadRootId == nil {
+                        Button {
+                            scheduling = .creating(body: text, channelId: channelId)
+                        } label: {
+                            Label("Schedule this message", systemImage: "clock")
+                        }
                     }
                 } label: {
                     Image(systemName: "plus.circle.fill")
@@ -86,6 +100,14 @@ struct ComposerView: View {
             .padding(.vertical, 8)
         }
         .background(MC.base)
+        .sheet(item: $scheduling) { target in
+            NavigationStack {
+                ScheduleMessageSheet(workspaceId: workspaceId, target: target) { _ in
+                    text = "" // it's scheduled now; leaving the draft would double-post it
+                }
+                .environmentObject(app)
+            }
+        }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in
                 uploadCameraShot(image)
