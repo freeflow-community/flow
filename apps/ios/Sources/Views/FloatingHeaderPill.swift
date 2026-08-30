@@ -1,4 +1,5 @@
 import SwiftUI
+import GRDB
 
 /// The floating header (#298): one rounded pill carrying a screen's title, its
 /// subtitle and its two controls, laid over content that runs all the way to
@@ -26,6 +27,20 @@ struct FloatingHeaderPill<Trailing: View>: View {
     /// Identifier for the subtitle line, when a screen's tests look for it.
     var subtitleAccessibilityIdentifier: String?
     @ViewBuilder var trailing: () -> Trailing
+
+    @EnvironmentObject private var app: AppState
+    @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
+
+    /// The pill wears the active workspace's sidebar color (#427), off the same
+    /// `SidebarPalette` the drawer and the macOS workspace rail read — it is the
+    /// top edge of the same colored shell, and a fixed violet capsule over a
+    /// navy sidebar was the one piece that ignored the setting. Observing here
+    /// rather than in `ChannelScreen` means every screen that adopts the
+    /// floating header follows the workspace for free.
+    private var palette: SidebarPalette {
+        let current = workspaces.value.first { $0.id == app.selectedWorkspaceId }
+        return SidebarPalette.palette(for: current?.sidebarColor)
+    }
 
     var body: some View {
         // Title and subtitle stack *inside* the control row. Stacking the other
@@ -65,11 +80,16 @@ struct FloatingHeaderPill<Trailing: View>: View {
         .padding(.vertical, 7)
         .background(
             Capsule(style: .continuous)
-                .fill(MC.sidebarGradient)
+                .fill(palette.gradient)
                 .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 5)
         )
         .padding(.horizontal, 18)
         .padding(.top, FloatingHeaderMetrics.topPadding)
+        // Live, like the drawer: recoloring the workspace writes the row, the
+        // observation republishes, the pill repaints without a restart.
+        .task {
+            workspaces.start(db: app.db) { try Workspace.fetchAll($0) }
+        }
     }
 }
 
