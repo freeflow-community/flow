@@ -51,6 +51,7 @@ import {
 } from '@flow/shared';
 import { ApiError, badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { rateAllow } from '../lib/rateLimit.js';
+import { rateAllowDb } from '../lib/rateLimitDb.js';
 import { parseByteRange } from '../lib/httpRange.js';
 import { blobStore } from '../storage/index.js';
 
@@ -334,7 +335,8 @@ export function registerRoutes(app: FastifyInstance): void {
   // Self-service account deletion (App Store 5.1.1(v)). The clients gate this
   // behind an explicit confirmation; the server just needs a valid session.
   app.delete('/v1/me', { preHandler: requireAuth }, async (req) => {
-    if (!rateAllow(`delete-me:${req.user.id}`, 3, 10 * 60_000)) {
+    // per-user key → DB-backed window, counted across replicas (phase 18 M1)
+    if (!(await rateAllowDb(`delete-me:${req.user.id}`, 3, 10 * 60_000))) {
       throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
     }
     await deleteMyAccount(req.user.id);
@@ -588,7 +590,8 @@ export function registerRoutes(app: FastifyInstance): void {
   // Keyed by user, not IP: redeeming already costs an account, and an office
   // full of people joining off the same link shares one egress address.
   app.post('/v1/join-links/redeem', { preHandler: requireAuth }, async (req) => {
-    if (!rateAllow(`join-redeem:${req.user.id}`, 20, 10 * 60_000)) {
+    // per-user key → DB-backed window, counted across replicas (phase 18 M1)
+    if (!(await rateAllowDb(`join-redeem:${req.user.id}`, 20, 10 * 60_000))) {
       throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
     }
     const body = parse(RedeemJoinLinkBody, req.body);

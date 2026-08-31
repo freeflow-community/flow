@@ -8,7 +8,18 @@ ruling of 2026-07-29 overrides that trigger for *replica scaling of the
 existing monolith only*; the larger Appendix A split (separate API and gateway
 pools, JetStream, pgbouncer) stays scale-triggered and is out of scope here.
 
-Status: proposal. Nothing here is built yet.
+Status: proposal, scheduled as `docs/specs/phase18.md`. Nothing here is
+built yet except where noted.
+
+> **Revised 2026-08-31** against the code as it stands. What changed since
+> 2026-07-29: presence is now keyed per **(user, workspace)** (#364), so the
+> heartbeat payload and merge below are workspace-aware; two more presence
+> consumers exist (`onlineUsersIn`, `hasAnyConnection`); the scheduled-message
+> scheduler (#419) landed already replica-safe (`FOR UPDATE SKIP LOCKED`); two
+> new replica-local soft-state maps exist (channel indicators #137, huddle
+> roster) — see the inventory and §1a; the "unfurl-cache expiry" sweep named
+> in the original §2 turned out to be unwired (`evictExpired` has no caller)
+> and is dropped from scope.
 
 ## What already works at N replicas
 
@@ -21,15 +32,23 @@ meta events need **no changes**.
 
 ## What breaks, and where
 
-Five single-node assumptions, verified in code:
+Single-node assumptions, verified in code (rows 6–7 added 2026-08-31):
 
 | # | State | Where | Failure at N=2 |
 |---|-------|-------|----------------|
-| 1 | Presence map | `presence.ts` (userId → local socket count) | users online via replica A look offline on B; `@here` under-resolves; new sockets get a partial presence snapshot |
+| 1 | Presence map | `presence.ts` (per **(user, workspace)** connection counts, #364) | users online via replica A look offline on B; `@here` under-resolves; new sockets get a partial presence snapshot; B wrongly clears A-connected users' indicators on local disconnect (`hasAnyConnection`) |
 | 2 | Boot migrations | `db/migrate.ts` (no lock) | replicas race the same migration during deploy |
 | 3 | App-events outbox | `services/appEvents.ts` `drainAppEvents` (plain SELECT) | both replicas claim the same due rows → apps receive events twice |
 | 4 | Socket Mode sockets | `gateway/socketMode.ts` (in-process map) | an app's socket lives on A; B's drain worker sees `hasLiveSocket() === false` and can't deliver |
 | 5 | Rate limiter | `lib/rateLimit.ts` (in-memory windows) | limits are silently N× looser |
+| 6 | Channel indicators | `indicators.ts` map (writers in `services/channelIndicators.ts`) | a spinner set via replica A is missing from B's channel-list snapshot; live events still reach every client (they ride the bus) |
+| 7 | Huddle roster cache | `huddles.ts` map (cache of LiveKit truth) | join/leave REST and webhooks land on one replica; the other's channel-list snapshot shows a stale roster until its next boot reconcile |
+
+Already replica-safe, no work needed: the scheduled-message scheduler (#419)
+claims due rows with `FOR UPDATE SKIP LOCKED`; message/typing/notification
+fan-out (NATS since phase 1); the unfurl cache (DB-backed, TTL checked on
+read — its `evictExpired` housekeeping is currently unwired, and if it is
+ever wired it goes behind the §2 sweep lock).
 
 ## The principle: soft state gossips, hard state locks
 
@@ -53,26 +72,37 @@ that migration cheap.
 Each replica keeps its local `online` map exactly as today, and additionally:
 
 - **Heartbeat.** Every ~10s, publish `presence.sync.{replicaId}` carrying
-  `{ replicaId, userIds: [...] }` — the full local online set. Full snapshots,
-  not deltas: self-healing by construction, and the payload is a few KB even
-  at thousands of concurrent users. `replicaId` is per-process-boot random
-  (Railway replicas have no stable identity; a restart is just a new id whose
-  predecessor expires).
+  `{ replicaId, workspaces: { [workspaceId]: userIds[] } }` — the full local
+  online set, keyed the way `presence.ts` now keys it: per **(user,
+  workspace)** (#364). Full snapshots, not deltas: self-healing by
+  construction, and the payload is a few KB even at thousands of concurrent
+  users. `replicaId` is per-process-boot random (Railway replicas have no
+  stable identity; a restart is just a new id whose predecessor expires).
 - **Merge.** Every replica subscribes to `presence.sync.*` and keeps
-  `remote: Map<replicaId, { userIds: Set, lastSeen }>`. Entries older than
-  ~30s (3 missed beats) are dropped.
-- **Read path.** `isOnline(userId)` = local count > 0 **or** any live remote
-  set contains the user. The new-socket presence snapshot
-  (`gateway/index.ts`) and `<!here>` resolution
-  (`services/notifications.ts`) read this merged view. The seam is unchanged:
-  both consumers already go through `presence.ts`.
+  `remote: Map<replicaId, { workspaces: Map<workspaceId, Set<userId>>, lastSeen }>`.
+  Entries older than ~30s (3 missed beats) are dropped.
+- **Read path.** All four presence reads consult local **or** any live
+  remote entry, per (user, workspace) where keyed:
+  - `isOnline(userId, workspaceId)` — `<!here>` resolution
+    (`services/notifications.ts`);
+  - `onlineUsersIn(workspaceId)` — the new-socket presence snapshot
+    (`gateway/index.ts`) must union the merged sets;
+  - `hasAnyConnection(userId)` — the gateway's disconnect path uses it to
+    clear a user's channel indicators; without the merged view, replica B
+    closing its last local socket wrongly clears indicators for a user still
+    connected via A;
+  - the seam is unchanged: every consumer already goes through
+    `presence.ts`.
 - **Event dedup.** Client-facing `presence` events must fire only on *global*
   transitions. Rule: a replica emits the workspace online/offline event only
-  when a **local** socket transition changes the **merged** answer. Every
-  transition originates on exactly one replica, so exactly one replica emits —
-  no coordination needed. (A user already online via A opening a socket on B:
-  B's local 0→1 doesn't change the merged answer → no event. Last socket
-  closing on A while B still holds one: same, no event.)
+  when a **local** socket transition changes the **merged** answer for that
+  (user, workspace). Every transition originates on exactly one replica, so
+  exactly one replica emits — no coordination needed. (A user already online
+  via A opening a socket on B: B's local 0→1 doesn't change the merged answer
+  → no event. Last socket closing on A while B still holds one: same, no
+  event.) This rule covers `sweepStale` too — the gateway's half-open-socket
+  TTL is just another local transition, and its offline emissions go through
+  the same merged-answer check.
 - **Failure modes.** Replica crash: its users read online for ≤30s, then
   expire — acceptable for presence. NATS outage: replicas degrade to their
   local view (exactly today's behavior); fan-out is down anyway, so presence
@@ -88,6 +118,23 @@ Each replica keeps its local `online` map exactly as today, and additionally:
 At `replicas = 1` all of this degenerates to today's behavior, so it can ship
 and soak in prod before the flip.
 
+## 1a. Other replica-local soft state (added 2026-08-31)
+
+Two maps landed after this design was written, both presence-shaped (soft,
+loss-tolerant, event fan-out already on the bus; only the *snapshot* read in
+`listChannels` is replica-local):
+
+- **Channel indicators** (#137, `indicators.ts`): ride the same heartbeat —
+  include each replica's live `(channelId, state)` aggregates alongside the
+  presence sets, and merge on read the same way. The disconnect-clear path
+  additionally needs the merged `hasAnyConnection` (§1 read path).
+- **Huddle roster** (`huddles.ts`): a cache of LiveKit, which is
+  authoritative and external. Cheapest fix is not gossip: each replica also
+  subscribes to the huddle bus events it already publishes and applies them
+  to its local cache, exactly like a client would; boot reconciliation covers
+  the rest. Decide at M2 implementation time; either mechanism is behind the
+  existing module seams.
+
 ## 2. Hard-state fixes (Postgres)
 
 - **Migrations:** wrap `migrate()` in `pg_advisory_lock` — losers wait, then
@@ -96,13 +143,19 @@ and soak in prod before the flip.
 - **Outbox:** `drainAppEvents` claims rows with `FOR UPDATE SKIP LOCKED`
   inside a transaction. Two replicas draining concurrently is then a feature
   (more throughput), not a bug.
-- **Singleton sweeps** (orphan-file sweep, session purge, unfurl-cache
-  expiry): `pg_try_advisory_lock` per job — one replica wins, others skip
-  that round. No leader election machinery.
-- **Rate limits:** per-user write limits move to a Postgres fixed-window
-  counter table (per Appendix A). The unauthenticated per-IP limits may stay
-  in-memory — N× looser is acceptable there and each request still hits a
-  limiter; documented divergence, revisit if abuse shows up.
+- **Singleton sweeps** (daily orphan-file sweep, boot-time session purge):
+  `pg_try_advisory_lock` per job on a dedicated connection — one replica
+  wins, others skip that round. No leader election machinery. (The original
+  list also named "unfurl-cache expiry"; that sweep does not actually run —
+  `evictExpired` is unwired — so it is out of scope until someone wires it,
+  behind the same lock.)
+- **Rate limits:** the per-**user** keys (`delete-me`, `join-redeem` in
+  `routes/index.ts`) move to a Postgres fixed-window counter table; these are
+  the limits where one caller crossing replicas matters. The unauthenticated
+  per-IP limits stay in-memory — N× looser is acceptable there and each
+  request still hits a limiter; documented divergence, revisit if abuse shows
+  up. (Appendix A's per-user *message write* limits were never built; nothing
+  to move there.)
 
 ## 3. Socket Mode routing over NATS
 
