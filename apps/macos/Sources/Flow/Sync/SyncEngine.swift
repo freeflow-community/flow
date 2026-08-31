@@ -556,6 +556,10 @@ actor SyncEngine {
                     // profile fetch already cached rather than blanking it.
                     website: existing?.website,
                     bio: existing?.bio,
+                    // #434: this one IS on the roster — that is the point of it
+                    // being there — so write it through, falling back to the
+                    // cached value for a server predating the field.
+                    title: m.title ?? existing?.title,
                     isAgent: m.isAgent ?? existing?.isAgent ?? false,
                     isBot: m.isBot ?? existing?.isBot ?? false,
                     // #432: the Directory names an agent's sponsor on its card,
@@ -1422,12 +1426,14 @@ actor SyncEngine {
     // MARK: - Profile (phase2.md §6)
 
     func updateProfile(
-        displayName: String?, timezone: String?, website: String? = nil, bio: String? = nil
+        displayName: String?, timezone: String?, website: String? = nil, bio: String? = nil,
+        title: String? = nil
     ) async throws {
         let me: User = try await api.patch(
             "/v1/me",
             body: PatchMeBody(
-                displayName: displayName, timezone: timezone, website: website, bio: bio
+                displayName: displayName, timezone: timezone, website: website, bio: bio,
+                title: title
             )
         )
         currentUser = me

@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { SIDEBAR_COLORS, PROFILE_BIO_MAX, PROFILE_WEBSITE_MAX, isProfileWebsiteUrl } from '@flow/shared';
+import {
+  SIDEBAR_COLORS,
+  PROFILE_BIO_MAX,
+  PROFILE_TITLE_MAX,
+  PROFILE_WEBSITE_MAX,
+  isProfileWebsiteUrl,
+} from '@flow/shared';
 import type {
   ChannelDTO,
   InviteDTO,
@@ -784,6 +790,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
   const auth = useAuth();
   const qc = useQueryClient();
   const [displayName, setDisplayName] = useState(auth.user.displayName);
+  const [title, setTitle] = useState(auth.user.title ?? '');
   const [timezone, setTimezone] = useState(auth.user.timezone || 'UTC');
   const [website, setWebsite] = useState(auth.user.website ?? '');
   const [bio, setBio] = useState(auth.user.bio ?? '');
@@ -815,6 +822,8 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
     try {
       const me = await api<UserDTO>('PATCH', '/v1/me', {
         displayName,
+        // #434: '' clears the title — the server trims, so a blank field is "unset"
+        title: title.trim(),
         timezone,
         website: website.trim(),
         bio,
@@ -873,6 +882,14 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Display name</label>
       <input data-testid="profile-name" className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+      {/* #434: directly under the name — the two together are what a Directory
+          card shows, so they are edited together. */}
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Title</label>
+      <input data-testid="profile-title" placeholder="Title (optional)" maxLength={PROFILE_TITLE_MAX}
+        className="w-full rounded border border-hairline2 px-3 py-2 text-sm"
+        value={title} onChange={(e) => setTitle(e.target.value)} />
+      <p className="mb-3 mt-1 text-xs text-faint">Shown under your name in the Directory.</p>
+
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Timezone</label>
       <select data-testid="profile-timezone" className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         value={timezone} onChange={(e) => setTimezone(e.target.value)}>
@@ -1136,6 +1153,12 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
             {user.displayName}
             {user.isAgent && <span title="AI agent"> 🤖</span>}
           </p>
+          {/* #434: under the name, same as the Directory card it opens from. */}
+          {user.title && (
+            <p data-testid="user-card-title" className="max-w-full truncate text-sm text-ink-soft">
+              {user.title}
+            </p>
+          )}
           {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
           <p className="text-sm text-muted select-all">{user.email}</p>
           <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>

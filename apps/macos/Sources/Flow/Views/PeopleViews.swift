@@ -160,6 +160,15 @@ struct MemberProfileSheet: View {
             Text(user.map(\.displayNameWithBadge) ?? "…")
                 .flowFont(.title3, weight: .bold)
                 .accessibilityIdentifier("profile.name")
+            // #434: under the name, same as the Directory card it opens from.
+            if let title = user?.title, !title.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text(title)
+                    .flowFont(.callout)
+                    .foregroundStyle(MC.inkSoft)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityIdentifier("profile.title")
+            }
             if user?.isAgent == true {
                 Text("AI agent").flowFont(.caption).foregroundStyle(.secondary)
             }
@@ -427,6 +436,7 @@ struct MyProfileSheet: View {
     @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var displayName = ""
+    @State private var title = ""
     @State private var timezone = TimeZone.current.identifier
     @State private var website = ""
     @State private var bio = ""
@@ -461,6 +471,18 @@ struct MyProfileSheet: View {
                 TextField("Display name", text: $displayName)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("profile.displayName")
+            }
+
+            // #434: directly under the name — the two together are what a
+            // Directory card shows, so they are edited together.
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Title").flowFont(.caption).foregroundStyle(.secondary)
+                TextField("Title (optional)", text: $title)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("profile.title")
+                    .onChange(of: title) { _, new in
+                        if new.count > profileTitleMax { title = String(new.prefix(profileTitleMax)) }
+                    }
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -533,7 +555,9 @@ struct MyProfileSheet: View {
                                 displayName: displayName.trimmingCharacters(in: .whitespaces),
                                 timezone: timezone,
                                 website: trimmedWebsite,
-                                bio: bio
+                                bio: bio,
+                                // "" clears it
+                                title: title.trimmingCharacters(in: .whitespaces)
                             )
                             dismiss()
                         } catch {
@@ -558,6 +582,7 @@ struct MyProfileSheet: View {
         }
         .onAppear {
             displayName = app.currentUser?.displayName ?? ""
+            title = app.currentUser?.title ?? ""
             timezone = app.currentUser?.timezone ?? TimeZone.current.identifier
             website = app.currentUser?.website ?? ""
             bio = app.currentUser?.bio ?? ""

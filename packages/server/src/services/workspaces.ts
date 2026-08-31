@@ -337,6 +337,7 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
     avatarUrl: r.u.avatarUrl,
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
+    title: r.u.title,
     isAgent: r.u.isAgent,
     isBot: r.u.isBot,
     // #357: the sponsor who vouched for this agent HERE; pre-#357 rows fall
@@ -363,6 +364,7 @@ export async function toMemberDTO(workspaceId: string, userId: string): Promise<
     avatarUrl: r.u.avatarUrl,
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
+    title: r.u.title,
     isAgent: r.u.isAgent,
     isBot: r.u.isBot,
     // #357: the sponsor who vouched for this agent HERE; pre-#357 rows fall

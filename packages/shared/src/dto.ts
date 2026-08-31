@@ -16,6 +16,10 @@ export interface UserDTO {
    * significant, everything else renders literally. Render it in a node that
    * escapes (a React text child, SwiftUI Text) — never as HTML. */
   bio: string;
+  /** One-line role shown under the name on Directory and profile cards (#434).
+   * '' = unset, and an unset title draws no line at all. Server-trimmed, max
+   * PROFILE_TITLE_MAX chars. */
+  title: string;
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
   /** Agents only: the human member who sponsored (approved) the agent. null for
@@ -82,6 +86,9 @@ export interface WorkspaceMemberDTO {
   avatarUrl: string | null;
   statusEmoji: string; // '' = no status
   statusText: string;
+  /** One-line role (#434), '' = unset. Carried on the roster so a Directory
+   * card can draw it without a fetch per member. */
+  title: string;
   /** First-class AI agent (AGENTS_DESIGN.md) — clients render a small 🤖 next to the name. */
   isAgent: boolean;
   /** App/integration bot user. Like `isAgent`, it means "not a person" — which

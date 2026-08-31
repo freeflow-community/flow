@@ -48,6 +48,8 @@ export const users = pgTable('users', {
   // PatchMeBody, the only write path); `bio` is plain text, newlines kept.
   website: text('website').notNull().default(''),
   bio: text('bio').notNull().default(''),
+  // #434: one-line title shown under the name on Directory and profile cards.
+  title: text('title').notNull().default(''),
   // Phase 10: per-user notification prefs ({dm, mention, groupMention,
   // threadReply, reaction, channelInvite, persistentBanners} — absent key =
   // default) and the

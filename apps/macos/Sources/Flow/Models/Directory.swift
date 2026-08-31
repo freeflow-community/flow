@@ -14,6 +14,8 @@ protocol DirectoryMember {
     var role: String { get }
     var statusEmoji: String? { get }
     var statusText: String? { get }
+    /// The member's own one-line title (#434). nil or "" = unset.
+    var title: String? { get }
     var isAgent: Bool? { get }
     var isBot: Bool? { get }
     /// Agents only: the human member who sponsored them.
@@ -32,6 +34,7 @@ struct DirectoryRow: Decodable, FetchableRecord, Equatable, Sendable, Identifiab
     var avatarUrl: String?
     var statusEmoji: String?
     var statusText: String?
+    var title: String?
     var isAgent: Bool?
     var isBot: Bool?
     var sponsorId: String?
@@ -43,6 +46,7 @@ struct DirectoryRow: Decodable, FetchableRecord, Equatable, Sendable, Identifiab
         SELECT m.userId AS userId, u.displayName AS displayName, u.email AS email,
                m.role AS role, u.avatarUrl AS avatarUrl,
                u.statusEmoji AS statusEmoji, u.statusText AS statusText,
+               u.title AS title,
                u.isAgent AS isAgent, u.isBot AS isBot, u.sponsorId AS sponsorId
         FROM member m JOIN user u ON u.id = m.userId
         WHERE m.workspaceId = ?
@@ -119,6 +123,16 @@ enum Directory {
         }
         if m.isBot == true { return "" }
         return m.email
+    }
+
+    /// The member's title, or nil when there is nothing to draw (#434). An
+    /// unset title omits the line entirely rather than reserving a blank one,
+    /// so a card without one is a shorter card, not a broken-looking one.
+    /// Whitespace-only counts as unset: the server trims, but a row cached by
+    /// an older client may not have been.
+    static func titleLine(_ m: some DirectoryMember) -> String? {
+        let t = (m.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 
     /// The live count beside the search box, pluralised.

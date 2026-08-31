@@ -52,26 +52,19 @@ struct MainView: View {
             if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_DRAWER"] == "1" {
                 drawerOpen = true
             }
-            // QA: FLOW_DEBUG_SHOW_ACTIVITY=1 lands on the Activity feed, same
-            // screenshot-without-a-tap-tool rationale as the hooks above.
-            if ProcessInfo.processInfo.environment["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" {
-                app.showActivity = true
-            }
-            // QA: FLOW_DEBUG_SHOW_SCHEDULED=1 lands on the Scheduled list, same
-            // screenshot-without-a-tap-tool rationale as the hooks above.
-            if ProcessInfo.processInfo.environment["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" {
-                app.showScheduled = true
-            }
-            // QA: FLOW_DEBUG_SHOW_DIRECTORY=1 lands on the Directory, same
-            // screenshot-without-a-tap-tool rationale as the hooks above.
-            if ProcessInfo.processInfo.environment["FLOW_DEBUG_SHOW_DIRECTORY"] == "1" {
-                app.showDirectory = true
-            }
+            debugShowPanel()
             #endif
         }
         .onChange(of: workspaces.value) { _, list in
             if app.selectedWorkspaceId == nil, let first = list.first {
                 app.selectWorkspace(first.id)
+                // Picking a workspace clears every panel flag (it is a move to
+                // somewhere else entirely), so a launch hook set before the
+                // first workspace arrived — which is every first launch after
+                // an install — has to be re-applied here or it is silently lost.
+                #if DEBUG
+                debugShowPanel()
+                #endif
             }
         }
         .onChange(of: allChannels.value) { _, list in
@@ -146,6 +139,18 @@ struct MainView: View {
     /// first pass that has a usable row wins, and the rest no-op.
     ///
     /// It only ever fills an *empty* selection (the guard lives in
+    #if DEBUG
+    /// QA: the `FLOW_DEBUG_SHOW_*` hooks land the app on a panel at launch, so
+    /// the simulator can be screenshot-verified without a tap tool. Compiled
+    /// out of release.
+    private func debugShowPanel() {
+        let env = ProcessInfo.processInfo.environment
+        if env["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" { app.showActivity = true }
+        if env["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" { app.showScheduled = true }
+        if env["FLOW_DEBUG_SHOW_DIRECTORY"] == "1" { app.showDirectory = true }
+    }
+    #endif
+
     /// `restorableLastChannel`), which is what keeps the priority order right:
     /// a deep link, a tapped notification or the debug hook has already put
     /// something on screen, so restoring is skipped — and if one of those

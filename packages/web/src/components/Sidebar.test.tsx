@@ -147,6 +147,7 @@ const member = (userId: string, displayName: string, isAgent: boolean): Workspac
   avatarUrl: null,
   statusEmoji: '',
   statusText: '',
+  title: '',
   isAgent,
   isBot: false,
   sponsorId: null,

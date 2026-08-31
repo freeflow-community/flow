@@ -47,6 +47,14 @@ struct MemberProfileSheet: View {
         return line.isEmpty ? nil : line
     }
 
+    /// #434: the one-line title, under the name — same as the Directory card
+    /// this sheet opens from. Whitespace-only counts as unset.
+    private var title: String? {
+        guard let t = user?.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty
+        else { return nil }
+        return t
+    }
+
     private var website: String? {
         guard let site = user?.website, !site.isEmpty else { return nil }
         return site
@@ -67,6 +75,14 @@ struct MemberProfileSheet: View {
                         .foregroundStyle(MC.ink)
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("profile.name")
+                    if let title {
+                        Text(title)
+                            .font(.system(size: 15))
+                            .foregroundStyle(MC.inkSoft)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .accessibilityIdentifier("profile.title")
+                    }
                     if user?.isAgent == true {
                         Text("🤖 AI agent")
                             .font(.system(size: 13, weight: .semibold))

@@ -164,6 +164,17 @@ struct DirectoryView: View {
                             Text("🤖").flowFont(.caption).help("AI agent")
                         }
                     }
+                    // #434: the member's own line, under the name and above the
+                    // role. Absent when unset — no reserved blank line.
+                    if let title = Directory.titleLine(m) {
+                        Text(title)
+                            .flowFont(.caption)
+                            .foregroundStyle(MC.inkSoft)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .help(title)
+                            .accessibilityIdentifier("directory.card.title")
+                    }
                     Text(Directory.kindLabel(m))
                         .flowFont(.caption)
                         .foregroundStyle(MC.muted)
