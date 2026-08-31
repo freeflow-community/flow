@@ -440,6 +440,10 @@ export const NotificationPrefsBody = z.object({
  * defence in depth for rows written before this rule. */
 export const PROFILE_WEBSITE_MAX = 200;
 export const PROFILE_BIO_MAX = 500;
+/** #434: the one-line role a Directory card shows under the name. Short on
+ * purpose — a card truncates, so anything longer would only ever be read as an
+ * ellipsis. */
+export const PROFILE_TITLE_MAX = 80;
 
 /** Absolute http(s) URL: a literal `http://` or `https://` prefix, a non-empty
  * host, and no whitespace anywhere.
@@ -469,6 +473,9 @@ export const PatchMeBody = z
       .optional(),
     // #220: plain text, newlines preserved. '' clears it.
     bio: z.string().max(PROFILE_BIO_MAX).optional(),
+    // #434: one-line role/title. Trimmed before the length check, so trailing
+    // whitespace can neither be stored nor push a title over the limit; '' clears it.
+    title: z.string().trim().max(PROFILE_TITLE_MAX).optional(),
     timezone: z
       .string()
       .max(64)
@@ -501,6 +508,7 @@ export const PatchMeBody = z
       b.displayName !== undefined ||
       b.website !== undefined ||
       b.bio !== undefined ||
+      b.title !== undefined ||
       b.timezone !== undefined ||
       b.statusEmoji !== undefined ||
       b.statusText !== undefined ||

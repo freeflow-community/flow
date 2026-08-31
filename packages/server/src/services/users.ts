@@ -44,6 +44,7 @@ export async function patchMe(
     statusText?: string | undefined;
     website?: string | undefined;
     bio?: string | undefined;
+    title?: string | undefined;
     notificationPrefs?: NotificationPrefs | undefined;
     statusSuppressAlerts?: boolean | undefined;
     unfurlOwnLinks?: boolean | undefined;
@@ -56,6 +57,7 @@ export async function patchMe(
     statusText: string;
     website: string;
     bio: string;
+    title: string;
     statusSuppressAlerts: boolean;
     unfurlOwnLinks: boolean;
     notificationPrefs: SQL;
@@ -67,6 +69,7 @@ export async function patchMe(
   if (patch.statusText !== undefined) set.statusText = patch.statusText;
   if (patch.website !== undefined) set.website = patch.website;
   if (patch.bio !== undefined) set.bio = patch.bio;
+  if (patch.title !== undefined) set.title = patch.title;
   if (patch.statusSuppressAlerts !== undefined) set.statusSuppressAlerts = patch.statusSuppressAlerts;
   // shallow-merge over the stored prefs: only the keys sent change
   if (patch.notificationPrefs !== undefined) {

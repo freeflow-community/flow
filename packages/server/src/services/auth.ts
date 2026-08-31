@@ -41,6 +41,7 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
     statusText: u.statusText,
     website: u.website,
     bio: u.bio,
+    title: u.title,
     isAgent: u.isAgent,
     sponsorId: u.isAgent ? u.sponsorUserId : null,
     notificationPrefs: u.notificationPrefs,

@@ -31,6 +31,7 @@ function member(userId: string, role: MemberRole, over: Partial<WorkspaceMemberD
     avatarUrl: null,
     statusEmoji: '',
     statusText: '',
+    title: '',
     isAgent: false,
     isBot: false,
     sponsorId: null,

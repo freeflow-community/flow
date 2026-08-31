@@ -24,6 +24,10 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     // text with significant newlines, never markdown.
     var website: String?
     var bio: String?
+    /// One-line role shown under the name on Directory and profile cards
+    /// (#434). Optional for the same reason as the two above; "" = unset, and
+    /// an unset title draws no line at all.
+    var title: String?
     var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
     // App/integration bot. Like `isAgent` it means "not a person", which is
     // what the sole-human check behind Delete workspace turns on (#340).
@@ -667,6 +671,9 @@ struct MemberDTO: Decodable, Sendable {
     let avatarUrl: String?
     let statusEmoji: String?
     let statusText: String?
+    /// One-line title (#434), carried on the roster so a Directory card draws
+    /// it without a fetch per member.
+    let title: String?
     let isAgent: Bool?
     /// Optional so a client pointed at a server predating the field decodes.
     let isBot: Bool?
@@ -990,12 +997,15 @@ struct PatchMeBody: Encodable, Sendable {
     /// an absolute http(s) URL, so the sheets check before they send.
     let website: String?
     let bio: String?
+    /// #434: "" clears it. The server trims and caps at PROFILE_TITLE_MAX, and
+    /// the editors cap as they type so Save can't be rejected for length.
+    let title: String?
 
     init(
         displayName: String? = nil, timezone: String? = nil,
         statusEmoji: String? = nil, statusText: String? = nil,
         statusSuppressAlerts: Bool? = nil,
-        website: String? = nil, bio: String? = nil
+        website: String? = nil, bio: String? = nil, title: String? = nil
     ) {
         self.displayName = displayName
         self.timezone = timezone
@@ -1004,6 +1014,7 @@ struct PatchMeBody: Encodable, Sendable {
         self.statusSuppressAlerts = statusSuppressAlerts
         self.website = website
         self.bio = bio
+        self.title = title
     }
 }
 /// POST /v1/me/notifications/read — a cursor (`upToId`, opening the Activity

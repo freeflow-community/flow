@@ -14,6 +14,7 @@ final class DirectoryTests: XCTestCase {
         var role: String = "member"
         var statusEmoji: String?
         var statusText: String?
+        var title: String?
         var isAgent: Bool?
         var isBot: Bool?
         var sponsorId: String?
@@ -25,13 +26,15 @@ final class DirectoryTests: XCTestCase {
         role: String = "member",
         isAgent: Bool = false,
         isBot: Bool = false,
-        sponsorId: String? = nil
+        sponsorId: String? = nil,
+        title: String? = nil
     ) -> Row {
         Row(
             userId: "u-\(name)",
             displayName: name,
             email: email ?? "\(name.lowercased())@example.com",
             role: role,
+            title: title,
             isAgent: isAgent,
             isBot: isBot,
             sponsorId: sponsorId
@@ -114,6 +117,26 @@ final class DirectoryTests: XCTestCase {
             Directory.contactLine(row("Ada", email: "ada@example.com"), sponsorName: nil),
             "ada@example.com"
         )
+    }
+
+    // MARK: - title (#434)
+
+    func testTitleLineIsTheTrimmedTitleOrNothingAtAll() {
+        XCTAssertEqual(Directory.titleLine(row("Ada", title: "Founder, Biztrip AI")), "Founder, Biztrip AI")
+        // Unset draws no line — not a blank one, which would leave every
+        // title-less card looking like it failed to load something.
+        XCTAssertNil(Directory.titleLine(row("Ada")))
+        XCTAssertNil(Directory.titleLine(row("Ada", title: "")))
+        XCTAssertNil(Directory.titleLine(row("Ada", title: "   ")))
+        // The server trims, but a row cached by an older client may not have been.
+        XCTAssertEqual(Directory.titleLine(row("Ada", title: "  Founder  ")), "Founder")
+    }
+
+    func testAnAgentWithATitleStillNamesItsSponsor() {
+        let agent = row("Prism", isAgent: true, sponsorId: "u-Ada", title: "Release manager")
+        XCTAssertEqual(Directory.titleLine(agent), "Release manager")
+        XCTAssertEqual(Directory.contactLine(agent, sponsorName: "Ada"), "Sponsored by Ada")
+        XCTAssertEqual(Directory.kindLabel(agent), "AI agent")
     }
 
     func testCountLabelSingularizes() {

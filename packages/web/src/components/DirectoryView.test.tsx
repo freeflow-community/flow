@@ -10,6 +10,7 @@ const row = (name: string, extra: Partial<DirectoryRow> = {}): DirectoryRow => (
   avatarUrl: null,
   statusEmoji: '',
   statusText: '',
+  title: '',
   isAgent: false,
   isBot: false,
   sponsorId: null,
@@ -91,6 +92,23 @@ describe('DirectoryGrid render', () => {
     const html = render([row('Ada'), row('Zoe')], 'ada');
     expect(html).toContain('directory-card-Ada');
     expect(html).not.toContain('directory-card-Zoe');
+  });
+
+  // #434: the title is the member's own line, and an absent one is absent —
+  // a reserved blank line would make every card without a title look broken.
+  it('shows a title under the name when set, and no line at all when unset', () => {
+    const withTitle = render([row('Ada', { title: 'Founder, Biztrip AI' })]);
+    expect(withTitle).toContain('directory-card-title');
+    expect(withTitle).toContain('Founder, Biztrip AI');
+    expect(render([row('Ada')])).not.toContain('directory-card-title');
+    expect(render([row('Ada', { title: '' })])).not.toContain('directory-card-title');
+  });
+
+  it('keeps an agent\u2019s Sponsored by line when the agent also has a title', () => {
+    const html = render([row('CypressBot', { isAgent: true, sponsorName: 'Ada', title: 'Release bot' })]);
+    expect(html).toContain('Release bot');
+    expect(html).toContain('Sponsored by Ada');
+    expect(html).toContain('AI agent');
   });
 
   it('distinguishes loading, an empty workspace, and a query with no match', () => {

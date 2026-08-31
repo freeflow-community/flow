@@ -265,6 +265,15 @@ struct AppDatabase: Sendable {
             }
         }
 
+        // One-line profile title (#434), shown under the name on a Directory
+        // card. Nil on every cached row until the next roster or profile
+        // fetch, which just means no line yet — never a wrong one.
+        migrator.registerMigration("v21") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "title", .text)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

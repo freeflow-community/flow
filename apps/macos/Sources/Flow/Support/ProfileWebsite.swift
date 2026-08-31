@@ -1,10 +1,11 @@
 import Foundation
 
-/// Mirrors PROFILE_BIO_MAX / PROFILE_WEBSITE_MAX in `@flow/shared`, which is
-/// where the server enforces them. Kept here so the sheets can show the limit
-/// instead of failing the save.
+/// Mirrors PROFILE_BIO_MAX / PROFILE_WEBSITE_MAX / PROFILE_TITLE_MAX in
+/// `@flow/shared`, which is where the server enforces them. Kept here so the
+/// sheets can show the limit instead of failing the save.
 let profileBioMax = 500
 let profileWebsiteMax = 200
+let profileTitleMax = 80
 
 /// Expanded profiles (#220): the client-side half of the website allowlist.
 ///

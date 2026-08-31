@@ -163,6 +163,7 @@ struct MyProfileView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var displayName = ""
+    @State private var title = ""
     @State private var timezone = TimeZone.current.identifier
     @State private var website = ""
     @State private var bio = ""
@@ -217,6 +218,17 @@ struct MyProfileView: View {
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("profile.displayName")
+            }
+
+            // #434: directly under the name — the two together are what a
+            // Directory card shows, so they are edited together.
+            Section("Title") {
+                TextField("Title (optional)", text: $title)
+                    .textInputAutocapitalization(.words)
+                    .accessibilityIdentifier("profile.title")
+                    .onChange(of: title) { _, new in
+                        if new.count > profileTitleMax { title = String(new.prefix(profileTitleMax)) }
+                    }
             }
 
             Section("Timezone") {
@@ -300,6 +312,7 @@ struct MyProfileView: View {
         }
         .onAppear {
             displayName = app.currentUser?.displayName ?? ""
+            title = app.currentUser?.title ?? ""
             timezone = app.currentUser?.timezone ?? TimeZone.current.identifier
             website = app.currentUser?.website ?? ""
             bio = app.currentUser?.bio ?? ""
@@ -333,7 +346,9 @@ struct MyProfileView: View {
             do {
                 try await app.engine.updateProfile(
                     displayName: trimmedName, timezone: timezone,
-                    website: trimmedWebsite, bio: bio
+                    website: trimmedWebsite, bio: bio,
+                    // "" clears it
+                    title: title.trimmingCharacters(in: .whitespaces)
                 )
                 dismiss()
             } catch {
