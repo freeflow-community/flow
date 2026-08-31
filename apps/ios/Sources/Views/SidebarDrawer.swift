@@ -444,6 +444,20 @@ struct SidebarDrawer: View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
 
+    /// The channel's own emoji (#396), drawn after its name. On macOS this slot
+    /// is shared with the activity spinner (#137) and needs a precedence rule;
+    /// iOS draws no spinner, so the emoji is its only tenant and simply shows
+    /// whenever the column is set. Read straight off the cached `Channel` row,
+    /// which is what makes it survive a relaunch.
+    @ViewBuilder
+    private func channelEmoji(_ channel: Channel) -> some View {
+        if let emoji = channel.emoji, !emoji.isEmpty {
+            Text(emoji)
+                .font(.system(size: 14))
+                .accessibilityHidden(true)
+        }
+    }
+
     /// The Activity feed's bell (#385) — fixed in the drawer header rather than
     /// sitting at the top of the channel list, so it can never scroll out of
     /// view and the list holds only real channels. Carries the notification
@@ -520,6 +534,7 @@ struct SidebarDrawer: View {
                     .font(.system(size: 15, weight: active || channel.unreadCount > 0 ? .semibold : .regular))
                     .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
                     .lineLimit(1)
+                channelEmoji(channel)
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
                         .font(.caption2)
@@ -588,6 +603,7 @@ struct SidebarDrawer: View {
                 if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
                     Text(emoji).font(.system(size: 15))
                 }
+                channelEmoji(channel)
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
                         .font(.caption2)
