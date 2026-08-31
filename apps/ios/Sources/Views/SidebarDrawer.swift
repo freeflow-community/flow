@@ -267,6 +267,11 @@ struct SidebarDrawer: View {
                             showNewDm = true
                         }
                     }
+                    // Directory (#432): a nav entry, not a DM row — it
+                    // highlights when active and opens the member grid rather
+                    // than a conversation. Directly under the header, as on
+                    // web and macOS.
+                    directoryRow
                     ForEach(dms) { dm in
                         dmRow(dm)
                         ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
@@ -328,6 +333,13 @@ struct SidebarDrawer: View {
             Button("Invite People…") { showInvite = true }
                 .disabled(app.selectedWorkspaceId == nil)
                 .accessibilityIdentifier("sidebar.invitePeople")
+            // Directory (#432), directly under Invite People… as on web + macOS.
+            Button("Directory") {
+                app.showDirectoryPanel()
+                onSelect()
+            }
+            .disabled(app.selectedWorkspaceId == nil)
+            .accessibilityIdentifier("sidebar.directoryMenuItem")
             Button("Add Workspace…") { showAddWorkspace = true }
             if currentWorkspace != nil {
                 switch workspaceExit {
@@ -489,6 +501,7 @@ struct SidebarDrawer: View {
 
     private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
         let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
+            && !app.showDirectory
         return Button {
             open(channel.id)
         } label: {
@@ -551,6 +564,7 @@ struct SidebarDrawer: View {
         let title = label
             ?? channel.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
         let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
+            && !app.showDirectory
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { usersById[$0] }
         return Button {
@@ -596,6 +610,38 @@ struct SidebarDrawer: View {
             channel.unreadNotifications > 0 ? "\(channel.unreadNotifications) notifications"
             : channel.unreadCount > 0 ? "unread" : "read"
         )
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// The Directory entry under the Direct Messages header (#432) — the same
+    /// nav-item shape as a channel row, minus everything that belongs to a
+    /// conversation (unread badge, long-press menu). Selecting it closes the
+    /// drawer, like any other selection.
+    private var directoryRow: some View {
+        let active = app.showDirectory
+        return Button {
+            app.showDirectoryPanel()
+            onSelect()
+        } label: {
+            HStack(spacing: 9) {
+                Text("👥")
+                    .font(.system(size: 15))
+                    .opacity(active ? 0.7 : 0.6)
+                    .frame(width: 18)
+                Text("Directory")
+                    .font(.system(size: 15, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.82))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 9)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.directory")
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
@@ -761,7 +807,8 @@ struct SidebarDrawer: View {
 
     private func defaultSelectionAndSelfDm(_ chans: [Channel]) {
         guard let wsId = app.selectedWorkspaceId, !chans.isEmpty else { return }
-        if app.selectedChannelId == nil && !app.showActivity && !app.showScheduled {
+        if app.selectedChannelId == nil && !app.showActivity && !app.showScheduled
+            && !app.showDirectory {
             let target = chans.first { $0.isMember && $0.name == "general" }
                 ?? chans.first { $0.isMember && !$0.isDM }
             if let target { app.selectChannel(target.id) }

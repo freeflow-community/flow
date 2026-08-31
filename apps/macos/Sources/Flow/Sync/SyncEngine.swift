@@ -558,6 +558,11 @@ actor SyncEngine {
                     bio: existing?.bio,
                     isAgent: m.isAgent ?? existing?.isAgent ?? false,
                     isBot: m.isBot ?? existing?.isBot ?? false,
+                    // #432: the Directory names an agent's sponsor on its card,
+                    // and one fetch per card is not an option — so the roster's
+                    // sponsorId is written through here. Falls back to the
+                    // cached value, since a server predating the field omits it.
+                    sponsorId: m.sponsorId ?? existing?.sponsorId,
                     createdAt: existing?.createdAt
                 ).save(db)
                 try Member(workspaceId: workspaceId, userId: m.userId, role: m.role).save(db)

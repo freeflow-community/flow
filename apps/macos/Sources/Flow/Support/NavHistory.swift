@@ -11,6 +11,9 @@ enum NavView: Equatable {
     /// The Scheduled panel (#424) — like the feed, it covers the content pane
     /// while the channel selection stays put behind it.
     case scheduled
+    /// The Directory (#432) — the workspace member grid. Same treatment again:
+    /// it covers the content pane, the channel stays selected behind it.
+    case directory
 }
 
 /// Browser-style visit history over `NavView` — what the workspace header's
