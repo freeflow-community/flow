@@ -7,6 +7,8 @@ import { connectBus, closeBus } from './bus.js';
 import { attachGateway } from './gateway/index.js';
 import { attachSocketMode } from './gateway/socketMode.js';
 import { purgeExpiredSessions } from './services/auth.js';
+import { purgeStaleRateWindows } from './lib/rateLimitDb.js';
+import { LOCK_KEYS, runExclusive } from './lib/singleton.js';
 import { startOrphanSweep } from './services/files.js';
 import { startAppEventsWorker } from './services/appEvents.js';
 import { startIndicatorSweeper } from './services/channelIndicators.js';
@@ -31,7 +33,12 @@ async function main(): Promise<void> {
     const { runBlobMigration } = await import('./tools/migrateBlobsToR2.js');
     void runBlobMigration(app.log).catch((err) => app.log.error(err, 'blob migration failed'));
   }
-  void purgeExpiredSessions().catch(() => {});
+  // Boot housekeeping on at most one replica per deploy (phase 18 M1) — the
+  // deletes are idempotent, the lock just spares N-1 replicas the work.
+  void runExclusive(LOCK_KEYS.bootPurge, async () => {
+    await purgeExpiredSessions();
+    await purgeStaleRateWindows();
+  }).catch(() => {});
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
   startAppEventsWorker(app.log); // Events API outbox drain (phase 4)
   const indicatorSweeper = startIndicatorSweeper(); // retract lapsed channel spinners (#137)

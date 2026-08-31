@@ -572,3 +572,11 @@ export const scheduledMessages = pgTable(
     index('scheduled_messages_author_idx').on(t.authorUserId),
   ],
 );
+
+/** Phase 18 M1: fixed-window rate-limit counters shared across replicas —
+ * only the per-user limiter keys live here (see lib/rateLimitDb.ts). */
+export const rateLimitWindows = pgTable('rate_limit_windows', {
+  key: text('key').primaryKey(),
+  windowStart: timestamp('window_start', { withTimezone: true }).notNull().defaultNow(),
+  count: integer('count').notNull().default(1),
+});

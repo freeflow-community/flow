@@ -13,6 +13,7 @@ import { and, asc, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { ChannelFilePage, FileDTO, PresignedUploadDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
+import { LOCK_KEYS, runExclusive } from '../lib/singleton.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { decryptBlob } from '../crypto/index.js';
 import { blobStore } from '../storage/index.js';
@@ -437,12 +438,15 @@ export async function reapFileIfUnreferenced(fileId: string): Promise<boolean> {
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Boot-time sweep + daily timer. Errors are logged by the caller; never fatal. */
+/** Boot-time sweep + daily timer. Errors are logged by the caller; never fatal.
+ * Phase 18 M1: the sweep body runs on at most one replica per round — deleting
+ * the same orphan twice is harmless, but N replicas listing the whole blob
+ * store daily is waste. Skipped rounds are made up at the next cadence. */
 export function startOrphanSweep(log: { info(o: unknown, msg: string): void; error(o: unknown, msg: string): void }): void {
   const run = async () => {
     try {
-      const n = await sweepOrphanFiles();
-      if (n > 0) log.info({ swept: n }, 'orphan file sweep');
+      const { ran, result } = await runExclusive(LOCK_KEYS.orphanSweep, sweepOrphanFiles);
+      if (ran && result && result > 0) log.info({ swept: result }, 'orphan file sweep');
     } catch (err) {
       log.error(err, 'orphan file sweep failed');
     }

@@ -1,11 +1,13 @@
 # Phase 18: Multi-replica readiness
 
-> **Status: planned.** Design: `docs/design/DISTRIBUTED_PRESENCE.md` — this
-> spec schedules that work; the design decisions and their rationale live
-> there and are not restated here. Operator ruling 2026-07-29
-> (`decision_log.md`): replica scaling of the monolith is scheduled work,
-> overriding the 2026-07-18 scale trigger for this scope only; presence
-> gossips over NATS, not Redis.
+> **Status: in progress — M1 started 2026-08-31.** Design:
+> `docs/design/DISTRIBUTED_PRESENCE.md` (revised 2026-08-31 against current
+> code — workspace-keyed presence #364, two new soft-state maps, corrected
+> sweep/rate-limit inventory) — this spec schedules that work; the design
+> decisions and their rationale live there and are not restated here.
+> Operator ruling 2026-07-29 (`decision_log.md`): replica scaling of the
+> monolith is scheduled work, overriding the 2026-07-18 scale trigger for
+> this scope only; presence gossips over NATS, not Redis.
 
 **Goal:** the `app` service runs correctly at `replicas: 2` on Railway —
 availability first, capacity second.
@@ -38,19 +40,30 @@ and is config, not code.
 ### M1 — Hard-state groundwork `[server]`
 
 - `migrate()` under `pg_advisory_lock`; losers wait, re-check, no-op.
-- `drainAppEvents` claims with `FOR UPDATE SKIP LOCKED` in a transaction.
-- Orphan-file sweep, session purge, unfurl-cache expiry each behind
+- `drainAppEvents` claims due rows with `FOR UPDATE SKIP LOCKED` in a short
+  transaction (lease-style, delivery outside the tx — the scheduler's #419
+  pattern), so two replicas draining is throughput, not double delivery.
+- Daily orphan-file sweep and boot-time session purge each behind
   `pg_try_advisory_lock` — skip the round if another replica holds it.
-- Per-user write limits → Postgres fixed-window table; per-IP limits stay
-  in-memory (documented).
+  (Unfurl-cache expiry dropped: that sweep is unwired; see design doc §2.
+  The scheduled-message scheduler needs nothing — already `SKIP LOCKED`.)
+- Per-user limiter keys (`delete-me`, `join-redeem`) → Postgres fixed-window
+  table; per-IP limits stay in-memory (documented divergence).
 - Tests: concurrent `drainAppEvents` calls deliver each event exactly once;
-  concurrent `migrate()` is serialized (two connections in-test).
+  concurrent `migrate()` is serialized (two connections in-test); the DB
+  limiter counts across two callers; the sweep lock admits one runner.
 
 ### M2 — Distributed presence `[server]`
 
 - Heartbeat publish + merge + expiry + event dedup + offline-expiry
-  election, per design doc §1. All behind `presence.ts`; the gateway and
-  `<!here>` resolution keep their current imports.
+  election, per design doc §1 — **workspace-keyed** (#364): the payload
+  carries per-workspace user sets. All behind `presence.ts`; the gateway and
+  `<!here>` resolution keep their current imports. All four reads go merged:
+  `isOnline`, `onlineUsersIn` (connect snapshot), `hasAnyConnection`
+  (indicator clearing), and `sweepStale`'s offline emissions.
+- The two newer soft-state maps ride along per design doc §1a: channel
+  indicators join the heartbeat; the huddle roster cache syncs from the bus
+  events it already publishes (decide the exact mechanism in the PR).
 - Tests: two in-process "replicas" against one NATS — merged `isOnline`,
   no duplicate presence events on second-socket connect, offline emitted
   once on expiry, degradation to local view when the bus drops.
