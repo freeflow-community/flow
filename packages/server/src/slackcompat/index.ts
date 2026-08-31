@@ -106,7 +106,7 @@ export function registerSlackCompat(app: FastifyInstance): void {
     const token = candidates.find((t) => t?.startsWith('xapp-')) ?? null;
     const appRow = token ? await authenticateAppToken(token) : null;
     if (!appRow) return reply.code(200).send({ ok: false, error: 'invalid_auth' });
-    const ticket = mintSocketTicket(appRow.id);
+    const ticket = await mintSocketTicket(appRow.id);
     const base = new URL(config.webUrlBase);
     base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
     base.pathname = '/api/socket-mode';
