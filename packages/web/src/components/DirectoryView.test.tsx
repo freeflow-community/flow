@@ -1,0 +1,104 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+import { MobileNavContext } from '../state';
+import { DirectoryGrid, filterMembers, type DirectoryRow } from './DirectoryView';
+
+const row = (name: string, extra: Partial<DirectoryRow> = {}): DirectoryRow => ({
+  userId: `u-${name}`,
+  displayName: name,
+  email: `${name.toLowerCase()}@example.com`,
+  avatarUrl: null,
+  statusEmoji: '',
+  statusText: '',
+  isAgent: false,
+  isBot: false,
+  sponsorId: null,
+  role: 'member',
+  joinedAt: '2026-08-30T00:00:00.000Z',
+  sponsorName: null,
+  online: false,
+  isSelf: false,
+  ...extra,
+});
+
+describe('filterMembers', () => {
+  it('sorts alphabetically, case-insensitively, agents mixed in with humans', () => {
+    const rows = [row('zoe'), row('CypressBot', { isAgent: true }), row('Ada')];
+    expect(filterMembers(rows, '').map((m) => m.displayName)).toEqual(['Ada', 'CypressBot', 'zoe']);
+  });
+
+  it('narrows by a case-insensitive substring of the name', () => {
+    const rows = [row('Ada Lovelace'), row('Alan Turing')];
+    expect(filterMembers(rows, 'ada').map((m) => m.displayName)).toEqual(['Ada Lovelace']);
+    expect(filterMembers(rows, 'TUR').map((m) => m.displayName)).toEqual(['Alan Turing']);
+  });
+
+  it('also matches the email local part, but never the domain', () => {
+    const rows = [row('Scott', { email: 'scottp@biztrip.ai' }), row('Ada')];
+    expect(filterMembers(rows, 'scottp').map((m) => m.displayName)).toEqual(['Scott']);
+    // "example" would otherwise match every member through their domain.
+    expect(filterMembers(rows, 'biztrip')).toEqual([]);
+  });
+
+  it('ignores an agent\u2019s synthetic address', () => {
+    // agent-<uuid>@agents.flow.local — matching it is only ever an accident.
+    const rows = [row('Prism', { isAgent: true, email: 'agent-01a0-beef@agents.flow.local' })];
+    expect(filterMembers(rows, 'prism').map((m) => m.displayName)).toEqual(['Prism']);
+    expect(filterMembers(rows, 'beef')).toEqual([]);
+  });
+
+  it('does not mutate the input', () => {
+    const rows = [row('zoe'), row('Ada')];
+    filterMembers(rows, '');
+    expect(rows.map((m) => m.displayName)).toEqual(['zoe', 'Ada']);
+  });
+});
+
+describe('DirectoryGrid render', () => {
+  const render = (rows: DirectoryRow[], query = '', loading = false) =>
+    renderToStaticMarkup(
+      // The pane header carries the mobile hamburger, which reads the nav context.
+      <MobileNavContext.Provider value={{ isMobile: false, drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {} }}>
+        <DirectoryGrid rows={rows} loading={loading} query={query} onQuery={() => {}} onSelect={() => {}} />
+      </MobileNavContext.Provider>,
+    );
+
+  it('draws a card per member with role, status and the agent badge', () => {
+    const html = render([
+      row('Ada', { role: 'owner', statusEmoji: '🎧', statusText: 'Focusing', online: true }),
+      row('CypressBot', { isAgent: true, sponsorName: 'Ada' }),
+    ]);
+    expect(html).toContain('directory-card-Ada');
+    expect(html).toContain('directory-card-CypressBot');
+    expect(html).toContain('Owner');
+    expect(html).toContain('Focusing');
+    expect(html).toContain('AI agent');
+    expect(html).toContain('🤖');
+    expect(html).toContain('2 people');
+    // An agent names its sponsor where a human shows their email.
+    expect(html).toContain('Sponsored by Ada');
+    expect(html).not.toContain('cypressbot@example.com');
+  });
+
+  it('marks yourself and singularizes the count', () => {
+    const html = render([row('Scott', { isSelf: true })]);
+    expect(html).toContain('(you)');
+    expect(html).toContain('1 person');
+    expect(html).not.toContain('1 people');
+  });
+
+  it('renders only the members matching the query', () => {
+    const html = render([row('Ada'), row('Zoe')], 'ada');
+    expect(html).toContain('directory-card-Ada');
+    expect(html).not.toContain('directory-card-Zoe');
+  });
+
+  it('distinguishes loading, an empty workspace, and a query with no match', () => {
+    expect(render([], '', true)).toContain('Loading…');
+    expect(render([], '')).toContain('Nobody is here yet.');
+    // A roster that loaded but matches nothing must not read as "empty workspace".
+    const noMatch = render([row('Ada')], 'zzz');
+    expect(noMatch).toContain('directory-empty');
+    expect(noMatch).not.toContain('Nobody is here yet.');
+  });
+});

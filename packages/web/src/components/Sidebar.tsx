@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { artifactGlyph } from '../lib/fileKind';
 import { dmTitle, isSelfDm as isSelfDmChannel } from '../lib/channelTitle';
 import { workspaceExit } from '../lib/workspaceExit';
-import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, SCHEDULED_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import type { Selection } from '../state';
 import {
   useAppArtifacts,
@@ -383,6 +383,9 @@ export default function Sidebar() {
             <MenuItem testid="menu-invite" onClick={() => { setWsMenuOpen(false); setShowInvite(true); }}>
               Invite People…
             </MenuItem>
+            <MenuItem testid="menu-directory" onClick={() => { setWsMenuOpen(false); sel.selectChannel(DIRECTORY_VIEW_ID); }}>
+              Directory
+            </MenuItem>
             {/* any member can sponsor agents (AGENT_MEMBERS.md) — the modal
                 explains registration and lets sponsors remove their own */}
             <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
@@ -581,6 +584,12 @@ export default function Sidebar() {
             title: 'New direct message',
             onClick: () => setShowNewDm(true),
           }}
+        />
+        {/* Directory (#430): a nav entry, not a DM row — it highlights when
+            active and opens the member grid rather than a conversation. */}
+        <DirectoryRow
+          active={sel.channelId === DIRECTORY_VIEW_ID}
+          onOpen={() => sel.selectChannel(DIRECTORY_VIEW_ID)}
         />
         {dmItems.map((item) => {
           const c = item.channel;
@@ -831,6 +840,24 @@ export function ActivityBell({
  * channel). Selectable like a channel; the hover × closes it (pure UI hide,
  * reopen from the workspace menu). Only rendered for admins.
  */
+/** The Directory entry under the Direct messages header (#430) — same nav-item
+ * shape as the admin row, minus the dismiss button (it is always offered). */
+function DirectoryRow({ active, onOpen }: { active: boolean; onOpen: () => void }) {
+  return (
+    <button
+      data-testid="sidebar-directory"
+      title="Browse everyone in this workspace"
+      className={`flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left ${
+        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+      }`}
+      onClick={onOpen}
+    >
+      <span className={active ? 'opacity-70' : 'text-white/60'}>👥</span>
+      <span className={`truncate ${active ? 'font-[650]' : 'text-white/82'}`}>Directory</span>
+    </button>
+  );
+}
+
 function AdminRow({
   active,
   onOpen,
