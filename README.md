@@ -132,15 +132,66 @@ with the coding agent.
 
 - Deciding how to build any feature is still work, and still requires lots of good human judgement.
 
-### The Task Board
+### The Software Factory
 
-We keep Flow dev tasks on a Github project. Agents pick up tasks and close them when their PR is merged.
-To access the task board, we generated a simple HTML app which fronts the Github list. This app
-is published into the Flow workspace as an _artifact_. You can open the app inside of Flow and create
-new tasks, or schedule tasks for development. Currently the Task Board app is hosted by the same
-machine which runs the _CypressBot_ agent.
+We currently use a "factory" configuration of 3 agents to build Flow features. Each agent is included
+in a `#factory` channel. Here is an example of using the factory to add a _user directory_ feature
+to the app.
 
-<img src="docs/images/task-board.png" alt="The Task Board app inside Flow" width="416">
+First, we discuss the feature with the Product Manager agent named _Prism_:
+
+<img width="792" height="112" alt="image" src="https://github.com/user-attachments/assets/7715ce98-01f9-4bd6-9775-3c588fc53651" />
+
+Prism specs and feature and writes a ticket into Github:
+
+<img width="709" height="691" alt="image" src="https://github.com/user-attachments/assets/37b9a1f7-623e-4359-b230-9bb6041ec19a" />
+
+Prism can generate a UX design as well, and share it in the factory channel as an artifact:
+
+<img width="1024" height="938" alt="image" src="https://github.com/user-attachments/assets/abcc1a09-2632-4314-ad05-c27eb465b369" />
+
+We have a _mini-app_ which shows a Kanban view of tickets in progress on the app:
+
+<img width="1027" height="795" alt="image" src="https://github.com/user-attachments/assets/337d1404-d0b2-4851-a5ea-46bdd8a3983a" />
+
+Once we have the spec, then Prism hands the ticket to the _Builder_ agent to build it:
+
+<img width="916" height="189" alt="image" src="https://github.com/user-attachments/assets/384b2c9e-e759-4dc2-9a67-b741f9242952" />
+
+_Builder_ is instructed (via SKILL) to open a new channel and log the build work in that channel:
+
+<img width="1289" height="765" alt="image" src="https://github.com/user-attachments/assets/911207c7-c284-4c6c-9b30-0abbfa44adc8" />
+
+_Builder_ builds the new feature, updates automated tests, AND tests the new feature directly via browser and native app automation.
+It posts screenshots as it works:
+
+<img width="814" height="907" alt="image" src="https://github.com/user-attachments/assets/8232aa52-076a-4320-8830-e5d9a847c713" />
+
+and when it's done, it signals back to _Prism_ that the task is complete. Prism reviews the task and the PR, and if all looks good
+then it signals our third agent, _Merger_, asking it to merge the PR:
+
+<img width="994" height="657" alt="image" src="https://github.com/user-attachments/assets/6221f363-d65b-4c1f-9415-6be606c859f6" />
+
+_Merger_ actually merges the PR and triggers server deployment, plus builds any native apps.
+
+## More Features
+
+### Mini-apps support
+
+Flow now supports a simple mechanism called _mini-apps_. The idea is that your coding agent can code a simple HTML-based app, and then export it to your workspace as a live artifact. Your agent runs the app behind a small proxy that checks a token
+provided by the caller. In this way the app is safely exposed only to your Flow workspace and not the wider world.
+We are using mini-apps today to host our _Task Board_ tracking our Github issues.
+
+The token mechanism of mini-apps also securely identifies the active user when you app is accessed, so that you can enforce visibility or permissions inside your mini-apps if needed.
+
+### Scheduled messages
+
+Flow now includes a basic _task scheduler_, which works by simply sending messages into a channel on a schedule:
+
+<img width="1516" height="736" alt="image" src="https://github.com/user-attachments/assets/aa4a179d-8673-43f1-b66b-4fb3c174918b" />
+
+Combined with agents, you can easily trigger agent tasks by sending messages on a schedule.
+
 
 ## Feature Ideas
 
@@ -152,43 +203,8 @@ so that scheduling work is easier (or automatic), we can have multiple agents wo
 and we want a better system for coordinating changes, resolving conflicts, and testing and shipping new
 work to production.
 
-One challenge is how to build such coordiation in a modular way. We don't want to embed a static
-workflow into _Flow_ itself. So figuring how where certain orchestration should happen (central
-code, agent Skills, agent-to-agent commmunication) is still evolving.
-
-### Embedded apps
-
-We like our little _Task Board_ app which fronts the Github-hosted task list. The app was
-vibe-coded with Claude, and in fact we built it interactively by simply prompting Claude within
-Flow to build the app, and then expose it inside Flow as a live (URL based) _artifact_. 
-
-However, today the app is hosted on the server which runs Claude Code, there is no real security
-or permissions being enforced.
-
-So we have the idea that Flow could host and serve real _mini apps_. These would be HTML/React/JS
-apps that we could run inside a container on the Flow server. The container would give us decent
-security. But then we would want these apps to be integrated at some level into Flow:
-
-- Leverage user authentication of the active Flow user
-- Have a way to securely access secrets stored by the Flow system for use by the app (like
-the Github API token for our Task Board app).
-
-There is a lot that we could do with a system where a coding agent can code a custom HTML
-frontend on top of some other app (Salesforce, JIRA) or database (like custom dashboards) and 
-then host that app within Flow itself.
-
-Along with first class support for apps we would probably add a proper **Apps** section to the
-Flow sidebar.
-
-### Scheduled tasks
-
-Every system is getting "scheduled tasks" these days, but the notion is so useful ("Send me
-a daily summary of PRs shipped yesterday") that we want to implement a basic scheduler within
-Flow. Slack _workflows_ are super obtuse, so we want to find an easier way to define and manage
-scheduled tasks within Flow itself.
-
-We think a "task" doesn't need to be any more complicated than "post this message to the channel
-at a certain time". 
+We have a prototype setup that is described above, with our PM, Builder, and Merger agents. These agents
+use Github and messaging within Flow to communicate and coordinate state.
 
 ### Federated workspaces
 
