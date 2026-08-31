@@ -275,6 +275,13 @@ This file keeps two things:
   clears, never both.
 
 ### Deliberate divergences (ruled)
+- The **frame-one channel switch** fix (#447) is macOS-only, and the other two
+  clients need nothing: web mounts `<ChannelView key={channelId}>` per channel
+  over React Query's synchronous cache, and iOS pushes `ChannelScreen`
+  `.id(channelId)`, so neither can render the channel it just left. macOS keeps
+  one view across channels on purpose — remounting it would reset
+  `MessageListView`, whose scroll-memory restore fires on the transcript
+  changing — so it re-keys the reads instead. Not a gap to close.
 - The **Directory's search field** is a plain text field on all three clients
   (#432), rather than iOS's system `.searchable`. On iOS 26 the system field
   only takes the navigation bar when the view also declares a toolbar item, and

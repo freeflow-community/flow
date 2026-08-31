@@ -1060,6 +1060,12 @@ actor SyncEngine {
                 )
             }
             await storeMessages(response.messages)
+        } catch let error as APIError where error.isCancellation {
+            // Switching channel cancels the leaving channel's `.task`, and a
+            // request abandoned on purpose is not something to interrupt
+            // anyone about: clicking through three channels quickly landed on
+            // the third under a modal "Couldn't load pinned messages:
+            // cancelled" (#447).
         } catch {
             await appState?.showError("Couldn't load pinned messages: \(error.localizedDescription)")
         }
