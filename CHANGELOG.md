@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Directory** (#430) landed on web only — macOS and iOS have no member grid.
+  It is pure client work: the view is a render of `GET /v1/workspaces/:id/members`,
+  which every client already fetches for names and avatars, so closing the gap
+  is a grid plus the two entry points (a sidebar row under Direct messages and
+  a workspace-menu item) wired to the profile card each app already has.
 - **Auto-opening the thread that holds a channel's oldest unread** (#327) landed
   on web only. The signal is server-side and already sent to every client
   (`ChannelDTO.oldestUnreadThreadReply`), so closing the gap is client work:

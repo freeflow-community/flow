@@ -35,6 +35,13 @@ export const ACTIVITY_VIEW_ID = '__activity__';
  */
 export const SCHEDULED_VIEW_ID = '__scheduled__';
 
+/**
+ * Sentinel channel id for the Directory (#430) — the same virtual-view trick
+ * again: a browsable grid of every workspace member, opened from the sidebar
+ * entry under Direct messages or the workspace menu. Not a real channel.
+ */
+export const DIRECTORY_VIEW_ID = '__directory__';
+
 export interface Selection {
   workspaceId: string | null;
   channelId: string | null;
