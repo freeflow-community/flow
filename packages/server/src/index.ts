@@ -5,6 +5,7 @@ import { closeDb } from './db/index.js';
 import { initCrypto } from './crypto/index.js';
 import { connectBus, closeBus } from './bus.js';
 import { attachGateway } from './gateway/index.js';
+import { startPresenceSync } from './presenceSync.js';
 import { attachSocketMode } from './gateway/socketMode.js';
 import { purgeExpiredSessions } from './services/auth.js';
 import { purgeStaleRateWindows } from './lib/rateLimitDb.js';
@@ -13,7 +14,7 @@ import { startOrphanSweep } from './services/files.js';
 import { startAppEventsWorker } from './services/appEvents.js';
 import { startIndicatorSweeper } from './services/channelIndicators.js';
 import { startScheduler } from './services/scheduledMessages.js';
-import { reconcileHuddlesFromLiveKit } from './services/huddles.js';
+import { reconcileHuddlesFromLiveKit, startHuddleRosterSync } from './services/huddles.js';
 
 async function main(): Promise<void> {
   initCrypto();
@@ -25,6 +26,11 @@ async function main(): Promise<void> {
   await app.listen({ port: config.port, host: config.host });
   const gateway = attachGateway(app.server);
   const socketMode = attachSocketMode(app.server);
+  // Distributed presence gossip (phase 18 M2) — inert at replicas: 1.
+  const presenceSync = startPresenceSync();
+  // Huddle roster convergence across replicas (design doc §1a) — the events
+  // carry full rosters, so applying every replica's stream keeps caches equal.
+  const huddleSync = startHuddleRosterSync();
   app.log.info(`ws gateway attached at ws://${config.host}:${config.port}/v1/ws`);
   app.log.info(`socket-mode compat attached at ws://${config.host}:${config.port}/api/socket-mode`);
 
@@ -51,6 +57,8 @@ async function main(): Promise<void> {
   void reconcileHuddlesFromLiveKit().catch((err) => app.log.error({ err }, 'livekit huddle reconciliation failed'));
 
   const shutdown = async () => {
+    presenceSync.stop();
+    huddleSync.stop();
     indicatorSweeper.stop();
     scheduler.stop();
     gateway.close();
