@@ -277,7 +277,10 @@ This file keeps two things:
 - iOS: no channel activity spinner (#137) — web and macOS spin a channel's
   sidebar row while an agent works there. Server API and the `channel.indicator`
   event are client-agnostic and `ChannelDTO.indicator` carries the initial
-  state, so this is a pure client port.
+  state, so this is a pure client port. The slot itself now exists on iOS: the
+  channel emoji (#396) draws there since #438, so closing this one also means
+  porting macOS's precedence rule — spinner while it is up, emoji back when it
+  clears, never both.
 
 ### Deliberate divergences (ruled)
 - The **Directory's search field** is a plain text field on all three clients
@@ -305,12 +308,6 @@ This file keeps two things:
   the workspace's `SidebarPalette` gradient; web and macOS draw their channel
   header as ink on the base surface, with no colored fill to follow the setting.
   Nothing to port. Not a gap to close.
-- The **channel emoji** (#396) draws on web and macOS and not on iOS, which
-  renders nothing in that slot today: it has no channel indicator either, so
-  adding the emoji alone would build the slot for half its tenants. The server
-  and the `channel.emoji` event are client-agnostic and the field already rides
-  the channel payload, so iOS picks both up together whenever that slot is
-  built. Not a gap to close on its own.
 - **Channel visit history** with back/forward buttons (#386) is web + macOS
   only. iOS was out of scope on purpose: the phone navigates a push/pop stack
   that already has its own back affordance, so a second, differently-scoped
