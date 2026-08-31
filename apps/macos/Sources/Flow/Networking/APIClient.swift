@@ -14,6 +14,21 @@ struct APIError: Error, LocalizedError, Sendable {
     let message: String
 
     var errorDescription: String? { message }
+
+    /// The request was abandoned rather than failing — the caller's `.task`
+    /// was cancelled, typically because the user moved on. Nothing to report
+    /// to them (#447).
+    var isCancellation: Bool { code == "cancelled" }
+
+    /// Transport failure, cancellations kept distinguishable.
+    static func network(_ error: Error) -> APIError {
+        let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
+        return APIError(
+            status: 0,
+            code: cancelled ? "cancelled" : "network",
+            message: error.localizedDescription
+        )
+    }
 }
 
 /// Strips the Authorization header when a redirect leaves the API host — the
@@ -159,7 +174,7 @@ actor APIClient {
         do {
             (_, response) = try await session.upload(for: req, fromFile: fileURL)
         } catch {
-            throw APIError(status: 0, code: "network", message: error.localizedDescription)
+            throw APIError.network(error)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
@@ -182,7 +197,7 @@ actor APIClient {
         do {
             (tmp, response) = try await session.download(for: req)
         } catch {
-            throw APIError(status: 0, code: "network", message: error.localizedDescription)
+            throw APIError.network(error)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
@@ -203,7 +218,7 @@ actor APIClient {
         do {
             (data, response) = try await session.data(for: req)
         } catch {
-            throw APIError(status: 0, code: "network", message: error.localizedDescription)
+            throw APIError.network(error)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
@@ -248,7 +263,7 @@ actor APIClient {
         do {
             (data, response) = try await session.data(for: req)
         } catch {
-            throw APIError(status: 0, code: "network", message: error.localizedDescription)
+            throw APIError.network(error)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {

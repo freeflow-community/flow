@@ -20,8 +20,18 @@ struct SidePanelView: View {
         return win.artifacts(inChannel: ch)
     }
 
+    /// Read through the keyed accessor so the tab names the channel the
+    /// sidebar just selected, not the one it left (#447).
+    private var currentChannel: Channel? {
+        guard let channelId = win.selectedChannelId else { return nil }
+        return channel.value(
+            for: channelId, db: app.db, fallback: nil,
+            { try Channel.fetchOne($0, key: channelId) }
+        )
+    }
+
     private var threadParent: (connector: String, name: String)? {
-        channel.value?.threadParentLabel(
+        currentChannel?.threadParentLabel(
             userNames: users.value, currentUserId: app.currentUser?.id
         )
     }
@@ -51,7 +61,9 @@ struct SidePanelView: View {
         .task(id: win.selectedChannelId) {
             // No channel means no panel, so there is nothing to re-title.
             guard let channelId = win.selectedChannelId else { return }
-            channel.start(db: app.db, reset: nil) { try Channel.fetchOne($0, key: channelId) }
+            channel.start(db: app.db, key: channelId, reset: nil) {
+                try Channel.fetchOne($0, key: channelId)
+            }
             users.start(db: app.db, reset: [:]) { db in
                 try Dictionary(
                     uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }

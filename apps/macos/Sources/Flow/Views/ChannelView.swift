@@ -18,8 +18,10 @@ struct ChannelView: View {
     @State private var profileUserId: String?
     @State private var showChannelEdit = false
     /// This channel's real membership (#70) — fetched, since the DTO only
-    /// carries memberIds for DMs.
-    @State private var channelMemberIds: [String] = []
+    /// carries memberIds for DMs. Tagged with the channel it was fetched for,
+    /// so a switch shows this channel's members (or none) rather than the
+    /// previous channel's while the request is in flight (#447).
+    @State private var loadedMembers: LoadedMembers?
     @State private var showMembers = false
     @State private var showPins = false
     /// How many of the newest cached messages the transcript shows. A hot
@@ -28,15 +30,84 @@ struct ChannelView: View {
     /// path, whose row-height estimates are the root of every parked/blank
     /// open and misplaced restore. One window's worth keeps every ordinary
     /// open on the exact, eager path; "Load earlier" widens it.
-    @State private var transcriptWindow = ChannelView.windowStep
+    /// Tagged with its channel for the same reason as `loadedMembers`: on the
+    /// first frame after a switch the window is this channel's, not the width
+    /// "Load earlier" left behind in the one before it.
+    @State private var window = LoadedWindow(channelId: "", count: ChannelView.windowStep)
+    private var transcriptWindow: Int {
+        window.channelId == channelId ? window.count : Self.windowStep
+    }
+    private func widenWindow() {
+        window = LoadedWindow(channelId: channelId, count: transcriptWindow + Self.windowStep)
+    }
 
     static let windowStep = 100
 
+    /// The observed queries, as builders, so the frame-one read in
+    /// `DBObserved.value(for:)` and the observation `.task` starts afterwards
+    /// run the same query. Everything this view renders goes through the
+    /// accessors below rather than `observer.value`, which is what makes a
+    /// channel switch atomic: the pane never draws a frame from the channel
+    /// the sidebar just left (#447).
+    private static func channelQuery(_ channelId: String) -> @Sendable (Database) throws -> Channel? {
+        { try Channel.fetchOne($0, key: channelId) }
+    }
+
+    private static func messagesQuery(_ key: TranscriptKey) -> @Sendable (Database) throws -> [Message] {
+        { db in
+            try Array(
+                Message
+                    .filter(Column("channelId") == key.channelId && Column("threadRootId") == nil)
+                    .order(Column("id").desc)
+                    .limit(key.limit)
+                    .fetchAll(db)
+                    .reversed()
+            )
+        }
+    }
+
+    private static func pinnedQuery(_ channelId: String) -> @Sendable (Database) throws -> [Message] {
+        { db in
+            try Message
+                .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
+                .order(Column("pinnedAt").desc)
+                .fetchAll(db)
+        }
+    }
+
+    /// Widening the window is as much a re-key as switching channel — both
+    /// change which rows the transcript should be showing.
+    private var transcriptKey: TranscriptKey {
+        TranscriptKey(channelId: channelId, limit: transcriptWindow + 1)
+    }
+
+    private var currentChannel: Channel? {
+        channel.value(for: channelId, db: app.db, fallback: nil, Self.channelQuery(channelId))
+    }
+
+    private var currentMessages: [Message] {
+        messages.value(
+            for: transcriptKey, db: app.db, fallback: [], Self.messagesQuery(transcriptKey)
+        )
+    }
+
+    private var currentPinned: [Message] {
+        pinnedMessages.value(for: channelId, db: app.db, fallback: [], Self.pinnedQuery(channelId))
+    }
+
+    /// This channel's membership: the fetched list once it has landed, the
+    /// DTO's DM-only ids until then.
+    private var channelMemberIds: [String] {
+        if let loadedMembers, loadedMembers.channelId == channelId { return loadedMembers.ids }
+        return []
+    }
+
     /// The fetch grabs one row beyond the window, so "is there more in the
     /// cache" needs no second query.
-    private var hasMoreCached: Bool { messages.value.count > transcriptWindow }
+    private var hasMoreCached: Bool { currentMessages.count > transcriptWindow }
     private var transcript: [Message] {
-        hasMoreCached ? Array(messages.value.dropFirst()) : messages.value
+        let msgs = currentMessages
+        return msgs.count > transcriptWindow ? Array(msgs.dropFirst()) : msgs
     }
 
     var body: some View {
@@ -62,12 +133,12 @@ struct ChannelView: View {
                 hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                 isLoadingHistory: app.loadingHistory.contains(channelId),
                 showThreadAffordances: true,
-                unreadThreadRootIds: Set(channel.value?.unreadThreadRootIds ?? []),
+                unreadThreadRootIds: Set(currentChannel?.unreadThreadRootIds ?? []),
                 onLoadOlder: {
                     // Widen the window first (instant, from cache); go to the
                     // server only once the cache is exhausted.
                     let cacheHadMore = hasMoreCached
-                    transcriptWindow += Self.windowStep
+                    widenWindow()
                     if !cacheHadMore {
                         Task { await app.engine.loadOlder(channelId: channelId) }
                     }
@@ -93,7 +164,7 @@ struct ChannelView: View {
 
             TypingIndicatorView(channelId: channelId, userNames: userNames)
 
-            if channel.value?.archivedAt != nil {
+            if currentChannel?.archivedAt != nil {
                 Text("This channel is archived and read-only.")
                     .flowFont(.callout)
                     .foregroundStyle(.secondary)
@@ -101,7 +172,7 @@ struct ChannelView: View {
             } else {
                 ComposerView(
                     channelId: channelId,
-                    workspaceId: channel.value?.workspaceId,
+                    workspaceId: currentChannel?.workspaceId,
                     threadRootId: nil,
                     placeholder: "Message \(headerTitle)",
                     onEditLast: { startEditingLastMessage() }
@@ -109,17 +180,12 @@ struct ChannelView: View {
             }
         }
         .task(id: channelId) {
-            transcriptWindow = Self.windowStep
-            channel.start(db: app.db, reset: nil) { db in
-                try Channel.fetchOne(db, key: channelId)
-            }
+            window = LoadedWindow(channelId: channelId, count: Self.windowStep)
+            channel.start(db: app.db, key: channelId, reset: nil, Self.channelQuery(channelId))
             startMessages()
-            pinnedMessages.start(db: app.db, reset: []) { db in
-                try Message
-                    .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
-                    .order(Column("pinnedAt").desc)
-                    .fetchAll(db)
-            }
+            pinnedMessages.start(
+                db: app.db, key: channelId, reset: [], Self.pinnedQuery(channelId)
+            )
             users.start(db: app.db, reset: [:]) { db in
                 try Dictionary(uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0) })
             }
@@ -141,7 +207,7 @@ struct ChannelView: View {
         // then MessageListView scrolls to it. Give up once history is exhausted.
         .onChange(of: transcriptWindow) { _, _ in startMessages() }
         .onChange(of: win.focusMessageId) { _, _ in pageToFocusIfNeeded() }
-        .onChange(of: messages.value.count) { _, _ in pageToFocusIfNeeded() }
+        .onChange(of: currentMessages.count) { _, _ in pageToFocusIfNeeded() }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
         }
@@ -152,16 +218,16 @@ struct ChannelView: View {
             MemberProfileSheet(userId: target.userId)
         }
         .sheet(isPresented: $showChannelEdit) {
-            if let c = channel.value {
+            if let c = currentChannel {
                 ChannelEditSheet(channel: c)
             }
         }
         .sheet(isPresented: $showPins) {
             PinnedMessagesSheet(
-                messages: pinnedMessages.value,
+                messages: currentPinned,
                 userNames: userNames,
                 onSelect: { message in
-                    guard let workspaceId = channel.value?.workspaceId else { return }
+                    guard let workspaceId = currentChannel?.workspaceId else { return }
                     win.openNotification(
                         workspaceId: workspaceId,
                         channelId: message.channelId,
@@ -187,25 +253,17 @@ struct ChannelView: View {
     /// Refresh this channel's membership. Falls back to the DTO's DM-only
     /// memberIds if the request fails, so the header never empties out.
     private func loadChannelMembers() async {
+        let channelId = channelId
         let ids = await app.engine.channelMemberIds(channelId: channelId)
-        channelMemberIds = ids.isEmpty ? (channel.value?.memberIds ?? []) : ids
+        guard !ids.isEmpty else { return } // keep the DTO's DM-only fallback
+        loadedMembers = LoadedMembers(channelId: channelId, ids: ids)
     }
 
     /// (Re)start the windowed transcript observation: the newest
     /// `transcriptWindow` + 1 rows, ascending (the +1 is the has-more probe).
     private func startMessages() {
-        let channelId = channelId
-        let limit = transcriptWindow + 1
-        messages.start(db: app.db, reset: []) { db in
-            try Array(
-                Message
-                    .filter(Column("channelId") == channelId && Column("threadRootId") == nil)
-                    .order(Column("id").desc)
-                    .limit(limit)
-                    .fetchAll(db)
-                    .reversed()
-            )
-        }
+        let key = transcriptKey
+        messages.start(db: app.db, key: key, reset: [], Self.messagesQuery(key))
     }
 
     /// Page older history toward a jump-to-message target until it's loaded
@@ -214,9 +272,9 @@ struct ChannelView: View {
         guard win.openThreadRootId == nil, let fid = win.focusMessageId else { return }
         if transcript.contains(where: { $0.id == fid }) { return } // loaded — list scrolls to it
         if hasMoreCached {
-            transcriptWindow += Self.windowStep // cached but outside the window
+            widenWindow() // cached but outside the window
         } else if app.hasMore[channelId] ?? false {
-            transcriptWindow += Self.windowStep
+            widenWindow()
             Task { await app.engine.loadOlder(channelId: channelId) }
         } else {
             win.focusMessageId = nil // not in this channel's history
@@ -225,7 +283,7 @@ struct ChannelView: View {
 
     /// ↑-to-edit (ui_nits item 4): only when my message is the newest.
     private func startEditingLastMessage() -> Bool {
-        guard let last = messages.value.last,
+        guard let last = currentMessages.last,
               last.userId == app.currentUser?.id,
               !last.isDeleted, !last.pending else { return false }
         editingMessage = last
@@ -234,13 +292,13 @@ struct ChannelView: View {
 
     /// The non-me member of a 1:1 DM (falls back to me for a self-DM).
     private var dmOtherUserId: String? {
-        guard channel.value?.kind == "dm" else { return nil }
-        let ids = channel.value?.memberIds ?? []
+        guard currentChannel?.kind == "dm" else { return nil }
+        let ids = currentChannel?.memberIds ?? []
         return ids.first { $0 != app.currentUser?.id } ?? ids.first
     }
 
     private var headerTitle: String {
-        guard let c = channel.value else { return "" }
+        guard let c = currentChannel else { return "" }
         return c.isDM
             ? c.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
             : "#\(c.name ?? "")"
@@ -255,7 +313,7 @@ struct ChannelView: View {
     /// it looking exactly as unclickable as before. Runs that already carry a
     /// colour are mention pills — `MentionRendering` owns those.
     private var headerTopic: AttributedString? {
-        guard let raw = channel.value?.topic, !raw.isEmpty else { return nil }
+        guard let raw = currentChannel?.topic, !raw.isEmpty else { return nil }
         var topic = MentionRendering.attributed(
             raw, names: userNames, currentUserId: app.currentUser?.id
         )
@@ -286,13 +344,13 @@ struct ChannelView: View {
                         }
                         .buttonStyle(.plain)
                         .help("View profile")
-                    } else if channel.value?.kind == "standard" {
+                    } else if currentChannel?.kind == "standard" {
                         // Clicking a channel's name opens the name/topic editor
                         // (ui_nits item 5).
                         Button {
                             showChannelEdit = true
                         } label: {
-                            Text(channel.value?.name ?? "")
+                            Text(currentChannel?.name ?? "")
                                 .flowFont(size: 15, weight: .bold)
                                 .foregroundStyle(MC.ink)
                                 .contentShape(Rectangle())
@@ -316,7 +374,7 @@ struct ChannelView: View {
                         // #392: the header's topic is one truncated line, so
                         // hovering shows the whole thing — raw text, matching
                         // the sidebar tooltip and the web client.
-                        .topicHelp(channel.value?.topic)
+                        .topicHelp(currentChannel?.topic)
                         .accessibilityIdentifier("channel.topic")
                 }
             }
@@ -336,13 +394,13 @@ struct ChannelView: View {
     /// is the ambient indicator for a huddle that's live but not yet joined.
     @ViewBuilder
     private var huddleButton: some View {
-        if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
+        if currentChannel?.kind == "standard", currentChannel?.archivedAt == nil {
             let inThisHuddle = app.activeHuddleChannelId == channelId
             let roster = app.huddleRosters[channelId] ?? []
             Button {
                 if inThisHuddle {
                     app.leaveHuddle()
-                } else if let workspaceId = channel.value?.workspaceId {
+                } else if let workspaceId = currentChannel?.workspaceId {
                     app.joinHuddle(channelId: channelId, workspaceId: workspaceId)
                 }
             } label: {
@@ -384,10 +442,10 @@ struct ChannelView: View {
                 showPins = true
             } label: {
                 Label(
-                    pinnedMessages.value.isEmpty
+                    currentPinned.isEmpty
                         ? "Pinned Messages"
-                        : "Pinned Messages (\(pinnedMessages.value.count))",
-                    systemImage: pinnedMessages.value.isEmpty ? "pin" : "pin.fill"
+                        : "Pinned Messages (\(currentPinned.count))",
+                    systemImage: currentPinned.isEmpty ? "pin" : "pin.fill"
                 )
             }
             .accessibilityIdentifier("channel.pins")
@@ -412,7 +470,7 @@ struct ChannelView: View {
             }
             .accessibilityIdentifier("channel.artifacts")
 
-            if channel.value?.kind == "standard" {
+            if currentChannel?.kind == "standard" {
                 Divider()
                 Button {
                     showChannelEdit = true
@@ -485,7 +543,7 @@ struct ChannelView: View {
 
     /// This channel's members, online first then alphabetical (web parity).
     private var orderedMembers: [User] {
-        let ids = channelMemberIds.isEmpty ? (channel.value?.memberIds ?? []) : channelMemberIds
+        let ids = channelMemberIds.isEmpty ? (currentChannel?.memberIds ?? []) : channelMemberIds
         return ids
             .map { id in
                 users.value[id]
@@ -592,7 +650,7 @@ struct ChannelView: View {
     }
 
     private var headerIcon: String {
-        guard let c = channel.value else { return "number" }
+        guard let c = currentChannel else { return "number" }
         if c.kind == "dm" { return "person" }
         if c.kind == "group_dm" { return "person.2" }
         return c.isPrivate ? "lock" : "number"
@@ -854,3 +912,22 @@ struct ChannelEditSheet: View {
         }
     }
 }
+
+/// Which channel a fetched member list belongs to (#447).
+private struct LoadedMembers {
+    let channelId: String
+    let ids: [String]
+}
+
+/// Which channel a "Load earlier" widening belongs to (#447).
+private struct LoadedWindow {
+    let channelId: String
+    let count: Int
+}
+
+/// Identity of the transcript query — channel plus how far back it reaches.
+private struct TranscriptKey: Hashable {
+    let channelId: String
+    let limit: Int
+}
+
