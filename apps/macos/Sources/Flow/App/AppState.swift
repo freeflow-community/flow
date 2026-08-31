@@ -50,9 +50,10 @@ final class AppState: ObservableObject {
     /// no state and the tests are not on the main actor.
     nonisolated static func channelRowHighlighted(
         rowId: String, selectedChannelId: String?, selectedArtifactId: String?, showActivity: Bool,
-        showScheduled: Bool = false
+        showScheduled: Bool = false, showDirectory: Bool = false
     ) -> Bool {
         selectedChannelId == rowId && selectedArtifactId == nil && !showActivity && !showScheduled
+            && !showDirectory
     }
 
     /// Scroll identity for a sidebar channel/DM row (#319), so the sidebar can
@@ -204,6 +205,10 @@ final class AppState: ObservableObject {
         get { window.showScheduled }
         set { window.showScheduled = newValue }
     }
+    var showDirectory: Bool {
+        get { window.showDirectory }
+        set { window.showDirectory = newValue }
+    }
     var focusMessageId: String? {
         get { window.focusMessageId }
         set { window.focusMessageId = newValue }
@@ -222,6 +227,7 @@ final class AppState: ObservableObject {
     func selectArtifact(_ id: String?) { window.selectArtifact(id) }
     func showActivityFeed() { window.showActivityFeed() }
     func showScheduledPanel() { window.showScheduledPanel() }
+    func showDirectoryPanel() { window.showDirectoryPanel() }
     func jumpToMessage(channelId: String, messageId: String) {
         window.jumpToMessage(channelId: channelId, messageId: messageId)
     }

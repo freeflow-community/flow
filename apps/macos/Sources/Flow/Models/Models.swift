@@ -670,6 +670,9 @@ struct MemberDTO: Decodable, Sendable {
     let isAgent: Bool?
     /// Optional so a client pointed at a server predating the field decodes.
     let isBot: Bool?
+    /// Agents only: the human member who sponsored them (#432). Carried on the
+    /// roster so the Directory can name a sponsor without a fetch per card.
+    let sponsorId: String?
     let role: String
     let joinedAt: String?
 }

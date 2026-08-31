@@ -219,6 +219,10 @@ struct SidebarView: View {
                     .help("New direct message")
                     .accessibilityIdentifier("sidebar.newDM")
                 }
+                // Directory (#432): a nav entry, not a DM row — it highlights
+                // when active and opens the member grid rather than a
+                // conversation. Directly under the header, as on web.
+                directoryRow
                 ForEach(dmChannels) { channel in
                     channelWithArtifacts(channel) { dmRow(channel) }
                     ForEach(dmChildren[channel.id] ?? []) { child in
@@ -613,7 +617,7 @@ struct SidebarView: View {
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
             selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
-            showScheduled: win.showScheduled
+            showScheduled: win.showScheduled, showDirectory: win.showDirectory
         )
         return SidebarHoverRow { hovering in
             Button {
@@ -696,7 +700,7 @@ struct SidebarView: View {
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
             selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
-            showScheduled: win.showScheduled
+            showScheduled: win.showScheduled, showDirectory: win.showDirectory
         )
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }
@@ -880,6 +884,36 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
+    }
+
+    /// The Directory entry under the Direct messages header (#432) — the same
+    /// nav-item shape as a channel row, minus everything that belongs to a
+    /// conversation (unread badge, hover menu, context menu).
+    private var directoryRow: some View {
+        let active = win.showDirectory
+        return Button {
+            win.showDirectoryPanel()
+        } label: {
+            HStack(spacing: 9) {
+                Text("👥")
+                    .flowFont(size: 14)
+                    .opacity(active ? 0.7 : 0.6)
+                    .frame(width: 14)
+                Text("Directory")
+                    .flowFont(size: 14, weight: active ? .semibold : .regular)
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.82))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Browse everyone in this workspace")
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.directory")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     /// An agent with no DM yet (#361) — clicking creates one. Same shape as a
@@ -1088,6 +1122,9 @@ struct SidebarView: View {
             Button("Create Workspace…") { showCreateWorkspace = true }
             Button("Accept Invite…") { showAcceptInvite = true }
             Button("Invite People…") { showInvite = true }
+            Button("Directory") { win.showDirectoryPanel() }
+                .disabled(win.selectedWorkspaceId == nil)
+                .accessibilityIdentifier("sidebar.directoryMenuItem")
             Divider()
             Button("All Workspaces") { win.selectWorkspace(nil) }
             if currentWorkspace != nil {

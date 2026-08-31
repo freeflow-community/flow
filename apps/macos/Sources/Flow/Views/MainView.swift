@@ -168,6 +168,9 @@ struct MainView: View {
         } else if win.showScheduled {
             // Scheduled panel (#424) — same treatment as the feed above.
             ScheduledPanelView()
+        } else if win.showDirectory {
+            // Directory (#432) — the workspace member grid, same treatment again.
+            DirectoryView()
         } else if let channelId = win.selectedChannelId {
             // Tabbed side panel: Thread, Files (#347) and the channel's
             // artifacts (phase 13). GeometryReader measures the space this
