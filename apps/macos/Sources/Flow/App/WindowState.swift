@@ -127,6 +127,25 @@ final class WindowState: ObservableObject {
         show(.channel(id))
     }
 
+    /// Sidebar click or tap (#441): when this channel's oldest unread is a
+    /// thread reply, enter the channel *and* that thread, scrolled to the
+    /// reply — otherwise the badge points at a timeline showing nothing new and
+    /// the user has to hunt for the thread by hand. Same jump a tapped
+    /// notification performs, and the same rule web applies: on the way into a
+    /// different channel only. Anything else is a plain select.
+    func openChannelFromSidebar(_ channel: Channel) {
+        guard let jump = channel.sidebarThreadJump(currentChannelId: selectedChannelId) else {
+            selectChannel(channel.id)
+            return
+        }
+        openNotification(
+            workspaceId: channel.workspaceId,
+            channelId: channel.id,
+            messageId: jump.replyId,
+            threadRootId: jump.rootId
+        )
+    }
+
     /// Put a view on the main pane, without recording a visit.
     private func show(_ view: NavView) {
         switch view {
