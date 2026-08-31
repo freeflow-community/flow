@@ -1,5 +1,23 @@
 # Decision log
 
+## 2026-08-31 — Socket Mode routing: request/reply, not heartbeat liveness; tickets to Postgres (phase 18 M3)
+
+- The design doc (§3) had app-socket liveness riding the presence heartbeat,
+  with the outbox consulting the merged view before choosing socket vs HTTP.
+  Implemented instead as **NATS request/reply**: `deliverEnvelope` tries the
+  local socket, then requests `app.{appId}.socketmode`; the socket-holding
+  replica subscribes (queue group `socketmode`, so exactly one responder) and
+  replies with the ack result. The request itself is the liveness probe — a
+  "no responders" error means no replica holds a socket, with **zero staleness
+  window**, where heartbeat liveness would be up to a beat stale in both
+  directions. Ack semantics are unchanged; the outbox stays the retry
+  backstop.
+- The design doc missed the **connection tickets**: `apps.connections.open`
+  may answer on one replica while the WebSocket upgrade lands on another, so
+  the one-time ticket moved from an in-memory map to Postgres (0039,
+  sha256-only, single-use via `DELETE .. RETURNING`) — hard state, per the
+  "soft state gossips, hard state locks" principle.
+
 ## 2026-08-31 — Presence event dedup is asymmetric (phase 18 M2 implementation)
 
 - The design doc's rule ("emit only when a local transition changes the merged

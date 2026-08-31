@@ -580,3 +580,11 @@ export const rateLimitWindows = pgTable('rate_limit_windows', {
   windowStart: timestamp('window_start', { withTimezone: true }).notNull().defaultNow(),
   count: integer('count').notNull().default(1),
 });
+
+/** Phase 18 M3: one-time Socket Mode connection tickets, DB-backed so mint
+ * and redeem may happen on different replicas (see gateway/socketMode.ts). */
+export const appSocketTickets = pgTable('app_socket_tickets', {
+  tokenHash: bytea('token_hash').primaryKey(),
+  appId: uuid('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});

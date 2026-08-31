@@ -72,6 +72,12 @@ export function subjectPresenceSync(replicaId: string): string {
 export function subjectPresenceSyncAll(): string {
   return `presence.sync.*`;
 }
+/** Per-app Socket Mode envelope routing (phase 18 M3) — the replica holding
+ * the app's socket subscribes (queue group, so exactly one responder when the
+ * app holds sockets on several replicas) and replies with the ack result. */
+export function subjectAppSocketMode(appId: string): string {
+  return `app.${appId}.socketmode`;
+}
 /** Per-user meta subject: tells a user's live sockets about workspace joins. */
 export function subjectUserMeta(userId: string): string {
   return `user.${userId}.meta`;
@@ -96,9 +102,21 @@ export function publishEvent(subject: string, event: Event): void {
   }
 }
 
-export function subscribeBus(subject: string): Subscription {
+export function subscribeBus(subject: string, opts?: { queue?: string }): Subscription {
   if (!nc) throw new Error('bus not connected');
-  return nc.subscribe(subject);
+  return nc.subscribe(subject, opts?.queue ? { queue: opts.queue } : undefined);
+}
+
+/**
+ * Request/reply (phase 18 M3, Socket Mode routing). Returns the parsed JSON
+ * reply, or null when the bus is not connected (unit tests, degraded boot) —
+ * the caller treats null like "nobody answered". NATS errors (no responders,
+ * timeout) propagate; the caller maps them.
+ */
+export async function requestBus(subject: string, payload: unknown, timeoutMs: number): Promise<unknown | null> {
+  if (!nc) return null;
+  const m = await nc.request(subject, JSON.stringify(payload), { timeout: timeoutMs });
+  return JSON.parse(new TextDecoder().decode(m.data)) as unknown;
 }
 
 export async function closeBus(): Promise<void> {
