@@ -1,5 +1,25 @@
 # Decision log
 
+## 2026-08-31 — Presence event dedup is asymmetric (phase 18 M2 implementation)
+
+- The design doc's rule ("emit only when a local transition changes the merged
+  answer") is unsafe against heartbeat staleness — the remote view is up to one
+  beat old. Two holes: a stale remote entry can suppress a real **online**
+  emission (wrong gray dot until a refetch), and two sockets closing on
+  different replicas within one beat suppress both **offline** emissions.
+- Ruling as implemented: **online** transitions emit on the *local* 0→1,
+  never suppressed (a redundant online event is harmless — presence events are
+  idempotent state); **offline** transitions emit on the *merged* answer (an
+  offline for a user still connected elsewhere would be wrong, not redundant).
+  The offline staleness hole is closed by emitting elected offline events for
+  pairs a *snapshot diff* removes from the merged view, in addition to the
+  crash-expiry election the doc already had. Duplicate offline events are
+  possible and tolerated.
+- Where: `presence.ts` header (rationale), `presenceSync.ts` (`emitElected`
+  on both snapshot-apply and expiry). Design doc §1 to be aligned after the
+  phase-18 M1 doc revision (PR #443) merges, to avoid cross-PR edits to the
+  same section.
+
 ## 2026-08-27 — Permanent message deletion is an owner/admin moderation power (operator)
 
 - Workspace `owner` and `admin` roles may permanently delete any non-system

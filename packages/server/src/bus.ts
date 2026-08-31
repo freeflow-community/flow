@@ -55,8 +55,22 @@ export function subjectChannelEmoji(workspaceId: string, channelId: string): str
 export function subjectHuddle(workspaceId: string, channelId: string): string {
   return `ws.${workspaceId}.chan.${channelId}.huddle`;
 }
+/** Every huddle event, all workspaces — the replica roster-sync subscription
+ * (phase 18 M2): huddle.updated carries the full roster, so replicas keep
+ * their caches converged by applying each other's events. */
+export function subjectHuddleAll(): string {
+  return `ws.*.chan.*.huddle`;
+}
 export function subjectWorkspaceAll(workspaceId: string): string {
   return `ws.${workspaceId}.>`;
+}
+/** Replica presence heartbeat (phase 18 M2) — server-to-server, never
+ * forwarded to clients (outside the `ws.*` wildcard the gateway subscribes). */
+export function subjectPresenceSync(replicaId: string): string {
+  return `presence.sync.${replicaId}`;
+}
+export function subjectPresenceSyncAll(): string {
+  return `presence.sync.*`;
 }
 /** Per-user meta subject: tells a user's live sockets about workspace joins. */
 export function subjectUserMeta(userId: string): string {

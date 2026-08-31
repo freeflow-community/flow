@@ -10,9 +10,11 @@
 //   3. the setter's last socket closes (see gateway/index.ts).
 // Rebooting the server clears everything, which is the correct answer too.
 //
-// Single-node, same as presence: the local map is authoritative while the
-// deployment is one process. A multi-node deployment needs this in Redis with
-// the same TTL semantics — the expiry is what makes that port straightforward.
+// Distributed the same way presence is (phase 18 M2, design doc §1a): each
+// replica's per-channel *aggregates* ride the presence heartbeat, and a
+// remote view of the other replicas' aggregates merges into every read. The
+// per-user entries stay local — only the setter's replica needs them; the
+// aggregate is all any other replica renders or publishes.
 import type { ChannelIndicatorState } from '@flow/shared';
 
 interface Entry {
@@ -25,6 +27,28 @@ interface Entry {
 /** channelId -> userId -> entry. Per-setter, so one agent clearing its own
  * indicator can't switch off another agent still working in the same channel. */
 const byChannel = new Map<string, Map<string, Entry>>();
+
+/** One channel's aggregate as another replica reported it. */
+export interface RemoteIndicator {
+  workspaceId: string;
+  state: ChannelIndicatorState;
+}
+
+interface RemoteReplicaIndicators {
+  channels: Map<string, RemoteIndicator>;
+  lastSeen: number;
+}
+
+/** replicaId -> that replica's last-heartbeat aggregate snapshot. */
+const remote = new Map<string, RemoteReplicaIndicators>();
+
+function remoteIndicator(channelId: string): ChannelIndicatorState | null {
+  for (const r of remote.values()) {
+    const entry = r.channels.get(channelId);
+    if (entry) return entry.state;
+  }
+  return null;
+}
 
 /** Default lifetime of a set that is never refreshed. Comfortably longer than
  * the bridge's refresh interval, short enough that an abandoned spinner is a
@@ -43,13 +67,13 @@ function prune(channelId: string, now: number): Map<string, Entry> | undefined {
   return users;
 }
 
-/** The channel's aggregate indicator — what clients render. Any live setter
- * means the row spins; several agents at once still show one spinner. */
+/** The channel's aggregate indicator — what clients render, merged across
+ * replicas. Any live setter anywhere means the row spins; several agents at
+ * once still show one spinner. */
 export function channelIndicator(channelId: string, now = Date.now()): ChannelIndicatorState | null {
   const users = prune(channelId, now);
-  if (!users) return null;
-  for (const e of users.values()) return e.state;
-  return null;
+  if (users) for (const e of users.values()) return e.state;
+  return remoteIndicator(channelId);
 }
 
 /** Aggregate state for many channels at once (the channel-list overlay). Only
@@ -119,20 +143,91 @@ export function clearIndicatorsForUser(userId: string, now = Date.now()): Channe
 
 /** Drop expired entries everywhere; returns the channels that just went quiet
  * so the sweeper can tell clients (nothing else would — an expiry has no
- * request behind it). */
+ * request behind it). Quiet means the *merged* aggregate is gone: a channel
+ * still spinning via another replica is not announced quiet. */
 export function sweepExpired(now = Date.now()): ChannelRef[] {
   const quieted: ChannelRef[] = [];
   for (const [channelId, users] of [...byChannel]) {
     const workspaceId = [...users.values()][0]?.workspaceId;
     if (!workspaceId) continue; // empty map — nothing was showing
     prune(channelId, now);
-    // the channel key survives iff at least one entry is still live
-    if (!byChannel.has(channelId)) quieted.push({ channelId, workspaceId });
+    // the channel key survives iff at least one local entry is still live
+    if (!byChannel.has(channelId) && remoteIndicator(channelId) === null) {
+      quieted.push({ channelId, workspaceId });
+    }
   }
   return quieted;
 }
 
-/** Tests only: forget everything. */
+// ---- distributed layer (phase 18 M2) — fed by presenceSync.ts ----
+
+/** This replica's live aggregates, heartbeat-shaped. */
+export function localIndicatorSnapshot(now = Date.now()): Record<string, RemoteIndicator> {
+  const out: Record<string, RemoteIndicator> = {};
+  for (const [channelId, users] of [...byChannel]) {
+    const workspaceId = [...users.values()][0]?.workspaceId;
+    if (!workspaceId) continue;
+    const state = channelIndicatorLocal(channelId, now);
+    if (state) out[channelId] = { workspaceId, state };
+  }
+  return out;
+}
+
+/** Local-only aggregate (snapshot building must not echo remote state back). */
+function channelIndicatorLocal(channelId: string, now = Date.now()): ChannelIndicatorState | null {
+  const users = prune(channelId, now);
+  if (!users) return null;
+  for (const e of users.values()) return e.state;
+  return null;
+}
+
+/**
+ * Absorb another replica's aggregate snapshot. Returns the channels the diff
+ * turned quiet in the *merged* view — the origin replica's clearing event may
+ * have been suppressed against a then-live view of us, so presenceSync's
+ * elected emitter re-announces them (duplicate clears are idempotent).
+ */
+export function applyRemoteIndicators(
+  replicaId: string,
+  channels: Record<string, RemoteIndicator>,
+  now = Date.now(),
+): ChannelRef[] {
+  const previous = remote.get(replicaId);
+  const parsed = new Map<string, RemoteIndicator>(Object.entries(channels));
+  remote.set(replicaId, { channels: parsed, lastSeen: now });
+  if (!previous) return [];
+  const quieted: ChannelRef[] = [];
+  for (const [channelId, entry] of previous.channels) {
+    if (parsed.has(channelId)) continue;
+    if (channelIndicator(channelId, now) === null) quieted.push({ channelId, workspaceId: entry.workspaceId });
+  }
+  return quieted;
+}
+
+/** Drop remote replicas not heard from within `ttlMs` (a crash — its spinners
+ * must not survive it). Returns the channels whose merged aggregate went
+ * quiet, for the elected emitter to announce. */
+export function expireRemoteIndicators(ttlMs: number, now = Date.now()): ChannelRef[] {
+  const dropped: RemoteReplicaIndicators[] = [];
+  for (const [replicaId, r] of remote) {
+    if (now - r.lastSeen <= ttlMs) continue;
+    remote.delete(replicaId);
+    dropped.push(r);
+  }
+  const quieted: ChannelRef[] = [];
+  const seen = new Set<string>();
+  for (const r of dropped) {
+    for (const [channelId, entry] of r.channels) {
+      if (seen.has(channelId)) continue;
+      seen.add(channelId);
+      if (channelIndicator(channelId, now) === null) quieted.push({ channelId, workspaceId: entry.workspaceId });
+    }
+  }
+  return quieted;
+}
+
+/** Tests only: forget everything, local and remote. */
 export function resetIndicators(): void {
   byChannel.clear();
+  remote.clear();
 }

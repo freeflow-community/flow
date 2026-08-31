@@ -5,9 +5,9 @@
 import { AccessToken, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
 import { TrackSource } from '@livekit/protocol';
 import { eq } from 'drizzle-orm';
-import type { HuddleUpdatedData } from '@flow/shared';
+import type { Event, HuddleUpdatedData } from '@flow/shared';
 import { db, schema } from '../db/index.js';
-import { publishEvent, subjectHuddle } from '../bus.js';
+import { publishEvent, subjectHuddle, subjectHuddleAll, subscribeBus } from '../bus.js';
 import { config } from '../config.js';
 import { ApiError, badRequest } from '../lib/errors.js';
 import * as store from '../huddles.js';
@@ -132,4 +132,39 @@ export async function reconcileHuddlesFromLiveKit(): Promise<void> {
     const { before, after } = store.reconcileChannel(channelId, chan.workspaceId, mapped);
     if (rosterChanged(before, after)) publish(channelId, chan.workspaceId, after);
   }
+}
+
+/**
+ * Replica roster sync (phase 18 M2, design doc §1a): join/leave REST calls
+ * and LiveKit webhooks land on one replica, so the others' caches go stale.
+ * Every `huddle.updated` event carries the channel's *full* roster, so each
+ * replica applies every event — its own included — to converge. Applying our
+ * own loopback is idempotent; ordering per subject is NATS-guaranteed, so the
+ * worst case is a milliseconds-stale roster between a local write and the
+ * loopback of the event before it. Boot reconciliation against LiveKit covers
+ * anything a fire-and-forget event loses.
+ */
+export function startHuddleRosterSync(): { stop(): void } {
+  const sub = subscribeBus(subjectHuddleAll());
+  void (async () => {
+    for await (const m of sub) {
+      try {
+        const event = JSON.parse(new TextDecoder().decode(m.data)) as Event;
+        if (event.type !== 'huddle.updated' || !event.channelId) continue;
+        const data = event.data as HuddleUpdatedData;
+        store.reconcileChannel(
+          event.channelId,
+          event.workspaceId,
+          data.participants.map((p) => ({ userId: p.userId, joinedAt: Date.parse(p.joinedAt) })),
+        );
+      } catch {
+        /* skip malformed */
+      }
+    }
+  })();
+  return {
+    stop() {
+      sub.unsubscribe();
+    },
+  };
 }

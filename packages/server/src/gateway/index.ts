@@ -214,10 +214,11 @@ async function loadWorkspaceIntoState(s: SocketState, wsId: string): Promise<voi
 }
 
 /**
- * Tell this socket who is currently online, per workspace (local registry,
- * single node). Presence is per (user, workspace) since #364, so the snapshot
- * is a straight read of each workspace's online set — a user online in one of
- * our workspaces is *not* reported online in the others.
+ * Tell this socket who is currently online, per workspace (merged across
+ * replicas since phase 18 M2 — onlineUsersIn unions the gossip view).
+ * Presence is per (user, workspace) since #364, so the snapshot is a straight
+ * read of each workspace's online set — a user online in one of our
+ * workspaces is *not* reported online in the others.
  */
 function sendPresenceSnapshot(s: SocketState, sock: WebSocket, onlyWorkspaceId?: string): void {
   for (const wsId of s.workspaces) {
@@ -329,9 +330,10 @@ export function attachGateway(server: HttpServer): { close(): void } {
               }
             })();
 
-            // presence bookkeeping (single node: the local registry is
-            // authoritative). Only the workspaces this connection serves, and
-            // only the ones where it is the *first* live connection.
+            // presence bookkeeping (the local registry plus the replica
+            // gossip view — presence.ts merges). Only the workspaces this
+            // connection serves, and only the ones where it is the *first*
+            // live local connection.
             if (!socketsByUser.has(s.userId)) socketsByUser.set(s.userId, new Set());
             socketsByUser.get(s.userId)!.add(s);
             for (const wsId of registerConnection(s.sessionId, s.userId, s.declared ?? s.workspaces)) {
@@ -340,7 +342,7 @@ export function attachGateway(server: HttpServer): { close(): void } {
 
             send(sock, { op: 'hello', sessionId: s.sessionId });
 
-            // presence snapshot: everyone currently online (local map, single node)
+            // presence snapshot: everyone currently online (merged across replicas)
             sendPresenceSnapshot(s, sock);
           } catch {
             send(sock, { op: 'error', code: 'unauthorized', message: 'invalid token' });
