@@ -1,6 +1,12 @@
 # Phase 18: Multi-replica readiness
 
-> **Status: in progress — M1 started 2026-08-31.** Design:
+> **Status: code-complete — M1 (#443), M2 (#444), M3 (#445) merged and
+> deployed 2026-08-31, soaking at `replicas: 1`. Only M4 (the flip + QA)
+> remains, tracked as issue #446.** Implementation deviations from the
+> design are recorded in `decision_log.md` (2026-08-31: asymmetric presence
+> event dedup; Socket Mode request/reply + DB tickets). Local two-replica
+> pre-flight: `scripts/two-replica-rehearsal.mjs` (all checks passed).
+> Design:
 > `docs/design/DISTRIBUTED_PRESENCE.md` (revised 2026-08-31 against current
 > code — workspace-keyed presence #364, two new soft-state maps, corrected
 > sweep/rate-limit inventory) — this spec schedules that work; the design
