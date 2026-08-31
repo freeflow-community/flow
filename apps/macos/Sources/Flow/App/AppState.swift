@@ -223,6 +223,7 @@ final class AppState: ObservableObject {
     func selectWorkspace(_ id: String?) { window.selectWorkspace(id) }
     func restoreActiveWorkspace() { window.restoreActiveWorkspace() }
     func selectChannel(_ id: String?) { window.selectChannel(id) }
+    func openChannelFromSidebar(_ channel: Channel) { window.openChannelFromSidebar(channel) }
     func openThread(_ rootId: String?) { window.openThread(rootId) }
     func selectArtifact(_ id: String?) { window.selectArtifact(id) }
     func showActivityFeed() { window.showActivityFeed() }

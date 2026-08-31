@@ -231,6 +231,9 @@ targets:
       - path: ../macos/Tests/FlowTests/MessageDeletePolicyTests.swift
       - path: ../macos/Tests/FlowTests/ScheduleEditorTests.swift
       - path: ../macos/Tests/FlowTests/ChannelEmojiTests.swift
+      # Shared-layer rule iOS now depends on (#441): the sidebar tap decides
+      # here whether to jump into a thread, on both clients.
+      - path: ../macos/Tests/FlowTests/SidebarThreadJumpTests.swift
     dependencies:
       - target: Flow
     settings:

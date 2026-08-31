@@ -13,14 +13,6 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- **Auto-opening the thread that holds a channel's oldest unread** (#327) landed
-  on web only. The signal is server-side and already sent to every client
-  (`ChannelDTO.oldestUnreadThreadReply`), so closing the gap is client work:
-  macOS/iOS cache channels locally, so each needs the field persisted (a column
-  + migration) and kept fresh the way `unreadThreadRootIds` already is, then a
-  sidebar tap that calls the existing jump primitive
-  (`WindowState.openNotification(workspaceId:channelId:messageId:threadRootId:)`
-  on macOS) instead of a plain channel select.
 - **Apps section in the left nav** (#394) landed on web and macOS only; iOS was
   explicitly out of scope for the issue. The server query
   (`GET /v1/workspaces/:id/app-artifacts`) is client-agnostic and complete, so

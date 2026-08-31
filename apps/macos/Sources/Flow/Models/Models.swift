@@ -301,6 +301,14 @@ extension FileAttachment {
     }
 }
 
+/// Where a channel's oldest unread lives when it is a thread reply (#327) —
+/// the pair the sidebar needs to land inside the thread on the right reply.
+/// Stored on the cached channel row as JSON, like `unreadThreadRootIds`.
+struct ThreadReplyRef: Codable, Sendable, Equatable {
+    var rootId: String
+    var replyId: String
+}
+
 struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "channel"
 
@@ -325,6 +333,12 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// root's "N replies" chip draws a dot, so a reply that needs you is
     /// visible in the transcript and not only in the sidebar badge.
     var unreadThreadRootIds: [String]?
+    /// Auto-open target (#327): set only when this channel's oldest unread is a
+    /// thread reply, so tapping the channel in the sidebar can land inside that
+    /// thread instead of on a timeline that shows nothing new. Nil when the
+    /// oldest unread is top-level, when there are no unreads, and on a cached
+    /// row until the next channel list arrives — all of which mean "no jump".
+    var oldestUnreadThreadReply: ThreadReplyRef?
     var notifyLevel: Int // 0=mute 1=mentions 2=all
     /// Parent channel (#118) — set at creation, one level deep. The sidebar
     /// draws this channel indented under it. nil for a top-level channel.
@@ -366,7 +380,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
         case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
-        case unreadThreadRootIds, notifyLevel, parentId, memberIds, emoji
+        case unreadThreadRootIds, oldestUnreadThreadReply, notifyLevel, parentId, memberIds, emoji
     }
 
     init(
@@ -374,6 +388,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         isPrivate: Bool, createdBy: String, createdAt: String, archivedAt: String?,
         isMember: Bool, lastReadMsgId: String?, unreadCount: Int, unreadNotifications: Int = 0,
         unreadThreadRootIds: [String]? = nil,
+        oldestUnreadThreadReply: ThreadReplyRef? = nil,
         notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil,
         emoji: String? = nil
     ) {
@@ -391,6 +406,7 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.unreadCount = unreadCount
         self.unreadNotifications = unreadNotifications
         self.unreadThreadRootIds = unreadThreadRootIds
+        self.oldestUnreadThreadReply = oldestUnreadThreadReply
         self.notifyLevel = notifyLevel
         self.parentId = parentId
         self.memberIds = memberIds
@@ -413,10 +429,28 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         unreadNotifications = try c.decodeIfPresent(Int.self, forKey: .unreadNotifications) ?? 0
         unreadThreadRootIds = try c.decodeIfPresent([String].self, forKey: .unreadThreadRootIds)
+        oldestUnreadThreadReply = try c.decodeIfPresent(
+            ThreadReplyRef.self, forKey: .oldestUnreadThreadReply
+        )
         notifyLevel = try c.decodeIfPresent(Int.self, forKey: .notifyLevel) ?? 1
         parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
         memberIds = try c.decodeIfPresent([String].self, forKey: .memberIds)
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji)
+    }
+}
+
+extension Channel {
+    /// The sidebar tap target (#441, matching web's `openChannelFromSidebar`):
+    /// the reply to land on when this channel's oldest unread lives inside a
+    /// thread. Nil means an ordinary channel select.
+    ///
+    /// Only on the way *into* a different channel. The server keeps sending the
+    /// field for as long as that reply is unread, so without this test a
+    /// re-render or a re-tap of the channel already on screen would yank the
+    /// user back into the thread they just left.
+    func sidebarThreadJump(currentChannelId: String?) -> ThreadReplyRef? {
+        guard id != currentChannelId else { return nil }
+        return oldestUnreadThreadReply
     }
 }
 

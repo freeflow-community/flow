@@ -274,6 +274,16 @@ struct AppDatabase: Sendable {
             }
         }
 
+        // Auto-open target (#327 parity, #441): where a channel's oldest unread
+        // lives when it is a thread reply. JSON, same shape as
+        // unreadThreadRootIds; nil on a cached row until the next channel list
+        // arrives, which just means no jump yet — never a wrong one.
+        migrator.registerMigration("v22") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "oldestUnreadThreadReply", .text)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

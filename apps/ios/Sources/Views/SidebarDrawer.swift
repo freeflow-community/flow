@@ -517,7 +517,7 @@ struct SidebarDrawer: View {
         let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
             && !app.showDirectory
         return Button {
-            open(channel.id)
+            open(channel)
         } label: {
             HStack(spacing: 9) {
                 Group {
@@ -583,7 +583,7 @@ struct SidebarDrawer: View {
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { usersById[$0] }
         return Button {
-            open(channel.id)
+            open(channel)
         } label: {
             HStack(spacing: 9) {
                 if channel.kind == "dm" {
@@ -742,6 +742,15 @@ struct SidebarDrawer: View {
     /// Select a channel and dismiss the drawer (the web mobile behavior).
     private func open(_ channelId: String) {
         app.selectChannel(channelId)
+        onSelect()
+    }
+
+    /// Tapping a row in the list: same thing, except that a channel whose
+    /// oldest unread is a thread reply opens on that reply inside its thread
+    /// (#441). The id-only version above is for channels we just created or
+    /// joined, which have nothing unread to jump to.
+    private func open(_ channel: Channel) {
+        app.openChannelFromSidebar(channel)
         onSelect()
     }
 

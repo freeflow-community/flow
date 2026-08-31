@@ -734,8 +734,12 @@ actor SyncEngine {
         let cleared: (count: Int, workspaceId: String)? = try? await db.writer.write { db in
             guard let ch = try Channel.fetchOne(db, key: channelId), ch.unreadNotifications > 0
             else { return nil }
+            // The auto-open target (#441) is derived from these same unread
+            // notifications, so it goes with them — otherwise leaving this
+            // channel and coming straight back would jump into a thread the
+            // user has just read, until the next channel list corrected it.
             try db.execute(
-                sql: "UPDATE channel SET unreadNotifications = 0 WHERE id = ?",
+                sql: "UPDATE channel SET unreadNotifications = 0, oldestUnreadThreadReply = NULL WHERE id = ?",
                 arguments: [channelId]
             )
             // The rail badge (#345) is the per-workspace sum of these rows.
@@ -1934,6 +1938,7 @@ actor SyncEngine {
             // (#270), so the transcript says *which* thread, not just that the
             // channel has something. Read-modify-write — it's a JSON array.
             let notifThreadRootId = n.message.threadRootId
+            let notifMessageId = n.messageId
             let notifWorkspaceId = n.workspaceId
             try? await db.writer.write { db in
                 try db.execute(
@@ -1950,9 +1955,21 @@ actor SyncEngine {
                       var chan = try Channel.filter(key: notifChannelId).fetchOne(db),
                       chan.isMember else { return }
                 var roots = chan.unreadThreadRootIds ?? []
-                guard !roots.contains(rootId) else { return }
-                roots.append(rootId)
-                chan.unreadThreadRootIds = roots
+                if !roots.contains(rootId) {
+                    roots.append(rootId)
+                    chan.unreadThreadRootIds = roots
+                }
+                // Auto-open target (#441): with nothing unread ahead of it on
+                // the main timeline and no target recorded yet, this reply *is*
+                // the channel's oldest unread — the test the server makes, made
+                // locally so the sidebar can jump before the next channel list
+                // lands. Anything else leaves the field alone: an older unread
+                // (top-level or reply) still owns the jump.
+                if chan.oldestUnreadThreadReply == nil, chan.unreadCount == 0 {
+                    chan.oldestUnreadThreadReply = ThreadReplyRef(
+                        rootId: rootId, replyId: notifMessageId
+                    )
+                }
                 try chan.save(db)
             }
             // Banner unless the server's alert gate (per-user prefs + status

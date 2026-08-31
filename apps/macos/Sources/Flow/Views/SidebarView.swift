@@ -621,7 +621,7 @@ struct SidebarView: View {
         )
         return SidebarHoverRow { hovering in
             Button {
-                win.selectChannel(channel.id)
+                win.openChannelFromSidebar(channel)
             } label: {
                 HStack(spacing: 9) {
                     Group {
@@ -706,7 +706,7 @@ struct SidebarView: View {
         let otherStatus = otherId.flatMap { memberById[$0] }
         return SidebarHoverRow { hovering in
             Button {
-                win.selectChannel(channel.id)
+                win.openChannelFromSidebar(channel)
             } label: {
                 HStack(spacing: 9) {
                     if channel.kind == "dm" {
