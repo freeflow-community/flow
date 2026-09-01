@@ -73,6 +73,12 @@ targets:
       path: Sources/Flow.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # APNs (#249). Xcode expands build settings inside the entitlements
+        # file at signing time, so one committed file serves both environments:
+        # Debug talks to the APNs sandbox, Release — TestFlight and the App
+        # Store, which both use production APNs — talks to production. Hard-
+        # coding either is the classic first-deploy trap.
+        aps-environment: $(APS_ENVIRONMENT)
         # Shared with the share extension. The group is the app's own id, so
         # tokens already written by the app are inside it and no migration is
         # needed (issue #214, failure mode 1).
@@ -105,7 +111,11 @@ targets:
         # An ambient huddle has to survive backgrounding/lock-screen, not just
         # in-app navigation (decision log 2026-08-20), or it fails the "feels
         # like a real call" bar the moment you switch apps.
-        UIBackgroundModes: [audio]
+        # `audio` for the huddle; `remote-notification` for the silent
+        # badge-sync push (#248) — without it iOS never hands a
+        # `content-available` push to didReceiveRemoteNotification, so reading
+        # a mention on the laptop would leave the phone's badge stale.
+        UIBackgroundModes: [audio, remote-notification]
         ITSAppUsesNonExemptEncryption: false
         # Allow cleartext HTTP only to loopback/.local (dev server); prod
         # (app.freeflow.im) stays HTTPS-enforced under ATS.
@@ -127,6 +137,14 @@ targets:
         # Capabilities, or via DEVELOPMENT_TEAM). Simulator CLI builds pass
         # CODE_SIGNING_ALLOWED=NO on the xcodebuild invocation instead, so the
         # committed project stays device-ready by default.
+      # Expanded into `aps-environment` in the entitlements above. Archives use
+      # the Release config, and TestFlight builds talk to *production* APNs
+      # despite not being on the store yet.
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production
 
   # Share extension (issue #214). Its own process, its own bundle and its own
   # App ID — hence the duplicated entitlements and the FlowServerURL below.
@@ -234,6 +252,9 @@ targets:
       # Shared-layer rule iOS now depends on (#441): the sidebar tap decides
       # here whether to jump into a thread, on both clients.
       - path: ../macos/Tests/FlowTests/SidebarThreadJumpTests.swift
+      # The APNs payload contract and the foreground-banner rule (#249) — the
+      # rule is iOS's alone, so this is the suite that must keep it honest.
+      - path: ../macos/Tests/FlowTests/PushPayloadTests.swift
     dependencies:
       - target: Flow
     settings:

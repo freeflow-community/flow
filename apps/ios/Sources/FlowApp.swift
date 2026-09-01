@@ -2,6 +2,9 @@ import SwiftUI
 
 @main
 struct FlowApp: App {
+    // APNs (#249): token registration, the foreground rule and tap routing all
+    // arrive as UIKit callbacks, some of them before any view exists.
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var pushDelegate
     @StateObject private var app = AppState()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -20,6 +23,10 @@ struct FlowApp: App {
                 // Backgrounded (or on the app switcher) is not "seen": the
                 // selected channel must not mark its mail read (issue #63).
                 .onChange(of: scenePhase) { _, phase in app.setAppActive(phase == .active) }
+                // Hand the app state to the push delegate, which replays a
+                // token or a tap that arrived before the UI was ready (a cold
+                // launch from a banner is exactly that).
+                .onAppear { pushDelegate.attach(app) }
                 // Web-to-app handoff: flow://signin?code=… (and flow://invite/…)
                 .onOpenURL { app.handleDeepLink($0) }
         }

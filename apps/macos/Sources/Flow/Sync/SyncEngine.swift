@@ -194,6 +194,12 @@ actor SyncEngine {
     }
 
     func logout() async {
+        // Push registration goes first, because the next line revokes the very
+        // session it authenticates with. Doing it after leaves the row behind —
+        // the next owner of this phone gets someone else's pushes until APNs
+        // 410s the token — and the 401 it earns also trips the unauthorized
+        // handler, so a deliberate sign-out ends on "Your session expired".
+        await unregisterPushDevice()
         let _: OkResponse? = try? await api.post("/v1/auth/logout")
         await tearDownSession()
     }
@@ -207,6 +213,18 @@ actor SyncEngine {
     }
 
     private func tearDownSession() async {
+        // The server row is already gone by now — `logout()` deletes it while
+        // the session is still alive, and account deletion cascades it — so
+        // this is only the local half. Every teardown path runs it, including
+        // the ones with no live session to ask (#249).
+        forgetPushDevice()
+        #if canImport(UIKit)
+        // Pushes already sitting in Notification Center belong to the session
+        // that just ended — tapping one after sign-out would route into a
+        // wiped cache. (macOS posts its banners locally and only while it is
+        // running, so it has nothing of the sort to clean up.)
+        await Banners.clearDelivered()
+        #endif
         Keychain.deleteToken()
         UserDefaults.standard.removeObject(forKey: Self.currentUserIdKey)
         await api.setToken(nil)
@@ -233,6 +251,43 @@ actor SyncEngine {
         startSocket(token: token)
         await refreshWorkspaces()
         await refreshNotificationBadge()
+    }
+
+    // MARK: - Push devices (#249)
+
+    /// Where the last registered APNs token is kept so sign-out can delete the
+    /// right row. Not the Keychain: it is not a secret, and it must survive a
+    /// launch in which APNs hasn't answered yet.
+    private static let deviceTokenKey = "pushDeviceToken" + Profile.suffix
+
+    /// Register (or re-register) this device — called from the iOS app delegate
+    /// every time APNs hands over a token, which is every cold start. Silent on
+    /// failure: a device that fails to register still receives everything over
+    /// the socket, so this must never surface as an error the user can see.
+    func registerPushDevice(token: String, environment: String, bundleId: String) async {
+        guard currentUser != nil else { return }
+        UserDefaults.standard.set(token, forKey: Self.deviceTokenKey)
+        let _: OkResponse? = try? await api.post(
+            "/v1/me/devices",
+            body: RegisterDeviceBody(
+                token: token, platform: "ios", environment: environment, bundleId: bundleId
+            )
+        )
+    }
+
+    /// Drop this device's registration, server side and local. Must be called
+    /// while the session is still valid — see `logout()`. No token stored
+    /// (macOS today, or a launch that never registered) means nothing to do.
+    private func unregisterPushDevice() async {
+        guard let token = UserDefaults.standard.string(forKey: Self.deviceTokenKey) else { return }
+        forgetPushDevice()
+        let _: OkResponse? = try? await api.delete("/v1/me/devices/\(token)")
+    }
+
+    /// Local half only: forget the token so the next session doesn't try to
+    /// delete a row that is no longer ours.
+    private func forgetPushDevice() {
+        UserDefaults.standard.removeObject(forKey: Self.deviceTokenKey)
     }
 
     // MARK: - Socket lifecycle

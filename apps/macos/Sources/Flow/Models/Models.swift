@@ -1060,6 +1060,19 @@ struct MarkNotificationsReadBody: Encodable, Sendable {
     /// comparison server-side). Ignored alongside `id`.
     var workspaceId: String?
 }
+/// POST /v1/me/devices — this device's APNs token (#249). Sent on every cold
+/// start, not only when the token changes: APNs rotates tokens silently on
+/// restore-from-backup and reinstall, and the endpoint upserts.
+struct RegisterDeviceBody: Encodable, Sendable {
+    let token: String
+    /// `ios` today; macOS joins the server's enum when it registers for push.
+    let platform: String
+    /// `sandbox` | `production` — must match the build's `aps-environment`
+    /// entitlement, or APNs answers every send with BadDeviceToken.
+    let environment: String
+    /// The APNs topic, i.e. the bundle id.
+    let bundleId: String
+}
 struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String }
 /// POST /v1/artifacts — pin a file as a shared artifact in a channel. nil name
 /// = server derives it from the filename.

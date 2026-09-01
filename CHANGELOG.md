@@ -274,6 +274,18 @@ This file keeps two things:
   porting macOS's precedence rule — spinner while it is up, emoji back when it
   clears, never both.
 
+- **APNs push notifications are iOS-only** (#249). The phone now registers a
+  device token, banners what it should, badges the icon and routes a tap; macOS
+  still posts local banners only while it is running, and web has none at all.
+  The server halves (registry, outbox, payload builder) are client-agnostic, so
+  macOS closes this with signing + provisioning it doesn't have today
+  (`PUSH_APNS.md` open question 4) and web would need a Web Push seam that does
+  not exist yet.
+- **A tapped push routes to the channel, not into the thread** (#249) — the same
+  hole as the Activity-row gap above, reached from a second entry point.
+  `PushDelegate.route` passes `threadRootId: nil` deliberately; it starts
+  carrying the root the moment `ThreadScreen` honours a jump target.
+
 ### Deliberate divergences (ruled)
 - The **frame-one channel switch** fix (#447) is macOS-only, and the other two
   clients need nothing: web mounts `<ChannelView key={channelId}>` per channel
