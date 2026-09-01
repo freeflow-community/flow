@@ -435,7 +435,7 @@ describe('the drain hydrates a real notification', () => {
     expect(sender.sent[0]!.payload.aps.alert).toEqual({ title: 'Alice', body: 'lunch?' });
   });
 
-  it('keeps the row when a 1:1 DM reaction comes from the counterpart too', async () => {
+  it('drops the row even when the 1:1 DM notification is a reaction', async () => {
     const sender = useFake();
     const m = await msg.sendMessage(dmId, bobId, randomUUID(), 'ship it');
     await db.delete(pendingPush);
