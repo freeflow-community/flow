@@ -129,7 +129,11 @@ Build it from the same strings the macOS banner already uses (`SyncEngine`'s
 ```jsonc
 {
   "aps": {
-    "alert": { "title": "Alice (DM)", "body": "standup in 5?" },
+    "alert": {
+      "title": "Alice mentioned you",
+      "subtitle": "#alerts",       // which conversation (#460)
+      "body": "standup in 5?"
+    },
     "sound": "default",
     "badge": 7,                    // server-authoritative unread total
     "thread-id": "<channelId>"     // groups a channel's pushes in Notification Center
@@ -148,6 +152,13 @@ rather than stacks.
 The custom keys are deliberately the **same contract the macOS banner's
 `userInfo` already carries**, so tap-routing is the existing
 `AppState.openNotification` path with a different entry point.
+
+`subtitle` is the "where" row (#460): `#name` for a standard channel and the
+other members' display names for a dm/group_dm — the same distinction
+`channelTitle.ts` draws in the sidebar, and never a `#` in front of a person.
+A thread reply needs no special case: the notification already carries the
+channel the thread lives in. It is not on the body-preview switch below, since
+it says where rather than what anyone wrote.
 
 `badge` is the value #63 made cheap and authoritative: the unread count the
 server already computes for `notification.read`. Reuse `unreadCount(userId)`

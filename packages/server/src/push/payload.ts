@@ -37,6 +37,15 @@ export const BODY_MAX_CHARS = 180;
  */
 export const PAYLOAD_MAX_BYTES = 4000;
 
+/**
+ * Subtitle cap (#460). A channel name is short by construction, but a group
+ * DM's is every other member's display name joined — unbounded, and it sits in
+ * the same 4 KB as the body. Capping it here keeps `fitPayload` below trimming
+ * only one thing, and a subtitle wider than the banner is truncated by the
+ * phone anyway.
+ */
+export const SUBTITLE_MAX_CHARS = 60;
+
 /** APNs stops retrying after this. A two-hour-old alert is noise, not news. */
 export const EXPIRATION_S = 3_600;
 
@@ -56,6 +65,35 @@ export interface PushContext {
   body: string;
   /** userId → displayName for the mention tokens this body contains. */
   names: Record<string, string>;
+  /**
+   * What the conversation calls itself (#460): the channel's `name` for a
+   * standard channel, and for a dm/group_dm the other members' display names
+   * the way the sidebar joins them. Raw — `subtitleFor` below owns the `#`, so
+   * the one rule that decides how a conversation reads on the phone stays in
+   * this pure file. Null when the hydration could not name it.
+   */
+  conversationName: string | null;
+  /** Which of the two naming rules applies. */
+  channelKind: ChannelKind;
+}
+
+/** Channel kinds, as the `channel_kind` enum spells them. */
+export type ChannelKind = 'standard' | 'dm' | 'group_dm';
+
+/**
+ * The middle row of the alert (#460): which conversation this came from, so a
+ * banner can be judged without opening it.
+ *
+ * `#name` for a channel and a bare name for a DM — the same distinction the
+ * sidebar and the thread header draw (`packages/web/src/lib/channelTitle.ts`),
+ * because a `#` in front of a person's name reads as a channel that doesn't
+ * exist. A thread reply needs no special case: notifications carry the channel
+ * the thread lives in, which is exactly the row to show.
+ */
+export function subtitleFor(ctx: Pick<PushContext, 'conversationName' | 'channelKind'>): string | undefined {
+  const name = oneLine(ctx.conversationName ?? '');
+  if (!name) return undefined;
+  return truncate(ctx.channelKind === 'standard' ? `#${name}` : name, SUBTITLE_MAX_CHARS);
 }
 
 /**
@@ -98,11 +136,15 @@ export function truncate(text: string, max = BODY_MAX_CHARS): string {
  * stays on: it is the one-line reversal should a workspace ever need (b), not
  * a knob to tune. Option (c), the Notification Service Extension, is a later
  * phase.
+ *
+ * The subtitle (#460) is not on that switch: it says *where*, not what anyone
+ * wrote, and the title already carries a display name either way. Turning off
+ * the preview should still leave a banner you can act on.
  */
 export function alertStringsFor(
-  ctx: Pick<PushContext, 'kind' | 'actorName' | 'reactionEmoji' | 'body' | 'names'>,
+  ctx: Pick<PushContext, 'kind' | 'actorName' | 'reactionEmoji' | 'body' | 'names' | 'conversationName' | 'channelKind'>,
   bodyPreview = config.pushBodyPreview,
-): { title: string; body?: string } {
+): { title: string; subtitle?: string; body?: string } {
   const who = ctx.actorName ?? 'Someone';
   const title = (() => {
     switch (ctx.kind) {
@@ -118,13 +160,15 @@ export function alertStringsFor(
         return `${who} mentioned you`;
     }
   })();
+  const subtitle = subtitleFor(ctx);
+  const where = subtitle ? { subtitle } : {};
   if (!bodyPreview) {
     // A DM's title alone is just a name; every other kind's already reads as a
     // sentence, so only this one needs the verb spelling out.
-    return ctx.kind === 1 ? { title: `${title} sent you a message` } : { title };
+    return ctx.kind === 1 ? { title: `${title} sent you a message`, ...where } : { title, ...where };
   }
   const body = truncate(oneLine(plainText(ctx.body, ctx.names)));
-  return body ? { title, body } : { title };
+  return body ? { title, ...where, body } : { title, ...where };
 }
 
 /**

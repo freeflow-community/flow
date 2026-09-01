@@ -52,6 +52,8 @@ const {
   badgeSyncHeaders,
   plainText,
   pushHeadersFor,
+  SUBTITLE_MAX_CHARS,
+  subtitleFor,
   truncate,
 } = await import('../src/push/payload.js');
 const { eq } = await import('drizzle-orm');
@@ -85,6 +87,8 @@ const ctx = (over: Partial<PushContext> = {}): PushContext => ({
   reactionEmoji: null,
   body: 'standup in 5?',
   names: {},
+  conversationName: 'alerts',
+  channelKind: 'standard',
   ...over,
 });
 
@@ -117,6 +121,36 @@ describe('alert strings match the macOS banner', () => {
   });
 });
 
+describe('the subtitle says which conversation it came from (#460)', () => {
+  it('prefixes a channel with # and leaves a DM name bare', () => {
+    expect(subtitleFor({ conversationName: 'alerts', channelKind: 'standard' })).toBe('#alerts');
+    expect(subtitleFor({ conversationName: 'Alice', channelKind: 'dm' })).toBe('Alice');
+    expect(subtitleFor({ conversationName: 'Alice, Carol', channelKind: 'group_dm' })).toBe('Alice, Carol');
+  });
+
+  it('omits the row rather than showing an empty one when the name is unknown', () => {
+    expect(subtitleFor({ conversationName: null, channelKind: 'standard' })).toBeUndefined();
+    expect(subtitleFor({ conversationName: '   ', channelKind: 'dm' })).toBeUndefined();
+    expect(alertStringsFor(ctx({ conversationName: null })).subtitle).toBeUndefined();
+  });
+
+  it('caps a group DM whose member list would run past the banner', () => {
+    const long = Array.from({ length: 40 }, (_, i) => `Member ${i}`).join(', ');
+    const subtitle = subtitleFor({ conversationName: long, channelKind: 'group_dm' })!;
+    expect([...subtitle]).toHaveLength(SUBTITLE_MAX_CHARS);
+    expect(subtitle.endsWith('\u2026')).toBe(true);
+  });
+
+  it('rides in the alert as its own row, between title and body', () => {
+    const p = buildPushPayload(ctx(), 1);
+    expect(p.aps.alert).toEqual({
+      title: 'Alice mentioned you',
+      subtitle: '#alerts',
+      body: 'standup in 5?',
+    });
+  });
+});
+
 describe('the body is a preview, not the message', () => {
   it('truncates well below the 4 KB cap', () => {
     const long = 'x'.repeat(BODY_MAX_CHARS * 3);
@@ -143,8 +177,11 @@ describe('the body is a preview, not the message', () => {
 
 describe('the operator switch (PUSH_APNS.md open question 1)', () => {
   it('option (b) sends no body, and gives a DM the verb its title lacks', () => {
-    expect(alertStringsFor(ctx({ kind: 1 }), false)).toEqual({ title: 'Alice sent you a message' });
-    expect(alertStringsFor(ctx({ kind: 0 }), false)).toEqual({ title: 'Alice mentioned you' });
+    expect(alertStringsFor(ctx({ kind: 1, conversationName: 'Alice', channelKind: 'dm' }), false)).toEqual({
+      title: 'Alice sent you a message',
+      subtitle: 'Alice',
+    });
+    expect(alertStringsFor(ctx({ kind: 0 }), false)).toEqual({ title: 'Alice mentioned you', subtitle: '#alerts' });
   });
 
   it('reads the config default, so reversing the ruling is one env var', () => {
@@ -218,8 +255,11 @@ describe('headers', () => {
 
 let aliceId = '';
 let bobId = '';
+let carolId = '';
 let workspaceId = '';
 let channelId = '';
+let dmId = '';
+let groupDmId = '';
 
 async function registerHuman(email: string, name: string): Promise<string> {
   const res = await auth.register(email, { password: 'password123', displayName: name, autoVerify: true });
@@ -238,6 +278,11 @@ beforeAll(async () => {
   const chan = await ch.createChannel(workspaceId, aliceId, 'alerts');
   channelId = chan.id;
   await ch.addMember(channelId, aliceId, bobId);
+  // #460: the two conversations with no `name` column of their own.
+  carolId = await registerHuman('carol@example.test', 'Carol');
+  await db.insert(schema.workspaceMembers).values({ workspaceId, userId: carolId, role: 'member' });
+  dmId = (await ch.createDm(workspaceId, aliceId, [bobId])).id;
+  groupDmId = (await ch.createDm(workspaceId, aliceId, [bobId, carolId])).id;
 });
 
 beforeEach(async () => {
@@ -274,7 +319,11 @@ describe('the drain hydrates a real notification', () => {
 
     expect(sender.sent).toHaveLength(1);
     const { payload, headers } = sender.sent[0]!;
-    expect(payload.aps.alert).toEqual({ title: 'Alice mentioned you', body: 'standup in 5, @Bob?' });
+    expect(payload.aps.alert).toEqual({
+      title: 'Alice mentioned you',
+      subtitle: '#alerts',
+      body: 'standup in 5, @Bob?',
+    });
     expect(payload.aps.badge).toBe(1);
     expect(payload.aps['thread-id']).toBe(channelId);
     expect(payload.workspaceId).toBe(workspaceId);
@@ -332,11 +381,44 @@ describe('the drain hydrates a real notification', () => {
     expect(written.channelId).toBe(channelId);
   });
 
+  it('shows the channel the thread lives in, not the thread', async () => {
+    const sender = useFake();
+    const root = await msg.sendMessage(channelId, bobId, randomUUID(), 'thread root');
+    await db.delete(pendingPush);
+    await db.delete(notifications);
+    await msg.sendMessage(channelId, aliceId, randomUUID(), 'me too', root.id);
+    await outbox.drainPendingPush(log);
+
+    expect(sender.sent[0]!.payload.aps.alert).toEqual({
+      title: 'Alice replied in a thread',
+      subtitle: '#alerts',
+      body: 'me too',
+    });
+  });
+
+  it('subtitles a DM with the counterpart, no # in front of a person', async () => {
+    const sender = useFake();
+    await msg.sendMessage(dmId, aliceId, randomUUID(), 'lunch?');
+    await outbox.drainPendingPush(log);
+
+    // Bob's phone, so the conversation is named from Bob's side: Alice.
+    expect(sender.sent[0]!.payload.aps.alert).toEqual({ title: 'Alice', subtitle: 'Alice', body: 'lunch?' });
+  });
+
+  it('subtitles a group DM with the other members, sorted', async () => {
+    const sender = useFake();
+    await msg.sendMessage(groupDmId, aliceId, randomUUID(), 'all three of us');
+    await outbox.drainPendingPush(log);
+
+    const forBob = sender.sent.find((s) => s.device.token === 'a'.repeat(64))!;
+    expect(forBob.payload.aps.alert?.subtitle).toBe('Alice, Carol');
+  });
+
   it('pushes no preview for a message deleted before the drain ran', async () => {
     const sender = useFake();
     const m = await msg.sendMessage(channelId, aliceId, randomUUID(), `secret <@${bobId}>`, undefined, undefined, [bobId]);
     await db.update(schema.messages).set({ deletedAt: new Date() }).where(eq(schema.messages.id, m.id));
     await outbox.drainPendingPush(log);
-    expect(sender.sent[0]!.payload.aps.alert).toEqual({ title: 'Alice mentioned you' });
+    expect(sender.sent[0]!.payload.aps.alert).toEqual({ title: 'Alice mentioned you', subtitle: '#alerts' });
   });
 });
