@@ -26,7 +26,12 @@ enum Banners {
     /// Post a banner for `n`. The navigation fields ride along in `userInfo` so
     /// tapping the banner can jump to the message (see `AppDelegate`'s
     /// notification-center delegate).
-    static func show(_ n: NotificationItem, title: String, body: String) {
+    ///
+    /// `sound: false` is the `sound` pref (#251, #464) off: the banner still
+    /// appears, it just doesn't make a noise. The content carries no sound at
+    /// all rather than a silent one, which is also what the delegate reads to
+    /// decide whether to ask for `.sound` when the app is frontmost.
+    static func show(_ n: NotificationItem, title: String, body: String, sound: Bool = true) {
         guard available else { return }
         // Log instead of silently dropping: "banner didn't appear" has too many
         // OS-level causes (denied permission, Focus, alert style None) to stay
@@ -42,22 +47,42 @@ enum Banners {
             if settings.alertStyle == .none {
                 NSLog("Flow banners: authorized but alert style is None (System Settings > Notifications > Flow)")
             }
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            content.sound = .default
             var userInfo: [AnyHashable: Any] = [
                 "workspaceId": n.workspaceId,
                 "channelId": n.channelId,
                 "messageId": n.messageId,
             ]
             if let root = n.message.threadRootId { userInfo["threadRootId"] = root }
-            content.userInfo = userInfo
+            let content = makeContent(title: title, body: body, userInfo: userInfo, sound: sound)
             let request = UNNotificationRequest(identifier: n.id, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request) { error in
                 if let error { NSLog("Flow banners: add failed: %@", error.localizedDescription) }
             }
         }
+    }
+
+    /// The banner's content. Split out from `show` so the one branch that has
+    /// no OS-level observable — a silenced alert looks exactly like a noisy one
+    /// in a screenshot — is testable.
+    static func makeContent(
+        title: String, body: String, userInfo: [AnyHashable: Any], sound: Bool
+    ) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        // No sound at all, rather than a silent one: `UNNotificationSound` has
+        // no "none" case, and a nil sound is also what the foreground delegate
+        // reads to decide whether to ask for `.sound`.
+        content.sound = sound ? .default : nil
+        content.userInfo = userInfo
+        return content
+    }
+
+    /// What the app asks for when a banner arrives while Flow is frontmost.
+    /// Requesting `.sound` for a request that carries none is how a "silenced"
+    /// alert still chimes on the foreground path, so this follows the content.
+    static func presentationOptions(hasSound: Bool) -> UNNotificationPresentationOptions {
+        hasSound ? [.banner, .sound] : [.banner]
     }
 
     /// Dock badge with the unread notification count (works bundled or bare).

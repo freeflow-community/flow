@@ -107,12 +107,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     // Show the banner even when Flow is frontmost — SyncEngine only posts one
     // when the user isn't already looking at that channel, so it's never noise.
+    // The sound follows the request: `Banners.show` leaves the content's sound
+    // nil when the `sound` pref is off (#464).
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        completionHandler(
+            Banners.presentationOptions(hasSound: notification.request.content.sound != nil)
+        )
     }
 
     // Banner tapped: bring the app forward and jump to the message.

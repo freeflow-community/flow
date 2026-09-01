@@ -2067,7 +2067,15 @@ actor SyncEngine {
                 case 5: "\(senderName ?? "Someone") added you to a channel"
                 default: "\(senderName ?? "Someone") mentioned you"
                 }
-                Banners.show(n, title: title, body: MentionRendering.plainText(n.message.body, names: names))
+                Banners.show(
+                    n,
+                    title: title,
+                    body: MentionRendering.plainText(n.message.body, names: names),
+                    // #464: the one pref the server can't enforce for a local
+                    // banner — routing is already decided by `n.alerts`, this
+                    // is only whether it makes a noise. Absent = on.
+                    sound: currentUser?.prefs.sound != false
+                )
             }
 
         case .notificationRead:

@@ -445,6 +445,10 @@ struct MyProfileSheet: View {
     @State private var avatarBusy = false
     @State private var confirmDelete = false
     @State private var deleteBusy = false
+    /// #464: notification prefs, edited live rather than on Save — each flip is
+    /// its own PATCH, so Cancel doesn't undo one.
+    @State private var prefs = NotificationPrefs()
+    @State private var prefsError: String?
 
     private static let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
 
@@ -459,77 +463,87 @@ struct MyProfileSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("My Profile").flowFont(.headline)
 
-            HStack(spacing: 12) {
-                avatar
-                Button(avatarBusy ? "Uploading…" : "Change Avatar…") { pickAvatar() }
-                    .disabled(avatarBusy)
-                    .accessibilityIdentifier("profile.changeAvatar")
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Display name").flowFont(.caption).foregroundStyle(.secondary)
-                TextField("Display name", text: $displayName)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("profile.displayName")
-            }
-
-            // #434: directly under the name — the two together are what a
-            // Directory card shows, so they are edited together.
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Title").flowFont(.caption).foregroundStyle(.secondary)
-                TextField("Title (optional)", text: $title)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("profile.title")
-                    .onChange(of: title) { _, new in
-                        if new.count > profileTitleMax { title = String(new.prefix(profileTitleMax)) }
+            // The Notifications section (#464) made the sheet taller than a
+            // laptop screen, so the fields scroll and the buttons stay put.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        avatar
+                        Button(avatarBusy ? "Uploading…" : "Change Avatar…") { pickAvatar() }
+                            .disabled(avatarBusy)
+                            .accessibilityIdentifier("profile.changeAvatar")
                     }
-            }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Timezone").flowFont(.caption).foregroundStyle(.secondary)
-                Picker("Timezone", selection: $timezone) {
-                    ForEach(Self.timezones, id: \.self) { tz in
-                        Text(tz).tag(tz)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Display name").flowFont(.caption).foregroundStyle(.secondary)
+                        TextField("Display name", text: $displayName)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("profile.displayName")
                     }
+
+                    // #434: directly under the name — the two together are what a
+                    // Directory card shows, so they are edited together.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Title").flowFont(.caption).foregroundStyle(.secondary)
+                        TextField("Title (optional)", text: $title)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("profile.title")
+                            .onChange(of: title) { _, new in
+                                if new.count > profileTitleMax { title = String(new.prefix(profileTitleMax)) }
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Timezone").flowFont(.caption).foregroundStyle(.secondary)
+                        Picker("Timezone", selection: $timezone) {
+                            ForEach(Self.timezones, id: \.self) { tz in
+                                Text(tz).tag(tz)
+                            }
+                        }
+                        .labelsHidden()
+                        .accessibilityIdentifier("profile.timezone")
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Website").flowFont(.caption).foregroundStyle(.secondary)
+                        TextField("https://example.com", text: $website)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("profile.website")
+                            .onChange(of: website) { _, new in
+                                if new.count > profileWebsiteMax { website = String(new.prefix(profileWebsiteMax)) }
+                            }
+                        if websiteInvalid {
+                            Text("Must be a full link starting with http:// or https://")
+                                .flowFont(.caption)
+                                .foregroundStyle(.red)
+                                .accessibilityIdentifier("profile.websiteError")
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Bio").flowFont(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(bio.count)/\(profileBioMax)")
+                                .flowFont(.caption)
+                                .foregroundStyle(bio.count >= profileBioMax ? .red : .secondary)
+                                .accessibilityIdentifier("profile.bioCount")
+                        }
+                        TextEditor(text: $bio)
+                            .frame(height: 64)
+                            .font(.body)
+                            .border(.secondary.opacity(0.3))
+                            .accessibilityIdentifier("profile.bio")
+                            .onChange(of: bio) { _, new in
+                                if new.count > profileBioMax { bio = String(new.prefix(profileBioMax)) }
+                            }
+                    }
+
+                    notifications
                 }
-                .labelsHidden()
-                .accessibilityIdentifier("profile.timezone")
+                .padding(.trailing, 2) // clear of the scroller
             }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Website").flowFont(.caption).foregroundStyle(.secondary)
-                TextField("https://example.com", text: $website)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("profile.website")
-                    .onChange(of: website) { _, new in
-                        if new.count > profileWebsiteMax { website = String(new.prefix(profileWebsiteMax)) }
-                    }
-                if websiteInvalid {
-                    Text("Must be a full link starting with http:// or https://")
-                        .flowFont(.caption)
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("profile.websiteError")
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Bio").flowFont(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(bio.count)/\(profileBioMax)")
-                        .flowFont(.caption)
-                        .foregroundStyle(bio.count >= profileBioMax ? .red : .secondary)
-                        .accessibilityIdentifier("profile.bioCount")
-                }
-                TextEditor(text: $bio)
-                    .frame(height: 64)
-                    .font(.body)
-                    .border(.secondary.opacity(0.3))
-                    .accessibilityIdentifier("profile.bio")
-                    .onChange(of: bio) { _, new in
-                        if new.count > profileBioMax { bio = String(new.prefix(profileBioMax)) }
-                    }
-            }
+            .frame(maxHeight: 520)
 
             if let error {
                 Text(error).flowFont(.callout).foregroundStyle(.red)
@@ -586,6 +600,85 @@ struct MyProfileSheet: View {
             timezone = app.currentUser?.timezone ?? TimeZone.current.identifier
             website = app.currentUser?.website ?? ""
             bio = app.currentUser?.bio ?? ""
+            prefs = app.currentUser?.prefs ?? NotificationPrefs()
+        }
+        // A flip made on web or the phone arrives as a new `currentUser`; adopt
+        // it. Our own writes land here too, carrying the value we already show.
+        .onChange(of: app.currentUser?.notificationPrefs) { _, new in
+            if let new { prefs = new }
+        }
+    }
+
+    // MARK: - Notifications (#464)
+
+    /// The same prefs section web has carried since phase 10 and iOS gained in
+    /// #251, on the Mac app's only settings surface. Web's `persistentBanners`
+    /// is deliberately absent: on macOS whether an alert stays on screen is the
+    /// user's System Settings > Notifications choice between "Banners" and
+    /// "Alerts", which no app can override — a toggle here would be a lie. The
+    /// value still round-trips untouched through `NotificationPrefs`.
+    private var notifications: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("Notifications").flowFont(.caption).foregroundStyle(.secondary)
+            Text("Off means no banner — everything still lands in the 🔔 list.")
+                .flowFont(.caption)
+                .foregroundStyle(.secondary)
+            prefToggle("Direct messages", "any message in a DM", \.dm, "dm")
+            prefToggle("Mentions of me", "@you", \.mention, "mention")
+            prefToggle("Group mentions", "@here, @channel", \.groupMention, "groupMention")
+            prefToggle("Thread replies", "threads you started or joined", \.threadReply, "threadReply")
+            prefToggle("Reactions", "someone reacts to your message", \.reaction, "reaction")
+            prefToggle("Channel invites", "someone adds you to a channel", \.channelInvite, "channelInvite")
+            prefToggle("Play a sound", "with every banner", \.sound, "sound")
+            if let prefsError {
+                Text(prefsError)
+                    .flowFont(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("profile.notifications.error")
+            }
+        }
+    }
+
+    private func prefToggle(
+        _ label: String,
+        _ hint: String,
+        _ key: WritableKeyPath<NotificationPrefs, Bool?>,
+        _ id: String
+    ) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label).flowFont(.callout)
+                Text(hint).flowFont(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: Binding(
+                get: { prefs[keyPath: key] != false }, // absent = on
+                set: { on in setPref(key, on) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .accessibilityIdentifier("profile.notifications.\(id)")
+        }
+    }
+
+    /// Optimistic, then reconciled: the switch moves now and reverts if the
+    /// write fails. Only the key that moved goes on the wire — the server
+    /// shallow-merges, so this can't clobber a pref set on another client.
+    private func setPref(_ key: WritableKeyPath<NotificationPrefs, Bool?>, _ on: Bool) {
+        let previous = prefs
+        prefs[keyPath: key] = on
+        prefsError = nil
+        var delta = NotificationPrefs()
+        delta[keyPath: key] = on
+        Task {
+            do {
+                try await app.engine.setNotificationPrefs(delta)
+            } catch {
+                prefs = previous
+                prefsError = error.localizedDescription
+            }
         }
     }
 
