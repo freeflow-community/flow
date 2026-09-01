@@ -702,3 +702,30 @@ export const ListScheduledMessagesQuery = z.object({
   mine: z.enum(['true', 'false']).optional(),
 });
 export type ListScheduledMessagesQuery = z.infer<typeof ListScheduledMessagesQuery>;
+
+// ---- push devices ----------------------------------------------
+/**
+ * APNs device token: hex, and a path segment on the DELETE route.
+ *
+ * Apple's tokens are 32 bytes today (64 hex chars) but Apple has explicitly
+ * said the length is not fixed, so the bound is a sanity range rather than an
+ * exact length — narrow enough that nothing but a token gets stored, wide
+ * enough that a longer future token still registers. Case is not significant:
+ * the server lowercases before storing (see services/devices.ts) so a client
+ * that sends uppercase on one launch and lowercase on the next still hits the
+ * same row instead of creating a second one.
+ */
+export const DeviceTokenParam = z
+  .string()
+  .regex(/^[0-9a-fA-F]{32,256}$/, 'must be a hex APNs device token');
+
+/** POST /v1/me/devices — register (or re-register) this device for push. */
+export const RegisterDeviceBody = z.object({
+  token: DeviceTokenParam,
+  /** iOS only for now; macOS joins the enum when it registers for push. */
+  platform: z.enum(['ios']),
+  environment: z.enum(['sandbox', 'production']),
+  /** APNs topic — the app's bundle id, e.g. `im.freeflow.app`. */
+  bundleId: z.string().min(1).max(255),
+});
+export type RegisterDeviceBody = z.infer<typeof RegisterDeviceBody>;
