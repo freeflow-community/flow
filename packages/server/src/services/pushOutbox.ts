@@ -359,6 +359,14 @@ let workerTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startPushWorker(log: Logger): void {
   if (workerTimer) return;
+  // Build the driver once at boot so a half-configured `apns` deploy says so
+  // here, next to the deploy that caused it, instead of at whatever hour the
+  // first notification happens to fire (#250).
+  try {
+    pushSender();
+  } catch (err) {
+    log.warn(err, 'push driver is misconfigured — no push will be delivered');
+  }
   const tick = async () => {
     try {
       await drainPendingPush(log);

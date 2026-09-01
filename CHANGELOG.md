@@ -136,8 +136,9 @@ This file keeps two things:
   set on web do take effect on macOS — only the settings surface is missing.
 - iOS: no Notifications section in the account/profile UI (web shipped the
   per-user pref toggles in phase 10, plus the Reactions toggle 2026-07-25).
-  Nothing on-device consumes them yet — iOS has no push notifications — so this
-  closes with the APNs work.
+  Since #250 the phone does consume them (`suppressAlert` gates push exactly as
+  it gates a banner), so prefs set on web silence the phone — iOS still just has
+  no surface to change them.
 - iOS artifacts, what's still missing after #157 (2026-07-30). Viewing is done —
   header Docs button, count badge, dropdown, full-screen viewer, co-browsing
   mini-browser, and auto-open of agent-created ones. What's left:
@@ -180,13 +181,6 @@ This file keeps two things:
   (macOS profiles handle multi-account). Candidate phase-3-adjacent fix.
 - macOS: workspace-chooser tiles ignore AX activation (real click required) — a11y gap.
 - No syntax highlighting in code blocks (both clients; never scoped).
-- iOS: no push notifications (APNs — deferred to a follow-on phase; needs
-  server device-token registry + Apple push key + device testing). Everything
-  else in core messaging + files is now at parity. Now designed end-to-end in
-  `docs/design/PUSH_APNS.md` (registry, sender seam, outbox, payload, client
-  work, phasing) — that doc also carries the open operator questions:
-  message body in the payload or not, the Apple Developer key, and
-  sandbox-vs-production.
 - macOS has no in-app registration, password-reset, or passwordless sign-in
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
@@ -277,10 +271,10 @@ This file keeps two things:
 - **APNs push notifications are iOS-only** (#249). The phone now registers a
   device token, banners what it should, badges the icon and routes a tap; macOS
   still posts local banners only while it is running, and web has none at all.
-  The server halves (registry, outbox, payload builder) are client-agnostic, so
-  macOS closes this with signing + provisioning it doesn't have today
-  (`PUSH_APNS.md` open question 4) and web would need a Web Push seam that does
-  not exist yet.
+  The server halves (registry, outbox, payload builder and — since #250 — the
+  real APNs driver) are client-agnostic, so macOS closes this with signing +
+  provisioning it doesn't have today (`PUSH_APNS.md` open question 4) and web
+  would need a Web Push seam that does not exist yet.
 - **A tapped push routes to the channel, not into the thread** (#249) — the same
   hole as the Activity-row gap above, reached from a second entry point.
   `PushDelegate.route` passes `threadRootId: nil` deliberately; it starts
