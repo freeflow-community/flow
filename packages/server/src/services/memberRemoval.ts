@@ -22,6 +22,7 @@ const {
   emailTokens,
   appLinkCodes,
   oauthIdentities,
+  deviceTokens,
 } = schema;
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -118,6 +119,11 @@ export async function removeMemberDeep(
  * so nothing that account held can still authenticate or re-match on a
  * Google/Apple sign-in. The mangled email preserves the original for audit and
  * can never collide (the user id prefix is unique).
+ *
+ * Device tokens (#245) go here too, and the FK cascade is not enough on its
+ * own: this path keeps the users row, so `ON DELETE CASCADE` never fires. A
+ * token left behind would keep pushing this account's notifications to a
+ * phone whose owner deleted the account.
  */
 export async function tombstoneUser(tx: Tx, userId: string, email: string): Promise<void> {
   await tx
@@ -135,6 +141,7 @@ export async function tombstoneUser(tx: Tx, userId: string, email: string): Prom
   await tx.delete(emailTokens).where(eq(emailTokens.userId, userId));
   await tx.delete(appLinkCodes).where(eq(appLinkCodes.userId, userId));
   await tx.delete(oauthIdentities).where(eq(oauthIdentities.userId, userId));
+  await tx.delete(deviceTokens).where(eq(deviceTokens.userId, userId));
 }
 
 /** Revoke an agent's tokens and null its username/key so it can never authenticate again. */

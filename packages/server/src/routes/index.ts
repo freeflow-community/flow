@@ -10,6 +10,7 @@ import {
   CreateInviteBody,
   CreateWorkspaceBody,
   CreateWorkspaceEmojiBody,
+  DeviceTokenParam,
   EditMessageBody,
   EmojiParam,
   ListChannelFilesQuery,
@@ -30,6 +31,7 @@ import {
   PatchMeBody,
   PresignUploadBody,
   RegisterBody,
+  RegisterDeviceBody,
   CreateAppBody,
   CreateArtifactBody,
   UpdateArtifactBody,
@@ -78,6 +80,7 @@ import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
 import * as wse from '../services/workspaceEmoji.js';
 import * as fl from '../services/files.js';
+import * as dv from '../services/devices.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
 import { deleteMyAccount } from '../services/accountDeletion.js';
@@ -362,6 +365,22 @@ export function registerRoutes(app: FastifyInstance): void {
     const body = parse(MarkNotificationsReadBody, req.body);
     const { unreadCount } = await nt.markNotificationsRead(req.user.id, body);
     return { ok: true, unreadCount };
+  });
+
+  // ---- push devices (#245) -------------------------------------
+  // Registration is idempotent and called on every cold start; the upsert
+  // rebinds a token that has changed hands rather than duplicating it.
+  app.post('/v1/me/devices', { preHandler: requireAuth }, async (req) => {
+    const body = parse(RegisterDeviceBody, req.body);
+    return dv.registerDevice(req.user.id, body);
+  });
+
+  // Sign-out. The client must call this *before* it discards the session
+  // token — afterwards it cannot authenticate, the row leaks, and the next
+  // owner of the phone gets someone else's pushes until APNs 410s the token.
+  app.delete('/v1/me/devices/:token', { preHandler: requireAuth }, async (req) => {
+    const { token } = req.params as { token: string };
+    return dv.unregisterDevice(req.user.id, parse(DeviceTokenParam, token));
   });
 
   // ---- users / avatars -----------------------------------------

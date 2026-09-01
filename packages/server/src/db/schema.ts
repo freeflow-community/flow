@@ -588,3 +588,30 @@ export const appSocketTickets = pgTable('app_socket_tickets', {
   appId: uuid('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
+
+/**
+ * APNs device tokens (#245, PUSH_APNS.md). Registered on every cold start —
+ * tokens rotate silently on restore-from-backup or reinstall, so "register
+ * every launch" is the cheapest correctness policy.
+ *
+ * `token` is unique globally rather than per user: a phone handed to someone
+ * else re-registers under the new account and the upsert rebinds `userId`,
+ * so the previous owner's pushes stop arriving on a phone that is not theirs.
+ */
+export const deviceTokens = pgTable(
+  'device_tokens',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(), // APNs device token, hex
+    platform: text('platform').notNull(), // 'ios' (macOS later)
+    environment: text('environment').notNull(), // 'sandbox' | 'production'
+    bundleId: text('bundle_id').notNull(), // APNs topic
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Set when APNs answers 410 Unregistered — kept, not deleted, so a
+     * re-register can revive the row instead of racing the sender. */
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  },
+  (t) => [index('device_tokens_user_idx').on(t.userId).where(sql`disabled_at IS NULL`)],
+);
