@@ -605,7 +605,10 @@ export const deviceTokens = pgTable(
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     token: text('token').notNull().unique(), // APNs device token, hex
     platform: text('platform').notNull(), // 'ios' (macOS later)
-    environment: text('environment').notNull(), // 'sandbox' | 'production'
+    // Narrowed at the type level so the sender seam's PushDevice takes a row
+    // straight through with no adapter — the API's zod schema is what enforces
+    // it at the boundary (#247).
+    environment: text('environment').$type<'sandbox' | 'production'>().notNull(),
     bundleId: text('bundle_id').notNull(), // APNs topic
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
@@ -614,4 +617,35 @@ export const deviceTokens = pgTable(
     disabledAt: timestamp('disabled_at', { withTimezone: true }),
   },
   (t) => [index('device_tokens_user_idx').on(t.userId).where(sql`disabled_at IS NULL`)],
+);
+
+/**
+ * APNs delivery outbox (#247, PUSH_APNS.md § "Delivery: outbox, not
+ * fire-and-forget"). Same shape as `pendingAppEvents` — same reason: push is
+ * not loss-tolerant the way WS publish is, because a phone with no socket has
+ * nothing to backfill from, so rows land in the notification's own transaction
+ * and an in-process worker drains them at least once.
+ *
+ * One row per *notification*, not per device: the worker resolves the user's
+ * live devices at send time (they change between commit and delivery) and
+ * computes the badge count once per row rather than once per phone.
+ */
+export const pendingPush = pgTable(
+  'pending_push',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    notificationId: uuid('notification_id')
+      .notNull()
+      .references(() => notifications.id, { onDelete: 'cascade' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('pending_push_due').on(t.nextAttemptAt).where(sql`delivered_at IS NULL AND failed_at IS NULL`),
+    index('pending_push_user_idx').on(t.userId, t.id.desc()),
+  ],
 );

@@ -37,6 +37,7 @@ import { badRequest } from '../lib/errors.js';
 import { publishEvent, subjectUserNotify } from '../bus.js';
 import { isOnline } from '../presence.js';
 import { toMessageDTO, type HydratedMessageRow } from './messages.js';
+import { enqueuePendingPush } from './pushOutbox.js';
 
 const { notifications, channelMembers, workspaceMembers, messages, channels, users } = schema;
 
@@ -245,6 +246,13 @@ export async function insertNotifications(
         actorId,
       })),
     );
+    // Push rides the same transaction (#247): a notification row that commits
+    // without its outbox row is a push the phone never gets, and there is no
+    // backfill path to recover it.
+    await enqueuePendingPush(
+      tx,
+      planned.map((p) => ({ userId: p.userId, notificationId: p.id })),
+    );
   }
   return planned;
 }
@@ -370,13 +378,22 @@ export async function notifyReaction(
   if (level === undefined || level === 0) return; // gone, or muted this channel
 
   const id = newId();
-  const inserted = await db
-    .insert(notifications)
-    .values({ id, userId: authorId, messageId: message.id, channelId: chan.id, kind: 4, actorId, reactionEmoji: emoji })
-    .onConflictDoNothing()
-    .returning({ id: notifications.id, createdAt: notifications.createdAt });
-  const row = inserted[0];
-  if (!row) return; // already notified for this (author, message, actor, emoji)
+  // Wrapped in a transaction so the push enqueue commits with the row (#247).
+  // The conflict clause is why this has to be a transaction rather than two
+  // statements: only the insert knows whether a row was actually written, and
+  // enqueuing for a suppressed duplicate would push twice for one reaction.
+  const row = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(notifications)
+      .values({ id, userId: authorId, messageId: message.id, channelId: chan.id, kind: 4, actorId, reactionEmoji: emoji })
+      .onConflictDoNothing()
+      .returning({ id: notifications.id, createdAt: notifications.createdAt });
+    const r = inserted[0];
+    if (!r) return undefined; // already notified for this (author, message, actor, emoji)
+    await enqueuePendingPush(tx, [{ userId: authorId, notificationId: r.id }]);
+    return r;
+  });
+  if (!row) return;
 
   const ctx = await alertContextFor(authorId);
   const dto: NotificationDTO = {
@@ -424,11 +441,20 @@ export async function notifyChannelInvite(
   if (invitedUserId === actorId) return; // added yourself — that's a join
 
   const id = newId();
-  const inserted = await db
-    .insert(notifications)
-    .values({ id, userId: invitedUserId, messageId: message.id, channelId: chan.id, kind: 5, actorId })
-    .returning({ id: notifications.id, createdAt: notifications.createdAt });
-  const row = inserted[0];
+  // Same transaction as its push enqueue (#247). The issue names only
+  // insertNotifications and notifyReaction because kind 5 postdates the spec —
+  // but it is a notification like any other, and leaving it out would make the
+  // outbox cover four kinds out of five for no reason anyone could state.
+  const row = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(notifications)
+      .values({ id, userId: invitedUserId, messageId: message.id, channelId: chan.id, kind: 5, actorId })
+      .returning({ id: notifications.id, createdAt: notifications.createdAt });
+    const r = inserted[0];
+    if (!r) return undefined;
+    await enqueuePendingPush(tx, [{ userId: invitedUserId, notificationId: r.id }]);
+    return r;
+  });
   if (!row) return;
 
   const ctx = await alertContextFor(invitedUserId);
@@ -461,7 +487,7 @@ export async function notifyChannelInvite(
  * `workspaceId` is given (the in-workspace Activity badge). Scoping needs the
  * channel join: notifications carry a channelId, not a workspaceId.
  */
-async function unreadCount(userId: string, workspaceId?: string | undefined): Promise<number> {
+export async function unreadCount(userId: string, workspaceId?: string | undefined): Promise<number> {
   const where = and(eq(notifications.userId, userId), isNull(notifications.readAt));
   const rows = workspaceId
     ? await db

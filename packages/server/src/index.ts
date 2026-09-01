@@ -12,6 +12,7 @@ import { purgeStaleRateWindows } from './lib/rateLimitDb.js';
 import { LOCK_KEYS, runExclusive } from './lib/singleton.js';
 import { startOrphanSweep } from './services/files.js';
 import { startAppEventsWorker } from './services/appEvents.js';
+import { startPushWorker } from './services/pushOutbox.js';
 import { startIndicatorSweeper } from './services/channelIndicators.js';
 import { startScheduler } from './services/scheduledMessages.js';
 import { reconcileHuddlesFromLiveKit, startHuddleRosterSync } from './services/huddles.js';
@@ -47,6 +48,7 @@ async function main(): Promise<void> {
   }).catch(() => {});
   startOrphanSweep(app.log); // boot-time + daily orphan-file sweep (decision log ruling 5)
   startAppEventsWorker(app.log); // Events API outbox drain (phase 4)
+  startPushWorker(app.log); // APNs outbox drain (#247)
   const indicatorSweeper = startIndicatorSweeper(); // retract lapsed channel spinners (#137)
   // Scheduled messages (#419). The first pass runs immediately, which is also
   // the catch-up path: a row that came due while the server was down is overdue
