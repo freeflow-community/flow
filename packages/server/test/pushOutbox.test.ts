@@ -36,6 +36,9 @@ const rx = await import('../src/services/reactions.js');
 const dev = await import('../src/services/devices.js');
 const outbox = await import('../src/services/pushOutbox.js');
 const { _setPushSenderForTests } = await import('../src/push/index.js');
+const { ApnsHttp2PushSender } = await import('../src/push/apnsSender.js');
+const { closeApnsSessions } = await import('../src/push/apnsClient.js');
+const http2 = await import('node:http2');
 const { newId } = await import('../src/lib/ids.js');
 const { desc, eq } = await import('drizzle-orm');
 
@@ -455,5 +458,91 @@ describe('worker lifecycle', () => {
     outbox._stopPushWorkerForTests();
     expect(sender.sent).toHaveLength(1);
     expect((await pushRows())[0]!.deliveredAt).not.toBeNull();
+  });
+});
+
+// The two acceptance items from #250 that the issue asks a physical device to
+// prove — "a real 410 disables the token" and "a deliberate bad key does not
+// consume retries" — are properties of the driver PLUS this worker, so the
+// composition is what has to hold. Here the real HTTP/2 driver is wired to a
+// fake Apple on a real socket, and the assertions are on the database rows the
+// drain leaves behind. A phone is still needed to prove APNs itself agrees
+// with our reading of its status codes; nothing above that line is left to it.
+describe('the real APNs driver, end to end against a fake Apple', () => {
+  let reply = { status: 200, body: '' };
+  const server = http2.createServer();
+  let origin = '';
+
+  beforeAll(async () => {
+    server.on('stream', (stream) => {
+      stream.on('data', () => {});
+      stream.on('end', () => {
+        stream.respond({ ':status': reply.status, 'apns-id': 'FAKE-ID', 'content-type': 'application/json' });
+        stream.end(reply.body);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  });
+
+  afterAll(async () => {
+    closeApnsSessions();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  const useRealDriver = () => {
+    _setPushSenderForTests(
+      new ApnsHttp2PushSender({
+        origins: { production: origin, sandbox: origin },
+        signer: async () => 'test.jwt.sig',
+        log: { warn: () => {}, error: () => {} },
+      }),
+    );
+  };
+
+  it('delivers through the driver and marks the row delivered', async () => {
+    reply = { status: 200, body: '' };
+    await addDevice(bobId, 'b'.repeat(64));
+    useRealDriver();
+    await mentionBob();
+    expect(await outbox.drainPendingPush(log)).toBe(1);
+    expect((await pushRows())[0]!.deliveredAt).not.toBeNull();
+  });
+
+  it('a bad provider key (403) burns no retries', async () => {
+    // The "deliberate bad key" check, minus Apple: one attempt, then failed.
+    // Retrying a wrong FLOW_APNS_KEY four times per notification would bury the
+    // one log line that names the actual problem.
+    reply = { status: 403, body: '{"reason":"InvalidProviderToken"}' };
+    await addDevice(bobId, 'b'.repeat(64));
+    useRealDriver();
+    await mentionBob();
+    await outbox.drainPendingPush(log);
+    const row = (await pushRows())[0]!;
+    expect(row.attempts).toBe(1);
+    expect(row.failedAt).not.toBeNull();
+    // ...and the device is left alone: nothing is wrong with the phone.
+    expect((await db.select().from(deviceTokens).where(eq(deviceTokens.userId, bobId)))[0]!.disabledAt).toBeNull();
+  });
+
+  it('a real 410 disables the device row', async () => {
+    reply = { status: 410, body: '{"reason":"Unregistered","timestamp":1788000000000}' };
+    await addDevice(bobId, 'b'.repeat(64));
+    useRealDriver();
+    await mentionBob();
+    await outbox.drainPendingPush(log);
+    expect((await db.select().from(deviceTokens).where(eq(deviceTokens.userId, bobId)))[0]!.disabledAt).not.toBeNull();
+  });
+
+  it('backs off on 429 rather than giving up', async () => {
+    reply = { status: 429, body: '{"reason":"TooManyRequests"}' };
+    await addDevice(bobId, 'b'.repeat(64));
+    useRealDriver();
+    await mentionBob();
+    await outbox.drainPendingPush(log);
+    const row = (await pushRows())[0]!;
+    expect(row.attempts).toBe(1);
+    expect(row.failedAt).toBeNull();
+    expect(row.nextAttemptAt.getTime()).toBeGreaterThan(Date.now());
   });
 });

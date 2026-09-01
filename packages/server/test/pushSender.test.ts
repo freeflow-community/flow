@@ -2,11 +2,12 @@
 // artifact. The artifact assertions are the point — the file it writes is fed
 // straight to `xcrun simctl push`, so its shape is a contract, not a log.
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  ApnsPushSender,
+  ApnsHttp2PushSender,
   DevPushSender,
   _setPushSenderForTests,
   apnsEnvFor,
@@ -17,7 +18,21 @@ import {
   type PushDevice,
 } from '../src/push/index.js';
 
-const saved = { driver: process.env.FLOW_PUSH_DRIVER, outbox: process.env.FLOW_PUSH_OUTBOX, env: process.env.FLOW_APNS_ENV, topic: process.env.FLOW_APNS_TOPIC };
+const saved = {
+  driver: process.env.FLOW_PUSH_DRIVER,
+  outbox: process.env.FLOW_PUSH_OUTBOX,
+  env: process.env.FLOW_APNS_ENV,
+  topic: process.env.FLOW_APNS_TOPIC,
+  key: process.env.FLOW_APNS_KEY,
+  keyId: process.env.FLOW_APNS_KEY_ID,
+  teamId: process.env.FLOW_APNS_TEAM_ID,
+};
+
+/** A throwaway P-256 key, so selecting the apns driver needs no real .p8 (#250). */
+const P8_PEM = crypto
+  .generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  .privateKey.export({ type: 'pkcs8', format: 'pem' })
+  .toString();
 
 let dir: string;
 
@@ -56,6 +71,9 @@ afterEach(async () => {
     ['FLOW_PUSH_OUTBOX', saved.outbox],
     ['FLOW_APNS_ENV', saved.env],
     ['FLOW_APNS_TOPIC', saved.topic],
+    ['FLOW_APNS_KEY', saved.key],
+    ['FLOW_APNS_KEY_ID', saved.keyId],
+    ['FLOW_APNS_TEAM_ID', saved.teamId],
   ] as const) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -80,11 +98,20 @@ describe('driver selection', () => {
     expect(pushSender()).toBeInstanceOf(DevPushSender);
   });
 
-  it('selects the apns driver, which fails loudly until #250 lands', async () => {
+  it('selects the real apns driver when it is configured', () => {
     process.env.FLOW_PUSH_DRIVER = 'apns';
-    const sender = pushSender();
-    expect(sender).toBeInstanceOf(ApnsPushSender);
-    await expect(sender.send(device, payload, headers)).rejects.toThrow(/not implemented yet, see #250/);
+    process.env.FLOW_APNS_KEY = Buffer.from(P8_PEM).toString('base64');
+    process.env.FLOW_APNS_KEY_ID = 'ABCDE12345';
+    process.env.FLOW_APNS_TEAM_ID = 'TEAM123456';
+    expect(pushSender()).toBeInstanceOf(ApnsHttp2PushSender);
+  });
+
+  it('refuses to half-configure the apns driver rather than silently writing to disk', () => {
+    // A production deploy that is missing the key must fail where someone is
+    // watching, not fall back to the dev driver and drop every push in .push/.
+    process.env.FLOW_PUSH_DRIVER = 'apns';
+    delete process.env.FLOW_APNS_KEY;
+    expect(() => pushSender()).toThrow(/FLOW_APNS_KEY/);
   });
 
   it('memoises the sender and lets tests swap it', async () => {
