@@ -13,6 +13,13 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- Push notifications name their conversation on the phone only (#460). The
+  APNs alert carries a `subtitle` row (`#channel`, or the members for a DM),
+  but the **macOS** banner is built locally in `Banners.swift` from the WS
+  event and still sets title + body only — closing the gap is one
+  `content.subtitle` there off the channel it already has in hand. **Web**
+  cannot close it: the browser Notification API has no third row, so its
+  equivalent would be folding the channel into the title.
 - **Apps section in the left nav** (#394) landed on web and macOS only; iOS was
   explicitly out of scope for the issue. The server query
   (`GET /v1/workspaces/:id/app-artifacts`) is client-agnostic and complete, so

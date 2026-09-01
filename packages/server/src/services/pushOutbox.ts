@@ -21,11 +21,11 @@ import { db, schema, type Tx } from '../db/index.js';
 import { decryptBody } from '../crypto/index.js';
 import { newId } from '../lib/ids.js';
 import { pushSender, type ApnsHeaders, type ApnsPayload, type PushDevice } from '../push/index.js';
-import { buildPushPayload, pushHeadersFor, type PushContext } from '../push/payload.js';
+import { buildPushPayload, pushHeadersFor, type ChannelKind, type PushContext } from '../push/payload.js';
 import { noteAlertPush } from './badgeSync.js';
 import { unreadCount } from './notifications.js';
 
-const { channels, deviceTokens, messages, notifications, pendingPush, users } = schema;
+const { channelMembers, channels, deviceTokens, messages, notifications, pendingPush, users } = schema;
 
 /** 1 initial + 3 retries, same as the Events API outbox. */
 const MAX_ATTEMPTS = 4;
@@ -78,6 +78,10 @@ type CtxRow = {
   notificationId: string;
   workspaceId: string;
   channelId: string;
+  /** Whose notification it is — the DM subtitle is named from their side (#460). */
+  recipientId: string;
+  channelName: string | null;
+  channelKind: ChannelKind;
   messageId: string;
   threadRootId: string | null;
   kind: number;
@@ -101,14 +105,29 @@ type CtxRow = {
  * out of the bodies first and only those ids are fetched. Unknown ids still
  * render "@someone", exactly as they do there. A deleted message pushes no
  * preview — `toMessageDTO` blanks it the same way.
+ *
+ * The subtitle's name (#460) rides the same query: a DM has no `name` column,
+ * so its members are read here and their display names join the ids the users
+ * lookup was already going to fetch.
  */
 export async function hydratePushContexts(rows: CtxRow[]): Promise<Map<string, PushContext>> {
   const bodies = new Map(rows.map((r) => [r.notificationId, r.deletedAt ? '' : decryptBody(r)]));
+  const dmChannelIds = [...new Set(rows.filter((r) => r.channelKind !== 'standard').map((r) => r.channelId))];
+  const dmMembers = dmChannelIds.length
+    ? await db
+        .select({ channelId: channelMembers.channelId, userId: channelMembers.userId })
+        .from(channelMembers)
+        .where(inArray(channelMembers.channelId, dmChannelIds))
+    : [];
+  const membersByChannel = new Map<string, string[]>();
+  for (const m of dmMembers) membersByChannel.set(m.channelId, [...(membersByChannel.get(m.channelId) ?? []), m.userId]);
+
   const ids = new Set<string>();
   for (const r of rows) {
     ids.add(r.actorId ?? r.authorId);
     for (const m of (bodies.get(r.notificationId) ?? '').matchAll(USER_MENTION_RE)) ids.add(m[1]!);
   }
+  for (const m of dmMembers) ids.add(m.userId);
   const found = ids.size
     ? await db
         .select({ id: users.id, displayName: users.displayName })
@@ -130,9 +149,27 @@ export async function hydratePushContexts(rows: CtxRow[]): Promise<Map<string, P
         reactionEmoji: r.reactionEmoji,
         body: bodies.get(r.notificationId) ?? '',
         names,
+        channelKind: r.channelKind,
+        conversationName:
+          r.channelKind === 'standard'
+            ? r.channelName
+            : dmName(membersByChannel.get(r.channelId) ?? [], r.recipientId, names),
       },
     ]),
   );
+}
+
+/**
+ * What a DM or group DM calls itself *to this recipient*: the other members'
+ * display names, sorted and joined — the server-side port of the web client's
+ * `dmTitle` (`packages/web/src/lib/channelTitle.ts`), so the subtitle on the
+ * phone matches the row the sidebar shows it under. A DM whose only member is
+ * you is the persistent self-DM, and reads the way it does there.
+ */
+function dmName(memberIds: string[], recipientId: string, names: Record<string, string>): string | null {
+  const others = memberIds.filter((id) => id !== recipientId);
+  if (others.length === 0) return memberIds.length ? `${names[recipientId] ?? 'You'} (you)` : null;
+  return others.map((id) => names[id] ?? 'Unknown').sort().join(', ');
 }
 
 // ---- delivery worker --------------------------------------------
@@ -190,6 +227,9 @@ export async function drainPendingPush(log: Logger): Promise<number> {
       notificationId: notifications.id,
       workspaceId: channels.workspaceId,
       channelId: notifications.channelId,
+      recipientId: notifications.userId,
+      channelName: channels.name,
+      channelKind: channels.kind,
       messageId: notifications.messageId,
       threadRootId: messages.threadRootId,
       kind: notifications.kind,
