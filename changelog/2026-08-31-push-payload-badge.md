@@ -9,9 +9,9 @@
   and `MentionRendering.plainText`, so the same mention reads the same on the
   Mac and the phone. Body is one-lined and cut to 180 code points.
 - `[server]` `FLOW_PUSH_BODY_PREVIEW` (default on) is the operator switch for
-  PUSH_APNS.md open question 1: off sends no body and titles a DM "Alice sent
-  you a message". **No ruling in `decision_log.md` yet** — shipped on the
-  spec's recommended option (a).
+  PUSH_APNS.md open question 1; off sends no body and titles a DM "Alice sent
+  you a message". Operator ruled 2026-09-01 for including the text — the
+  switch stays on (`decision_log.md`).
 - `[server]` Headers: `alert`/priority 10/~1 h expiry, `apns-collapse-id` =
   channelId for kind 3 only.
 - `[server]` `services/badgeSync.ts` mirrors every `notification.read` publish

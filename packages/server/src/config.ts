@@ -75,10 +75,10 @@ export const config = {
    * Does the message text ride along in the push? (PUSH_APNS.md § "Open
    * questions for the operator", 1.) Bodies are AES-GCM encrypted at rest, so
    * including it hands the plaintext to Apple in transit — the spec's option
-   * (a), best UX, and the default. `FLOW_PUSH_BODY_PREVIEW=0` is option (b):
-   * the title still says who, and nothing the user wrote leaves the server.
-   * One switch on purpose, so a workspace that cares costs an env var rather
-   * than a rewrite.
+   * (a), best UX, and what the operator ruled on 2026-09-01 (decision log).
+   * `FLOW_PUSH_BODY_PREVIEW=0` is option (b): the title still says who, and
+   * nothing the user wrote leaves the server. One switch on purpose, so a
+   * workspace that cares costs an env var rather than a rewrite.
    */
   get pushBodyPreview(): boolean {
     const v = process.env.FLOW_PUSH_BODY_PREVIEW;

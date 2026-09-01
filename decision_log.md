@@ -1,5 +1,20 @@
 # Decision log
 
+## 2026-09-01 — APNs push payloads carry the message text (operator ruling)
+
+- `PUSH_APNS.md` § "Open questions for the operator", 1: bodies are AES-GCM
+  encrypted at rest, so putting the plaintext in a push hands it to Apple in
+  transit. Options were (a) include it, (b) "Alice sent you a message" with no
+  body, (c) `mutable-content` + a Notification Service Extension that fetches
+  the body on device.
+- **Operator ruling (Scott, in #task-248): (a) — include the text, and leave
+  the flag enabled.** So `FLOW_PUSH_BODY_PREVIEW` defaults on and stays on;
+  it exists as the one-line reversal to (b) should a workspace ever need it,
+  not as something to tune. (c) remains the upgrade path if that day comes,
+  and is not built.
+- Where: `config.ts` (`pushBodyPreview`), `push/payload.ts`
+  (`alertStringsFor`). Shipped in #248 / PR #453.
+
 ## 2026-08-31 — Socket Mode routing: request/reply, not heartbeat liveness; tickets to Postgres (phase 18 M3)
 
 - The design doc (§3) had app-socket liveness riding the presence heartbeat,
