@@ -37,6 +37,7 @@ import { badRequest } from '../lib/errors.js';
 import { publishEvent, subjectUserNotify } from '../bus.js';
 import { isOnline } from '../presence.js';
 import { toMessageDTO, type HydratedMessageRow } from './messages.js';
+import { queueBadgeSync } from './badgeSync.js';
 import { enqueuePendingPush } from './pushOutbox.js';
 
 const { notifications, channelMembers, workspaceMembers, messages, channels, users } = schema;
@@ -516,13 +517,16 @@ export async function publishNotificationRetirements(
   for (const row of retired) byUser.set(row.userId, [...(byUser.get(row.userId) ?? []), row.id]);
   const readAt = new Date().toISOString();
   for (const [userId, ids] of byUser) {
+    const total = await unreadCount(userId);
     publishEvent(subjectUserNotify(userId), {
       type: 'notification.read',
       workspaceId,
       channelId,
       ts: readAt,
-      data: { ids, unreadCount: await unreadCount(userId), readAt },
+      data: { ids, unreadCount: total, readAt },
     });
+    // Same convergence, to devices instead of sockets (#248).
+    queueBadgeSync(userId, total);
   }
 }
 
@@ -554,6 +558,9 @@ async function applyRead(
       ts: readAt.toISOString(),
       data: { ids, unreadCount: total, readAt: readAt.toISOString() },
     });
+    // The phone has no socket to hear that event on — mirror it as a silent
+    // badge push, coalesced and suppressed by services/badgeSync.ts (#248).
+    queueBadgeSync(userId, total);
   }
   return { ids, unreadCount: total };
 }
@@ -648,12 +655,15 @@ export async function clearChannelNotificationsForAll(chan: ChannelRow): Promise
   const byUser = new Map<string, string[]>();
   for (const r of updated) byUser.set(r.userId, [...(byUser.get(r.userId) ?? []), r.id]);
   for (const [userId, ids] of byUser) {
+    const total = await unreadCount(userId);
     publishEvent(subjectUserNotify(userId), {
       type: 'notification.read',
       workspaceId: chan.workspaceId,
       ts: readAt.toISOString(),
-      data: { ids, unreadCount: await unreadCount(userId), readAt: readAt.toISOString() },
+      data: { ids, unreadCount: total, readAt: readAt.toISOString() },
     });
+    // Same convergence, to devices instead of sockets (#248).
+    queueBadgeSync(userId, total);
   }
 }
 

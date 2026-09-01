@@ -71,6 +71,19 @@ export const config = {
   get pushOutboxDir(): string {
     return process.env.FLOW_PUSH_OUTBOX ?? path.join(pkgRoot, '.push');
   },
+  /**
+   * Does the message text ride along in the push? (PUSH_APNS.md § "Open
+   * questions for the operator", 1.) Bodies are AES-GCM encrypted at rest, so
+   * including it hands the plaintext to Apple in transit — the spec's option
+   * (a), best UX, and the default. `FLOW_PUSH_BODY_PREVIEW=0` is option (b):
+   * the title still says who, and nothing the user wrote leaves the server.
+   * One switch on purpose, so a workspace that cares costs an env var rather
+   * than a rewrite.
+   */
+  get pushBodyPreview(): boolean {
+    const v = process.env.FLOW_PUSH_BODY_PREVIEW;
+    return !(v === '0' || v === 'false');
+  },
   /** Base URL the web client is served from — used in emailed links. */
   get webUrlBase(): string {
     return process.env.FLOW_WEB_URL ?? 'http://127.0.0.1:8787';
