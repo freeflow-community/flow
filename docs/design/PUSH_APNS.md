@@ -233,6 +233,9 @@ not the message.
    payload, but a new target and a second auth path on device.
    **Recommendation: (a) now, with (c) as the upgrade** if Flow ever hosts
    workspaces that care. Worth a decision-log ruling either way.
+   **Answered 2026-09-01 (operator ruling, decision log): (a).** Built in #248
+   behind `FLOW_PUSH_BODY_PREVIEW`, which defaults on and stays on — the flag
+   is the one-line reversal to (b), not a knob.
 2. **Apple Developer account** — team id, the APNs Auth Key (`.p8`, one per
    team, reusable across apps), and who holds it. Blocks everything past the
    dev driver.

@@ -92,8 +92,12 @@ export function truncate(text: string, max = BODY_MAX_CHARS): string {
  * nothing the user wrote leaves the server. Option (b) has no body at all —
  * for every kind but a DM the title already says who and what, and a DM's
  * title is a bare name, so it grows the verb instead ("Alice sent you a
- * message"). Reversing the ruling is `FLOW_PUSH_BODY_PREVIEW=0`, not a
- * rewrite; option (c), the Notification Service Extension, is a later phase.
+ * message").
+ *
+ * The operator ruled (a) on 2026-09-01 (decision log), so the switch is on and
+ * stays on: it is the one-line reversal should a workspace ever need (b), not
+ * a knob to tune. Option (c), the Notification Service Extension, is a later
+ * phase.
  */
 export function alertStringsFor(
   ctx: Pick<PushContext, 'kind' | 'actorName' | 'reactionEmoji' | 'body' | 'names'>,
