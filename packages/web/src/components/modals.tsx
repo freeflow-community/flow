@@ -934,6 +934,8 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.reaction !== false} onChange={(v) => void setPref('reaction', v)} />
       <PrefToggle testid="pref-channel-invite" label="Channel invites" hint="someone adds you to a channel"
         checked={prefs.channelInvite !== false} onChange={(v) => void setPref('channelInvite', v)} />
+      <PrefToggle testid="pref-sound" label="Play a sound" hint="with every banner"
+        checked={prefs.sound !== false} onChange={(v) => void setPref('sound', v)} />
       <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
         checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
 

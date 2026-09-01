@@ -22,6 +22,8 @@ struct AccountSheet: View {
     /// so a headless run can screenshot the form without tap automation. Same
     /// family as the other FLOW_DEBUG_* hooks in `Platform/`.
     @State private var pushProfile = false
+    /// The same hook for the notification prefs (#251): `FLOW_DEBUG_OPEN_NOTIFICATIONS=1`.
+    @State private var pushNotifications = false
 
     private var statusEmoji: String { app.currentUser?.statusEmoji ?? "" }
     private var statusText: String { app.currentUser?.statusText ?? "" }
@@ -81,6 +83,13 @@ struct AccountSheet: View {
                     }
                     .accessibilityIdentifier("account.profile")
 
+                    NavigationLink {
+                        NotificationSettingsView()
+                    } label: {
+                        Label("Notifications", systemImage: "bell")
+                    }
+                    .accessibilityIdentifier("account.notifications")
+
                     Button(role: .destructive) {
                         dismiss()
                         Task { await app.engine.logout() }
@@ -91,9 +100,13 @@ struct AccountSheet: View {
                 }
             }
             .navigationDestination(isPresented: $pushProfile) { MyProfileView() }
+            .navigationDestination(isPresented: $pushNotifications) { NotificationSettingsView() }
             .onAppear {
                 if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_PROFILE"] == "1" {
                     pushProfile = true
+                }
+                if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_NOTIFICATIONS"] == "1" {
+                    pushNotifications = true
                 }
             }
             .listStyle(.insetGrouped)

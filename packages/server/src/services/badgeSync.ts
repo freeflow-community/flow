@@ -13,7 +13,7 @@
 // and the count is absolute rather than a delta. Durability would buy an
 // at-least-once guarantee on a number that is stale by the time it is retried.
 //
-// Two suppressions, both because Apple meters background pushes on a per-app
+// Three suppressions, all because Apple meters background pushes on a per-app
 // budget and an app that burns it stops getting them delivered at all:
 //
 //   1. THROTTLE — at most one per user per WINDOW_MS, trailing-edge, so a
@@ -25,6 +25,21 @@
 //      any later alert is the same idea taken one step further, and it also
 //      stops a coalesced sync from re-asserting a count the alert has since
 //      moved past.
+//   3. HOURLY BUDGET (#251) — at most BACKGROUND_PUSHES_PER_HOUR per user per
+//      rolling hour. (1) bounds a burst and does nothing about an hour: at one
+//      push per 30 s, a person working a busy workspace all morning spends 120
+//      of them, and someone reading once every two minutes still spends 30 —
+//      both an order of magnitude past what Apple will deliver. Measured, not
+//      assumed: `test/badgeSyncBudget.test.ts` replays those profiles through
+//      this module and counts. Over budget iOS delays or drops the pushes
+//      itself, which is the same staleness this cap causes but chosen by
+//      someone who cannot see which count matters — better to spend the
+//      allowance deliberately.
+//
+// The cap HOLDS rather than drops: the newest count stays pending and goes out
+// when the oldest send in the window ages out. A badge is absolute, so an hour
+// of heavy reading owes the phone exactly one truthful number, and dropping
+// would leave it owing nothing.
 //
 // The state is per process. With several replicas the throttle is per replica —
 // acceptable, because a user's read requests are not sharded by user and Apple's
@@ -51,7 +66,19 @@ const { deviceTokens } = schema;
  * worker ticks once a second, so a read that races an incoming mention would
  * otherwise send its silent push before the alert that renders it redundant.
  */
-export const badgeSyncTiming = { windowMs: 30_000, settleMs: 2_000 };
+export const badgeSyncTiming = { windowMs: 30_000, settleMs: 2_000, budgetWindowMs: 3_600_000 };
+
+/**
+ * Background pushes one user's badge may cost per `budgetWindowMs` (#251).
+ *
+ * Apple documents the budget as "a few per hour" and never as a number, so
+ * this is a judgement rather than a constant read off a spec: six spends it at
+ * roughly one every ten minutes, which is frequent enough that a phone put
+ * down after a read settles within minutes, and modest enough to leave room
+ * for the same app's other background work. The measurements that motivated it
+ * are in `test/badgeSyncBudget.test.ts`.
+ */
+export const BACKGROUND_PUSHES_PER_HOUR = 6;
 /** Idle user state is dropped after this, so the maps don't grow with the user table. */
 const IDLE_TTL_MS = 10 * 60_000;
 
@@ -62,6 +89,12 @@ interface UserState {
   queuedAt: number;
   /** Last badge-sync actually handed to the sender. */
   lastSentAt: number;
+  /**
+   * When each of the last `BACKGROUND_PUSHES_PER_HOUR` sends went out, oldest
+   * first — the rolling window suppression (3) meters. Capped by construction,
+   * so this is a handful of numbers per active user, not a log.
+   */
+  sentAt: number[];
   timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -73,7 +106,7 @@ const lastAlert = new Map<string, { badge: number; at: number }>();
 function stateFor(userId: string): UserState {
   let st = states.get(userId);
   if (!st) {
-    st = { pending: null, queuedAt: 0, lastSentAt: 0, timer: null };
+    st = { pending: null, queuedAt: 0, lastSentAt: 0, sentAt: [], timer: null };
     states.set(userId, st);
   }
   return st;
@@ -121,21 +154,46 @@ async function flush(userId: string): Promise<void> {
   const st = stateFor(userId);
   st.timer = null;
   const badge = st.pending;
-  st.pending = null;
   if (badge === null) return;
 
   const alert = lastAlert.get(userId);
-  if (alert && alert.at >= st.queuedAt) return; // suppression (2)
+  if (alert && alert.at >= st.queuedAt) {
+    st.pending = null;
+    return; // suppression (2)
+  }
+
+  // Suppression (3): the hour's allowance. Held, not dropped — the pending
+  // count stays owed and goes out as soon as the oldest send ages out of the
+  // window, so the phone still ends up with the truth, just later.
+  const now = Date.now();
+  st.sentAt = st.sentAt.filter((t) => now - t < badgeSyncTiming.budgetWindowMs);
+  if (st.sentAt.length >= BACKGROUND_PUSHES_PER_HOUR) {
+    const wait = Math.max(st.sentAt[0]! + badgeSyncTiming.budgetWindowMs - now, badgeSyncTiming.settleMs);
+    st.timer = setTimeout(() => {
+      void flush(userId);
+    }, wait);
+    st.timer.unref?.();
+    return;
+  }
+
+  st.pending = null;
+  // The window opens when the send STARTS, not when it finishes: the device
+  // query below is a round trip, and a read landing inside it would otherwise
+  // see an un-advanced window and schedule a second push immediately.
+  const previousSentAt = st.lastSentAt;
+  st.lastSentAt = now;
 
   const devices = await db
     .select()
     .from(deviceTokens)
     .where(and(eq(deviceTokens.userId, userId), isNull(deviceTokens.disabledAt)));
-  if (devices.length === 0) return;
-
-  // Only a real send opens a new throttle window — a user with no live device
-  // shouldn't have their next genuine sync delayed by a no-op.
-  st.lastSentAt = Date.now();
+  if (devices.length === 0) {
+    // Only a real send opens a new throttle window — a user with no live device
+    // shouldn't have their next genuine sync delayed by a no-op.
+    st.lastSentAt = previousSentAt;
+    return;
+  }
+  st.sentAt.push(now);
   const payload = buildBadgeSyncPayload(badge);
   const headers = badgeSyncHeaders();
   const sender = pushSender();

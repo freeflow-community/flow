@@ -1,5 +1,49 @@
 # Decision log
 
+## 2026-09-01 — APNs polish (#251): push obeys the prefs, and the hour gets a budget
+
+Four questions #251 asked, answered with what the code and the measurements
+actually say rather than by turning knobs.
+
+- **The prefs never reached the phone.** `suppressAlertFor` gated the banner on
+  web and macOS, but the outbox enqueued and sent every notification row
+  regardless — so "mute reactions" and a Do-not-disturb status silenced the
+  laptop while the phone in the same pocket rang. Fixed in `pushOutbox.ts` by
+  running the same function at **send** time (prefs joined into the hydration
+  query that was already running). Shipping the iOS prefs UI on top of the old
+  behaviour would have given people toggles that did nothing to the device that
+  wakes them up.
+- **A muted push still carries the badge**, as `{aps:{badge:N}}` at priority 5:
+  nothing displays, but an unread row that the badge stops counting is a lie.
+  Deliberately an *alert* push rather than the `content-available` kind —
+  background pushes are metered and a muted mention is a new notification, not
+  a correction, so spending that budget on the common case would starve the
+  corrections that need it.
+- **The 30 s coalescing window is right; the hour had no limit at all.**
+  Measured through the real module (`test/badgeSyncBudget.test.ts`, time scaled
+  400:1): a catch-up burst of 40 reads costs 2 pushes — the window doing its
+  job — but an hour of steady reading on a busy workspace cost **119**, and a
+  read every two minutes still cost **30**, against an Apple background budget
+  documented as "a few per hour". Added a rolling **6 per hour per user** cap
+  that *holds* the newest count rather than dropping it; the busy profiles now
+  cost 6. Over the budget iOS delays or drops these itself, which is the same
+  staleness chosen by something that cannot see which count matters.
+- **`apns-collapse-id` was dead code — removed rather than extended.** It was
+  set for kind 3 only, and `suppressAlertFor` never alerts kind 3, so no push
+  ever carried one. Extending it to the kinds that do push was rejected:
+  collapsing *replaces* the previous notification, so a busy channel would show
+  the newest mention and silently drop the ones before it, and a tap could only
+  route to the survivor. `thread-id` already gives a busy channel one stacked
+  group in Notification Center, which is the grouping that was wanted.
+- **The 1 h expiry stays.** It bounds how stale a push can be when a phone comes
+  back from a tunnel, and it also bounds the badge: an expired push is a badge
+  update that never lands. Shortening it trades a rare stale banner for a more
+  often wrong badge.
+- Also added: a `sound` pref (default on) — `aps.sound` omitted when off, and
+  the iOS foreground rule presents `[.banner]` alone — and the iOS
+  notification-prefs screen the toggles have never had here, which closes that
+  half of the standing Parity gap (macOS still has none).
+
 ## 2026-09-01 — APNs push payloads carry the message text (operator ruling)
 
 - `PUSH_APNS.md` § "Open questions for the operator", 1: bodies are AES-GCM

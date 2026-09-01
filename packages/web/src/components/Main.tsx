@@ -424,6 +424,10 @@ export default function Main() {
         tag: n.id,
         // presentation pref: persist until dismissed (browser permitting)
         requireInteraction: authRef.current.user.notificationPrefs.persistentBanners === true,
+        // #251: the same `sound` pref the phone honours. Chromium respects
+        // `silent`; the browsers that don't were never going to make a noise
+        // here anyway, so the pref costs nothing where it is ignored.
+        silent: authRef.current.user.notificationPrefs.sound === false,
       });
       // Clicking the OS banner should focus this tab and jump straight to the
       // triggering message — same navigation the in-app Activity list does.

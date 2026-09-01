@@ -4,7 +4,7 @@
 //    would show wrong: the title/body strings matching the macOS banner, the
 //    custom keys matching the banner's `userInfo` contract (rename one and iOS
 //    tap-routing silently stops finding the channel), thread grouping, the
-//    collapse-id being kind-3-only, and the body staying a preview;
+//    sound pref reaching `aps.sound` (#251), and the body staying a preview;
 //  - the same builder driven through a real drain and the DEV SENDER, so the
 //    artifact under test is the file `xcrun simctl push` accepts.
 //
@@ -48,6 +48,7 @@ const {
   BODY_MAX_CHARS,
   alertStringsFor,
   buildBadgeSyncPayload,
+  buildMutedBadgePayload,
   buildPushPayload,
   badgeSyncHeaders,
   plainText,
@@ -242,6 +243,15 @@ describe('the custom keys are the macOS banner contract', () => {
     expect(p.aps.sound).toBe('default');
     expect(p.aps['thread-id']).toBe('c1');
   });
+
+  // #251. Omitted, not empty: APNs plays the default for a sound name it
+  // cannot resolve, so `sound: ''` would ring.
+  it('omits the sound key entirely when the sound pref is off', () => {
+    const p = buildPushPayload(ctx(), 7, false);
+    expect('sound' in p.aps).toBe(false);
+    expect(p.aps.alert).toBeDefined();
+    expect(p.aps.badge).toBe(7);
+  });
 });
 
 describe('headers', () => {
@@ -253,11 +263,21 @@ describe('headers', () => {
     expect(h.expiration! - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(3_600);
   });
 
-  it('collapse on the channel for kind 3 only', () => {
-    expect(pushHeadersFor(ctx({ kind: 3 })).collapseId).toBe('c1');
-    for (const kind of [0, 1, 2, 4, 5] as const) {
+  // #251: collapse-id is gone. It only ever fired for kind 3, which
+  // `suppressAlertFor` never alerts on, so no push ever carried one; and
+  // collapsing the kinds that DO push would replace unread mentions with the
+  // newest. `thread-id` is the grouping a busy channel actually wanted.
+  it('never collapse — a replaced alert is a mention nobody saw', () => {
+    for (const kind of [0, 1, 2, 3, 4, 5] as const) {
       expect(pushHeadersFor(ctx({ kind })).collapseId).toBeUndefined();
     }
+  });
+
+  it('send a muted push power-considerate: a badge nobody is woken for', () => {
+    const h = pushHeadersFor(ctx(), true);
+    expect(h.pushType).toBe('alert');
+    expect(h.priority).toBe(5);
+    expect(buildMutedBadgePayload(4)).toEqual({ aps: { badge: 4 } });
   });
 
   it('send the silent badge-sync power-considerate and contentless', () => {

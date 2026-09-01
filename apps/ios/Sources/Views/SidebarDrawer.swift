@@ -1008,9 +1008,11 @@ private struct DrawerStatusFooter: View {
         }
         .sheet(isPresented: $showAccount) { AccountSheet() }
         // QA: FLOW_DEBUG_OPEN_PROFILE=1 opens the account sheet on launch; the
-        // sheet then pushes My Profile itself.
+        // sheet then pushes My Profile itself. FLOW_DEBUG_OPEN_NOTIFICATIONS=1
+        // (#251) does the same for the notification prefs.
         .onAppear {
-            if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_PROFILE"] == "1" {
+            let env = ProcessInfo.processInfo.environment
+            if env["FLOW_DEBUG_OPEN_PROFILE"] == "1" || env["FLOW_DEBUG_OPEN_NOTIFICATIONS"] == "1" {
                 showAccount = true
             }
         }

@@ -164,7 +164,13 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
                 visibleChannelId: self.appState?.selectedChannelId,
                 openThreadRootId: self.appState?.openThreadRootId
             )
-            reply.value(present ? [.banner, .sound] : [])
+            // #251: the `sound` pref applies to a foreground banner too. The
+            // push the server sent while backgrounded already had `aps.sound`
+            // omitted, but a foreground presentation names its own options, so
+            // the rule has to be applied on both sides of the same pref.
+            let sound = self.appState?.currentUser?.prefs.isOn(\.sound) ?? true
+            let options: UNNotificationPresentationOptions = sound ? [.banner, .sound] : [.banner]
+            reply.value(present ? options : [])
         }
     }
 

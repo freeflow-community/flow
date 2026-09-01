@@ -51,6 +51,13 @@ export interface NotificationPrefs {
   channelInvite?: boolean | undefined;
   /** Web-only presentation pref: OS notifications persist until dismissed (requireInteraction). Default off. */
   persistentBanners?: boolean | undefined;
+  /**
+   * Play a sound with an alert. Default on. Presentation, not routing: a
+   * silenced kind still banners and still lands in the inbox. Honoured by the
+   * push payload (`aps.sound` is omitted when off) and by the iOS foreground
+   * rule, which then presents `[.banner]` alone.
+   */
+  sound?: boolean | undefined;
 }
 
 /** Why a kind-0 (mention) notification fired: direct mention vs group-mention variant. */

@@ -284,6 +284,16 @@ struct AppDatabase: Sendable {
             }
         }
 
+        // Per-user notification prefs (#251), so the settings screens can render
+        // the toggles from the cached user instead of blocking on a fetch. JSON,
+        // nil on every cached row until the next `/v1/me` — which reads as "all
+        // defaults", the same thing an absent key means server-side.
+        migrator.registerMigration("v23") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "notificationPrefs", .text)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 
