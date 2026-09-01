@@ -89,6 +89,7 @@ const ctx = (over: Partial<PushContext> = {}): PushContext => ({
   names: {},
   conversationName: 'alerts',
   channelKind: 'standard',
+  soloDmWithActor: false,
   ...over,
 });
 
@@ -123,20 +124,36 @@ describe('alert strings match the macOS banner', () => {
 
 describe('the subtitle says which conversation it came from (#460)', () => {
   it('prefixes a channel with # and leaves a DM name bare', () => {
-    expect(subtitleFor({ conversationName: 'alerts', channelKind: 'standard' })).toBe('#alerts');
-    expect(subtitleFor({ conversationName: 'Alice', channelKind: 'dm' })).toBe('Alice');
-    expect(subtitleFor({ conversationName: 'Alice, Carol', channelKind: 'group_dm' })).toBe('Alice, Carol');
+    expect(subtitleFor({ conversationName: 'alerts', channelKind: 'standard', soloDmWithActor: false })).toBe('#alerts');
+    // A DM named by someone other than its sender — a group DM, or the 1:1 rule
+    // below not firing — keeps the name bare: a `#` in front of a person reads
+    // as a channel that does not exist.
+    expect(subtitleFor({ conversationName: 'Alice', channelKind: 'dm', soloDmWithActor: false })).toBe('Alice');
+    expect(subtitleFor({ conversationName: 'Alice, Carol', channelKind: 'group_dm', soloDmWithActor: false }))
+      .toBe('Alice, Carol');
+  });
+
+  it('drops the row in a 1:1 DM, where the counterpart is the sender', () => {
+    const dm = { conversationName: 'Alice', channelKind: 'dm' as const, soloDmWithActor: true };
+    expect(subtitleFor(dm)).toBeUndefined();
+    // The rule is who the counterpart is, not whether the strings match — so it
+    // holds for the titles that are not a bare name either.
+    expect(alertStringsFor(ctx({ kind: 1, ...dm }), false)).toEqual({ title: 'Alice sent you a message' });
+    expect(alertStringsFor(ctx({ kind: 4, reactionEmoji: '👍', ...dm })).subtitle).toBeUndefined();
+    // A group DM keeps its row: there the names are the ones the title leaves out.
+    expect(subtitleFor({ conversationName: 'Alice, Carol', channelKind: 'group_dm', soloDmWithActor: false }))
+      .toBe('Alice, Carol');
   });
 
   it('omits the row rather than showing an empty one when the name is unknown', () => {
-    expect(subtitleFor({ conversationName: null, channelKind: 'standard' })).toBeUndefined();
-    expect(subtitleFor({ conversationName: '   ', channelKind: 'dm' })).toBeUndefined();
+    expect(subtitleFor({ conversationName: null, channelKind: 'standard', soloDmWithActor: false })).toBeUndefined();
+    expect(subtitleFor({ conversationName: '   ', channelKind: 'dm', soloDmWithActor: false })).toBeUndefined();
     expect(alertStringsFor(ctx({ conversationName: null })).subtitle).toBeUndefined();
   });
 
   it('caps a group DM whose member list would run past the banner', () => {
     const long = Array.from({ length: 40 }, (_, i) => `Member ${i}`).join(', ');
-    const subtitle = subtitleFor({ conversationName: long, channelKind: 'group_dm' })!;
+    const subtitle = subtitleFor({ conversationName: long, channelKind: 'group_dm', soloDmWithActor: false })!;
     expect([...subtitle]).toHaveLength(SUBTITLE_MAX_CHARS);
     expect(subtitle.endsWith('\u2026')).toBe(true);
   });
@@ -179,7 +196,7 @@ describe('the operator switch (PUSH_APNS.md open question 1)', () => {
   it('option (b) sends no body, and gives a DM the verb its title lacks', () => {
     expect(alertStringsFor(ctx({ kind: 1, conversationName: 'Alice', channelKind: 'dm' }), false)).toEqual({
       title: 'Alice sent you a message',
-      subtitle: 'Alice',
+      subtitle: 'Alice', // a DM the 1:1 rule does not fire on still says where
     });
     expect(alertStringsFor(ctx({ kind: 0 }), false)).toEqual({ title: 'Alice mentioned you', subtitle: '#alerts' });
   });
@@ -305,6 +322,16 @@ afterAll(async () => {
   await closeDb();
 });
 
+/** `addReaction` writes its notification without the caller awaiting it, so a
+ * drain fired the same tick can find an empty outbox. */
+async function waitForPendingPush(): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    if ((await db.select().from(pendingPush)).length > 0) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error('no pending_push row was ever written');
+}
+
 function useFake(): FakeSender {
   const s = new FakeSender();
   _setPushSenderForTests(s);
@@ -387,6 +414,7 @@ describe('the drain hydrates a real notification', () => {
     await db.delete(pendingPush);
     await db.delete(notifications);
     await msg.sendMessage(channelId, aliceId, randomUUID(), 'me too', root.id);
+    await waitForPendingPush();
     await outbox.drainPendingPush(log);
 
     expect(sender.sent[0]!.payload.aps.alert).toEqual({
@@ -396,18 +424,36 @@ describe('the drain hydrates a real notification', () => {
     });
   });
 
-  it('subtitles a DM with the counterpart, no # in front of a person', async () => {
+  it('gives a 1:1 DM no subtitle — its counterpart is the sender the title names', async () => {
     const sender = useFake();
     await msg.sendMessage(dmId, aliceId, randomUUID(), 'lunch?');
+    await waitForPendingPush();
     await outbox.drainPendingPush(log);
 
-    // Bob's phone, so the conversation is named from Bob's side: Alice.
-    expect(sender.sent[0]!.payload.aps.alert).toEqual({ title: 'Alice', subtitle: 'Alice', body: 'lunch?' });
+    // Bob's phone. "Alice / Alice / lunch?" spends a row saying nothing, so the
+    // row goes (operator ruling on #460) — the title already says where.
+    expect(sender.sent[0]!.payload.aps.alert).toEqual({ title: 'Alice', body: 'lunch?' });
+  });
+
+  it('keeps the row when a 1:1 DM reaction comes from the counterpart too', async () => {
+    const sender = useFake();
+    const m = await msg.sendMessage(dmId, bobId, randomUUID(), 'ship it');
+    await db.delete(pendingPush);
+    await db.delete(notifications);
+    await rx.addReaction(m.id, aliceId, '🎉');
+    await waitForPendingPush();
+    await outbox.drainPendingPush(log);
+
+    // Still Alice on both rows, so the subtitle still goes — the rule is who
+    // the counterpart is, not how the title happens to be phrased.
+    expect(sender.sent.at(-1)!.payload.aps.alert?.subtitle).toBeUndefined();
+    expect(sender.sent.at(-1)!.payload.aps.alert?.title).toBe('Alice reacted 🎉');
   });
 
   it('subtitles a group DM with the other members, sorted', async () => {
     const sender = useFake();
     await msg.sendMessage(groupDmId, aliceId, randomUUID(), 'all three of us');
+    await waitForPendingPush();
     await outbox.drainPendingPush(log);
 
     const forBob = sender.sent.find((s) => s.device.token === 'a'.repeat(64))!;

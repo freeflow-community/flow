@@ -154,6 +154,9 @@ export async function hydratePushContexts(rows: CtxRow[]): Promise<Map<string, P
           r.channelKind === 'standard'
             ? r.channelName
             : dmName(membersByChannel.get(r.channelId) ?? [], r.recipientId, names),
+        soloDmWithActor:
+          r.channelKind === 'dm'
+          && isSoloDmWithActor(membersByChannel.get(r.channelId) ?? [], r.recipientId, r.actorId ?? r.authorId),
       },
     ]),
   );
@@ -167,9 +170,28 @@ export async function hydratePushContexts(rows: CtxRow[]): Promise<Map<string, P
  * you is the persistent self-DM, and reads the way it does there.
  */
 function dmName(memberIds: string[], recipientId: string, names: Record<string, string>): string | null {
-  const others = memberIds.filter((id) => id !== recipientId);
+  const others = counterparts(memberIds, recipientId);
   if (others.length === 0) return memberIds.length ? `${names[recipientId] ?? 'You'} (you)` : null;
   return others.map((id) => names[id] ?? 'Unknown').sort().join(', ');
+}
+
+/**
+ * Whether this DM's only counterpart is the person the title already names
+ * (the #460 ruling — see `subtitleFor`). Decided on ids, so it holds however
+ * the title happens to be phrased, and two people who share a display name
+ * cannot collapse into one.
+ */
+function isSoloDmWithActor(memberIds: string[], recipientId: string, actorId: string): boolean {
+  const others = counterparts(memberIds, recipientId);
+  // The self-DM has no counterpart but you; if you are also the actor, the
+  // subtitle repeats the title there too.
+  const speakers = others.length ? others : memberIds.filter((id) => id === recipientId);
+  return speakers.length === 1 && speakers[0] === actorId;
+}
+
+/** The members of a DM other than whoever is being pushed. */
+function counterparts(memberIds: string[], recipientId: string): string[] {
+  return memberIds.filter((id) => id !== recipientId);
 }
 
 // ---- delivery worker --------------------------------------------

@@ -75,6 +75,12 @@ export interface PushContext {
   conversationName: string | null;
   /** Which of the two naming rules applies. */
   channelKind: ChannelKind;
+  /**
+   * A 1:1 DM whose counterpart is the very person the title names — set by
+   * identity, not by comparing strings (operator ruling on #460). Its subtitle
+   * would only say again what the title just said, so `subtitleFor` drops it.
+   */
+  soloDmWithActor: boolean;
 }
 
 /** Channel kinds, as the `channel_kind` enum spells them. */
@@ -89,8 +95,19 @@ export type ChannelKind = 'standard' | 'dm' | 'group_dm';
  * because a `#` in front of a person's name reads as a channel that doesn't
  * exist. A thread reply needs no special case: notifications carry the channel
  * the thread lives in, which is exactly the row to show.
+ *
+ * The one conversation that gets no row is a **1:1 DM**, because there the
+ * counterpart *is* the sender and the title already names them — "Alice /
+ * Alice / lunch at 1?" spends a line saying nothing (operator ruling on #460).
+ * The test is who the counterpart is, not whether the two strings match, so it
+ * holds for the titles that are not a bare name either: "Alice sent you a
+ * message" with the preview off, and "Alice reacted 👍". Group DMs keep their
+ * row — there the names are the ones the title leaves out.
  */
-export function subtitleFor(ctx: Pick<PushContext, 'conversationName' | 'channelKind'>): string | undefined {
+export function subtitleFor(
+  ctx: Pick<PushContext, 'conversationName' | 'channelKind' | 'soloDmWithActor'>,
+): string | undefined {
+  if (ctx.channelKind === 'dm' && ctx.soloDmWithActor) return undefined;
   const name = oneLine(ctx.conversationName ?? '');
   if (!name) return undefined;
   return truncate(ctx.channelKind === 'standard' ? `#${name}` : name, SUBTITLE_MAX_CHARS);
@@ -142,7 +159,10 @@ export function truncate(text: string, max = BODY_MAX_CHARS): string {
  * the preview should still leave a banner you can act on.
  */
 export function alertStringsFor(
-  ctx: Pick<PushContext, 'kind' | 'actorName' | 'reactionEmoji' | 'body' | 'names' | 'conversationName' | 'channelKind'>,
+  ctx: Pick<
+    PushContext,
+    'kind' | 'actorName' | 'reactionEmoji' | 'body' | 'names' | 'conversationName' | 'channelKind' | 'soloDmWithActor'
+  >,
   bodyPreview = config.pushBodyPreview,
 ): { title: string; subtitle?: string; body?: string } {
   const who = ctx.actorName ?? 'Someone';

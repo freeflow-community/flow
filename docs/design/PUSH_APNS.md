@@ -160,6 +160,13 @@ A thread reply needs no special case: the notification already carries the
 channel the thread lives in. It is not on the body-preview switch below, since
 it says where rather than what anyone wrote.
 
+A **1:1 DM carries no subtitle** (operator ruling on #460): its counterpart is
+the sender the title already names, so the row would only repeat itself. The
+test is who the counterpart is — decided on ids in the hydration — not whether
+the two strings match, so it holds for "Alice sent you a message" with the
+preview off and for "Alice reacted 👍" as well. Group DMs keep the row: there
+the names are the ones the title leaves out.
+
 `badge` is the value #63 made cheap and authoritative: the unread count the
 server already computes for `notification.read`. Reuse `unreadCount(userId)`
 once per notification.
