@@ -16,12 +16,16 @@
 // happens here, at send time: devices change between commit and delivery, and
 // the badge count is computed once per notification instead of once per phone.
 import { and, desc, eq, inArray, isNull, lte } from 'drizzle-orm';
+import { USER_MENTION_RE, type NotificationKind } from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
+import { decryptBody } from '../crypto/index.js';
 import { newId } from '../lib/ids.js';
 import { pushSender, type ApnsHeaders, type ApnsPayload, type PushDevice } from '../push/index.js';
+import { buildPushPayload, pushHeadersFor, type PushContext } from '../push/payload.js';
+import { noteAlertPush } from './badgeSync.js';
 import { unreadCount } from './notifications.js';
 
-const { channels, deviceTokens, messages, notifications, pendingPush } = schema;
+const { channels, deviceTokens, messages, notifications, pendingPush, users } = schema;
 
 /** 1 initial + 3 retries, same as the Events API outbox. */
 const MAX_ATTEMPTS = 4;
@@ -34,8 +38,6 @@ const BATCH = 20;
  * well inside this; the lease only matters when a replica dies mid-batch, and
  * then its rows retry this soon with no attempts consumed. */
 const CLAIM_LEASE_MS = 120_000;
-/** APNs stops retrying after this. A two-hour-old alert is noise, not news. */
-const EXPIRATION_S = 3_600;
 
 // ---- enqueue (same-transaction) ---------------------------------
 
@@ -69,52 +71,68 @@ export async function enqueuePendingPush(tx: Tx, intents: PushIntent[]): Promise
   );
 }
 
-// ---- payload seam (#248 owns the contents) -----------------------
+// ---- hydration for the payload builder (#248) --------------------
 
-/** What the outbox knows about a notification when it comes time to send. */
-interface PushContext {
+/** The columns the drain reads per notification, before decryption. */
+type CtxRow = {
   notificationId: string;
   workspaceId: string;
   channelId: string;
   messageId: string;
   threadRootId: string | null;
   kind: number;
-}
+  reactionEmoji: string | null;
+  actorId: string | null;
+  authorId: string;
+  deletedAt: Date | null;
+  body: Buffer;
+  bodyNonce: Buffer;
+  encKeyId: string;
+  encScheme: number;
+};
 
 /**
- * The payload, minus its words.
+ * Rows → what the payload builder needs, with every display name the batch's
+ * titles and bodies want fetched in one query: the actors, plus whoever the
+ * bodies mention.
  *
- * #248 owns the alert strings and what the badge means; this builds the part
- * the outbox is actually the authority on — the routing keys (identical to the
- * `userInfo` the macOS banner already carries, so tap-routing reuses
- * `AppState.openNotification`) and the badge value it computed once for this
- * notification. Until #248 lands there is no `alert` dictionary, which makes
- * this a badge-and-routing push rather than a banner with an empty title.
+ * The Mac loads the whole (cached, small) user table to render mention tokens;
+ * a server that speaks for every workspace cannot, so the tokens are parsed
+ * out of the bodies first and only those ids are fetched. Unknown ids still
+ * render "@someone", exactly as they do there. A deleted message pushes no
+ * preview — `toMessageDTO` blanks it the same way.
  */
-export function buildPushPayload(ctx: PushContext, badge: number): ApnsPayload {
-  return {
-    aps: {
-      sound: 'default',
-      badge,
-      'thread-id': ctx.channelId, // groups a channel's pushes in Notification Center
-    },
-    workspaceId: ctx.workspaceId,
-    channelId: ctx.channelId,
-    messageId: ctx.messageId,
-    ...(ctx.threadRootId ? { threadRootId: ctx.threadRootId } : {}),
-    notificationId: ctx.notificationId, // lets the tap mark exactly this row read
-  };
-}
-
-/** Headers per PUSH_APNS.md § "The payload". Kind 3 (channel activity) collapses
- * on the channel, so a busy channel replaces rather than stacks. */
-export function pushHeadersFor(ctx: PushContext): ApnsHeaders {
-  return {
-    pushType: 'alert',
-    priority: 10,
-    expiration: Math.floor(Date.now() / 1000) + EXPIRATION_S,
-    ...(ctx.kind === 3 ? { collapseId: ctx.channelId } : {}),
-  };
+export async function hydratePushContexts(rows: CtxRow[]): Promise<Map<string, PushContext>> {
+  const bodies = new Map(rows.map((r) => [r.notificationId, r.deletedAt ? '' : decryptBody(r)]));
+  const ids = new Set<string>();
+  for (const r of rows) {
+    ids.add(r.actorId ?? r.authorId);
+    for (const m of (bodies.get(r.notificationId) ?? '').matchAll(USER_MENTION_RE)) ids.add(m[1]!);
+  }
+  const found = ids.size
+    ? await db
+        .select({ id: users.id, displayName: users.displayName })
+        .from(users)
+        .where(inArray(users.id, [...ids]))
+    : [];
+  const names = Object.fromEntries(found.map((u) => [u.id, u.displayName]));
+  return new Map(
+    rows.map((r) => [
+      r.notificationId,
+      {
+        notificationId: r.notificationId,
+        workspaceId: r.workspaceId,
+        channelId: r.channelId,
+        messageId: r.messageId,
+        threadRootId: r.threadRootId,
+        kind: r.kind as NotificationKind,
+        actorName: names[r.actorId ?? r.authorId] ?? null,
+        reactionEmoji: r.reactionEmoji,
+        body: bodies.get(r.notificationId) ?? '',
+        names,
+      },
+    ]),
+  );
 }
 
 // ---- delivery worker --------------------------------------------
@@ -165,6 +183,8 @@ export async function drainPendingPush(log: Logger): Promise<number> {
 
   // Notification context and devices are both read HERE, not at enqueue: this
   // is the send-time fan-out the one-row-per-notification shape exists for.
+  // The message body comes along encrypted and is decrypted below (#248), the
+  // same way every read path does it.
   const ctxRows = await db
     .select({
       notificationId: notifications.id,
@@ -173,12 +193,22 @@ export async function drainPendingPush(log: Logger): Promise<number> {
       messageId: notifications.messageId,
       threadRootId: messages.threadRootId,
       kind: notifications.kind,
+      reactionEmoji: notifications.reactionEmoji,
+      // Legacy rows carry no actor — the author was it (listNotifications does
+      // the same fallback).
+      actorId: notifications.actorId,
+      authorId: messages.userId,
+      deletedAt: messages.deletedAt,
+      body: messages.body,
+      bodyNonce: messages.bodyNonce,
+      encKeyId: messages.encKeyId,
+      encScheme: messages.encScheme,
     })
     .from(notifications)
     .innerJoin(messages, eq(messages.id, notifications.messageId))
     .innerJoin(channels, eq(channels.id, notifications.channelId))
     .where(inArray(notifications.id, [...new Set(claimed.map((r) => r.notificationId))]));
-  const ctxById = new Map(ctxRows.map((r) => [r.notificationId, r]));
+  const ctxById = await hydratePushContexts(ctxRows);
 
   const deviceRows = await db
     .select()
@@ -242,6 +272,11 @@ export async function drainPendingPush(log: Logger): Promise<number> {
     if (anyOk) {
       // At-least-once is per notification, not per device: one phone that took
       // it is enough, and retrying the row would re-deliver to that phone.
+      // A delivered alert already carries the current count, so a badge-sync
+      // queued for this user has nothing left to say (PUSH_APNS.md § "Silent
+      // pushes keep the badge honest"). Noted only on success: an alert that
+      // never landed has silenced nothing.
+      noteAlertPush(row.userId, badge);
       delivered += 1;
       await resolve(row.id, { failed: false });
       continue;
