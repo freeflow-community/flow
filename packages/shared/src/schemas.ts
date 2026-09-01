@@ -429,6 +429,7 @@ export const NotificationPrefsBody = z.object({
   reaction: z.boolean().optional(),
   channelInvite: z.boolean().optional(),
   persistentBanners: z.boolean().optional(),
+  sound: z.boolean().optional(),
 });
 
 /** #220: the only schemes a profile website may use.

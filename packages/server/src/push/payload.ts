@@ -46,7 +46,17 @@ export const PAYLOAD_MAX_BYTES = 4000;
  */
 export const SUBTITLE_MAX_CHARS = 60;
 
-/** APNs stops retrying after this. A two-hour-old alert is noise, not news. */
+/**
+ * APNs stops retrying after this. An hour-old alert is noise, not news.
+ *
+ * Re-checked for #251 and kept. The number bounds how stale a push can be when
+ * a phone comes back from a tunnel or a flat battery, and an hour is already
+ * past the point where a mention is worth interrupting someone for — while
+ * being long enough that a normal commute-length gap still delivers. It also
+ * has to cover the badge: an expired push is a badge update that never lands,
+ * and the next alert or read is then the only thing that corrects it.
+ * Shortening it would trade a rare stale banner for a more often wrong badge.
+ */
 export const EXPIRATION_S = 3_600;
 
 /** What the outbox knows about a notification when it comes time to send. */
@@ -198,12 +208,16 @@ export function alertStringsFor(
  * this notification (#63's `unreadCount`), so a phone that has been asleep
  * still lands on the right number rather than incrementing from a stale one.
  */
-export function buildPushPayload(ctx: PushContext, badge: number): ApnsPayload {
+export function buildPushPayload(ctx: PushContext, badge: number, sound = true): ApnsPayload {
   const alert = alertStringsFor(ctx);
   const payload: ApnsPayload = {
     aps: {
       alert,
-      sound: 'default',
+      // #251: the `sound` pref, off = a banner that doesn't make a noise. The
+      // key is omitted rather than sent empty — `sound: ''` is not a documented
+      // "silent" value, and APNs plays the default for anything it can't
+      // resolve.
+      ...(sound ? { sound: 'default' } : {}),
       badge,
       'thread-id': ctx.channelId, // groups a channel's pushes in Notification Center
     },
@@ -226,14 +240,43 @@ export function buildBadgeSyncPayload(badge: number): ApnsPayload {
   return { aps: { badge, 'content-available': 1 } };
 }
 
-/** Alert headers. Kind 3 (channel activity) collapses on the channel, so a busy
- * channel replaces rather than stacks. */
-export function pushHeadersFor(ctx: Pick<PushContext, 'kind' | 'channelId'>): ApnsHeaders {
+/**
+ * The badge-only push a *muted* notification sends instead of an alert (#251).
+ *
+ * A kind the user has turned off, or any kind while a DND status is on, must
+ * not ring — but the row is still unread, and a phone whose badge stops
+ * counting it is lying. `aps` with nothing but `badge` displays nothing: iOS
+ * applies the number and shows no banner, no sound, no Notification Center row.
+ *
+ * Deliberately an *alert* push rather than the `content-available` one
+ * `buildBadgeSyncPayload` builds. Background pushes are metered per app
+ * (§ "Silent pushes keep the badge honest"), and a muted mention is a *new*
+ * notification, not a correction to an old one — spending the background budget
+ * on the common case would starve the corrections that actually need it.
+ */
+export function buildMutedBadgePayload(badge: number): ApnsPayload {
+  return { aps: { badge } };
+}
+
+/** Alert headers.
+ *
+ * No `collapse-id` (#251). It was wired to kind 3 (channel activity), which
+ * `suppressAlertFor` never alerts on and the outbox therefore never sends — so
+ * the branch could not fire. Extending it to the kinds that *do* push was
+ * considered and rejected: collapsing replaces the previous notification, so a
+ * busy channel would show one mention and silently drop the four before it,
+ * and a tap could only route to the survivor. `thread-id` already gives a busy
+ * channel one stacked group in Notification Center, which is the grouping that
+ * was actually wanted. Kept in `ApnsHeaders` for the badge-sync path and any
+ * future genuinely-replaceable push.
+ *
+ * `priority` is 5 for a muted push: nothing is displayed, so there is no reason
+ * to wake a sleeping radio for it. */
+export function pushHeadersFor(ctx: Pick<PushContext, 'kind' | 'channelId'>, muted = false): ApnsHeaders {
   return {
     pushType: 'alert',
-    priority: 10,
+    priority: muted ? 5 : 10,
     expiration: Math.floor(Date.now() / 1000) + EXPIRATION_S,
-    ...(ctx.kind === 3 ? { collapseId: ctx.channelId } : {}),
   };
 }
 

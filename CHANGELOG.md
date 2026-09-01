@@ -67,12 +67,13 @@ This file keeps two things:
   widens the window and the centring scroll still leaves the row off screen.
   Shallower jumps, and jumps inside a thread, land on every client. macOS pages
   differently (no window) and is unaffected; web is unaffected.
-- Per-user notification alert prefs have a UI on web only — macOS and iOS
-  render every kind and honour the server's `suppressAlert`, but offer no way
-  to change the toggles behind it. Noted with the `channelInvite` pref (#303),
-  which inherits the same gap as `dm`/`mention`/`reaction` rather than adding a
-  new one. `PATCH /v1/me` is the whole API; each native client needs a settings
-  pane.
+- Per-user notification alert prefs have no UI on **macOS**: it renders every
+  kind and honours the server's `suppressAlert`, but offers no way to change
+  the toggles behind it — including the `sound` pref (#251), which web and iOS
+  both expose. iOS closed its half in #251 (`NotificationSettingsView`, reached
+  from the account sheet); macOS needs the same pane, and
+  `SyncEngine.setNotificationPrefs` is already shared with it, so this is a
+  view rather than new plumbing. `PATCH /v1/me` is the whole API.
 - Clearing a channel's Activity unreads on open without waiting for the server
   (#227) landed on macOS and iOS only. Web still leaves the badge up until the
   `notification.read` round trip returns; the fix is an optimistic cache write

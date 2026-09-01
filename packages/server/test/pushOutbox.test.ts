@@ -8,7 +8,7 @@
 // packages/infra, host port 5442). The drain is driven directly rather than by
 // waiting on the 1s interval: what matters is the claim-and-resolve semantics,
 // not the timer.
-import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 process.env.DATABASE_URL = process.env.FLOW_TEST_DATABASE_URL
@@ -34,6 +34,7 @@ const ch = await import('../src/services/channels.js');
 const msg = await import('../src/services/messages.js');
 const rx = await import('../src/services/reactions.js');
 const dev = await import('../src/services/devices.js');
+const us = await import('../src/services/users.js');
 const outbox = await import('../src/services/pushOutbox.js');
 const { _setPushSenderForTests } = await import('../src/push/index.js');
 const { ApnsHttp2PushSender } = await import('../src/push/apnsSender.js');
@@ -544,5 +545,75 @@ describe('the real APNs driver, end to end against a fake Apple', () => {
     expect(row.attempts).toBe(1);
     expect(row.failedAt).toBeNull();
     expect(row.nextAttemptAt.getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+// #251. Until this, the outbox pushed every notification row it was handed:
+// the per-user prefs and the DND status gated banners on web and macOS while
+// the phone in the same pocket rang anyway. The gate now runs at send time,
+// through the same `suppressAlertFor` the REST list and the WS fan-out use.
+describe('prefs and DND reach the phone', () => {
+  afterEach(async () => {
+    await us.patchMe(bobId, { notificationPrefs: { mention: true, reaction: true, sound: true } });
+    await us.patchMe(bobId, { statusSuppressAlerts: false });
+  });
+
+  /** The one push a drain produced. */
+  async function pushOnce(): Promise<{ payload: ApnsPayload; headers: ApnsHeaders }> {
+    const sender = useSender();
+    await outbox.drainPendingPush(log);
+    expect(sender.sent).toHaveLength(1);
+    return sender.sent[0]!;
+  }
+
+  it('a muted kind still carries the badge, but rings nothing', async () => {
+    await addDevice(bobId, 'c'.repeat(64));
+    await us.patchMe(bobId, { notificationPrefs: { reaction: false } });
+    const m = await msg.sendMessage(channelId, bobId, randomUUID(), 'mine');
+    await rx.addReaction(m.id, aliceId, '👍');
+
+    const { payload, headers } = await pushOnce();
+    expect(payload.aps.alert).toBeUndefined();
+    expect(payload.aps.sound).toBeUndefined();
+    expect(payload.aps.badge).toBe(1);
+    // Power-considerate: nothing is displayed, so nothing needs waking for.
+    expect(headers.priority).toBe(5);
+    // ...and the row is done, not retried — a mute is not a failure.
+    expect((await pushRows())[0]!.deliveredAt).not.toBeNull();
+  });
+
+  it('a DND status silences a kind whose own toggle is on', async () => {
+    await addDevice(bobId, 'c'.repeat(64));
+    await us.patchMe(bobId, { statusSuppressAlerts: true });
+    await mentionBob();
+    expect((await pushOnce()).payload.aps.alert).toBeUndefined();
+  });
+
+  it('an unmuted kind is unaffected', async () => {
+    await addDevice(bobId, 'c'.repeat(64));
+    await us.patchMe(bobId, { notificationPrefs: { reaction: false } }); // a DIFFERENT kind
+    await mentionBob();
+    const { payload, headers } = await pushOnce();
+    expect(payload.aps.alert?.title).toBe('Alice mentioned you');
+    expect(payload.aps.sound).toBe('default');
+    expect(headers.priority).toBe(10);
+  });
+
+  it('the sound pref silences the alert without hiding it', async () => {
+    await addDevice(bobId, 'c'.repeat(64));
+    await us.patchMe(bobId, { notificationPrefs: { sound: false } });
+    await mentionBob();
+    const { payload } = await pushOnce();
+    expect(payload.aps.alert?.title).toBe('Alice mentioned you');
+    expect(payload.aps.sound).toBeUndefined();
+  });
+
+  // The value that decides is the one held when the phone would ring, not the
+  // one held when the message was written.
+  it('reads the pref at send time, not at enqueue time', async () => {
+    await addDevice(bobId, 'c'.repeat(64));
+    await mentionBob();
+    await us.patchMe(bobId, { notificationPrefs: { mention: false } });
+    expect((await pushOnce()).payload.aps.alert).toBeUndefined();
   });
 });

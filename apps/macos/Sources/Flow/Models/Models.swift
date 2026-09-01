@@ -28,6 +28,12 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     /// (#434). Optional for the same reason as the two above; "" = unset, and
     /// an unset title draws no line at all.
     var title: String?
+    /// Per-user alert prefs (#251). Only `/v1/me` carries them — nil on every
+    /// other user's row, and on a cached row written before this column
+    /// existed, which reads as "all defaults" exactly like an absent key does
+    /// server-side. Stored as JSON in the `user` table (GRDB encodes a nested
+    /// Codable that way).
+    var notificationPrefs: NotificationPrefs?
     var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
     // App/integration bot. Like `isAgent` it means "not a person", which is
     // what the sole-human check behind Delete workspace turns on (#340).
@@ -43,6 +49,48 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
 
     /// A person, as opposed to an agent or an app bot (#340).
     var isHuman: Bool { isAgent != true && isBot != true }
+
+    /// The prefs as the settings screen wants to read them: absent = on.
+    var prefs: NotificationPrefs { notificationPrefs ?? NotificationPrefs() }
+}
+
+/// Per-user notification preferences (phase 10, extended by #251).
+///
+/// Every key is optional and **absent means on** — the same three-state shape
+/// the server stores, so a client that has never written a pref sends nothing
+/// and a server that gains a new key doesn't need this struct to know about it.
+/// `PATCH /v1/me` shallow-merges, so one flip sends one key.
+struct NotificationPrefs: Codable, Sendable, Equatable {
+    var dm: Bool?
+    var mention: Bool?
+    var groupMention: Bool?
+    var threadReply: Bool?
+    var reaction: Bool?
+    var channelInvite: Bool?
+    /// Web-only presentation pref, carried so a round trip through this client
+    /// can't drop it.
+    var persistentBanners: Bool?
+    /// #251: play a sound with an alert. Off still banners — it is presentation,
+    /// not routing.
+    var sound: Bool?
+
+    init(
+        dm: Bool? = nil, mention: Bool? = nil, groupMention: Bool? = nil,
+        threadReply: Bool? = nil, reaction: Bool? = nil, channelInvite: Bool? = nil,
+        persistentBanners: Bool? = nil, sound: Bool? = nil
+    ) {
+        self.dm = dm
+        self.mention = mention
+        self.groupMention = groupMention
+        self.threadReply = threadReply
+        self.reaction = reaction
+        self.channelInvite = channelInvite
+        self.persistentBanners = persistentBanners
+        self.sound = sound
+    }
+
+    /// Absent = on, which is what every toggle in the UI binds to.
+    func isOn(_ key: KeyPath<NotificationPrefs, Bool?>) -> Bool { self[keyPath: key] != false }
 }
 
 struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
@@ -1034,12 +1082,15 @@ struct PatchMeBody: Encodable, Sendable {
     /// #434: "" clears it. The server trims and caps at PROFILE_TITLE_MAX, and
     /// the editors cap as they type so Save can't be rejected for length.
     let title: String?
+    /// #251: shallow-merged server-side, so send only the key that changed.
+    let notificationPrefs: NotificationPrefs?
 
     init(
         displayName: String? = nil, timezone: String? = nil,
         statusEmoji: String? = nil, statusText: String? = nil,
         statusSuppressAlerts: Bool? = nil,
-        website: String? = nil, bio: String? = nil, title: String? = nil
+        website: String? = nil, bio: String? = nil, title: String? = nil,
+        notificationPrefs: NotificationPrefs? = nil
     ) {
         self.displayName = displayName
         self.timezone = timezone
@@ -1049,6 +1100,7 @@ struct PatchMeBody: Encodable, Sendable {
         self.website = website
         self.bio = bio
         self.title = title
+        self.notificationPrefs = notificationPrefs
     }
 }
 /// POST /v1/me/notifications/read — a cursor (`upToId`, opening the Activity

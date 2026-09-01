@@ -1521,6 +1521,19 @@ actor SyncEngine {
         await appState?.setPhase(.signedIn(me))
     }
 
+    /// Flip one notification pref (#251).
+    ///
+    /// One PATCH per toggle, carrying only the key that moved — the server
+    /// shallow-merges, so this can never clobber a pref another client set.
+    /// Returns nothing: the caller renders from `currentUser`, which this
+    /// replaces with the server's merged answer.
+    func setNotificationPrefs(_ prefs: NotificationPrefs) async throws {
+        let me: User = try await api.patch("/v1/me", body: PatchMeBody(notificationPrefs: prefs))
+        currentUser = me
+        try? await db.writer.write { db in try me.save(db) }
+        await appState?.setPhase(.signedIn(me))
+    }
+
     func uploadAvatar(fileURL: URL) async throws {
         let data = try Data(contentsOf: fileURL)
         let me: User = try await api.upload(

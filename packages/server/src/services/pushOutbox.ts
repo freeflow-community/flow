@@ -16,14 +16,20 @@
 // happens here, at send time: devices change between commit and delivery, and
 // the badge count is computed once per notification instead of once per phone.
 import { and, desc, eq, inArray, isNull, lte } from 'drizzle-orm';
-import { USER_MENTION_RE, type NotificationKind } from '@flow/shared';
+import { USER_MENTION_RE, type NotificationKind, type NotificationSubkind } from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
 import { decryptBody } from '../crypto/index.js';
 import { newId } from '../lib/ids.js';
 import { pushSender, type ApnsHeaders, type ApnsPayload, type PushDevice } from '../push/index.js';
-import { buildPushPayload, pushHeadersFor, type ChannelKind, type PushContext } from '../push/payload.js';
+import {
+  buildMutedBadgePayload,
+  buildPushPayload,
+  pushHeadersFor,
+  type ChannelKind,
+  type PushContext,
+} from '../push/payload.js';
 import { noteAlertPush } from './badgeSync.js';
-import { unreadCount } from './notifications.js';
+import { suppressAlertFor, unreadCount, type AlertContext } from './notifications.js';
 
 const { channelMembers, channels, deviceTokens, messages, notifications, pendingPush, users } = schema;
 
@@ -85,6 +91,8 @@ type CtxRow = {
   messageId: string;
   threadRootId: string | null;
   kind: number;
+  /** Which mention variant fired, for the alert gate. Null on legacy rows. */
+  subkind: string | null;
   reactionEmoji: string | null;
   actorId: string | null;
   authorId: string;
@@ -194,6 +202,27 @@ function counterparts(memberIds: string[], recipientId: string): string[] {
   return memberIds.filter((id) => id !== recipientId);
 }
 
+/**
+ * Whether this push must not ring (#251).
+ *
+ * Until now the outbox pushed every notification row it was handed, so the
+ * per-user prefs and the DND status gated banners on web and macOS while the
+ * phone in the same pocket rang anyway — the one client where "mute reactions"
+ * matters most was the one that ignored it. Same function the REST list and
+ * the WS fan-out use, so the three cannot drift.
+ *
+ * Read at SEND time, not enqueue time: prefs and status are exactly the kind of
+ * thing someone changes in the seconds before the push goes out, and the value
+ * that should decide is the one they hold when the phone would ring.
+ */
+export function mutedFor(row: { kind: number; subkind: string | null }, ctx: AlertContext): boolean {
+  return suppressAlertFor(
+    row.kind as NotificationKind,
+    (row.subkind as NotificationSubkind | null) ?? null,
+    ctx,
+  );
+}
+
 // ---- delivery worker --------------------------------------------
 
 interface Logger {
@@ -255,7 +284,12 @@ export async function drainPendingPush(log: Logger): Promise<number> {
       messageId: notifications.messageId,
       threadRootId: messages.threadRootId,
       kind: notifications.kind,
+      subkind: notifications.subkind,
       reactionEmoji: notifications.reactionEmoji,
+      // #251: the recipient's alert prefs ride the query that was already
+      // joining for the payload, so honouring them costs no extra round trip.
+      prefs: users.notificationPrefs,
+      statusSuppressAlerts: users.statusSuppressAlerts,
       // Legacy rows carry no actor — the author was it (listNotifications does
       // the same fallback).
       actorId: notifications.actorId,
@@ -269,8 +303,19 @@ export async function drainPendingPush(log: Logger): Promise<number> {
     .from(notifications)
     .innerJoin(messages, eq(messages.id, notifications.messageId))
     .innerJoin(channels, eq(channels.id, notifications.channelId))
+    .innerJoin(users, eq(users.id, notifications.userId))
     .where(inArray(notifications.id, [...new Set(claimed.map((r) => r.notificationId))]));
   const ctxById = await hydratePushContexts(ctxRows);
+  /** notificationId → does this one ring, and does it make a sound (#251). */
+  const gateById = new Map(
+    ctxRows.map((r) => [
+      r.notificationId,
+      {
+        muted: mutedFor(r, { prefs: r.prefs, statusSuppressAlerts: r.statusSuppressAlerts }),
+        sound: r.prefs.sound !== false,
+      },
+    ]),
+  );
 
   const deviceRows = await db
     .select()
@@ -305,8 +350,11 @@ export async function drainPendingPush(log: Logger): Promise<number> {
 
     // Once per notification — the whole point of not having a row per device.
     const badge = await unreadCount(row.userId);
-    const payload = buildPushPayload(ctx, badge);
-    const headers = pushHeadersFor(ctx);
+    // A muted kind (or a DND status) still owes the phone its badge — it just
+    // owes it silently. See `buildMutedBadgePayload`.
+    const gate = gateById.get(row.notificationId) ?? { muted: false, sound: true };
+    const payload = gate.muted ? buildMutedBadgePayload(badge) : buildPushPayload(ctx, badge, gate.sound);
+    const headers = pushHeadersFor(ctx, gate.muted);
 
     let anyOk = false;
     let anyRetryable = false;
