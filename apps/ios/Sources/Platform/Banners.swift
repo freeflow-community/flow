@@ -55,7 +55,14 @@ enum Banners {
     /// No local banners: an alert for this message is already on its way from
     /// the server (#248), and the foreground rule lives in the push delegate.
     /// Signature mirrors the macOS `Banners.show` the shared `SyncEngine` calls.
-    static func show(_ n: NotificationItem, title: String, body: String) {}
+    ///
+    /// `sound` is accepted and ignored on purpose (#464). macOS builds its own
+    /// banner, so it is the client that has to honour the pref; here the alert
+    /// is built server-side, and `pushOutbox` already omits the APNs `sound`
+    /// key when the pref is off. Taking the argument anyway keeps one shared
+    /// call site in `SyncEngine` — the drift that broke this build was the
+    /// signature diverging, not the behaviour.
+    static func show(_ n: NotificationItem, title: String, body: String, sound: Bool = true) {}
 
     /// App-icon badge with the unread notification count.
     @MainActor
