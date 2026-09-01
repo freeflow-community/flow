@@ -43,6 +43,34 @@ export const config = {
   get emailOutboxDir(): string {
     return process.env.FLOW_EMAIL_OUTBOX ?? path.join(pkgRoot, '.emails');
   },
+  // ---- push (APNs) ---------------------------------------------
+  /** 'dev' logs + writes each push to pushOutboxDir; 'apns' talks to Apple (#250). */
+  get pushDriver(): 'dev' | 'apns' {
+    return process.env.FLOW_PUSH_DRIVER === 'apns' ? 'apns' : 'dev';
+  },
+  /** base64 of the .p8 APNs Auth Key. */
+  get apnsKey(): string | undefined {
+    return process.env.FLOW_APNS_KEY;
+  },
+  /** 10-char key id that names the .p8 above. */
+  get apnsKeyId(): string | undefined {
+    return process.env.FLOW_APNS_KEY_ID;
+  },
+  get apnsTeamId(): string | undefined {
+    return process.env.FLOW_APNS_TEAM_ID;
+  },
+  /** APNs topic — the app's bundle id. A device's own bundleId wins over this. */
+  get apnsTopic(): string {
+    return process.env.FLOW_APNS_TOPIC ?? 'im.freeflow.app';
+  },
+  /** Fallback APNs environment; the per-device `environment` column wins over it. */
+  get apnsEnv(): 'sandbox' | 'production' {
+    return process.env.FLOW_APNS_ENV === 'production' ? 'production' : 'sandbox';
+  },
+  /** Dev driver drops each push here as a simctl-ready JSON file (gitignored). */
+  get pushOutboxDir(): string {
+    return process.env.FLOW_PUSH_OUTBOX ?? path.join(pkgRoot, '.push');
+  },
   /** Base URL the web client is served from — used in emailed links. */
   get webUrlBase(): string {
     return process.env.FLOW_WEB_URL ?? 'http://127.0.0.1:8787';
