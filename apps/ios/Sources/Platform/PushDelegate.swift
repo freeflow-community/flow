@@ -25,18 +25,45 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         return true
     }
 
-    /// Wired from `FlowApp`'s `onAppear`, once the state the callbacks need
-    /// exists.
+    /// Wired from `FlowApp` — on `onAppear`, once the state the callbacks need
+    /// exists, and again on every change of `AppState.phase`.
+    ///
+    /// Idempotent, and called more than once on purpose: a tapped push is only
+    /// routable once the app is *signed in*, not merely once a view exists.
+    /// Routing into `.loading` looked like it worked and wasn't (#458): the
+    /// bootstrap that follows publishes `.signedOut` for the moment before the
+    /// session resolves, and `AppState.setPhase` answers that with
+    /// `clearForSignOut()`, which wipes the selected channel and `lastChannelId`
+    /// both — so a cold-launch tap opened the right workspace at "Select a
+    /// channel". Waiting for `.signedIn` is what makes the cold-start tap land.
     func attach(_ state: AppState) {
         appState = state
         if let token = pendingToken {
             pendingToken = nil
             register(token: token, with: state)
         }
-        if let tap = pendingTap {
-            pendingTap = nil
-            route(tap, with: state)
-        }
+        deliverPendingTap()
+    }
+
+    /// Whether a tapped push can be routed in this app phase.
+    ///
+    /// Only `.signedIn`. `.loading` looks routable and isn't — the bootstrap
+    /// behind it publishes `.signedOut` on its way, and that wipes the window's
+    /// selection (#458). Static and pure so the rule is one testable thing.
+    nonisolated static func canRoute(phase: AppState.Phase) -> Bool {
+        if case .signedIn = phase { return true }
+        return false
+    }
+
+    /// Route a tap that has been waiting for the app to be ready, if it is now.
+    /// A tap held past a sign-out simply stays held: it addresses a channel of
+    /// the account the push was sent to, and signing back in is when it becomes
+    /// meaningful again.
+    private func deliverPendingTap() {
+        guard let state = appState, Self.canRoute(phase: state.phase), let tap = pendingTap
+        else { return }
+        pendingTap = nil
+        route(tap, with: state)
     }
 
     // MARK: - Registration
@@ -95,45 +122,74 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
 
     // MARK: - UNUserNotificationCenterDelegate
 
+    // Both callbacks below are written in their **completion-handler** form
+    // rather than the tidier `async` one, and that is the fix for #458.
+    //
+    // Swift bridges an `async` delegate method to the ObjC selector by calling
+    // the completion handler when the function returns — on whatever
+    // cooperative-pool thread it happened to finish on. UIKit does main-thread
+    // work inside both handlers (the tap handler snapshots the app for state
+    // restoration), so the tap path aborted every single time with
+    // `NSInternalInconsistencyException: Call must be made on main thread`,
+    // *after* the routing had already been applied. Hopping to the main actor
+    // inside the body, as the async version did, is not enough: the handler
+    // call itself is the part that has to be on the main thread.
+    //
+    // Spelling the handler out puts it inside the hop, and makes the other
+    // contract visible too — it must be called exactly once on every path,
+    // including the ones that decline to do anything.
+
     /// The foreground rule. "Don't banner what I'm already reading" is a client
     /// decision by design — the server stays dumb about what is on screen — and
     /// the decision itself lives in `PushPayload.shouldPresentBanner`, where it
     /// is testable without a device.
-    /// `nonisolated` (and the hop below) because `UNNotification` is not
-    /// Sendable: the delegate callbacks can't be witnessed by main-actor
-    /// methods, so the payload is read here and only the parsed value crosses.
+    /// `nonisolated` because `UNNotification` is not Sendable: the delegate
+    /// callbacks can't be witnessed by main-actor methods, so the payload is
+    /// read here and only the parsed value crosses.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification
-    ) async -> UNNotificationPresentationOptions {
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
         let info = notification.request.content.userInfo
         let badge = PushPayload.badge(from: info)
         let payload = PushPayload(userInfo: info)
-        return await MainActor.run { () -> UNNotificationPresentationOptions in
+        let reply = MainActorHandoff(completionHandler)
+        Task { @MainActor in
             if let badge { Banners.setBadge(badge) }
-            guard let payload else { return [] }
+            guard let payload else { return reply.value([]) }
             let present = PushPayload.shouldPresentBanner(
                 payload: payload,
                 appActive: self.appState?.isAppActive ?? false,
                 visibleChannelId: self.appState?.selectedChannelId,
                 openThreadRootId: self.appState?.openThreadRootId
             )
-            return present ? [.banner, .sound] : []
+            reply.value(present ? [.banner, .sound] : [])
         }
     }
 
     /// Tapped: select the workspace, open the channel, focus the message, and
     /// mark exactly this notification row read.
+    ///
+    /// A payload we can't route — a badge-sync push, or one missing or with an
+    /// empty routing key — is not an error here: the tap has already brought
+    /// the app to the front, which is the sane thing to do with it. It lands
+    /// wherever it was, and nothing navigates (#458 AC3).
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        guard let payload = PushPayload(userInfo: response.notification.request.content.userInfo)
-        else { return }
-        await MainActor.run {
-            guard let appState = self.appState else {
-                // Cold launch from a banner: the tap beat the UI. Replayed by
-                // `attach`.
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let payload = PushPayload(userInfo: response.notification.request.content.userInfo)
+        let reply = MainActorHandoff(completionHandler)
+        Task { @MainActor in
+            defer { reply.value() }
+            guard let payload else { return }
+            guard let appState = self.appState, Self.canRoute(phase: appState.phase) else {
+                // The tap beat the app: a cold launch from a banner delivers it
+                // before any view exists, and even once one does the session may
+                // still be resolving. Replayed by `attach` as soon as both are
+                // true.
                 self.pendingTap = payload
                 return
             }
@@ -159,4 +215,18 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         guard let notificationId = payload.notificationId else { return }
         Task { await state.engine.markNotificationRead(id: notificationId) }
     }
+}
+
+/// Carries a UIKit completion handler from a `nonisolated` delegate callback to
+/// the main actor.
+///
+/// The handlers `UNUserNotificationCenterDelegate` hands out are not `Sendable`
+/// — the SDK predates the annotation — so Swift 6 refuses to let one cross into
+/// a `Task`. Unchecked is honest rather than lazy here: the only thing that ever
+/// touches the wrapped closure is the main actor, exactly once, which is the
+/// property `Sendable` would be asserting anyway (and is what #458 was about —
+/// the handler *must* run on the main thread).
+private struct MainActorHandoff<Value>: @unchecked Sendable {
+    let value: Value
+    init(_ value: Value) { self.value = value }
 }
