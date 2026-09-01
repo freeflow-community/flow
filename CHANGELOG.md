@@ -67,13 +67,6 @@ This file keeps two things:
   widens the window and the centring scroll still leaves the row off screen.
   Shallower jumps, and jumps inside a thread, land on every client. macOS pages
   differently (no window) and is unaffected; web is unaffected.
-- Per-user notification alert prefs have no UI on **macOS**: it renders every
-  kind and honours the server's `suppressAlert`, but offers no way to change
-  the toggles behind it — including the `sound` pref (#251), which web and iOS
-  both expose. iOS closed its half in #251 (`NotificationSettingsView`, reached
-  from the account sheet); macOS needs the same pane, and
-  `SyncEngine.setNotificationPrefs` is already shared with it, so this is a
-  view rather than new plumbing. `PATCH /v1/me` is the whole API.
 - Clearing a channel's Activity unreads on open without waiting for the server
   (#227) landed on macOS and iOS only. Web still leaves the badge up until the
   `notification.read` round trip returns; the fix is an optimistic cache write
@@ -135,18 +128,6 @@ This file keeps two things:
   jump target, which `ThreadScreen` still ignores. Phase 12.
 - Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
   per-workspace switch/allowlist) is missing on *every* client — API-only.
-- macOS: phase 10 notification settings — no Notifications section in the
-  profile/settings UI (including the new per-user **Reactions** toggle), and the
-  status picker doesn't set `status_suppress_alerts` (web shipped 2026-07-21).
-  The shared `setStatus(emoji:text:suppressAlerts:)` now carries the flag and
-  iOS sends it; macOS just needs to pass it at the call site. The banner path
-  itself now honours the server's `suppressAlert` (2026-07-25, #63), so prefs
-  set on web do take effect on macOS — only the settings surface is missing.
-- iOS: no Notifications section in the account/profile UI (web shipped the
-  per-user pref toggles in phase 10, plus the Reactions toggle 2026-07-25).
-  Since #250 the phone does consume them (`suppressAlert` gates push exactly as
-  it gates a banner), so prefs set on web silence the phone — iOS still just has
-  no surface to change them.
 - iOS artifacts, what's still missing after #157 (2026-07-30). Viewing is done —
   header Docs button, count badge, dropdown, full-screen viewer, co-browsing
   mini-browser, and auto-open of agent-created ones. What's left:
@@ -294,6 +275,13 @@ This file keeps two things:
   carrying the root the moment `ThreadScreen` honours a jump target.
 
 ### Deliberate divergences (ruled)
+- **"Keep banners on screen"** (`persistentBanners`) is a web-only toggle, and
+  stays that way after macOS gained its prefs pane (#464) and iOS gained its
+  screen (#251). The browser Notification API takes `requireInteraction`; on
+  macOS and iOS, banner-vs-alert is the user's own OS setting and no app can
+  override it, so a toggle there would be a lie. The key still round-trips
+  untouched through both native clients, so a web user's choice survives a flip
+  made on a phone. Not a gap to close.
 - The **frame-one channel switch** fix (#447) is macOS-only, and the other two
   clients need nothing: web mounts `<ChannelView key={channelId}>` per channel
   over React Query's synchronous cache, and iOS pushes `ChannelScreen`
