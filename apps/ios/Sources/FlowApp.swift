@@ -27,6 +27,10 @@ struct FlowApp: App {
                 // token or a tap that arrived before the UI was ready (a cold
                 // launch from a banner is exactly that).
                 .onAppear { pushDelegate.attach(app) }
+                // And again on every phase change: a tapped push can only be
+                // routed once we are signed in, which on a cold launch happens
+                // several beats after the first view appears (#458).
+                .onChange(of: app.phase) { _, _ in pushDelegate.attach(app) }
                 // Web-to-app handoff: flow://signin?code=… (and flow://invite/…)
                 .onOpenURL { app.handleDeepLink($0) }
         }

@@ -275,6 +275,11 @@ This file keeps two things:
   real APNs driver) are client-agnostic, so macOS closes this with signing +
   provisioning it doesn't have today (`PUSH_APNS.md` open question 4) and web
   would need a Web Push seam that does not exist yet.
+  Two rules learned the hard way on iOS (#458) travel with this gap when macOS
+  closes it: a `UNUserNotificationCenterDelegate` completion handler must be
+  called *on the main thread* (the `async` bridge does not), and a tapped push
+  may only be routed once the app is signed in — bootstrap passes through
+  `.signedOut`, which clears the window's selection.
 - **A tapped push routes to the channel, not into the thread** (#249) — the same
   hole as the Activity-row gap above, reached from a second entry point.
   `PushDelegate.route` passes `threadRootId: nil` deliberately; it starts

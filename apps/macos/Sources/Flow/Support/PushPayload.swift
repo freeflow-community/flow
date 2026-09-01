@@ -31,16 +31,24 @@ struct PushPayload: Equatable, Sendable {
     /// Returns nil for anything that isn't a routable alert push — a badge-sync
     /// push, or a malformed payload — so callers can't accidentally navigate on
     /// half a payload.
+    ///
+    /// "Malformed" includes a key that is present but *empty*: an id that is
+    /// the empty string routes to a workspace and a channel that cannot exist,
+    /// which on the phone is a blank screen with no way back. Refusing to parse
+    /// it is what makes the tap land at home instead (#458).
     init?(userInfo: [AnyHashable: Any]) {
-        guard let workspaceId = userInfo["workspaceId"] as? String,
-              let channelId = userInfo["channelId"] as? String,
-              let messageId = userInfo["messageId"] as? String
+        guard let workspaceId = userInfo["workspaceId"] as? String, !workspaceId.isEmpty,
+              let channelId = userInfo["channelId"] as? String, !channelId.isEmpty,
+              let messageId = userInfo["messageId"] as? String, !messageId.isEmpty
         else { return nil }
         self.workspaceId = workspaceId
         self.channelId = channelId
         self.messageId = messageId
-        threadRootId = userInfo["threadRootId"] as? String
-        notificationId = userInfo["notificationId"] as? String
+        // Optional keys get the same treatment: an empty `threadRootId` would
+        // read as "open a thread" and an empty `notificationId` would send a
+        // mark-read for no row, so both collapse to nil.
+        threadRootId = (userInfo["threadRootId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        notificationId = (userInfo["notificationId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The server-authoritative unread total an alert or badge-sync push
