@@ -45,8 +45,15 @@ Key decisions and operator rulings go in `decision_log.md`.
 ```sh
 pnpm build
 pnpm test                       # server suite (vitest)
-cd apps/macos && swift test     # live-server smoke test against 127.0.0.1:8787
+scripts/check-clients.sh        # macOS + iOS compile — catches shared-source drift
+cd apps/macos && swift test     # live-server smoke test (see FLOW_TEST_SERVER_URL below)
 ```
+
+`pnpm qa:up` gives you a throwaway server with seeded fixtures on a free port
+and a pre-authed way into any client; `pnpm qa:down` removes it again.
+`scripts/new-changelog.sh <issue> "<title>"` scaffolds the entry above.
+All of them, plus `scripts/push-sim.sh` for notification testing, are
+documented in [`docs/dev/TOOLS.md`](docs/dev/TOOLS.md).
 
 Include screenshots for anything that changes the UI, describe how you tested
 it, and rebase on `main` first — the codebase moves quickly.
