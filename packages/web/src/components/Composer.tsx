@@ -420,42 +420,6 @@ export default function Composer({
         </p>
       )}
 
-      {(attachments.length > 0 || uploading > 0) && (
-        <div className="mb-1 flex flex-wrap items-end gap-1.5">
-          {attachments.map((f) =>
-            f.hasThumb ? (
-              // Image previews in the prompt area (phase 5 item 4): real thumbnail + ✕ overlay.
-              <span key={f.id} data-testid={`pending-file-${f.name}`} className="relative" title={f.name}>
-                <AuthImg
-                  path={`/v1/files/${f.id}/thumb`}
-                  alt={f.name}
-                  className="h-14 w-14 rounded-lg border border-hairline object-cover"
-                />
-                <button
-                  className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-hairline bg-white text-[9px] text-faint shadow-sm hover:text-ink"
-                  title="Remove"
-                  onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}
-                >
-                  ✕
-                </button>
-              </span>
-            ) : (
-              <span
-                key={f.id}
-                data-testid={`pending-file-${f.name}`}
-                className="flex items-center gap-1 rounded-full bg-daypill px-2 py-0.5 text-xs"
-              >
-                📄 {f.name}
-                <button className="text-faint hover:text-ink" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
-                  ✕
-                </button>
-              </span>
-            ),
-          )}
-          {uploading > 0 && <span className="text-xs text-muted">Uploading…</span>}
-        </div>
-      )}
-
       {editingId && (
         <div
           data-testid={`${testPrefix}-editing-banner`}
@@ -554,6 +518,43 @@ export default function Composer({
             {editingId ? '✓' : '➤'}
           </button>
         </div>
+
+        {(attachments.length > 0 || uploading > 0) && (
+          <div className="mt-2 flex flex-wrap items-end gap-1.5">
+            {attachments.map((f) =>
+              f.hasThumb ? (
+                // Image previews sit inside the composer card, below the input
+                // row (issue #471): real thumbnail + ✕ overlay.
+                <span key={f.id} data-testid={`pending-file-${f.name}`} className="relative" title={f.name}>
+                  <AuthImg
+                    path={`/v1/files/${f.id}/thumb`}
+                    alt={f.name}
+                    className="h-14 w-14 rounded-lg border border-hairline object-cover"
+                  />
+                  <button
+                    className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-hairline bg-white text-[9px] text-faint shadow-sm hover:text-ink"
+                    title="Remove"
+                    onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ) : (
+                <span
+                  key={f.id}
+                  data-testid={`pending-file-${f.name}`}
+                  className="flex items-center gap-1 rounded-full bg-daypill px-2 py-0.5 text-xs"
+                >
+                  📄 {f.name}
+                  <button className="text-faint hover:text-ink" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
+                    ✕
+                  </button>
+                </span>
+              ),
+            )}
+            {uploading > 0 && <span className="text-xs text-muted">Uploading…</span>}
+          </div>
+        )}
       </div>
 
       {scheduling && sel.workspaceId && (

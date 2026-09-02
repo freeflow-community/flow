@@ -32,10 +32,6 @@ struct ComposerView: View {
                 mentionInviteBanner
             }
 
-            if !attachments.isEmpty || uploading > 0 {
-                attachmentBar
-            }
-
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: pickFiles) {
                     Image(systemName: "paperclip")
@@ -112,6 +108,12 @@ struct ComposerView: View {
                 .disabled(!canSend)
                 .help("Send message")
                 .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
+            }
+
+            // Pending attachments sit below the input row, inside the composer
+            // card (issue #471) — the composer reads top-to-bottom.
+            if !attachments.isEmpty || uploading > 0 {
+                attachmentBar
             }
         }
         .padding(12)
