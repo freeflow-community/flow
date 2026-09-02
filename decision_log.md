@@ -1,5 +1,47 @@
 # Decision log
 
+## 2026-09-02 — #469 was the hardened runtime, not the signing identity
+
+The issue's stated hypothesis was that `tccd` auto-denies because the release
+is signed with the self-signed "MyChat Dev Signing" identity, whose certificate
+only exists on the build machine. That is wrong on both halves, and the record
+matters because the wrong fix (buy a Developer ID, re-sign) would have changed
+nothing.
+
+The shipped artifact — `Flow-2.2.83-524.zip`, pulled from the live appcast —
+is signed `Developer ID Application: BizTrip AI Inc. (76NSMTH84G)`, timestamped,
+notarized and stapled; `spctl` accepts it as `source=Notarized Developer ID`.
+It validates on any machine, from the stapled ticket, with no keychain trust
+involved. "MyChat Dev Signing" belongs to `make-app.sh`'s local path only, and
+that certificate is no longer in this machine's keychain either, so local
+builds have quietly been ad-hoc for some time.
+
+What actually breaks it: `dist.sh` signs with `--options runtime` against an
+**empty** `Flow.entitlements`. The hardened runtime gates the microphone and
+camera behind `com.apple.security.device.audio-input` and
+`com.apple.security.device.camera`, and refuses them before TCC is consulted —
+which is why there is no prompt, no Privacy & Security row, and an instant
+`false`. Measured with a probe signed by the same certificate under the same
+runtime, varying only the entitlements file:
+
+    empty file       .notDetermined -> requestAccess false in 0.004s -> .denied
+    with audio-input .notDetermined -> system prompt shown           -> .authorized
+
+Camera behaves identically. **The general lesson is the one worth keeping: a
+capability that only the release path can exercise cannot be validated by
+building locally.** `make-app.sh` applies no hardened runtime, so every
+developer build worked and every shipped build could not, and no amount of
+task-channel QA on this machine would ever have caught it. That is why the
+check now lives in `dist.sh`, asserting on the signed bundle, where failing
+costs a release instead of a bug report from someone else's Mac.
+
+Corollary ruling: **the "Access Needed" alert may only be raised by a settled
+`.denied`/`.restricted`.** `LiveKitSDK.ensureDeviceAccess` returns one `Bool`
+for "the user declined" and "the OS declined to ask", and sending someone to a
+Privacy pane that does not list Flow is worse than saying nothing. Flow reads
+the status itself now (`Support/DeviceAccess.swift`).
+
+
 ## 2026-09-02 — Huddle video (#435) and DM huddles that ring (#436)
 
 Design calls made while building batch 4, kept here because each closed a

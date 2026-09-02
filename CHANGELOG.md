@@ -293,6 +293,14 @@ This file keeps two things:
   carrying the root the moment `ThreadScreen` honours a jump target.
 
 ### Deliberate divergences (ruled)
+- The **hardened-runtime device entitlements** (#469) are a macOS packaging
+  concern with no counterpart elsewhere: only the macOS release signs with
+  `--options runtime`, so only it can be refused the mic and camera before TCC
+  is consulted. iOS grants capture through its usage strings and the App Store
+  signature; web goes through the browser's own permission model. The *client*
+  half of the same fix — `DeviceAccess.request(_:)`, which stops a refusal the
+  user never saw being reported as one they chose — is in shared code and so
+  lands on macOS and iOS together. Not a gap to close.
 - **"Keep banners on screen"** (`persistentBanners`) is a web-only toggle, and
   stays that way after macOS gained its prefs pane (#464) and iOS gained its
   screen (#251). The browser Notification API takes `requireInteraction`; on

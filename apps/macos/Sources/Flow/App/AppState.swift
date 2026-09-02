@@ -101,11 +101,13 @@ final class AppState: ObservableObject {
     @Published private(set) var huddleConnecting: Bool = false
     /// Muted on join, by decision — the mic is never auto-published.
     @Published private(set) var huddleMuted: Bool = true
-    /// Set when an unmute attempt finds the OS mic permission isn't granted
-    /// (never asked, or previously denied — `ensureDeviceAccess` doesn't say
-    /// which). Drives a dedicated alert with an "Open Settings" action;
-    /// separate from `errorMessage` because that one's alert is a plain "OK"
-    /// everywhere else it's used.
+    /// Set when an unmute attempt finds the OS mic permission *settled* as
+    /// denied — either a standing `.denied`/`.restricted` or a Don't Allow at
+    /// the prompt. Not for "never asked": `DeviceAccess` asks first, and a
+    /// refusal the OS never put to the user goes to `errorMessage` instead,
+    /// because there is no Privacy row to send anyone to (#469). Drives a
+    /// dedicated alert with an "Open Settings" action; separate from
+    /// `errorMessage` because that one's alert is a plain "OK" everywhere else.
     @Published var micPermissionBlocked = false
     /// Same story for the camera (#435) and, on macOS, for Screen Recording:
     /// each is a separate OS grant with its own Settings pane, and each has to
@@ -848,9 +850,16 @@ final class AppState: ObservableObject {
     private func setHuddleCamera(_ on: Bool) {
         guard let room = huddleRoom, huddleCameraOn != on else { return }
         Task {
-            if on, !(await LiveKitSDK.ensureDeviceAccess(for: [.video])) {
-                cameraPermissionBlocked = true
-                return
+            if on {
+                switch await DeviceAccess.request(.video) {
+                case .granted: break
+                case .refused:
+                    cameraPermissionBlocked = true
+                    return
+                case .unavailable:
+                    errorMessage = Self.deviceUnavailableMessage("camera")
+                    return
+                }
             }
             do {
                 try await room.localParticipant.setCamera(enabled: on)
@@ -999,16 +1008,22 @@ final class AppState: ObservableObject {
         let next = !huddleMuted
         Task {
             // Unmuting is the only transition that opens the mic. LiveKit's
-            // SDK never requests OS permission itself (it only exposes this
-            // helper — grepped the vendored source to confirm) — until an app
-            // calls it, macOS/iOS never show the consent prompt AND never
-            // list Flow in the Microphone privacy settings at all, so the
-            // capture just fails with a generic "permission not granted"
-            // every time. Ask first so that either registers Flow properly
-            // (first run) or comes back false immediately, no dead SDK error.
-            if !next, !(await LiveKitSDK.ensureDeviceAccess(for: [.audio])) {
-                micPermissionBlocked = true
-                return
+            // SDK never requests OS permission itself, so until an app asks,
+            // macOS/iOS never show the consent prompt and never list Flow in
+            // the Microphone privacy settings at all — the capture just fails
+            // with a generic "permission not granted" every time. Ask first,
+            // via DeviceAccess rather than the SDK's helper, so a refusal that
+            // the user never saw doesn't get reported as one they chose (#469).
+            if !next {
+                switch await DeviceAccess.request(.audio) {
+                case .granted: break
+                case .refused:
+                    micPermissionBlocked = true
+                    return
+                case .unavailable:
+                    errorMessage = Self.deviceUnavailableMessage("microphone")
+                    return
+                }
             }
             do {
                 try await room.localParticipant.setMicrophone(enabled: !next)
@@ -1020,6 +1035,17 @@ final class AppState: ObservableObject {
                 errorMessage = "Couldn't turn on the microphone: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Shown when the OS refuses a device without ever asking the user — no
+    /// prompt, no Privacy row, so the "Open Settings" alert would be a dead
+    /// end. #469 was one cause (a missing hardened-runtime entitlement); this
+    /// keeps any future one legible instead of blaming the user for a choice
+    /// they were never offered.
+    static func deviceUnavailableMessage(_ device: String) -> String {
+        "The system blocked Flow's \(device) request without asking you, so "
+            + "there's nothing to enable in Privacy & Security. Update Flow to "
+            + "the latest version, and report this if it keeps happening."
     }
 
     /// "Open Settings" action for the mic-permission alert. Deep-links to the
