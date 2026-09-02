@@ -6,6 +6,10 @@
 // in makes it appear with no client change — that is the whole content model,
 // and it is easy to break by hardcoding a list later.
 //
+// "What's New" (#474) is the one topic with no file: it is generated from the
+// `## Feature` sections of changelog/ by the same script that writes the
+// FEATURES.md behind the build version menu, so the two cannot drift.
+//
 // No database — the routes only read files, like the public-config tests.
 import { describe, expect, it, beforeEach, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
@@ -48,9 +52,12 @@ describe('GET /v1/help/topics', () => {
       'channels-and-invites',
       'agents',
       'mini-apps',
+      'huddles',
+      'whats-new',
     ]);
     expect(topics[0]!.title).toBe('Home');
     expect(topics.map((t) => t.title)).toContain('Channels & Invites');
+    expect(topics.at(-1)!.title).toBe("What's New");
   });
 });
 
@@ -72,6 +79,20 @@ describe('GET /v1/help/pages/:slug', () => {
       expect(res.statusCode, slug).toBe(200);
       expect((res.json() as { markdown: string }).markdown.trim().length, slug).toBeGreaterThan(0);
     }
+  });
+
+  it('serves What\'s New from the same source as the build version menu', async () => {
+    const res = await get('/v1/help/pages/whats-new');
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { slug: string; title: string; markdown: string };
+    expect(body.title).toBe("What's New");
+
+    // Same bytes the version menu renders: FEATURES.md, as the generator
+    // produces it. Comparing against the generator rather than a checked-in
+    // fixture is what makes "no duplicated content to maintain" testable.
+    const { buildFeatures } = await import('../../../scripts/build-features.mjs');
+    expect(body.markdown).toBe(buildFeatures().markdown.trim() + '\n');
+    expect(body.markdown).toContain("# What's new in Flow");
   });
 
   it('404s an unknown slug, and never escapes the help directory', async () => {
@@ -98,8 +119,15 @@ describe('a new markdown file (content-driven topic list)', () => {
     const { listTopics, getPage } = await import('../src/services/help.js');
     delete process.env.FLOW_HELP_DIR;
 
-    expect(listTopics().map((t: { slug: string }) => t.slug)).toEqual(['home', 'later', 'bare-page']);
+    // whats-new is generated, not a file, so it rides along on any help dir;
+    // bare-page has no `order:` and so falls back to 100, behind it.
+    expect(listTopics().map((t: { slug: string }) => t.slug)).toEqual([
+      'home',
+      'later',
+      'whats-new',
+      'bare-page',
+    ]);
     expect(listTopics().find((t: { slug: string }) => t.slug === 'bare-page')!.title).toBe('bare page');
-    expect(getPage('later').markdown).toContain('# Later');
+    expect((await getPage('later')).markdown).toContain('# Later');
   });
 });

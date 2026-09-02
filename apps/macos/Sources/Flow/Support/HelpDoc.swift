@@ -18,6 +18,44 @@ enum HelpDoc {
         topics.contains { $0.slug == home } ? home : topics.first?.slug
     }
 
+    /// Fold a soft-wrapped source line back onto the line it continues.
+    ///
+    /// Help markdown wraps at ~80 columns in the file, and a wrapped *bullet*
+    /// continues on an indented line. `MarkdownBlocks` ends the list run at
+    /// that line, so the tail of the bullet rendered as a stray un-indented
+    /// paragraph beneath it. The other two renderers of this same text already
+    /// fold it — the version menu in `FeatureNotes.parse`, the web viewer in
+    /// `unwrap` — and the What's New page (#474) is generated from FEATURES.md,
+    /// whose bullets are always wrapped, so no amount of authoring avoids it.
+    ///
+    /// Fenced code is left byte-for-byte alone, and an indented line that opens
+    /// a list marker of its own is a nested item rather than a continuation.
+    static func unwrap(_ markdown: String) -> String {
+        MarkdownBlocks.mapNonCode(markdown) { run in
+            var out: [String] = []
+            for line in run.components(separatedBy: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                let indented = line.hasPrefix(" ") || line.hasPrefix("\t")
+                if indented, !trimmed.isEmpty, !opensListItem(trimmed), let last = out.last,
+                   !last.trimmingCharacters(in: .whitespaces).isEmpty {
+                    out[out.count - 1] = last + " " + trimmed
+                } else {
+                    out.append(line)
+                }
+            }
+            return out.joined(separator: "\n")
+        }
+    }
+
+    /// Does this line start a list item — `- `, `* `, `+ `, or `1. ` / `1) `?
+    private static func opensListItem(_ trimmed: String) -> Bool {
+        for marker in ["- ", "* ", "+ "] where trimmed.hasPrefix(marker) { return true }
+        let digits = trimmed.prefix { $0.isNumber }
+        guard !digits.isEmpty else { return false }
+        let rest = trimmed.dropFirst(digits.count)
+        return rest.hasPrefix(". ") || rest.hasPrefix(") ")
+    }
+
     /// A page's markdown as blocks. The message grammar, with one difference:
     /// doc prose is soft-wrapped at ~80 columns in the source file, and a
     /// message body renders those line breaks literally — which would leave
@@ -30,7 +68,7 @@ enum HelpDoc {
     /// lines and all, because a message renders those as the gap you see.
     /// Reflowed, they would run two paragraphs into one sentence stream.
     static func blocks(_ markdown: String) -> [MarkdownBlocks.Segment] {
-        MarkdownBlocks.segments(markdown).flatMap { segment -> [MarkdownBlocks.Segment] in
+        MarkdownBlocks.segments(unwrap(markdown)).flatMap { segment -> [MarkdownBlocks.Segment] in
             guard case let .paragraph(text) = segment else { return [segment] }
             return paragraphs(text).map { .paragraph($0) }
         }

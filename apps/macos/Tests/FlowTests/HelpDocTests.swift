@@ -29,6 +29,55 @@ final class HelpDocTests: XCTestCase {
         XCTAssertNil(HelpDoc.openingSlug([]))
     }
 
+    // MARK: - unwrapping soft-wrapped bullets
+
+    /// The defect this fixes: a bullet wrapped at 80 columns in the source
+    /// rendered as a bullet plus a stray paragraph carrying its second half.
+    /// The What's New page (#474) is generated from FEATURES.md, whose bullets
+    /// are always wrapped, so this is the difference between it reading and not.
+    func testWrappedBulletStaysOneListItem() {
+        let md = """
+        - **Huddles now do video.** Turn on your camera or share your screen in
+          any huddle.
+        - **Fixed:** turning your mic on now asks for permission.
+        """
+        XCTAssertEqual(
+            HelpDoc.blocks(md),
+            [.ulist(items: [
+                "**Huddles now do video.** Turn on your camera or share your screen in any huddle.",
+                "**Fixed:** turning your mic on now asks for permission.",
+            ])]
+        )
+    }
+
+    /// An indented line that opens a marker of its own is a nested item, not
+    /// the tail of the one above it.
+    func testNestedListItemIsNotFoldedIntoItsParent() {
+        let md = """
+        - Parent item
+          - Nested item
+        """
+        guard case let .ulist(items)? = HelpDoc.blocks(md).first else {
+            return XCTFail("expected a list")
+        }
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items.first, "Parent item")
+    }
+
+    /// Indentation is meaningful inside a fenced block, so folding must not
+    /// reach into one — a help page that documents an API request would come
+    /// out mangled.
+    func testFencedCodeKeepsItsIndentation() {
+        let md = """
+        ```
+        {
+          "slug": "huddles"
+        }
+        ```
+        """
+        XCTAssertEqual(HelpDoc.blocks(md), [.code("{\n  \"slug\": \"huddles\"\n}")])
+    }
+
     // MARK: - blocks
 
     /// The whole point of the reflow: a paragraph wrapped at ~80 columns in the
