@@ -16,7 +16,11 @@
 //     SyncEngine's `.notification` case, so a mention that reads one way on
 //     the Mac does not read another way on the phone. `alertStringsFor` below
 //     is a straight port of that switch; `plainText` is a port of
-//     MentionRendering.plainText. When one moves, move the other.
+//     MentionRendering.plainText. When one moves, move the other — #466/#472
+//     moved both, since the mistitled `default:` was in each of them.
+//     The one place they differ is kind 3's channel name: this builder has the
+//     conversation hydrated, the local banner does not and says the generic
+//     string instead.
 import { GROUP_MENTION_RE, USER_MENTION_RE, type NotificationKind } from '@flow/shared';
 import { config } from '../config.js';
 import type { ApnsHeaders, ApnsPayload } from './index.js';
@@ -116,8 +120,27 @@ export type ChannelKind = 'standard' | 'dm' | 'group_dm';
  */
 export function subtitleFor(
   ctx: Pick<PushContext, 'conversationName' | 'channelKind' | 'soloDmWithActor'>,
+  titleNamesConversation = false,
 ): string | undefined {
   if (ctx.channelKind === 'dm' && ctx.soloDmWithActor) return undefined;
+  // The second way a row can say nothing new (#472): a kind-3 title *is* the
+  // conversation name ("New activity in #general"), so repeating it underneath
+  // spends the line twice. Same drop-the-echo rule as `soloDmWithActor` above,
+  // decided by the caller that built the title rather than by comparing
+  // strings after the fact.
+  if (titleNamesConversation) return undefined;
+  return conversationLabel(ctx);
+}
+
+/**
+ * How a conversation names itself in an alert: `#name` for a channel and a
+ * bare name for a DM, capped. Undefined when the hydration could not name it.
+ *
+ * Shared by the subtitle and by the kind-3 title, so the `#` rule is decided
+ * once — a title that hard-coded it would put a `#` in front of a person's
+ * name the day a DM's channel is followed.
+ */
+function conversationLabel(ctx: Pick<PushContext, 'conversationName' | 'channelKind'>): string | undefined {
   const name = oneLine(ctx.conversationName ?? '');
   if (!name) return undefined;
   return truncate(ctx.channelKind === 'standard' ? `#${name}` : name, SUBTITLE_MAX_CHARS);
@@ -176,21 +199,43 @@ export function alertStringsFor(
   bodyPreview = config.pushBodyPreview,
 ): { title: string; subtitle?: string; body?: string } {
   const who = ctx.actorName ?? 'Someone';
+  const label = conversationLabel(ctx);
+  // Kind 3 is the one title that names the conversation itself; the subtitle
+  // then drops its row rather than saying it again (#472).
+  const titleNamesConversation = ctx.kind === 3 && label !== undefined;
   const title = (() => {
     switch (ctx.kind) {
+      case 0:
+        return `${who} mentioned you`;
       case 1:
         return ctx.actorName ?? 'New direct message';
       case 2:
         return `${who} replied in a thread`;
+      case 3:
+        // Channel activity from a followed channel (notify_level=all) — nobody
+        // mentioned anybody, and a banner that says they did trains the reader
+        // to distrust the ones that did (#466/#472). Latent today
+        // (`suppressAlertFor` never alerts on kind 3) and fixed before that
+        // trap springs; whether kind 3 should ever alert is a separate
+        // decision this file does not make.
+        return label ? `New activity in ${label}` : 'New channel activity';
       case 4:
         return `${who} reacted ${ctx.reactionEmoji ?? ''}`.trim();
       case 5:
         return `${who} added you to a channel`;
-      default:
-        return `${who} mentioned you`;
+      default: {
+        // Exhaustive: `NotificationKind` is a closed union, so adding a kind
+        // without a case above is a *compile* error here rather than a banner
+        // claiming a mention that never happened — which is exactly how kind 3
+        // got mistitled for two releases. The runtime string is the neutral
+        // fallback for a row that somehow carries a kind this build predates.
+        const unhandled: never = ctx.kind;
+        void unhandled;
+        return 'New activity';
+      }
     }
   })();
-  const subtitle = subtitleFor(ctx);
+  const subtitle = subtitleFor(ctx, titleNamesConversation);
   const where = subtitle ? { subtitle } : {};
   if (!bodyPreview) {
     // A DM's title alone is just a name; every other kind's already reads as a

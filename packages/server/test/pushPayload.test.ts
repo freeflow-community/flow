@@ -103,7 +103,6 @@ describe('alert strings match the macOS banner', () => {
     expect(alertStringsFor(ctx({ kind: 4, reactionEmoji: '👍' })).title).toBe('Alice reacted 👍');
     expect(alertStringsFor(ctx({ kind: 5 })).title).toBe('Alice added you to a channel');
     expect(alertStringsFor(ctx({ kind: 0 })).title).toBe('Alice mentioned you');
-    expect(alertStringsFor(ctx({ kind: 3 })).title).toBe('Alice mentioned you');
   });
 
   it('falls back the way the Mac does when the actor is unknown', () => {
@@ -120,6 +119,57 @@ describe('alert strings match the macOS banner', () => {
 
   it('flattens a multi-line body into one line', () => {
     expect(alertStringsFor(ctx({ body: 'one\n\ntwo   three' })).body).toBe('one two three');
+  });
+});
+
+// #466/#472. Kind 3 is a followed channel's ordinary traffic — nobody was
+// mentioned — and it used to fall through the `default:` to the mention title.
+// Latent (the outbox never sends a kind-3 push, and `suppressAlertFor` is not
+// this issue's business), so these tests are the only place the strings are
+// seen until the day kind 3 is allowed to alert.
+describe('channel activity says so instead of claiming a mention (#466/#472)', () => {
+  it('names the channel, and never says anyone mentioned anyone', () => {
+    const alert = alertStringsFor(ctx({ kind: 3 }));
+    expect(alert.title).toBe('New activity in #alerts');
+    expect(alert.title).not.toContain('mentioned');
+    expect(alert.body).toBe('standup in 5?');
+  });
+
+  it('drops the subtitle its own title already said — the soloDmWithActor rule', () => {
+    // "New activity in #alerts / #alerts / standup in 5?" spends a row saying
+    // nothing, so the row goes. Every other kind keeps it: their titles name a
+    // person, not a place.
+    expect(alertStringsFor(ctx({ kind: 3 })).subtitle).toBeUndefined();
+    expect(alertStringsFor(ctx({ kind: 0 })).subtitle).toBe('#alerts');
+  });
+
+  it('stays a sentence with the preview off', () => {
+    expect(alertStringsFor(ctx({ kind: 3 }), false)).toEqual({ title: 'New activity in #alerts' });
+    expect(alertStringsFor(ctx({ kind: 0 }), false)).toEqual({ title: 'Alice mentioned you', subtitle: '#alerts' });
+  });
+
+  it('falls back to a generic title when hydration could not name the channel', () => {
+    // No name to put in the title, so the subtitle has nothing to echo and
+    // there is nothing for it to show either — both fall back cleanly.
+    expect(alertStringsFor(ctx({ kind: 3, conversationName: null }))).toEqual({
+      title: 'New channel activity',
+      body: 'standup in 5?',
+    });
+    expect(alertStringsFor(ctx({ kind: 3, conversationName: null }), false)).toEqual({
+      title: 'New channel activity',
+    });
+  });
+
+  it('uses the bare name in a DM-shaped conversation, not a # that reads as a channel', () => {
+    expect(alertStringsFor(ctx({ kind: 3, conversationName: 'Alice, Carol', channelKind: 'group_dm' })).title)
+      .toBe('New activity in Alice, Carol');
+  });
+
+  it('claims a mention for exactly one kind', () => {
+    const mentioning = ([0, 1, 2, 3, 4, 5] as const).filter((kind) =>
+      alertStringsFor(ctx({ kind, reactionEmoji: '\u{1F44D}' })).title.includes('mentioned'),
+    );
+    expect(mentioning).toEqual([0]);
   });
 });
 
