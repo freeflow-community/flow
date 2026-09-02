@@ -21,7 +21,15 @@ struct MainView: View {
             ZStack(alignment: .leading) {
                 VStack(spacing: 0) {
                     content
+                    // Only mounts once someone turns on a camera or a share
+                    // (#435); an audio-only huddle is the bar alone, as before.
+                    HuddleGridView()
                     HuddleBar()
+                }
+                // The ring floats over everything — it is the one thing that
+                // has to be answerable from wherever you are looking (#436).
+                .overlay(alignment: .bottom) {
+                    IncomingHuddleView().padding(.bottom, 90)
                 }
 
                 if drawerOpen {

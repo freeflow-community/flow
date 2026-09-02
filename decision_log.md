@@ -1,5 +1,54 @@
 # Decision log
 
+## 2026-09-02 — Huddle video (#435) and DM huddles that ring (#436)
+
+Design calls made while building batch 4, kept here because each closed a
+question the issues left open.
+
+- **`cancelled` is recorded, but the DM reads "Missed huddle".** The caller
+  hanging up before anyone answered is a distinct *fact* — it is in the
+  `huddle_invites` row — but from the callee's side it is exactly a call they
+  never got to answer. Inventing a fourth transcript line ("Call cancelled")
+  would tell them something about the caller's behaviour they have no use for.
+- **`unavailable` is a target status separate from `missed`.** Both are
+  misses. Only the first is *instant* and produces "X isn't available" for the
+  caller, and Track A makes it the common case (no push means a closed tab is
+  unreachable), so collapsing the two would throw away the distinction that
+  matters most right now. When Track B lands, `unavailable` should get rarer —
+  it is a useful measure of how much the ring is missing.
+- **Huddle outcome lines count toward channel unread; join/leave lines still
+  do not.** The unread query excluded *all* system messages, which is right for
+  a courtesy notice and wrong for "Missed huddle" — the only trace a call you
+  weren't there for leaves. The exclusion is now by kind
+  (`HUDDLE_SYSTEM_KINDS`, shared between the unread query and the poster) rather
+  than by "is it a system message".
+- **Accept is join.** Answering a ring marks the target answered and then takes
+  the ordinary join path for its token; there is no second way into the room.
+  This is what keeps "a target who just joins the room without pressing Accept"
+  from being stuck ringing forever.
+- **The multi-device rule lives in one pure function per client**
+  (`lib/huddleRing.ts`, `Support/HuddleRing.swift`), not in the view layer. One
+  event type carries the whole lifecycle to everyone involved, so the
+  interesting logic is the *reading* — and a laptop and a phone reading the
+  same event have to agree. Both implementations carry the same six cases as
+  tests. Writing them caught the group-DM bug: keying the ring card off
+  `invite.status` rather than the reader's own target row would have yanked the
+  card away from everyone else the moment the first person accepted, killing
+  the late-join the issue asks for.
+- **Turning a camera off mutes its publication, it does not unpublish it.** So
+  "is there a publication?" is not "is there video?" — it stays true forever
+  after the first camera-on, and the grid never collapses back to the bar.
+  Tiles require a live, unmuted, subscribed track. (The Swift SDK's
+  `firstCameraVideoTrack` already guards this; the web client had to be taught.)
+- **An empty ScreenCaptureKit source list means "permission not granted".**
+  macOS does not error when Screen Recording was never granted — it returns no
+  windows and no displays. That is the signal the share picker keys its
+  Open-Settings path off, which covers both "denied" and "never asked".
+- **The grid is capped at 40% of the viewport on web.** A huddle is something
+  you have *while* working in the conversation; an uncapped 16:9 share tile
+  pushed the transcript and composer off screen entirely. Shares letterbox
+  rather than crop — cropping cuts off the edges of what someone is showing.
+
 ## 2026-09-01 — APNs polish (#251): push obeys the prefs, and the hour gets a budget
 
 Four questions #251 asked, answered with what the code and the measurements

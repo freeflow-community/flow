@@ -649,3 +649,45 @@ export const pendingPush = pgTable(
     index('pending_push_user_idx').on(t.userId, t.id.desc()),
   ],
 );
+
+/**
+ * DM huddle invites (#436, migration 0042) — the ring and its outcome.
+ * Channel huddles are ambient and leave no rows at all; a DM huddle rings, and
+ * a ring nobody answered has to still be there tomorrow, which no in-memory
+ * roster can promise. `huddleInvites` is the call, `huddleInviteTargets` is
+ * one row per person rung (a 1:1 call is the one-target case).
+ */
+export const huddleInvites = pgTable(
+  'huddle_invites',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    startedBy: uuid('started_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    /** 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'cancelled' */
+    status: text('status').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The first accept — the moment the call became real. Null = unanswered. */
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    durationSeconds: integer('duration_seconds'),
+    /** The transcript line posted into the DM ("Call ended · 4 min"). */
+    systemMessageId: uuid('system_message_id').references(() => messages.id, { onDelete: 'set null' }),
+  },
+  (t) => [
+    index('huddle_invites_channel_idx').on(t.channelId, t.startedAt.desc()),
+    index('huddle_invites_ringing_idx').on(t.status).where(sql`status IN ('ringing', 'active')`),
+  ],
+);
+
+export const huddleInviteTargets = pgTable(
+  'huddle_invite_targets',
+  {
+    inviteId: uuid('invite_id').notNull().references(() => huddleInvites.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    /** 'ringing' | 'accepted' | 'declined' | 'missed' | 'unavailable' */
+    status: text('status').notNull(),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.inviteId, t.userId] }), index('huddle_invite_targets_user_idx').on(t.userId)],
+);

@@ -1,4 +1,5 @@
-import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { HUDDLE_SYSTEM_KINDS } from '@flow/shared';
 import type { ChannelDTO, ChannelIndicatorState, ChannelKind, HuddleParticipantDTO, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -353,15 +354,19 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     let unreadCount = 0;
     let oldestUnreadTopLevel: string | null = null;
     if (r.isMember) {
-      // System lines (join/leave) never contribute to unread — they're courtesy
-      // notices, not messages you need to catch up on. Neither do your own
-      // messages: you can't have unread mail from yourself, and the read cursor
+      // Membership lines (join/leave) never contribute to unread — they're
+      // courtesy notices, not messages you need to catch up on. A *huddle*
+      // line is the opposite (#436): "Missed huddle" is the only trace a call
+      // you weren't there for leaves, and a missed call that doesn't mark the
+      // DM unread is one you never find out about. So the exclusion is by
+      // kind, not by "is it a system message". Neither do your own messages
+      // count: you can't have unread mail from yourself, and the read cursor
       // may not have caught up if you sent from another client (#71).
       const base = and(
         eq(messages.channelId, r.c.id),
         isNull(messages.threadRootId),
         isNull(messages.deletedAt),
-        isNull(messages.systemKind),
+        or(isNull(messages.systemKind), inArray(messages.systemKind, [...HUDDLE_SYSTEM_KINDS])),
         ne(messages.userId, userId),
       );
       const cond = r.lastReadMsgId ? and(base, gt(messages.id, r.lastReadMsgId)) : base;

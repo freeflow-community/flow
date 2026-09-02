@@ -23,6 +23,9 @@ delete process.env.FLOW_BLOB_DRIVER;
 process.env.LIVEKIT_API_KEY = 'test-key';
 process.env.LIVEKIT_API_SECRET = 'test-secret-at-least-32-bytes-long';
 process.env.LIVEKIT_URL = 'https://test.livekit.cloud';
+// #436: the ring is 30s in production. Tests wait on it, so shrink it here —
+// read once at module load by services/huddleInvites.ts.
+process.env.FLOW_HUDDLE_RING_MS = '150';
 
 {
   const { default: postgres } = await import('postgres');
@@ -41,6 +44,8 @@ const ws = await import('../src/services/workspaces.js');
 const ch = await import('../src/services/channels.js');
 const store = await import('../src/huddles.js');
 const hd = await import('../src/services/huddles.js');
+const hi = await import('../src/services/huddleInvites.js');
+const presence = await import('../src/presence.js');
 const { AccessToken } = await import('livekit-server-sdk');
 
 let aliceId = '';
@@ -50,6 +55,7 @@ let workspaceId = '';
 let channelId = '';
 let privateId = ''; // private channel: alice + bob only
 let dmId = '';
+let groupDmId = '';
 let archivedId = '';
 
 async function registerHuman(email: string, name: string): Promise<string> {
@@ -92,6 +98,9 @@ beforeAll(async () => {
   const dm = await ch.createDm(workspaceId, aliceId, [bobId]);
   dmId = dm.id;
 
+  const groupDm = await ch.createDm(workspaceId, aliceId, [bobId, outsiderId]);
+  groupDmId = groupDm.id;
+
   const toArchive = await ch.createChannel(workspaceId, aliceId, 'stale');
   archivedId = toArchive.id;
   await ch.archiveChannel(archivedId, aliceId);
@@ -102,8 +111,15 @@ afterAll(async () => {
   fs.rmSync(process.env.FLOW_FILE_DIR!, { recursive: true, force: true });
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   store.resetHuddles();
+  hi.resetHuddleInviteTimers();
+  presence.resetPresence();
+  const { db, schema } = await import('../src/db/index.js');
+  await db.delete(schema.huddleInvites);
+  await db.delete(schema.messages);
+  await db.delete(schema.notifications);
+  await db.update(schema.users).set({ statusSuppressAlerts: false });
 });
 
 describe('huddle store', () => {
@@ -213,8 +229,20 @@ describe('joinHuddle / leaveHuddle', () => {
     await expect(hd.joinHuddle(privateId, outsiderId)).rejects.toThrow(/not found/i);
   });
 
-  it('rejects a DM', async () => {
-    await expect(hd.joinHuddle(dmId, aliceId)).rejects.toThrow(/dm/i);
+  it('grants camera and screen share, not just the microphone (#435)', async () => {
+    const { token } = await hd.joinHuddle(channelId, aliceId);
+    const claims = JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString()) as {
+      video: { canPublishSources: string[] };
+    };
+    // The old grant was microphone-only, and LiveKit refuses an ungranted
+    // source *silently* — the camera button would have looked fine and done
+    // nothing.
+    expect(claims.video.canPublishSources).toEqual([
+      'microphone',
+      'camera',
+      'screen_share',
+      'screen_share_audio',
+    ]);
   });
 
   it('rejects an archived channel', async () => {
@@ -273,5 +301,213 @@ describe('handleLiveKitWebhook', () => {
       participant: { identity: aliceId },
     });
     await expect(hd.handleLiveKitWebhook(body, await signWebhook(body))).resolves.toBeUndefined();
+  });
+});
+
+// ---- DM huddle invites (#436) --------------------------------------------
+// The ring is where channel huddles and DM huddles diverge, so these cover the
+// lifecycle end to end: who can be rung, what each answer does, and the line
+// the DM is left with. Presence is faked through the presence store (a "live
+// socket" is what Track A means by reachable), and the ring timeout is 150ms
+// here (FLOW_HUDDLE_RING_MS, set at the top of this file).
+describe('DM huddle invites', () => {
+  const online = (userId: string, connectionId = `c-${userId}`): void => {
+    presence.registerConnection(connectionId, userId, [workspaceId]);
+  };
+
+  async function systemLines(channelId: string): Promise<{ kind: string | null; body: string }[]> {
+    const { db, schema } = await import('../src/db/index.js');
+    const { decryptBody } = await import('../src/crypto/index.js');
+    const { eq, isNotNull, and } = await import('drizzle-orm');
+    const rows = await db
+      .select()
+      .from(schema.messages)
+      .where(and(eq(schema.messages.channelId, channelId), isNotNull(schema.messages.systemKind)));
+    return rows.map((r) => ({
+      kind: r.systemKind,
+      body: decryptBody(r),
+    }));
+  }
+
+  async function invitesFor(channelId: string) {
+    const { db, schema } = await import('../src/db/index.js');
+    const { eq } = await import('drizzle-orm');
+    return db.select().from(schema.huddleInvites).where(eq(schema.huddleInvites.channelId, channelId));
+  }
+
+  async function targetsOf(inviteId: string) {
+    const { db, schema } = await import('../src/db/index.js');
+    const { eq } = await import('drizzle-orm');
+    return db.select().from(schema.huddleInviteTargets).where(eq(schema.huddleInviteTargets.inviteId, inviteId));
+  }
+
+  it('starting a DM huddle rings a reachable callee', async () => {
+    online(bobId);
+    const res = await hd.joinHuddle(dmId, aliceId);
+    expect(res.invite?.status).toBe('ringing');
+    expect(res.unavailable).toEqual([]);
+    expect(res.invite?.targets).toEqual([
+      expect.objectContaining({ userId: bobId, status: 'ringing' }),
+    ]);
+    // The caller is in the room already, waiting — that is what makes accept instant.
+    expect(store.huddleParticipants(dmId).map((p) => p.userId)).toEqual([aliceId]);
+  });
+
+  it('an offline callee is an instant miss, named to the caller', async () => {
+    const res = await hd.joinHuddle(dmId, aliceId); // bob has no live socket
+    expect(res.unavailable).toEqual(['Bob']);
+    const [invite] = await invitesFor(dmId);
+    expect(invite?.status).toBe('missed');
+    expect(await systemLines(dmId)).toEqual([{ kind: 'huddle_missed', body: 'Missed huddle' }]);
+  });
+
+  it('DND suppresses the ring — reachable socket, unavailable person', async () => {
+    online(bobId);
+    const { db, schema } = await import('../src/db/index.js');
+    const { eq } = await import('drizzle-orm');
+    await db.update(schema.users).set({ statusSuppressAlerts: true }).where(eq(schema.users.id, bobId));
+    const res = await hd.joinHuddle(dmId, aliceId);
+    expect(res.unavailable).toEqual(['Bob']);
+    expect(res.invite?.status).toBe('missed');
+  });
+
+  it('a muted DM suppresses the ring', async () => {
+    online(bobId);
+    await ch.setNotifyLevel(dmId, bobId, 0);
+    try {
+      const res = await hd.joinHuddle(dmId, aliceId);
+      expect(res.unavailable).toEqual(['Bob']);
+    } finally {
+      await ch.setNotifyLevel(dmId, bobId, 1);
+    }
+  });
+
+  it('accepting makes the call active and the accepter a participant', async () => {
+    online(bobId);
+    const started = await hd.joinHuddle(dmId, aliceId);
+    const invite = await hi.acceptInvite(started.invite!.id, bobId, 'sess-phone');
+    expect(invite).not.toBeNull();
+    await hd.joinHuddle(dmId, bobId); // accept is join — routes chain these two
+    const [row] = await invitesFor(dmId);
+    expect(row?.status).toBe('active');
+    expect(row?.answeredAt).not.toBeNull();
+    expect((await targetsOf(row!.id))[0]?.status).toBe('accepted');
+    expect(store.huddleParticipants(dmId).map((p) => p.userId).sort()).toEqual([aliceId, bobId].sort());
+  });
+
+  it('declining ends the ring and leaves "Call declined" in the DM', async () => {
+    online(bobId);
+    const started = await hd.joinHuddle(dmId, aliceId);
+    await hi.declineInvite(started.invite!.id, bobId);
+    const [row] = await invitesFor(dmId);
+    expect(row?.status).toBe('declined');
+    expect(await systemLines(dmId)).toEqual([{ kind: 'huddle_declined', body: 'Call declined' }]);
+  });
+
+  it('a ring nobody answers times out to missed', async () => {
+    online(bobId);
+    await hd.joinHuddle(dmId, aliceId);
+    await new Promise((r) => setTimeout(r, 400));
+    const [row] = await invitesFor(dmId);
+    expect(row?.status).toBe('missed');
+    expect((await targetsOf(row!.id))[0]?.status).toBe('missed');
+    expect(await systemLines(dmId)).toEqual([{ kind: 'huddle_missed', body: 'Missed huddle' }]);
+  });
+
+  it('the caller backing out cancels the ring — the DM still reads "Missed huddle"', async () => {
+    online(bobId);
+    const started = await hd.joinHuddle(dmId, aliceId);
+    await hi.cancelInvite(started.invite!.id, aliceId);
+    const [row] = await invitesFor(dmId);
+    // Recorded as cancelled; from Bob's side it was a call he never got to answer.
+    expect(row?.status).toBe('cancelled');
+    expect(await systemLines(dmId)).toEqual([{ kind: 'huddle_missed', body: 'Missed huddle' }]);
+  });
+
+  it('an answered call that empties ends with its duration', async () => {
+    online(bobId);
+    const started = await hd.joinHuddle(dmId, aliceId);
+    await hi.acceptInvite(started.invite!.id, bobId);
+    await hd.joinHuddle(dmId, bobId);
+    await hd.leaveHuddle(dmId, bobId);
+    await hd.leaveHuddle(dmId, aliceId); // room empty → call over
+    const [row] = await invitesFor(dmId);
+    expect(row?.status).toBe('ended');
+    expect(row?.durationSeconds).not.toBeNull();
+    const lines = await systemLines(dmId);
+    expect(lines[0]?.kind).toBe('huddle_ended');
+    expect(lines[0]?.body).toMatch(/^Call ended · \d+ (sec|min)$/);
+  });
+
+  it('a missed call marks the DM unread, unlike a join/leave line', async () => {
+    await hd.joinHuddle(dmId, aliceId); // bob offline → instant miss
+    const chans = await ch.listChannels(workspaceId, bobId);
+    const dm = chans.find((c) => c.id === dmId);
+    // The unread query excludes system messages by default (a join line
+    // shouldn't bold a channel); huddle outcomes are the exception, because
+    // "Missed huddle" is the only trace the call leaves.
+    expect(dm?.unreadCount ?? 0).toBeGreaterThan(0);
+  });
+
+  it('the outcome line notifies the other member like any DM message', async () => {
+    const { db, schema } = await import('../src/db/index.js');
+    const { eq } = await import('drizzle-orm');
+    await hd.joinHuddle(dmId, aliceId); // bob offline → instant miss
+    const rows = await db.select().from(schema.notifications).where(eq(schema.notifications.userId, bobId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind).toBe(1); // DM — unread + badge, same as a typed message
+  });
+
+  it('a callee busy in another DM huddle is unavailable', async () => {
+    online(bobId);
+    online(outsiderId);
+    // Bob is mid-call in the group DM…
+    store.joinHuddle(groupDmId, workspaceId, bobId);
+    const res = await hd.joinHuddle(dmId, aliceId);
+    expect(res.unavailable).toEqual(['Bob']);
+  });
+
+  it('a callee in a *channel* huddle still gets the ring', async () => {
+    online(bobId);
+    store.joinHuddle(channelId, workspaceId, bobId); // ambient, not a call
+    const res = await hd.joinHuddle(dmId, aliceId);
+    expect(res.unavailable).toEqual([]);
+    expect(res.invite?.status).toBe('ringing');
+  });
+
+  it('a group DM goes active on the first accept and logs the non-answerer missed', async () => {
+    online(bobId);
+    online(outsiderId);
+    const started = await hd.joinHuddle(groupDmId, aliceId);
+    expect(started.invite?.targets).toHaveLength(2);
+    await hi.acceptInvite(started.invite!.id, bobId);
+    await hd.joinHuddle(groupDmId, bobId);
+    let [row] = await invitesFor(groupDmId);
+    expect(row?.status).toBe('active'); // first accept, while outsider keeps ringing
+    expect((await targetsOf(row!.id)).find((t) => t.userId === outsiderId)?.status).toBe('ringing');
+
+    await hd.leaveHuddle(groupDmId, bobId);
+    await hd.leaveHuddle(groupDmId, aliceId);
+    [row] = await invitesFor(groupDmId);
+    expect(row?.status).toBe('ended');
+    expect((await targetsOf(row!.id)).find((t) => t.userId === outsiderId)?.status).toBe('missed');
+  });
+
+  it('channel huddles stay ambient: no ring, no rows', async () => {
+    online(bobId);
+    const res = await hd.joinHuddle(channelId, aliceId);
+    expect(res.invite).toBeNull();
+    expect(res.unavailable).toEqual([]);
+    expect(await invitesFor(channelId)).toHaveLength(0);
+    expect(await systemLines(channelId)).toEqual([]);
+  });
+
+  it('the boot sweep retires rings orphaned by a restart', async () => {
+    online(bobId);
+    await hd.joinHuddle(dmId, aliceId);
+    hi.resetHuddleInviteTimers(); // the old process died with its 30s timer
+    expect(await hi.sweepStaleOnBoot()).toBe(1);
+    const [row] = await invitesFor(dmId);
+    expect(row?.status).toBe('missed');
   });
 });

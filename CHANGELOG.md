@@ -13,6 +13,24 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Screen-share audio is Chromium-web only** (#435). The web client asks for
+  it (`getDisplayMedia({ audio: true })`) and Chromium supplies tab audio;
+  Firefox/Safari ignore the flag and share silently, which is the intended
+  degradation. **macOS and iOS share silently too** — LiveKit's Swift
+  `setScreenShare` publishes video only, and macOS system-audio capture needs a
+  separate ScreenCaptureKit audio stream. Closing the macOS half is that
+  stream published as a second track; iOS cannot close it without a Broadcast
+  Upload Extension.
+- **iOS can view any screen share but only publishes Flow's own content**
+  (#435, deliberate for this PR). Full-screen capture on iOS requires a
+  Broadcast Upload Extension — a separate target, its own entitlement and an
+  App Group — which the issue explicitly deferred. Web and macOS publish
+  whatever the picker chose.
+- **The ring is in-app only, on every client** (#436, Track A). It reaches a
+  live socket, so a closed tab or a backgrounded iPhone is treated as
+  unavailable and the call is missed instantly. Closing this is Track B
+  (APNs/PushKit/CallKit, Web Push/VAPID) — a separate feature, not a client
+  gap: no client can close it alone.
 - Push notifications name their conversation on the phone only (#460). The
   APNs alert carries a `subtitle` row (`#channel`, or the members for a DM),
   but the **macOS** banner is built locally in `Banners.swift` from the WS

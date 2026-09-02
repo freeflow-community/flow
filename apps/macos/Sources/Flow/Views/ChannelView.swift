@@ -388,13 +388,15 @@ struct ChannelView: View {
         .background(MC.chat)
     }
 
-    /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
-    /// not while archived. "Join Huddle" doubles as start — there's no
-    /// separate ring/start action (CONTEXT.md: Huddle). The participant count
-    /// is the ambient indicator for a huddle that's live but not yet joined.
+    /// Huddles run in any entity now — channel, DM or group DM (#436) — just
+    /// not in an archived one. In a channel the button joins something ambient
+    /// and nobody is rung; in a DM the same button *rings* the other
+    /// member(s), so it says so. The participant count is the ambient
+    /// indicator for a huddle that's live but not yet joined.
     @ViewBuilder
     private var huddleButton: some View {
-        if currentChannel?.kind == "standard", currentChannel?.archivedAt == nil {
+        if let channel = currentChannel, channel.archivedAt == nil {
+            let isDm = channel.kind != "standard"
             let inThisHuddle = app.activeHuddleChannelId == channelId
             let roster = app.huddleRosters[channelId] ?? []
             Button {
@@ -406,7 +408,7 @@ struct ChannelView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "mic.fill")
-                    Text(inThisHuddle ? "Leave Huddle" : "Join Huddle")
+                    Text(inThisHuddle ? "Leave Huddle" : isDm ? "Huddle" : "Join Huddle")
                     if !inThisHuddle, !roster.isEmpty {
                         Text("\(roster.count)")
                             .flowFont(size: 11, weight: .bold)
@@ -420,7 +422,7 @@ struct ChannelView: View {
             }
             .buttonStyle(.plain)
             .disabled(app.huddleConnecting)
-            .help(inThisHuddle ? "Leave huddle" : "Join huddle")
+            .help(inThisHuddle ? "Leave huddle" : isDm ? "Start a huddle — this rings them" : "Join huddle")
             .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
         }
     }

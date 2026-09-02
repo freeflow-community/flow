@@ -1,11 +1,19 @@
-// Voice huddle (Phase 1): authorization, LiveKit token minting, fan-out, and
-// the webhook/boot reconciliation that keeps ../huddles.ts in sync with
-// LiveKit (the source of truth — see that module's doc comment and
-// decision_log.md 2026-08-20).
+// Huddles: authorization, LiveKit token minting, fan-out, and the
+// webhook/boot reconciliation that keeps ../huddles.ts in sync with LiveKit
+// (the source of truth — see that module's doc comment and decision_log.md
+// 2026-08-20).
+//
+// A huddle is now scoped to an *entity*, not a channel (#436): channels stay
+// ambient (join freely, no ring) while DMs and group DMs ring their members.
+// The room is the same either way — room name is the entity id — so everything
+// here is shared, and the DM-only half (the ring, its 30s timeout, the
+// transcript line) lives in ./huddleInvites.ts and is reached from exactly two
+// places below: the join path starts a ring, and every path that empties a
+// room ends one.
 import { AccessToken, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
 import { TrackSource } from '@livekit/protocol';
 import { eq } from 'drizzle-orm';
-import type { Event, HuddleUpdatedData } from '@flow/shared';
+import type { Event, HuddleJoinDTO, HuddleUpdatedData } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { publishEvent, subjectHuddle, subjectHuddleAll, subscribeBus } from '../bus.js';
 import { config } from '../config.js';
@@ -13,6 +21,7 @@ import { ApiError, badRequest } from '../lib/errors.js';
 import * as store from '../huddles.js';
 import { toParticipantDTOs, type HuddleParticipant } from '../huddles.js';
 import { requireChannelAccess } from './channels.js';
+import { endInviteForChannel, startOrJoinRing } from './huddleInvites.js';
 
 const { channels } = schema;
 
@@ -39,24 +48,34 @@ function publish(channelId: string, workspaceId: string, participants: HuddlePar
   });
 }
 
-/** Channels only (standard, not DM/group DM), and not archived (spec: huddles
- * are scoped to exactly one channel — see CONTEXT.md). */
+/**
+ * Any entity you can reach — channel, DM or group DM (#436) — as long as it
+ * isn't archived. A DM huddle additionally requires membership: you cannot
+ * ring a conversation you are only able to see.
+ */
 async function requireHuddleEligible(channelId: string, userId: string) {
   const { chan, isMember } = await requireChannelAccess(channelId, userId);
-  if (chan.kind !== 'standard') throw badRequest('dm_channel', 'huddles are not available in DMs');
   if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
+  if (chan.kind !== 'standard' && !isMember) throw badRequest('not_a_member', 'not a member of this conversation');
   return { chan, isMember };
 }
 
 /**
- * Join a channel's huddle: mints a LiveKit access token scoped to that room
- * (room name = channel id) and records the join. Idempotent — calling this
+ * Join an entity's huddle: mints a LiveKit access token scoped to that room
+ * (room name = entity id) and records the join. Idempotent — calling this
  * while already an active participant re-mints a fresh token rather than
  * erroring (decision log 2026-08-20); this is also the reconnect path.
- * Audio-only is enforced here, server-side, not just in client UI:
- * `canPublishSources` is restricted to the microphone.
+ *
+ * The grant covers microphone, camera and screen share (#435). It used to be
+ * microphone-only, which did not merely hide the camera button — LiveKit
+ * *silently* refuses to publish a source outside the grant, so a client that
+ * tried got a dead track and no error. Joining still starts muted, camera off
+ * and not sharing; the grant says what you *may* publish, the client says what
+ * you actually are.
+ *
+ * In a DM this also starts (or answers) the ring — see ./huddleInvites.ts.
  */
-export async function joinHuddle(channelId: string, userId: string): Promise<{ token: string; url: string }> {
+export async function joinHuddle(channelId: string, userId: string): Promise<HuddleJoinDTO> {
   const { apiKey, apiSecret, url } = requireLiveKitConfigured();
   const { chan } = await requireHuddleEligible(channelId, userId);
 
@@ -68,17 +87,22 @@ export async function joinHuddle(channelId: string, userId: string): Promise<{ t
     room: channelId,
     roomJoin: true,
     canPublish: true,
-    canPublishSources: [TrackSource.MICROPHONE],
+    canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO],
     canSubscribe: true,
   });
-  return { token: await at.toJwt(), url };
+  const token = await at.toJwt();
+
+  if (chan.kind === 'standard') return { token, url, invite: null, unavailable: [] };
+  const { invite, unavailable } = await startOrJoinRing(chan, userId);
+  return { token, url, invite, unavailable };
 }
 
-/** Leave a channel's huddle. Idempotent (no-op if the caller wasn't in it). */
+/** Leave an entity's huddle. Idempotent (no-op if the caller wasn't in it). */
 export async function leaveHuddle(channelId: string, userId: string): Promise<void> {
   const { chan } = await requireChannelAccess(channelId, userId);
   const { before, after } = store.leaveHuddle(channelId, userId);
   if (rosterChanged(before, after)) publish(channelId, chan.workspaceId, after);
+  if (chan.kind !== 'standard' && after.length === 0) await endInviteForChannel(channelId);
 }
 
 /**
@@ -97,11 +121,13 @@ export async function handleLiveKitWebhook(rawBody: string, authHeader: string):
     if (!channelId || !userId) return;
     const { before, after, workspaceId } = store.leaveHuddle(channelId, userId);
     if (workspaceId && rosterChanged(before, after)) publish(channelId, workspaceId, after);
+    if (after.length === 0) await endInviteForChannel(channelId);
   } else if (event.event === 'room_finished') {
     const channelId = event.room?.name;
     if (!channelId) return;
     const { before, workspaceId } = store.clearChannelHuddle(channelId);
     if (workspaceId && before.length > 0) publish(channelId, workspaceId, []);
+    await endInviteForChannel(channelId);
   }
 }
 
