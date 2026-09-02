@@ -18,12 +18,18 @@ const TOPICS = [
   { slug: 'channels-and-invites', title: 'Channels & Invites', order: 2 },
   { slug: 'agents', title: 'Agents', order: 3 },
   { slug: 'mini-apps', title: 'Mini Apps', order: 4 },
+  { slug: 'huddles', title: 'Huddles', order: 5 },
 ];
+
+// "What's New" (#474) is the one topic with no file: the server generates it
+// from the same changelog source as the build version menu's release notes.
+const GENERATED = { slug: 'whats-new', title: "What's New", order: 90 };
+const ALL = [...TOPICS, GENERATED];
 
 const view = (slug: string) =>
   renderToStaticMarkup(
     <HelpViewer
-      topics={TOPICS}
+      topics={ALL}
       page={{ slug, title: slug, markdown: read(slug) }}
       slug={slug}
       onSelect={() => {}}
@@ -34,7 +40,7 @@ const view = (slug: string) =>
 describe('HelpViewer', () => {
   it('lists every topic beside the page, marking the selected one', () => {
     const html = view('home');
-    for (const t of TOPICS) expect(html).toContain(`data-testid="help-topic-${t.slug}"`);
+    for (const t of ALL) expect(html).toContain(`data-testid="help-topic-${t.slug}"`);
     expect(html).toContain('Channels &amp; Invites');
     expect(html).toMatch(/help-topic-home"[^>]*aria-current="page"/);
   });
@@ -57,6 +63,23 @@ describe('HelpViewer', () => {
   it('covers every markdown file in docs/help — a new file needs no client change', () => {
     const slugs = readdirSync(helpDir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
     expect(slugs.sort()).toEqual(TOPICS.map((t) => t.slug).sort());
+  });
+
+  it('renders the generated release notes as a help page', async () => {
+    // Same text the "Build …" → What's new lightbox shows: the server serves
+    // this page straight from the FEATURES.md generator.
+    const { buildFeatures } = await import('../../../../scripts/build-features.mjs');
+    const html = renderToStaticMarkup(
+      <HelpViewer
+        topics={ALL}
+        page={{ slug: GENERATED.slug, title: GENERATED.title, markdown: buildFeatures().markdown }}
+        slug={GENERATED.slug}
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("What&#x27;s new in Flow");
+    expect(html).toContain('<li'); // the notes themselves
   });
 
   it('says so when the content cannot be loaded', () => {

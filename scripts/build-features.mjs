@@ -9,14 +9,15 @@
 // FEATURES.md is gitignored — never edit it by hand. This script runs on the
 // web predev/prebuild and in apps/macos/tools/make-app.sh, and can be run
 // directly: node scripts/build-features.mjs
+//
+// `buildFeatures()` is also imported by the server, which serves the same
+// notes as the "What's New" help page (#474) — the help page and the build
+// version menu are then the same text from the same source, and cannot drift.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const changelogDir = path.join(repoRoot, 'changelog');
-const archivePath = path.join(changelogDir, 'FEATURES_ARCHIVE.md');
-const outPath = path.join(repoRoot, 'FEATURES.md');
 
 const HEADER = `# What's new in Flow
 
@@ -44,28 +45,43 @@ function featureSection(text) {
   return body || null;
 }
 
-const entries = fs
-  .readdirSync(changelogDir)
-  .filter((f) => ENTRY_RE.test(f))
-  .sort()
-  .reverse(); // newest date first; same-date order is by slug, reversed — arbitrary but stable
+/**
+ * Build the FEATURES.md text from a checkout. Returns the markdown and a
+ * one-line summary of what went into it (for the CLI's log line).
+ */
+export function buildFeatures(root = repoRoot) {
+  const changelogDir = path.join(root, 'changelog');
+  const entries = fs
+    .readdirSync(changelogDir)
+    .filter((f) => ENTRY_RE.test(f))
+    .sort()
+    .reverse(); // newest date first; same-date order is by slug, reversed — arbitrary but stable
 
-const byDate = new Map();
-for (const file of entries) {
-  const body = featureSection(fs.readFileSync(path.join(changelogDir, file), 'utf8'));
-  if (!body) continue; // internal-only change
-  const date = file.slice(0, 10);
-  if (!byDate.has(date)) byDate.set(date, []);
-  byDate.get(date).push(body);
+  const byDate = new Map();
+  for (const file of entries) {
+    const body = featureSection(fs.readFileSync(path.join(changelogDir, file), 'utf8'));
+    if (!body) continue; // internal-only change
+    const date = file.slice(0, 10);
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date).push(body);
+  }
+
+  let markdown = HEADER;
+  for (const [date, bodies] of byDate) {
+    markdown += `## ${date}\n\n${bodies.join('\n\n')}\n\n`;
+  }
+  markdown += fs.readFileSync(path.join(changelogDir, 'FEATURES_ARCHIVE.md'), 'utf8').trim() + '\n';
+
+  const notes = [...byDate.values()].flat().length;
+  return {
+    markdown,
+    summary: `${notes} note(s) over ${byDate.size} date(s) from ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, + frozen archive`,
+  };
 }
 
-let out = HEADER;
-for (const [date, bodies] of byDate) {
-  out += `## ${date}\n\n${bodies.join('\n\n')}\n\n`;
+// CLI: write FEATURES.md. Skipped when this module is imported.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const { markdown, summary } = buildFeatures();
+  fs.writeFileSync(path.join(repoRoot, 'FEATURES.md'), markdown);
+  console.log(`FEATURES.md: ${summary}`);
 }
-out += fs.readFileSync(archivePath, 'utf8').trim() + '\n';
-
-fs.writeFileSync(outPath, out);
-console.log(
-  `FEATURES.md: ${[...byDate.values()].flat().length} note(s) over ${byDate.size} date(s) from ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, + frozen archive`,
-);
