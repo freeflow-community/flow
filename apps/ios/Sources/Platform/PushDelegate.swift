@@ -204,11 +204,15 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     }
 
     private func route(_ payload: PushPayload, with state: AppState) {
-        // Thread routing on iOS waits on the thread-route Parity gap
-        // (CHANGELOG.md), so a reply lands in its channel with the message
-        // focused rather than inside the thread screen. Passing nil here is
-        // that gap, not an oversight: a non-nil root would open a thread panel
-        // the phone does not have.
+        // The push has carried `threadRootId` since #248; it is passed on now
+        // (#476), so a tap on a thread reply opens the thread and scrolls to
+        // the reply instead of dropping the reader in the channel to hunt for
+        // it. It used to be nil on purpose — the phone had no thread
+        // destination to route to — but `ChannelScreen`'s `$threadRoute` (#89)
+        // and `ThreadScreen`'s jump target (#332) both landed since, so the two
+        // halves the Parity gap was waiting on exist. A top-level message still
+        // sends nil, which closes any thread parked in the target channel so it
+        // cannot hide the message being jumped to.
         // Straight at the single window rather than `AppState.openNotification`,
         // whose `routingWindow` is nil until a view has asked for the window —
         // which a tap that launched the app can beat.
@@ -216,7 +220,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
             workspaceId: payload.workspaceId,
             channelId: payload.channelId,
             messageId: payload.messageId,
-            threadRootId: nil
+            threadRootId: payload.threadRootId
         )
         guard let notificationId = payload.notificationId else { return }
         Task { await state.engine.markNotificationRead(id: notificationId) }
