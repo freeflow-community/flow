@@ -3,11 +3,46 @@ import XCTest
 
 @testable import Flow
 
-/// Integration smoke test against the live local backend at 127.0.0.1:8787.
-/// Verifies that APIClient decoding matches the server's actual JSON shapes.
-/// Creates throwaway accounts (timestamped emails).
+/// Integration smoke test against a live local backend. Verifies that
+/// APIClient decoding matches the server's actual JSON shapes. Creates
+/// throwaway accounts (timestamped emails).
+///
+/// The server address is `FLOW_TEST_SERVER_URL` (falling back to the app's own
+/// `FLOW_SERVER_URL`), defaulting to `http://127.0.0.1:8787` — unchanged for
+/// anyone whose dev server is on the default port. It is configurable because
+/// 8787 is not always Flow's: on a machine where another app holds it, every
+/// `swift test` run failed here on a stranger's 404 (#455, #459). `pnpm qa:up`
+/// prints a ready-made export line for a scratch server on a free port.
 final class LiveAPITests: XCTestCase {
-    private let baseURL = URL(string: "http://127.0.0.1:8787")!
+    private let baseURL = LiveAPITests.serverURL
+
+    static let serverURL: URL = {
+        let env = ProcessInfo.processInfo.environment
+        let raw = env["FLOW_TEST_SERVER_URL"] ?? env["FLOW_SERVER_URL"] ?? ""
+        return URL(string: raw.trimmingCharacters(in: .whitespaces)) ?? defaultServerURL
+    }()
+
+    static let defaultServerURL = URL(string: "http://127.0.0.1:8787")!
+
+    /// Skip rather than fail when nothing Flow-shaped is listening. A live
+    /// integration test has nothing to say about the code when the thing it
+    /// integrates with is absent — and "absent" here includes an unrelated
+    /// server squatting the port, which is why the probe insists on Flow's own
+    /// 401 rather than merely on a socket that accepts.
+    override func setUp() async throws {
+        try await super.setUp()
+        var req = URLRequest(url: baseURL.appendingPathComponent("v1/me"))
+        req.timeoutInterval = 3
+        guard
+            let (_, res) = try? await URLSession.shared.data(for: req),
+            (res as? HTTPURLResponse)?.statusCode == 401
+        else {
+            throw XCTSkip(
+                "no Flow server at \(baseURL.absoluteString) — start one "
+                    + "(`pnpm qa:up`, then export the FLOW_TEST_SERVER_URL it prints)"
+            )
+        }
+    }
 
     func testAuthWorkspaceChannelMessageFlow() async throws {
         let api = APIClient(baseURL: baseURL)
