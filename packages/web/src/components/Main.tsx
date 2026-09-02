@@ -7,6 +7,7 @@ import type {
   ChannelEmojiData,
   ChannelIndicatorData,
   Event,
+  HuddleInviteData,
   HuddleUpdatedData,
   MessageDTO,
   NotificationDTO,
@@ -19,7 +20,7 @@ import { api, getToken } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
-import { HuddleProvider } from '../huddle';
+import { HuddleProvider, useHuddle, type HuddleState } from '../huddle';
 import { useNameMap, useWorkspaceInvites, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
@@ -30,6 +31,8 @@ import ScheduledView from './ScheduledView';
 import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
 import HuddleMiniBar from './HuddleMiniBar';
+import HuddleGrid from './HuddleGrid';
+import IncomingHuddle from './IncomingHuddle';
 import { MobileMenuButton } from './MobileMenuButton';
 import { HelpModal } from './HelpModal';
 import { AuthImg } from './Avatar';
@@ -58,6 +61,13 @@ export default function Main() {
   // breakpoint rather than being stranded open on a phone-width window.
   const [helpOpen, setHelpOpen] = useState(false);
   const socketRef = useRef<SocketClient | null>(null);
+  // The huddle controller lives *inside* HuddleProvider, which this component
+  // renders — so socket events reach it through a ref that HuddleWiring (below
+  // the provider) fills in, rather than a hook this scope cannot call.
+  const huddleBridge = useRef<{
+    applyInviteEvent: HuddleState['applyInviteEvent'];
+    setSessionId: HuddleState['setSessionId'];
+  } | null>(null);
   // refs so the socket handler always sees current selection
   const selRef = useRef(sel);
   selRef.current = sel;
@@ -137,6 +147,7 @@ export default function Main() {
         }
       },
       onEvent: (event: Event) => handleEvent(event),
+      onSession: (sessionId) => huddleBridge.current?.setSessionId(sessionId),
     });
     socketRef.current = client;
     client.start();
@@ -388,6 +399,20 @@ export default function Main() {
         }
         break;
       }
+      case 'huddle.invite': {
+        // The DM ring (#436). Every device of every participant gets this;
+        // the controller decides from it whether *this* device shows a card.
+        const d = event.data as HuddleInviteData;
+        huddleBridge.current?.applyInviteEvent(d.invite, {
+          selfId: authRef.current.user.id,
+          answeredBySessionId: d.answeredBySessionId,
+          unavailable: d.unavailable,
+        });
+        // A resolved ring posts its line into the DM, so the sidebar's unread
+        // and ordering move with it.
+        void qc.invalidateQueries({ queryKey: ['channels', event.workspaceId] });
+        break;
+      }
       case 'notification.read': {
         // Another session (or the server, on a channel/thread visit) read rows.
         // The event's count is the cross-workspace total, so it can't drive a
@@ -474,9 +499,12 @@ export default function Main() {
     <LiveContext.Provider value={live}>
      <MobileNavContext.Provider value={mobileNav}>
       <HuddleProvider>
+      <HuddleWiring bridge={huddleBridge} />
       <div className="flex h-full flex-col bg-base text-ink">
         <OpenInAppBanner />
         <HuddleMiniBar />
+        <HuddleGrid />
+        <IncomingHuddle />
         <div className="relative flex min-h-0 flex-1">
           {/* Rail + sidebar. Desktop: inline flex columns. Mobile (<md): a
               fixed slide-in drawer over the content, toggled by the header
@@ -531,6 +559,30 @@ export default function Main() {
      </MobileNavContext.Provider>
     </LiveContext.Provider>
   );
+}
+
+/**
+ * The seam between the socket (owned by Main) and the huddle controller (owned
+ * by HuddleProvider, which Main renders). Renders nothing; it exists so the
+ * event handler above can reach `applyInviteEvent` without every huddle state
+ * change re-rendering the whole app shell.
+ */
+function HuddleWiring({
+  bridge,
+}: {
+  bridge: React.MutableRefObject<{
+    applyInviteEvent: HuddleState['applyInviteEvent'];
+    setSessionId: HuddleState['setSessionId'];
+  } | null>;
+}) {
+  const huddle = useHuddle();
+  useEffect(() => {
+    bridge.current = { applyInviteEvent: huddle.applyInviteEvent, setSessionId: huddle.setSessionId };
+    return () => {
+      bridge.current = null;
+    };
+  }, [bridge, huddle.applyInviteEvent, huddle.setSessionId]);
+  return null;
 }
 
 /** Design 3a column 1: the 64px violet workspace rail. */

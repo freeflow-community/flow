@@ -127,6 +127,20 @@ export function reconcileChannel(
   return { before, after: huddleParticipants(channelId) };
 }
 
+/**
+ * The entity whose huddle this user is currently in, or undefined. Drives the
+ * busy rule (#436): a callee already in a *DM* huddle is unavailable, while a
+ * callee in a *channel* huddle still gets the ring (accepting drops them from
+ * it). Only the caller knows which kind the returned id is — this store never
+ * looks at channel rows.
+ */
+export function activeHuddleChannelForUser(userId: string): string | undefined {
+  for (const [channelId, users] of byChannel) {
+    if (users.has(userId)) return channelId;
+  }
+  return undefined;
+}
+
 /** Every channel id with a live huddle right now (channel-list overlay input, tests). */
 export function activeHuddleChannelIds(): string[] {
   return [...byChannel.keys()];

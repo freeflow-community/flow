@@ -189,10 +189,63 @@ export type NotifyLevel = 0 | 1 | 2;
  */
 export type ChannelIndicatorState = 'busy';
 
-/** One participant in a channel's live voice huddle (Phase 1: audio-only). */
+/** One participant in an entity's live huddle. */
 export interface HuddleParticipantDTO {
   userId: string;
   joinedAt: string; // ISO
+}
+
+/**
+ * A DM huddle invite's lifecycle (#436). `ringing` while the caller waits;
+ * `active` from the first accept; then one terminal state — `ended` (someone
+ * answered and the call finished), `declined` (every callee said no),
+ * `missed` (nobody answered within 30s, or nobody was reachable at all), or
+ * `cancelled` (the caller hung up before any accept).
+ */
+export type HuddleInviteStatus = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'cancelled';
+
+/**
+ * One person rung by an invite. `unavailable` is the *instant* miss — no live
+ * socket, DND, a muted DM, or already in another DM huddle — kept distinct
+ * from `missed` (a ring that ran the full 30s) because only the first tells
+ * the caller "X isn't available" the moment they start the call.
+ */
+export type HuddleInviteTargetStatus = 'ringing' | 'accepted' | 'declined' | 'missed' | 'unavailable';
+
+export interface HuddleInviteTargetDTO {
+  userId: string;
+  status: HuddleInviteTargetStatus;
+  respondedAt: string | null;
+}
+
+/**
+ * The ring (#436). Sent to each callee's devices to raise the incoming-call
+ * overlay, and back to the caller so they can watch it resolve. A group DM
+ * has one invite with several targets, each answering independently.
+ */
+export interface HuddleInviteDTO {
+  id: string;
+  workspaceId: string;
+  channelId: string;
+  startedBy: string;
+  status: HuddleInviteStatus;
+  startedAt: string; // ISO
+  answeredAt: string | null;
+  endedAt: string | null;
+  targets: HuddleInviteTargetDTO[];
+}
+
+/**
+ * POST /v1/channels/:id/huddle/join — a LiveKit token scoped to the room whose
+ * name is the entity id. In a DM the same call *starts the ring* (#436), so
+ * the response also carries the invite it created and the names it could not
+ * reach; a channel huddle is ambient and leaves both null/empty.
+ */
+export interface HuddleJoinDTO {
+  token: string;
+  url: string;
+  invite: HuddleInviteDTO | null;
+  unavailable: string[];
 }
 
 export interface ChannelDTO {
@@ -445,7 +498,25 @@ export interface UnfurlDTO {
 }
 
 /** Channel event lines rendered inline in the stream (join/leave notices). */
-export type SystemMessageKind = 'member_joined' | 'member_left';
+/**
+ * Inline channel-event lines. The first two are membership; the huddle three
+ * are a DM call's outcome (#436), posted into the DM when the ring resolves.
+ * The body is always the pre-rendered sentence, so a client that has never
+ * heard of a kind still renders the line correctly.
+ */
+export type SystemMessageKind =
+  | 'member_joined'
+  | 'member_left'
+  | 'huddle_missed'
+  | 'huddle_declined'
+  | 'huddle_ended';
+
+/**
+ * The huddle outcome kinds (#436). Split out because they are the system
+ * messages that *do* count toward a channel's unread — a missed call has to be
+ * findable, unlike a join/leave courtesy line.
+ */
+export const HUDDLE_SYSTEM_KINDS = ['huddle_missed', 'huddle_declined', 'huddle_ended'] as const;
 
 export interface MessageDTO {
   id: string;

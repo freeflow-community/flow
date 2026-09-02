@@ -1,14 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Hardened-runtime entitlements for the notarized Flow.app (phase 14).
+  Hardened-runtime entitlements for the notarized Flow.app. dist.sh signs with
+  the hardened runtime enabled, so this file is the app's entire resource
+  access story.
 
-  Intentionally EMPTY. Keychain and UserNotifications both work under the
-  hardened runtime with no entitlement. Add a key here ONLY if notarization or
-  runtime behavior proves one is required (see docs/specs/phase14.md §4), and
-  add just that key. Do NOT enable App Sandbox in this phase.
+  It was empty until #469, on the reasoning that Keychain and UserNotifications
+  need no entitlement under the hardened runtime. True when it was written, and
+  then huddles added mic and camera and nobody came back here. The hardened
+  runtime refuses those two before TCC is ever consulted: no consent prompt, no
+  row in Privacy & Security, and AVCaptureDevice.requestAccess returning false
+  in four milliseconds. Every released build had it and no local build did,
+  because make-app.sh signs without the hardened runtime, which is why it took
+  a report from someone else's machine to find.
+
+  Measured on the release cert, hardened runtime, varying only this file:
+    empty file        notDetermined, requestAccess false in 0.004s, then denied
+    with audio-input  notDetermined, prompt shown, then authorized
+
+  Keep this minimal: one key per capability Flow actually uses, and only once
+  the runtime proves it needs it. Do NOT enable App Sandbox here.
+
+  Note for editors: this file is parsed by AMFI, whose XML parser rejects a
+  double hyphen inside a comment. Spell flags out in words.
 -->
 <plist version="1.0">
 <dict>
+    <!-- Huddle mic. Without this the hardened runtime denies capture outright. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Huddle video (#435). Same gate, same failure mode. -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
 </dict>
 </plist>

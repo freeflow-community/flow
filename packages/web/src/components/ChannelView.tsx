@@ -119,12 +119,13 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   // Switching channels shouldn't leave the previous channel's roster hanging open.
   useEffect(() => setMembersOpen(false), [channelId]);
 
-  // Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
-  // not while archived. "Join Huddle" doubles as start — there's no separate
-  // ring/start action (CONTEXT.md: Huddle).
+  // Huddles run in any entity now — channel, DM or group DM (#436) — just not
+  // in an archived one. In a channel the button joins something ambient; in a
+  // DM the same button *rings* the other member(s), so it says so.
   const huddleParticipants = channel?.huddleParticipants ?? [];
   const inThisHuddle = huddle.channelId === channelId;
-  const huddleEligible = channel?.kind === 'standard' && !channel?.archivedAt;
+  const huddleEligible = !!channel && !channel.archivedAt;
+  const isDmHuddle = !!channel && channel.kind !== 'standard';
 
   // #392: the header shows the topic on one truncated line — hovering it gives
   // the whole thing, raw, matching the sidebar tooltip.
@@ -179,7 +180,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             <button
               type="button"
               data-testid={inThisHuddle ? 'huddle-leave' : 'huddle-join'}
-              title={inThisHuddle ? 'Leave huddle' : 'Join huddle'}
+              title={inThisHuddle ? 'Leave huddle' : isDmHuddle ? 'Start a huddle — this rings them' : 'Join huddle'}
               disabled={huddle.connecting}
               className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold max-md:hidden ${
                 inThisHuddle
@@ -191,7 +192,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
                 else if (channel) void huddle.join(channelId, channel.workspaceId).catch(() => {});
               }}
             >
-              🎙 {inThisHuddle ? 'Leave Huddle' : 'Join Huddle'}
+              🎙 {inThisHuddle ? 'Leave Huddle' : isDmHuddle ? 'Huddle' : 'Join Huddle'}
               {/* ambient indicator: a huddle live but not yet joined shows who's in it */}
               {!inThisHuddle && huddleParticipants.length > 0 && (
                 <span className="rounded-full bg-accent/15 px-1.5 text-accent-soft">{huddleParticipants.length}</span>

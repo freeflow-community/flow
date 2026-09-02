@@ -8,6 +8,10 @@ export type SocketStatus = 'connecting' | 'connected' | 'reconnecting';
 export interface SocketHandlers {
   onEvent(event: Event): void;
   onStatus(status: SocketStatus): void;
+  /** The session id from `hello`. Identifies this *device* to the server, which
+   * is how a DM ring answered here is told apart from the same ring answered on
+   * your phone (#436). Fires again on every reconnect — the id is new each time. */
+  onSession?(sessionId: string): void;
 }
 
 // How long silence from the server means the socket is dead (#271). The
@@ -85,6 +89,7 @@ export class SocketClient {
         ws.send(JSON.stringify({ op: 'pong' }));
       } else if (frame.op === 'hello') {
         this.backoff = 500;
+        this.handlers.onSession?.(frame.sessionId);
         this.handlers.onStatus('connected');
       } else if (frame.op === 'event') {
         this.handlers.onEvent(frame.event);
