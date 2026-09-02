@@ -329,8 +329,12 @@ actor SyncEngine {
 
     private func handle(_ signal: SocketSignal) async {
         switch signal {
-        case .connected:
+        case .connected(let sessionId):
             await appState?.setConnection(.connected)
+            // The session id names this *device* to the server — how a DM ring
+            // answered here is told apart from the same ring answered on a
+            // phone (#436). New on every reconnect.
+            await appState?.setSessionId(sessionId)
             // The server re-snapshots presence right after hello, and nobody
             // sends `offline` for someone who left while we were down (#364).
             await appState?.presenceReset()
@@ -1449,14 +1453,34 @@ actor SyncEngine {
         await appState?.channelBecameUnavailable(channelId)
     }
 
-    // MARK: - Voice huddle (Phase 1)
+    // MARK: - Huddle
 
-    /// Mints a LiveKit access token scoped to this channel's room. Idempotent
+    /// Mints a LiveKit access token scoped to this entity's room. Idempotent
     /// server-side — calling it while already an active participant re-mints
     /// a fresh token rather than erroring (decision log 2026-08-20); this is
-    /// also the reconnect path.
+    /// also the reconnect path. In a DM this is also what starts the ring.
     func joinHuddle(channelId: String) async throws -> HuddleJoinResponse {
         try await api.post("/v1/channels/\(channelId)/huddle/join")
+    }
+
+    /// Answering a ring (#436). Accept *is* join — the server marks the target
+    /// answered (dismissing this user's other devices) and hands back a token
+    /// through the same path, so there is no second way into the room.
+    func acceptHuddleInvite(inviteId: String, sessionId: String?) async throws -> HuddleJoinResponse {
+        try await api.post("/v1/huddle/invites/\(inviteId)/accept", body: HuddleInviteReplyBody(sessionId: sessionId))
+    }
+
+    /// Best-effort like every other ring reply: the 30s timeout retires the
+    /// invite anyway if this never lands.
+    func declineHuddleInvite(inviteId: String, sessionId: String?) async {
+        let _: OkResponse? = try? await api.post(
+            "/v1/huddle/invites/\(inviteId)/decline",
+            body: HuddleInviteReplyBody(sessionId: sessionId)
+        )
+    }
+
+    func cancelHuddleInvite(inviteId: String) async {
+        let _: OkResponse? = try? await api.post("/v1/huddle/invites/\(inviteId)/cancel")
     }
 
     /// Best-effort: the webhook safety net (participant_left) covers a
@@ -1912,6 +1936,9 @@ actor SyncEngine {
 
         case .huddleUpdated(let d):
             await appState?.huddleUpdated(channelId: d.channelId, participants: d.participants)
+
+        case .huddleInvite(let d):
+            await appState?.huddleInviteEvent(d)
 
         case .channel(let dto):
             // The broadcast DTO claims isMember from the creator's perspective;

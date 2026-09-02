@@ -813,10 +813,67 @@ struct ChannelEmojiData: Decodable, Sendable {
     let emoji: String?
 }
 
-/// One participant in a channel's live voice huddle (Phase 1: audio-only).
+/// One participant in an entity's live huddle.
 struct HuddleParticipant: Codable, Sendable, Equatable {
     let userId: String
     let joinedAt: String
+}
+
+/// A DM huddle invite's lifecycle (#436). `ringing` while the caller waits;
+/// `active` from the first accept; then one terminal state. Decoded from a
+/// plain string with an `unknown` fallback, so a status added server-side
+/// later can't fail the whole event.
+enum HuddleInviteStatus: String, Codable, Sendable {
+    case ringing, active, ended, declined, missed, cancelled, unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = HuddleInviteStatus(rawValue: raw) ?? .unknown
+    }
+}
+
+/// One person rung by an invite. `unavailable` is the instant miss — no live
+/// socket, DND, muted DM, or busy in another DM huddle.
+enum HuddleInviteTargetStatus: String, Codable, Sendable {
+    case ringing, accepted, declined, missed, unavailable, unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = HuddleInviteTargetStatus(rawValue: raw) ?? .unknown
+    }
+}
+
+struct HuddleInviteTarget: Codable, Sendable, Equatable, Identifiable {
+    let userId: String
+    let status: HuddleInviteTargetStatus
+    let respondedAt: String?
+
+    var id: String { userId }
+}
+
+/// The ring (#436) — "X is calling you", plus everything needed to decide
+/// whether *this* device should show it (see `ringEffect` in HuddleRing.swift).
+struct HuddleInvite: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let workspaceId: String
+    let channelId: String
+    let startedBy: String
+    let status: HuddleInviteStatus
+    let startedAt: String
+    let answeredAt: String?
+    let endedAt: String?
+    let targets: [HuddleInviteTarget]
+}
+
+/// `huddle.invite` payload. One event type for both directions: the callee's
+/// ring and the caller's "still ringing / they weren't available".
+struct HuddleInviteData: Decodable, Sendable {
+    let invite: HuddleInvite
+    /// The WS session that answered — so the device that did stays quiet while
+    /// its siblings say "Answered on another device".
+    let answeredBySessionId: String?
+    /// Names nobody could reach. Sent only to the caller.
+    let unavailable: [String]?
 }
 
 /// `huddle.updated` payload: the channel's aggregate roster after a change —
@@ -828,10 +885,20 @@ struct HuddleUpdatedData: Decodable, Sendable {
 }
 
 /// POST /v1/channels/:id/huddle/join response: a LiveKit access token scoped
-/// to that channel's room, and the server URL to connect to.
+/// to that entity's room, and the server URL to connect to. In a DM the same
+/// call starts the ring, so it also carries the invite and the names it could
+/// not reach; both are absent for an ambient channel huddle (and on a server
+/// that predates #436, which is why they decode optionally).
 struct HuddleJoinResponse: Decodable, Sendable {
     let token: String
     let url: String
+    let invite: HuddleInvite?
+    let unavailable: [String]?
+}
+
+/// Body for accept/decline: which device is answering (#436 multi-device).
+struct HuddleInviteReplyBody: Encodable, Sendable {
+    let sessionId: String?
 }
 struct MembersResponse: Decodable, Sendable { let members: [MemberDTO] }
 struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
@@ -1185,6 +1252,7 @@ enum EventPayload: Sendable {
     case channelIndicator(ChannelIndicatorData)
     case channelEmoji(ChannelEmojiData)
     case huddleUpdated(HuddleUpdatedData)
+    case huddleInvite(HuddleInviteData)
     case channel(Channel)
     case channelUpdated(Channel)
     case channelArchived(Channel)
@@ -1233,6 +1301,8 @@ struct EventDTO: Decodable, Sendable {
             payload = .channelEmoji(try c.decode(ChannelEmojiData.self, forKey: .data))
         case "huddle.updated":
             payload = .huddleUpdated(try c.decode(HuddleUpdatedData.self, forKey: .data))
+        case "huddle.invite":
+            payload = .huddleInvite(try c.decode(HuddleInviteData.self, forKey: .data))
         case "channel.created":
             payload = .channel(try c.decode(Channel.self, forKey: .data))
         case "channel.updated":

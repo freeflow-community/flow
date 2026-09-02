@@ -2,6 +2,7 @@ import type {
   ArtifactDTO,
   ChannelDTO,
   ChannelIndicatorState,
+  HuddleInviteDTO,
   HuddleParticipantDTO,
   MessageDTO,
   NotificationDTO,
@@ -23,7 +24,8 @@ export type EventType =
   | 'channel.archived'
   | 'channel.indicator' // per-channel subject: the activity spinner turned on/off (#137)
   | 'channel.emoji' // per-channel subject: the persistent channel emoji changed (#396)
-  | 'huddle.updated' // per-channel subject: voice huddle roster changed (Phase 1)
+  | 'huddle.updated' // per-channel subject: huddle roster changed (Phase 1)
+  | 'huddle.invite' // per-user notify subject: a DM huddle is ringing you, or the ring resolved (#436)
   | 'member.joined'
   | 'member.left'
   | 'member.updated' // workspace role change (admin panel)
@@ -91,6 +93,30 @@ export interface ChannelEmojiData {
 export interface HuddleUpdatedData {
   channelId: string;
   participants: HuddleParticipantDTO[];
+}
+
+/**
+ * A DM huddle invite changed (#436), delivered on each involved user's notify
+ * subject — the caller's and every callee's, so one event drives both the
+ * incoming-ring overlay and the caller's "ringing…"/"X isn't available" state.
+ *
+ * Clients render the ring while `invite.status === 'ringing'` and this user's
+ * target row is still `ringing`; any other combination dismisses it. That rule
+ * is what makes multi-device work without a second event type: accepting on a
+ * phone flips the target to `accepted` and every other device of that user
+ * takes the same event down. `answeredBySessionId` names the *socket* that
+ * answered, so the answering device stays quiet while its siblings can say
+ * "Answered on another device."
+ */
+export interface HuddleInviteData {
+  invite: HuddleInviteDTO;
+  answeredBySessionId?: string;
+  /**
+   * Display names of callees who could never be rung (offline, DND, muted DM,
+   * or busy in another DM huddle). Only sent to the caller — it is the text of
+   * "X isn't available."
+   */
+  unavailable?: string[];
 }
 
 export interface PresenceData {

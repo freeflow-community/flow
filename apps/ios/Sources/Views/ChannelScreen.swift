@@ -78,14 +78,16 @@ struct ChannelScreen: View {
         return text.isEmpty ? nil : text
     }
 
-    /// Voice huddle (Phase 1): channels only (standard, not DM/group DM), and
-    /// not while archived. "Join Huddle" doubles as start — see CONTEXT.md
-    /// (Huddle). The participant count is the ambient indicator for a huddle
-    /// that's live but not yet joined. Sits in the pill's trailing slot
-    /// alongside the "⋯" menu (#298 moved the whole header into the pill).
+    /// Huddles run in any entity now — channel, DM or group DM (#436) — just
+    /// not in an archived one. In a channel the button joins something ambient
+    /// and nobody is rung; in a DM it *rings* the other member(s). The
+    /// participant count is the ambient indicator for a huddle that's live but
+    /// not yet joined. Sits in the pill's trailing slot alongside the "⋯" menu
+    /// (#298 moved the whole header into the pill).
     private var huddleButton: some View {
         Group {
-            if channel.value?.kind == "standard", channel.value?.archivedAt == nil {
+            if let ch = channel.value, ch.archivedAt == nil {
+                let isDm = ch.kind != "standard"
                 let inThisHuddle = app.activeHuddleChannelId == channelId
                 let roster = app.huddleRosters[channelId] ?? []
                 Button {
@@ -110,7 +112,7 @@ struct ChannelScreen: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(app.huddleConnecting)
-                .accessibilityLabel(inThisHuddle ? "Leave huddle" : "Join huddle")
+                .accessibilityLabel(inThisHuddle ? "Leave huddle" : isDm ? "Start a huddle" : "Join huddle")
                 .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
             }
         }

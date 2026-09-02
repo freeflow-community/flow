@@ -44,5 +44,16 @@ struct RootView: View {
         } message: {
             Text("Flow needs microphone access to talk in a huddle. Enable it in Settings → Flow → Microphone.")
         }
+        // Same shape for the camera (#435): a separate OS grant, and "Open
+        // Settings" is the only useful thing to offer once it's refused.
+        .alert(
+            "Camera Access Needed",
+            isPresented: $app.cameraPermissionBlocked
+        ) {
+            Button("Open Settings") { app.openCameraSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Flow needs camera access to turn on video in a huddle. Enable it in Settings → Flow → Camera.")
+        }
     }
 }

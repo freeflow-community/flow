@@ -288,6 +288,18 @@ export const SetNotifyLevelBody = z.object({
 });
 export type SetNotifyLevelBody = z.infer<typeof SetNotifyLevelBody>;
 
+/**
+ * Answering or refusing a DM huddle ring (#436). `sessionId` is the WS session
+ * of the device doing it (from the `hello` frame) — it rides along so this
+ * device stays quiet while the user's *other* devices can say "Answered on
+ * another device" rather than just blinking the overlay away. Optional: an
+ * older client that omits it simply gets the plain dismissal everywhere.
+ */
+export const HuddleInviteReplyBody = z.object({
+  sessionId: z.string().optional(),
+});
+export type HuddleInviteReplyBody = z.infer<typeof HuddleInviteReplyBody>;
+
 // ---- messages --------------------------------------------------
 /** Group-mention tokens stored in bodies (Slack-style). */
 export const GROUP_MENTION_RE = /<!(channel|here|everyone)>/g;

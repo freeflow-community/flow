@@ -105,9 +105,10 @@ targets:
             CFBundleURLSchemes: [flow]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSCameraUsageDescription: Take a photo to share in the conversation.
-        # Voice huddle (Phase 1).
-        NSMicrophoneUsageDescription: Flow needs microphone access to let you talk in a voice huddle.
+        # Two uses now: a photo for the composer, and video in a huddle (#435).
+        NSCameraUsageDescription: Take a photo to share, or turn on your camera in a huddle.
+        # Huddles (Phase 1).
+        NSMicrophoneUsageDescription: Flow needs microphone access to let you talk in a huddle.
         # An ambient huddle has to survive backgrounding/lock-screen, not just
         # in-app navigation (decision log 2026-08-20), or it fails the "feels
         # like a real call" bar the moment you switch apps.

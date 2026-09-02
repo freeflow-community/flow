@@ -75,8 +75,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>SUScheduledCheckInterval</key><integer>86400</integer>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
-    <!-- Voice huddle (Phase 1) -->
-    <key>NSMicrophoneUsageDescription</key><string>Flow needs microphone access to let you talk in a voice huddle.</string>
+    <!-- Huddles: mic (Phase 1) and camera (#435). Screen Recording has no
+         usage-description key — macOS grants it through System Settings only. -->
+    <key>NSMicrophoneUsageDescription</key><string>Flow needs microphone access to let you talk in a huddle.</string>
+    <key>NSCameraUsageDescription</key><string>Flow needs camera access to let you turn on video in a huddle.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

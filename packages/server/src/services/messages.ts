@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { HUDDLE_SYSTEM_KINDS } from '@flow/shared';
 import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO, SystemMessageKind, UnfurlDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -291,6 +292,11 @@ export async function sendMessage(
 const SYSTEM_PREDICATE: Record<SystemMessageKind, string> = {
   member_joined: 'joined the channel',
   member_left: 'left the channel',
+  // Huddle outcomes (#436) render as their own sentence, not "<Name> <predicate>"
+  // — postHuddleSystemMessage builds those bodies and never reaches this table.
+  huddle_missed: '',
+  huddle_declined: '',
+  huddle_ended: '',
 };
 
 /**
@@ -357,6 +363,79 @@ export async function postSystemMessage(
   } catch (err) {
     // Best-effort: a failed courtesy line must not abort the join/leave.
     console.error('postSystemMessage failed', { channelId: chan.id, kind, err });
+    return null;
+  }
+}
+
+/**
+ * The DM transcript line a huddle leaves behind (#436): "Missed huddle",
+ * "Call declined", "Call ended · 4 min". Sibling of postSystemMessage, split
+ * out because it differs on both halves of that function's contract:
+ *
+ * - it posts into **DMs and group DMs**, which postSystemMessage refuses (a
+ *   join/leave line there would be nonsense; a missed call there is the whole
+ *   point), and
+ * - it **notifies**, through the ordinary DM path — a missed call that left no
+ *   unread and no badge is a missed call you never learn about. `computeRecipients`
+ *   gives every other member kind 1 (dm) and already drops anyone who muted
+ *   the conversation, so muting a DM silences its call lines too, for free.
+ *
+ * Body is pre-rendered, like every system message, so scroll-back reads
+ * correctly with no live lookup. Best-effort: a failed line must not fail the
+ * call it describes.
+ */
+export async function postHuddleSystemMessage(
+  chan: { id: string; workspaceId: string },
+  authorId: string,
+  kind: (typeof HUDDLE_SYSTEM_KINDS)[number],
+  body: string,
+): Promise<MessageDTO | null> {
+  try {
+    const chanRow = (await db.select().from(schema.channels).where(eq(schema.channels.id, chan.id)).limit(1))[0];
+    if (!chanRow) return null;
+    const { recipients, alertContext } = await computeRecipients(chanRow, authorId, body, []);
+
+    const id = newId();
+    const now = new Date();
+    const enc = encryptBody(body);
+    let row: MessageRow | undefined;
+    let planned: Awaited<ReturnType<typeof insertNotifications>> = [];
+    await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(messages)
+        .values({
+          id,
+          channelId: chan.id,
+          userId: authorId,
+          threadRootId: null,
+          clientMsgId: newId(),
+          body: enc.body,
+          bodyNonce: enc.bodyNonce,
+          encKeyId: enc.encKeyId,
+          encScheme: enc.encScheme,
+          createdAt: now,
+          systemKind: kind,
+        })
+        .returning();
+      row = inserted[0];
+      if (!row) return;
+      planned = await insertNotifications(tx, recipients, id, chan.id, authorId);
+    });
+    if (!row) return null;
+
+    const dto = toMessageDTO(row);
+    const ts = now.toISOString();
+    publishEvent(subjectMsg(chan.workspaceId, chan.id), {
+      type: 'message.created',
+      workspaceId: chan.workspaceId,
+      channelId: chan.id,
+      ts,
+      data: dto,
+    });
+    publishNotifications(planned, alertContext, dto, chan.workspaceId, ts);
+    return dto;
+  } catch (err) {
+    console.error('postHuddleSystemMessage failed', { channelId: chan.id, kind, err });
     return null;
   }
 }

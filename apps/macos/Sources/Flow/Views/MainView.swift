@@ -73,7 +73,15 @@ struct MainView: View {
             sidebarResizer
             VStack(spacing: 0) {
                 HuddleBar()
+                // Only mounts once someone turns on a camera or a share (#435);
+                // an audio-only huddle is the bar alone, exactly as before.
+                HuddleGridView()
                 detail
+            }
+            // The ring floats over everything — it is the one thing that has to
+            // be answerable from wherever you happen to be looking (#436).
+            .overlay(alignment: .bottomTrailing) {
+                IncomingHuddleView().padding(20)
             }
             // The content column must be free to shrink below its contents'
             // ideal width; otherwise it sets the whole HStack's minimum and the

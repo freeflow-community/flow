@@ -45,6 +45,7 @@ import {
   SetChannelEmojiBody,
   SetChannelIndicatorBody,
   SetMemberRoleBody,
+  HuddleInviteReplyBody,
   SetNotifyLevelBody,
   UpdateAppBody,
   UpdateChannelBody,
@@ -76,6 +77,7 @@ import * as ch from '../services/channels.js';
 import * as ci from '../services/channelIndicators.js';
 import * as ce from '../services/channelEmoji.js';
 import * as hd from '../services/huddles.js';
+import * as hi from '../services/huddleInvites.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
 import * as wse from '../services/workspaceEmoji.js';
@@ -735,9 +737,11 @@ export function registerRoutes(app: FastifyInstance): void {
     return ce.setChannelEmoji(id, req.user.id, body.emoji);
   });
 
-  // Voice huddle (Phase 1, LiveKit Cloud): ambient, audio-only, channel-scoped.
-  // See CONTEXT.md (Huddle) and services/huddles.ts for the join/leave/webhook
-  // design. Join is idempotent — re-mints a fresh token, also the reconnect path.
+  // Huddles (LiveKit Cloud): entity-scoped voice/video. Ambient in a channel,
+  // a ring in a DM or group DM (#436). See CONTEXT.md (Huddle, Huddle invite)
+  // and services/huddles.ts for the join/leave/webhook design. Join is
+  // idempotent — re-mints a fresh token, also the reconnect path — and in a DM
+  // it is what starts the ring.
   app.post('/v1/channels/:id/huddle/join', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return hd.joinHuddle(id, req.user.id);
@@ -746,6 +750,32 @@ export function registerRoutes(app: FastifyInstance): void {
   app.post('/v1/channels/:id/huddle/leave', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     await hd.leaveHuddle(id, req.user.id);
+    return { ok: true };
+  });
+
+  // Answering a ring is joining: accept marks the target answered (so the
+  // user's other devices dismiss with "Answered on another device") and then
+  // takes the ordinary join path for the token — there is no second way in.
+  app.post('/v1/huddle/invites/:id/accept', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(HuddleInviteReplyBody, req.body ?? {});
+    const invite = await hi.acceptInvite(id, req.user.id, body.sessionId);
+    if (!invite) throw new ApiError(404, 'invite_not_found', 'that huddle is no longer ringing');
+    return hd.joinHuddle(invite.channelId, req.user.id);
+  });
+
+  app.post('/v1/huddle/invites/:id/decline', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(HuddleInviteReplyBody, req.body ?? {});
+    await hi.declineInvite(id, req.user.id, body.sessionId);
+    return { ok: true };
+  });
+
+  // The caller giving up before anyone answered. Leaving the room does this
+  // too (the roster empties); this is the explicit "never mind" button.
+  app.post('/v1/huddle/invites/:id/cancel', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await hi.cancelInvite(id, req.user.id);
     return { ok: true };
   });
 
