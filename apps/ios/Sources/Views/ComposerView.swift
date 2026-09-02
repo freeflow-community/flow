@@ -33,9 +33,6 @@ struct ComposerView: View {
             if let s = suggestions, !s.items.isEmpty {
                 suggestionBar(s)
             }
-            if !attachments.isEmpty || uploading > 0 {
-                attachmentBar
-            }
             HStack(alignment: .bottom, spacing: 8) {
                 Menu {
                     Button {
@@ -98,6 +95,14 @@ struct ComposerView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+
+            // Pending attachments sit below the input row (issue #471) — the
+            // composer reads top-to-bottom: what you typed, then what you attached.
+            if !attachments.isEmpty || uploading > 0 {
+                attachmentBar
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
         }
         .background(MC.base)
         .sheet(item: $scheduling) { target in
