@@ -403,10 +403,13 @@ struct SidebarView: View {
 
     // MARK: - Header
 
+    /// Title left, controls right. The title is the only view here that gives
+    /// ground (#456): it takes the leftover width and truncates, so the nav /
+    /// clock / bell cluster stays whole down to the 180pt minimum sidebar.
     private var header: some View {
         HStack(spacing: 2) {
             workspaceMenu
-            Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
             navButton(back: true)
             navButton(back: false)
             scheduledClock
@@ -1159,15 +1162,20 @@ struct SidebarView: View {
                     .font(ZoomedFont.system(size: 16, weight: .bold, scale: textZoom))
                     .foregroundStyle(.white)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                // The switcher affordance never truncates with the name.
                 Image(systemName: "chevron.down")
                     .font(ZoomedFont.system(.caption, scale: textZoom))
                     .foregroundStyle(.white.opacity(0.55))
+                    .layoutPriority(1)
             }
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .fixedSize()
+        // No .fixedSize() (#456): it let a long workspace name claim its full
+        // intrinsic width and shove the header controls off the sidebar edge.
+        .help(currentWorkspace?.name ?? "Workspace")
         .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 }

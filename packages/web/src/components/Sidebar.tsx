@@ -364,14 +364,7 @@ export default function Sidebar() {
       }}
     >
       <div ref={wsMenuRef} className="relative flex items-center justify-between px-3.5 pt-5 pb-2">
-        <button
-          data-testid="workspace-menu"
-          className="flex min-w-0 items-center gap-1 rounded px-1 text-left text-base font-bold hover:bg-white/10"
-          onClick={() => setWsMenuOpen((v) => !v)}
-        >
-          <span className="truncate">{ws?.name ?? 'Workspace'}</span>
-          <span className="text-xs text-white/55">▾</span>
-        </button>
+        <WorkspaceTitle name={ws?.name} onClick={() => setWsMenuOpen((v) => !v)} />
         {wsMenuOpen && (
           <div className="absolute top-12 left-3 right-3 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
             {(workspaces.data ?? []).map((w) => (
@@ -735,6 +728,28 @@ function isTextEntry(target: EventTarget | null): boolean {
  * and non-interactive — at whichever end of the history it sits at, which on a
  * fresh session is both of them.
  */
+/**
+ * The workspace name + switcher affordance. It is the only thing in the header
+ * that gives ground (#456): `min-w-0` lets it shrink below its text width and
+ * `truncate` ellipsises what is left, so the nav/clock/bell cluster beside it —
+ * all `shrink-0` — stays whole down to the 180px minimum sidebar. The full name
+ * stays reachable as the hover tooltip.
+ */
+export function WorkspaceTitle({ name, onClick }: { name?: string; onClick: () => void }) {
+  const label = name ?? 'Workspace';
+  return (
+    <button
+      data-testid="workspace-menu"
+      title={label}
+      className="flex min-w-0 items-center gap-1 rounded px-1 text-left text-base font-bold hover:bg-white/10"
+      onClick={onClick}
+    >
+      <span className="truncate">{label}</span>
+      <span className="shrink-0 text-xs text-white/55">▾</span>
+    </button>
+  );
+}
+
 export function NavButton({
   dir,
   enabled,
