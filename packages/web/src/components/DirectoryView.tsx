@@ -6,11 +6,12 @@
 // The roster endpoint already exists (`useMembers`), so this is a view over
 // data the client is holding anyway: no fetch per card, and the grid is
 // populated the moment the sidebar has drawn.
-import { useState } from 'react';
-import type { WorkspaceMemberDTO } from '@flow/shared';
+import { useEffect, useState } from 'react';
+import type { WorkspaceEmailResultDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { useAuth, useLive, useSelection } from '../state';
-import { useMembers } from '../hooks';
+import { useMembers, useWorkspaces } from '../hooks';
 import { Avatar } from './Avatar';
+import { EmailEveryoneModal, resultToastText } from './EmailEveryoneModal';
 import { MobileMenuButton } from './MobileMenuButton';
 import { UserCard } from './modals';
 
@@ -29,6 +30,14 @@ export interface DirectoryRow extends WorkspaceMemberDTO {
  * left out — matching one would only ever be an accident. Humans and agents sort together
  * alphabetically: the Directory answers "who is here", and splitting it by kind
  * would bury an agent you were looking for behind every human.
+ *
+ * Privacy mode (#489) drops a member from the listing *and* from search — one
+ * filter for both, because a member who is hidden from the grid but findable by
+ * typing their name would not be hidden at all. They are still on the roster,
+ * so mentions, DMs and channel membership are untouched; only this view leaves
+ * them out. It leaves them out for everyone, themselves included: the settings
+ * toggle is the confirmation that it worked, and a roster count that differed
+ * per viewer would be the odd thing to explain.
  */
 export function filterMembers(rows: DirectoryRow[], query: string): DirectoryRow[] {
   const q = query.trim().toLowerCase();
@@ -37,6 +46,7 @@ export function filterMembers(rows: DirectoryRow[], query: string): DirectoryRow
     m.displayName.toLowerCase().includes(q) ||
     (!m.isAgent && !m.isBot && m.email.toLowerCase().split('@')[0]!.includes(q));
   return rows
+    .filter((m) => !m.privacyMode)
     .filter(matches)
     .slice()
     .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }));
@@ -52,12 +62,17 @@ export function DirectoryGrid({
   query,
   onQuery,
   onSelect,
+  canEmailEveryone = false,
+  onEmailEveryone,
 }: {
   rows: DirectoryRow[];
   loading: boolean;
   query: string;
   onQuery: (v: string) => void;
   onSelect: (userId: string) => void;
+  /** #481: owners and admins only — a plain member never sees the button. */
+  canEmailEveryone?: boolean;
+  onEmailEveryone?: () => void;
 }) {
   const shown = filterMembers(rows, query);
   return (
@@ -85,6 +100,18 @@ export function DirectoryGrid({
         <span className="ml-auto shrink-0 text-xs text-faint" data-testid="directory-count">
           {shown.length} {shown.length === 1 ? 'person' : 'people'}
         </span>
+        {/* #481: owner/admin only. Sits at the right end of the search row —
+            the Directory is the view of "everyone this would go to". */}
+        {canEmailEveryone && (
+          <button
+            data-testid="directory-email-everyone"
+            title="Email every member of this workspace"
+            className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-white hover:opacity-90"
+            onClick={onEmailEveryone}
+          >
+            ✉️ Email everyone
+          </button>
+        )}
       </div>
 
       <div className="mc-scroll min-h-0 flex-1 overflow-y-auto p-4 max-md:p-2" data-testid="directory-grid">
@@ -94,7 +121,7 @@ export function DirectoryGrid({
           </p>
         ) : shown.length === 0 ? (
           <p className="py-16 text-center text-sm text-faint" data-testid="directory-empty">
-            {rows.length === 0 ? 'Nobody is here yet.' : `No one matches “${query.trim()}”.`}
+            {query.trim() === '' ? 'Nobody is here yet.' : `No one matches “${query.trim()}”.`}
           </p>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
@@ -162,8 +189,22 @@ export default function DirectoryView() {
   const auth = useAuth();
   const live = useLive();
   const members = useMembers(sel.workspaceId);
+  const workspaces = useWorkspaces();
   const [query, setQuery] = useState('');
   const [cardUserId, setCardUserId] = useState<string | null>(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Same inline role check the Sidebar uses (Sidebar.tsx:250) — the server
+  // enforces it again on every one of the three email routes.
+  const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
+  const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const byId = new Map((members.data ?? []).map((m) => [m.userId, m]));
   const rows: DirectoryRow[] = (members.data ?? []).map((m) => ({
@@ -173,6 +214,8 @@ export default function DirectoryView() {
     sponsorName: m.sponsorId ? byId.get(m.sponsorId)?.displayName ?? null : null,
   }));
 
+  const onSent = (res: WorkspaceEmailResultDTO) => setToast(resultToastText(res));
+
   return (
     <>
       <DirectoryGrid
@@ -181,8 +224,31 @@ export default function DirectoryView() {
         query={query}
         onQuery={setQuery}
         onSelect={setCardUserId}
+        canEmailEveryone={isAdmin}
+        onEmailEveryone={() => setEmailOpen(true)}
       />
       {cardUserId && <UserCard userId={cardUserId} onClose={() => setCardUserId(null)} />}
+      {emailOpen && sel.workspaceId && (
+        <EmailEveryoneModal
+          workspaceId={sel.workspaceId}
+          workspaceName={ws?.name}
+          selfEmail={auth.user.email}
+          onClose={() => setEmailOpen(false)}
+          onSent={onSent}
+        />
+      )}
+      {/* The one result surface this feature needs; the web client has no
+          toast system, and inventing one for a single call site would be a
+          bigger change than the feature. */}
+      {toast && (
+        <div
+          data-testid="directory-toast"
+          role="status"
+          className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white shadow-2xl"
+        >
+          ✓ {toast}
+        </div>
+      )}
     </>
   );
 }

@@ -320,6 +320,26 @@ export async function getStreamUrl(
   return { url, expiresInSeconds: url ? config.streamUrlTtlSeconds : 0 };
 }
 
+/** Access-checked thumbnail URL for direct use by an image element. Unlike
+ * GET /thumb, this JSON response does not make an authenticated fetch follow
+ * a cross-origin redirect before the browser can paint the image. Local and
+ * legacy-encrypted rows return null so the web client can keep using its
+ * authenticated blob fallback. */
+export async function getThumbUrl(
+  fileId: string,
+  userId: string,
+): Promise<{ url: string | null; expiresInSeconds: number }> {
+  const f = await requireFileAccess(fileId, userId);
+  if (!f.thumbKey) throw notFound('no thumbnail for this file');
+  if (f.encKeyId) return { url: null, expiresInSeconds: 0 };
+  const url = await blobStore().presignGet(f.thumbKey, {
+    contentType: 'image/webp',
+    inline: true,
+    ttlSeconds: config.presignGetTtlSeconds,
+  });
+  return { url, expiresInSeconds: url ? config.presignGetTtlSeconds : 0 };
+}
+
 export async function getThumbDownload(fileId: string, userId: string): Promise<FileDownload> {
   const f = await requireFileAccess(fileId, userId);
   if (!f.thumbKey) throw notFound('no thumbnail for this file');

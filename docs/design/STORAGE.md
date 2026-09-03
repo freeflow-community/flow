@@ -100,16 +100,26 @@ once on error in case the TTL expired in a long-open tab). Native clients
 don't use it yet — they stream the download to disk and play the local file
 (Parity gap; the fix is AVPlayer pointed at this URL).
 
+### Thumbnail URLs (web image rendering)
+
+`GET /v1/files/:id/thumb/url` returns JSON `{url, expiresInSeconds}` after the
+same file-access check as `/thumb`. On R2, the web client assigns the short-lived
+presigned URL directly to the image element. This avoids sending an
+Authorization-bearing JavaScript fetch through the cross-origin R2 redirect
+before the browser can paint the image. The local driver and legacy encrypted
+rows return `url: null`; web then falls back to the authenticated `/thumb` blob
+fetch. Original images and animated GIFs use `/v1/files/:id/url` the same way.
+
 ### Client redirect rules
 
 The 302 hop crosses origins (API host → `*.r2.cloudflarestorage.com`), and
 R2 rejects dual auth, so the bearer token must not follow the redirect:
 
-- **Web**: nothing to do — the fetch spec strips `Authorization` on
-  cross-origin redirects, and every evergreen browser implements it. The web
-  client still fetches via `blobUrl()` (object URLs) because `<img>` can't
-  send auth headers; the `blob:` URLs users see are in-memory handles, not
-  server addresses.
+- **Web**: the fetch spec strips `Authorization` on cross-origin redirects.
+  File-backed image surfaces normally avoid that redirect inside JavaScript:
+  they fetch an access-checked JSON URL first and hand its presigned target to
+  the image element. Local storage and legacy encrypted rows still use
+  `blobUrl()`; those `blob:` URLs are in-memory handles, not server addresses.
 - **macOS/iOS**: CFNetwork's redirect header handling is inconsistent across
   OS versions, so `APIClient` installs a `RedirectSanitizer`
   (`URLSessionTaskDelegate`) that explicitly drops `Authorization` whenever

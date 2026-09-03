@@ -42,6 +42,8 @@ import {
   ListScheduledMessagesQuery,
   UpdateScheduledMessageBody,
   SendMessageBody,
+  SendWorkspaceEmailBody,
+  PreviewWorkspaceEmailBody,
   SetChannelEmojiBody,
   SetChannelIndicatorBody,
   SetMemberRoleBody,
@@ -85,6 +87,7 @@ import * as fl from '../services/files.js';
 import * as dv from '../services/devices.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
+import * as cem from '../services/communityEmail.js';
 import { deleteMyAccount } from '../services/accountDeletion.js';
 import { detachUserFromWorkspace, disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
@@ -444,6 +447,37 @@ export function registerRoutes(app: FastifyInstance): void {
   app.delete('/v1/workspaces/:id/avatar', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return ws.clearWorkspaceAvatar(id, req.user.id);
+  });
+
+  // ---- Community email (#481, owner/admin, web-only UI) ----
+  // Markdown in, sanitized HTML out — rendered by the same service function
+  // the preview route calls, so what the composer shows is what ships.
+  app.post('/v1/workspaces/:id/email', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SendWorkspaceEmailBody, req.body);
+    return cem.sendBroadcast(id, req.user.id, body.subject, body.markdown);
+  });
+
+  // "Send test to me" (#484): the same draft, to the author alone, on its own
+  // lighter rate limit — so checking the rendering never costs the broadcast.
+  app.post('/v1/workspaces/:id/email/test', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SendWorkspaceEmailBody, req.body);
+    return cem.sendTestBroadcast(id, req.user.id, body.subject, body.markdown);
+  });
+
+  app.post('/v1/workspaces/:id/email/preview', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(PreviewWorkspaceEmailBody, req.body);
+    return cem.previewBroadcast(id, req.user.id, body.markdown);
+  });
+
+  // The To chip's number, from the server that decides who is a recipient —
+  // the client filtering the roster itself would be a second implementation of
+  // the rule, free to drift.
+  app.get('/v1/workspaces/:id/email/recipients', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { recipientCount: await cem.countBroadcastRecipients(id, req.user.id) };
   });
 
   // ---- Slack-compat app management (phase 4, owner/admin, web-only UI) ----
@@ -970,6 +1004,13 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/files/:id/url', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return fl.getStreamUrl(id, req.user.id);
+  });
+
+  // Short-lived thumbnail URL for direct use by <img>. Keeping the presign in
+  // JSON avoids making a bearer-authenticated fetch cross the R2 redirect.
+  app.get('/v1/files/:id/thumb/url', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return fl.getThumbUrl(id, req.user.id);
   });
 
   // ---- artifacts (phase 13: per-channel shared objects) ----

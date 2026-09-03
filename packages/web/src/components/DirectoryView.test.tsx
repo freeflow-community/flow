@@ -14,6 +14,7 @@ const row = (name: string, extra: Partial<DirectoryRow> = {}): DirectoryRow => (
   isAgent: false,
   isBot: false,
   sponsorId: null,
+  privacyMode: false,
   role: 'member',
   joinedAt: '2026-08-30T00:00:00.000Z',
   sponsorName: null,
@@ -48,6 +49,23 @@ describe('filterMembers', () => {
     expect(filterMembers(rows, 'beef')).toEqual([]);
   });
 
+  // #489: hidden from the listing *and* from search — findable by typing a name
+  // you already know would not be hidden at all.
+  it('leaves out a member in privacy mode, whoever is looking', () => {
+    const rows = [row('Ada'), row('Hilda', { privacyMode: true, email: '' }), row('Zoe')];
+    expect(filterMembers(rows, '').map((m) => m.displayName)).toEqual(['Ada', 'Zoe']);
+    expect(filterMembers(rows, 'hilda')).toEqual([]);
+    // themselves included — the settings toggle is the confirmation, not a
+    // card only they can see
+    const self = [row('Hilda', { privacyMode: true, email: '', isSelf: true })];
+    expect(filterMembers(self, '')).toEqual([]);
+  });
+
+  it('still finds a member who turned privacy mode back off', () => {
+    const rows = [row('Hilda', { privacyMode: false })];
+    expect(filterMembers(rows, 'hilda').map((m) => m.displayName)).toEqual(['Hilda']);
+  });
+
   it('does not mutate the input', () => {
     const rows = [row('zoe'), row('Ada')];
     filterMembers(rows, '');
@@ -56,11 +74,19 @@ describe('filterMembers', () => {
 });
 
 describe('DirectoryGrid render', () => {
-  const render = (rows: DirectoryRow[], query = '', loading = false) =>
+  const render = (rows: DirectoryRow[], query = '', loading = false, canEmailEveryone = false) =>
     renderToStaticMarkup(
       // The pane header carries the mobile hamburger, which reads the nav context.
       <MobileNavContext.Provider value={{ isMobile: false, drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {} }}>
-        <DirectoryGrid rows={rows} loading={loading} query={query} onQuery={() => {}} onSelect={() => {}} />
+        <DirectoryGrid
+          rows={rows}
+          loading={loading}
+          query={query}
+          onQuery={() => {}}
+          onSelect={() => {}}
+          canEmailEveryone={canEmailEveryone}
+          onEmailEveryone={() => {}}
+        />
       </MobileNavContext.Provider>,
     );
 
@@ -111,6 +137,14 @@ describe('DirectoryGrid render', () => {
     expect(html).toContain('AI agent');
   });
 
+  it('draws no card, and no count, for a member in privacy mode (#489)', () => {
+    const html = render([row('Ada'), row('Hilda', { privacyMode: true, email: '' })]);
+    expect(html).toContain('directory-card-Ada');
+    expect(html).not.toContain('directory-card-Hilda');
+    expect(html).not.toContain('hilda@example.com');
+    expect(html).toContain('1 person');
+  });
+
   it('distinguishes loading, an empty workspace, and a query with no match', () => {
     expect(render([], '', true)).toContain('Loading…');
     expect(render([], '')).toContain('Nobody is here yet.');
@@ -118,5 +152,15 @@ describe('DirectoryGrid render', () => {
     const noMatch = render([row('Ada')], 'zzz');
     expect(noMatch).toContain('directory-empty');
     expect(noMatch).not.toContain('Nobody is here yet.');
+  });
+
+  // #481: the broadcast entry point is owner/admin only. The server enforces
+  // it again, but a member should never see a button they can't use.
+  it('shows Email everyone only when the viewer is an owner or admin', () => {
+    expect(render([row('Ada')], '', false, true)).toContain('directory-email-everyone');
+    expect(render([row('Ada')], '', false, true)).toContain('Email everyone');
+    expect(render([row('Ada')], '', false, false)).not.toContain('directory-email-everyone');
+    // absent prop behaves like a plain member, not like an admin
+    expect(render([row('Ada')])).not.toContain('Email everyone');
   });
 });

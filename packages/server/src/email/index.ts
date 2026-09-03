@@ -11,6 +11,10 @@ export interface EmailMessage {
   to: string;
   subject: string;
   text: string;
+  /** Optional HTML alternative (#481 community broadcasts). When present the
+   * message is multipart: `text` stays the fallback for clients that refuse
+   * HTML, and the two must say the same thing. Auth flows send text only. */
+  html?: string;
 }
 
 export interface EmailSender {
@@ -27,7 +31,9 @@ class DevMailer implements EmailSender {
     const file = path.join(this.dir, `${stamp}-${slug}.json`);
     await fs.writeFile(file, JSON.stringify({ ...msg, sentAt: new Date().toISOString() }, null, 2));
     const link = msg.text.match(/https?:\/\/\S+/)?.[0];
-    console.log(`[email:dev] to=${msg.to} subject="${msg.subject}"${link ? ` link=${link}` : ''} (${file})`);
+    console.log(
+      `[email:dev] to=${msg.to} subject="${msg.subject}"${link ? ` link=${link}` : ''}${msg.html ? ' +html' : ''} (${file})`,
+    );
   }
 }
 
@@ -52,7 +58,15 @@ class CloudflareMailer implements EmailSender {
           authorization: `Bearer ${this.apiToken}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ from: this.from, to: msg.to, subject: msg.subject, text: msg.text }),
+        body: JSON.stringify({
+          from: this.from,
+          to: msg.to,
+          subject: msg.subject,
+          text: msg.text,
+          // Cloudflare's flat send API names the HTML alternative `html`,
+          // alongside `text` rather than instead of it.
+          ...(msg.html ? { html: msg.html } : {}),
+        }),
       },
     );
     const json = (await res.json().catch(() => ({}))) as {

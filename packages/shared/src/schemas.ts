@@ -515,6 +515,10 @@ export const PatchMeBody = z
     statusSuppressAlerts: z.boolean().optional(),
     // phase 11 §10: don't unfurl links in my own messages
     unfurlOwnLinks: z.boolean().optional(),
+    // #489: hide my email from the API and drop me from the Directory. This is
+    // the only write path, and it only ever writes the caller's own row — which
+    // is what makes "settable by the user themselves" true by construction.
+    privacyMode: z.boolean().optional(),
   })
   .refine(
     (b) =>
@@ -527,7 +531,8 @@ export const PatchMeBody = z
       b.statusText !== undefined ||
       b.notificationPrefs !== undefined ||
       b.statusSuppressAlerts !== undefined ||
-      b.unfurlOwnLinks !== undefined,
+      b.unfurlOwnLinks !== undefined ||
+      b.privacyMode !== undefined,
     'nothing to update',
   )
   .refine(
@@ -742,3 +747,24 @@ export const RegisterDeviceBody = z.object({
   bundleId: z.string().min(1).max(255),
 });
 export type RegisterDeviceBody = z.infer<typeof RegisterDeviceBody>;
+
+// ---- community email (#481) ------------------------------------
+/** POST /v1/workspaces/:id/email — admin broadcast to every human member.
+ * Body is markdown; the server renders and sanitizes it (single source of
+ * truth) so the composer's Preview tab and the sent mail cannot diverge. */
+export const SendWorkspaceEmailBody = z.object({
+  subject: z.string().trim().min(1).max(200),
+  markdown: z.string().trim().min(1).max(10_000),
+});
+export type SendWorkspaceEmailBody = z.infer<typeof SendWorkspaceEmailBody>;
+
+/** POST /v1/workspaces/:id/email/test (#484) — the same draft to the author
+ * alone, so it takes the same body; the server adds the `[Test] ` prefix. */
+export const SendTestWorkspaceEmailBody = SendWorkspaceEmailBody;
+export type SendTestWorkspaceEmailBody = z.infer<typeof SendTestWorkspaceEmailBody>;
+
+/** POST /v1/workspaces/:id/email/preview — same renderer, nothing sent. */
+export const PreviewWorkspaceEmailBody = z.object({
+  markdown: z.string().trim().min(1).max(10_000),
+});
+export type PreviewWorkspaceEmailBody = z.infer<typeof PreviewWorkspaceEmailBody>;

@@ -321,6 +321,23 @@ struct ChannelScreen: View {
                 app.openThread(nil)
             }
         }
+        // …and the other direction (#476): a jump that arrives while this
+        // channel is *already* on screen. A tapped push for a thread reply in
+        // the visible channel sets `openThreadRootId` and nothing else — the
+        // `.task` below seeds `$threadRoute` on first appearance only, so the
+        // tap opened the channel and stopped there. A tap for a different
+        // channel was never affected: that remounts this screen.
+        //
+        // Guarded on the selection for the same reason the pop branch above is:
+        // a channel switch changes `openThreadRootId` for the channel replacing
+        // this one, and pushing a destination from a screen on its way out is
+        // exactly what corrupts the NavigationStack (see `restoredParkedThread`).
+        // Assigning the same route back is a no-op, so this cannot loop with
+        // the handler above.
+        .onChange(of: app.openThreadRootId) { _, rootId in
+            guard app.selectedChannelId == channelId else { return }
+            threadRoute = rootId.map(ThreadRoute.init)
+        }
         // Jump-to-message (phase 12): page older history until the target is
         // loaded, then MessageListView scrolls to it; give up when exhausted.
         .onChange(of: transcriptWindow) { _, _ in startMessages() }
@@ -405,7 +422,7 @@ struct ChannelScreen: View {
         } else if app.hasMore[channelId] ?? false {
             transcriptWindow += Self.windowStep
             Task { await app.engine.loadOlder(channelId: channelId) }
-        } else if threadRoute == nil {
+        } else if threadRoute == nil, app.openThreadRootId == nil {
             // Never clear it while a thread is pushed (#332): this transcript
             // is filtered to `threadRootId == nil`, so a jump to a *reply* can
             // never become "loaded" here, and exhausting the channel's history
@@ -413,6 +430,12 @@ struct ChannelScreen: View {
             // before that screen's replies had arrived to claim it. Paging
             // above still runs, so a jump to a root message is unaffected by a
             // thread that happens to be parked open (#89).
+            //
+            // `openThreadRootId` is checked as well as the local route (#476):
+            // a notification tap sets the app-level root and the focus id in
+            // one pass, and the push it triggers is a view update behind — so
+            // for that one pass `threadRoute` is still nil here while the
+            // target already belongs to the thread about to appear.
             app.focusMessageId = nil // not in this channel's loaded history
         }
     }

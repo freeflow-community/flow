@@ -12,6 +12,7 @@ import { bytesLabel } from '../lib/format';
 import { isHtmlFile, isImageFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { useSelection } from '../state';
 import { useArtifacts } from '../hooks';
+import { useFileImageSource } from './FileImage';
 
 export default function ArtifactBody({ artifactId }: { artifactId: string }) {
   const sel = useSelection();
@@ -452,18 +453,19 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function ImagePane({ file }: { file: FileDTO }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    void blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); }).catch(() => { if (alive) setFailed(true); });
-    return () => { alive = false; };
-  }, [file.id]);
-  if (failed) return <DownloadPane file={file} />;
-  if (!url) return <Centered>Loading…</Centered>;
+  const image = useFileImageSource(file.id, 'original');
+  if (image.status === 'failed') return <DownloadPane file={file} />;
+  if (!image.src) return <Centered>Loading…</Centered>;
   return (
     <div className="mc-scroll flex min-h-0 flex-1 items-center justify-center overflow-auto bg-daypill/40 p-4">
-      <img src={url} alt={file.name} className="max-h-full max-w-full rounded-lg" data-testid={`artifact-image-${file.name}`} />
+      <img
+        src={image.src}
+        alt={file.name}
+        className="max-h-full max-w-full rounded-lg"
+        data-testid={`artifact-image-${file.name}`}
+        onLoad={image.onLoad}
+        onError={image.onError}
+      />
     </div>
   );
 }

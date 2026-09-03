@@ -9,7 +9,8 @@ import { SCHEDULED_VIEW_ID, useAuth, useSelection } from '../state';
 import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
 import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
 import { messageDeleteConfirmation, messageDeleteMode } from '../lib/messagePermissions';
-import { Avatar, AuthImg } from './Avatar';
+import { Avatar } from './Avatar';
+import { useFileImageSource, type FileImageSource } from './FileImage';
 import { LightboxButton, LightboxShell } from './Lightbox';
 import { EmojiGlyph } from './CustomEmoji';
 import EmojiPicker from './EmojiPicker';
@@ -862,24 +863,110 @@ function ImageAttachment({ file }: { file: FileDTO }) {
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [lightbox, setLightbox] = useState(false);
   const download = useDownload(file);
+  const variant = file.mimeType === 'image/gif' ? 'original' : 'thumbnail';
+  const image = useFileImageSource(file.id, variant, !collapsed);
 
-  // GIFs skip the static webp thumb and render the original so they animate.
-  const imgPath = file.mimeType === 'image/gif' ? `/v1/files/${file.id}` : `/v1/files/${file.id}/thumb`;
   return (
     <div className="mt-1">
       <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
       {!collapsed && (
-        <div className="group/att relative mt-0.5 w-fit">
-          <button data-testid={`file-${file.name}`} className="block" onClick={() => setLightbox(true)} title={file.name}>
-            {/* ~2x preview (ui_nits item 1). Thumbs cap at 512px, so an img
-                never stretches past its intrinsic size — large images land at
-                512 CSS px (soft on retina; noted at review). */}
-            <AuthImg path={imgPath} alt={file.name} className="max-h-[480px] max-w-[min(576px,100%)] rounded-lg border border-hairline" />
-          </button>
-          <DownloadHoverButton file={file} onDownload={download} />
-        </div>
+        <AttachmentImagePreview
+          file={file}
+          image={image}
+          onOpen={() => setLightbox(true)}
+          onDownload={download}
+        />
       )}
       {lightbox && <ImageLightbox file={file} onClose={() => setLightbox(false)} onDownload={download} />}
+    </div>
+  );
+}
+
+const IMAGE_PREVIEW_MAX_WIDTH = 512;
+const IMAGE_PREVIEW_MAX_HEIGHT = 480;
+const IMAGE_PREVIEW_FALLBACK_WIDTH = 320;
+const IMAGE_PREVIEW_FALLBACK_HEIGHT = 240;
+const IMAGE_PREVIEW_MIN_EDGE = 96;
+
+/** Definite outer geometry keeps loading and failed previews visible and
+ * removes the fit-content/percentage-width cycle that is fragile on phones. */
+export function attachmentPreviewStyle(file: Pick<FileDTO, 'width' | 'height'>): React.CSSProperties {
+  const sourceWidth = file.width && file.width > 0 ? file.width : IMAGE_PREVIEW_FALLBACK_WIDTH;
+  const sourceHeight = file.height && file.height > 0 ? file.height : IMAGE_PREVIEW_FALLBACK_HEIGHT;
+  const scale = Math.min(1, IMAGE_PREVIEW_MAX_WIDTH / sourceWidth, IMAGE_PREVIEW_MAX_HEIGHT / sourceHeight);
+  return {
+    width: Math.max(IMAGE_PREVIEW_MIN_EDGE, Math.round(sourceWidth * scale)),
+    maxWidth: '100%',
+    minHeight: IMAGE_PREVIEW_MIN_EDGE,
+    aspectRatio: `${sourceWidth} / ${sourceHeight}`,
+  };
+}
+
+/** Presentational seam kept separate from loading so all states can be
+ * regression-tested without a browser or network. */
+export function AttachmentImagePreview({
+  file,
+  image,
+  onOpen,
+  onDownload,
+}: {
+  file: FileDTO;
+  image: FileImageSource;
+  onOpen: () => void;
+  onDownload: () => Promise<void>;
+}) {
+  return (
+    <div
+      data-testid={`file-image-frame-${file.name}`}
+      className="group/att relative mt-0.5 max-w-full min-w-0 overflow-hidden rounded-lg border border-hairline bg-daypill"
+      style={attachmentPreviewStyle(file)}
+    >
+      {image.src && image.status !== 'failed' && (
+        <button
+          type="button"
+          data-testid={`file-${file.name}`}
+          className={`absolute inset-0 block h-full w-full ${image.status === 'loaded' ? '' : 'opacity-0'}`}
+          onClick={onOpen}
+          title={file.name}
+        >
+          <img
+            src={image.src}
+            alt={file.name}
+            className="h-full w-full object-contain"
+            onLoad={image.onLoad}
+            onError={image.onError}
+          />
+        </button>
+      )}
+      {image.status === 'loading' && (
+        <div role="status" className="absolute inset-0 flex items-center justify-center text-xs text-faint">
+          Loading preview…
+        </div>
+      )}
+      {image.status === 'failed' && (
+        <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center text-xs text-faint">
+          <span>Preview unavailable</span>
+          <span className="flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              data-testid={`file-retry-${file.name}`}
+              className="rounded-md border border-hairline bg-white px-2 py-1 font-semibold text-ink hover:border-hairline2"
+              onClick={image.retry}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              data-testid={`file-error-download-${file.name}`}
+              className="rounded-md border border-hairline bg-white px-2 py-1 font-semibold text-ink hover:border-hairline2"
+              onClick={() => void onDownload()}
+            >
+              Download
+            </button>
+          </span>
+        </div>
+      )}
+      {image.status === 'loaded' && <DownloadHoverButton file={file} onDownload={onDownload} />}
     </div>
   );
 }
@@ -935,18 +1022,18 @@ function VideoAttachment({ file }: { file: FileDTO }) {
     <div className="mt-1">
       <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
       {!collapsed && (
-        <div className="group/att relative mt-0.5 w-fit">
+        <div className="group/att relative mt-0.5 w-[min(576px,100%)]">
           {url ? (
             <video
               data-testid={`file-video-${file.name}`}
               src={url}
               controls
               preload="metadata"
-              className="max-h-[480px] max-w-[min(576px,100%)] rounded-lg border border-hairline bg-black"
+              className="block h-auto max-h-[480px] w-full rounded-lg border border-hairline bg-black"
               onError={onVideoError}
             />
           ) : (
-            <div className="flex h-[240px] w-[min(426px,100%)] items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">
+            <div className="flex h-[240px] w-full items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">
               ▶
             </div>
           )}
@@ -1196,12 +1283,7 @@ function ImageLightbox({
   onClose: () => void;
   onDownload: () => Promise<void>;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); }).catch(() => {});
-    return () => { alive = false; };
-  }, [file.id]);
+  const image = useFileImageSource(file.id, 'original');
   return (
     <LightboxShell
       testId="lightbox"
@@ -1212,7 +1294,7 @@ function ImageLightbox({
           <LightboxButton
             testId="lightbox-open-external"
             title="Open external"
-            onClick={() => { if (url) window.open(url, '_blank'); }}
+            onClick={() => { if (image.src) window.open(image.src, '_blank'); }}
           >
             ↗
           </LightboxButton>
@@ -1222,8 +1304,25 @@ function ImageLightbox({
         </>
       }
     >
-      {url ? (
-        <img src={url} alt={file.name} className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain" />
+      {image.src && image.status !== 'failed' ? (
+        <img
+          src={image.src}
+          alt={file.name}
+          className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain"
+          onLoad={image.onLoad}
+          onError={image.onError}
+        />
+      ) : image.status === 'failed' ? (
+        <div role="alert" className="flex flex-col items-center gap-2 text-sm text-white/70">
+          <span>Preview unavailable</span>
+          <button
+            type="button"
+            className="rounded-md border border-white/30 px-3 py-1.5 font-semibold text-white hover:bg-white/10"
+            onClick={image.retry}
+          >
+            Retry
+          </button>
+        </div>
       ) : (
         <span className="text-sm text-white/70">Loading…</span>
       )}

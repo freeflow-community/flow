@@ -13,6 +13,14 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Privacy mode is web-only to set, and native shows the redaction without
+  explaining it** (#489, native half deliberately deferred to #490). The server
+  hides the address everywhere, so macOS and iOS already show a privacy-mode
+  member with no email — but they have no toggle, and their Directory still
+  lists that member. #490 closes both halves. One wrinkle to close with it: the
+  workspace-wide `user.updated` event carries the redacted DTO, so a
+  privacy-mode member's *own* native cache blanks their address until the next
+  `/v1/me`.
 - **Screen-share audio is Chromium-web only** (#435). The web client asks for
   it (`getDisplayMedia({ audio: true })`) and Chromium supplies tab audio;
   Firefox/Safari ignore the flag and share silently, which is the intended
@@ -136,14 +144,13 @@ This file keeps two things:
   original `clientMsgId`); iOS still needs the `failed` flag on its message row,
   the un-bump/re-bump rollup handling, and the retry UI. Server is already
   idempotent on `(channelId, clientMsgId)`, so it's a client-only port.
-- iOS: a thread-reply Activity notification lands in the originating channel
-  but does not open the thread or scroll to the reply (web + macOS open the
-  thread and flash the reply). iOS threads are a pushed screen owned by
-  `ChannelScreen`'s `$threadRoute`; since #89 that route is seeded from
-  `AppState.openThreadRootId` on appear, so the thread half is now plumbed —
-  what's missing is an Activity row that sets `openThreadRootId` for a reply
-  (it deliberately targets only top-level messages today) and the in-thread
-  jump target, which `ThreadScreen` still ignores. Phase 12.
+- iOS: a thread-reply *Activity-feed* row lands in the originating channel but
+  does not open the thread or scroll to the reply (web + macOS open the thread
+  and flash the reply). Only the feed row is left: #332 gave `ThreadScreen` its
+  jump target and #476 wired `WindowState.openNotification`'s thread half all
+  the way through from a push tap, so closing this is the Activity row passing
+  the reply's `threadRootId` the way `PushDelegate` now does — it deliberately
+  targets only top-level messages today.
 - Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
   per-workspace switch/allowlist) is missing on *every* client — API-only.
 - iOS artifacts, what's still missing after #157 (2026-07-30). Viewing is done —
@@ -287,12 +294,21 @@ This file keeps two things:
   called *on the main thread* (the `async` bridge does not), and a tapped push
   may only be routed once the app is signed in — bootstrap passes through
   `.signedOut`, which clears the window's selection.
-- **A tapped push routes to the channel, not into the thread** (#249) — the same
-  hole as the Activity-row gap above, reached from a second entry point.
-  `PushDelegate.route` passes `threadRootId: nil` deliberately; it starts
-  carrying the root the moment `ThreadScreen` honours a jump target.
+- **Deep-linking a notification tap into a thread is iOS-only** (#476). Tapping
+  an APNs alert for a thread reply opens the thread scrolled to the reply;
+  macOS and web have no equivalent because neither receives a push at all yet
+  (the gap above), so this closes with their push support rather than
+  separately — both already open a thread from an *Activity* row.
 
 ### Deliberate divergences (ruled)
+- **Community email is web-only** (#481, #484, #486, as specified). Composing a
+  broadcast is an admin desk job — a markdown editor with a preview pane, and
+  now a "Send test to me" button on the confirm step — and the issues scoped it
+  to web deliberately. Nothing about it is client-specific: the endpoints
+  (`POST /v1/workspaces/:id/email` and its `…/email/preview` and `…/email/test`
+  siblings) are plain REST, render server-side and would work unchanged from a
+  native composer, so this is a scope decision rather than a platform limit.
+  Not a gap to close unless someone asks to compose one from a phone.
 - The **hardened-runtime device entitlements** (#469) are a macOS packaging
   concern with no counterpart elsewhere: only the macOS release signs with
   `--options runtime`, so only it can be refused the mic and camera before TCC

@@ -2086,13 +2086,24 @@ actor SyncEngine {
                     )
                 }) ?? [:]
                 let senderName = names[n.actorUserId]
+                // Kept in step with `alertStringsFor` in the server's
+                // push/payload.ts — the same notification must not read one way
+                // on the Mac and another on the phone. #466/#472 fixed the
+                // mention title being the `default:` there; this is the same
+                // three lines here. Kind 3 cannot reach this switch today
+                // (`n.alerts` is false for it), so no channel-name lookup is
+                // added for a row that never renders — the honest generic
+                // string is what the banner would show, and the local banner
+                // has no subtitle to name the channel in anyway.
                 let title = switch n.kind {
+                case 0: "\(senderName ?? "Someone") mentioned you"
                 case 1: senderName ?? "New direct message"
                 case 2: "\(senderName ?? "Someone") replied in a thread"
+                case 3: "New channel activity"
                 case 4: "\(senderName ?? "Someone") reacted \(n.reactionEmoji ?? "")"
                     .trimmingCharacters(in: .whitespaces)
                 case 5: "\(senderName ?? "Someone") added you to a channel"
-                default: "\(senderName ?? "Someone") mentioned you"
+                default: "New activity"
                 }
                 Banners.show(
                     n,

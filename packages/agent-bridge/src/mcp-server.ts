@@ -13,7 +13,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { ArtifactDTO } from '@flow/shared';
+import type { ArtifactDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { FlowApi, FlowApiError } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 
@@ -27,6 +27,23 @@ interface JsonRpcRequest {
 /** How a channel is named in tool output — DMs have no name, only a kind. */
 const channelLabel = (c: { name: string | null; kind: string }): string =>
   c.name ? `#${c.name}` : `(${c.kind})`;
+
+/** One member as a `list_users` line. The email is member-visible data the
+ * members API already returns to anyone in the workspace (#488) — carrying it
+ * here is what lets an agent email a colleague without falling back to raw
+ * HTTP. Agents' synthetic addresses print as-is.
+ *
+ * A member in privacy mode (#489) arrives with no address at all: the server
+ * has already emptied the field, so the line simply omits that column rather
+ * than printing a gap an agent might read as a name. Their id and name stay —
+ * privacy mode hides an address, it does not hide a person. */
+export const memberLine = (m: WorkspaceMemberDTO): string =>
+  [
+    m.userId,
+    `${m.displayName}${m.isAgent ? ' 🤖' : ''}`,
+    ...(m.email ? [m.email] : []),
+    `[${m.role}]${m.statusText ? ` — ${m.statusText}` : ''}`,
+  ].join('  ');
 
 /** Lease for an indicator set by hand via set_channel_indicator (#137). Longer
  * than the per-turn one, because nothing refreshes this one — but still bounded,
@@ -141,7 +158,8 @@ const TOOLS = [
   },
   {
     name: 'list_users',
-    description: 'List workspace members (id, display name, role; 🤖 marks agents). Use the ids in <@userId> mentions.',
+    description:
+      'List workspace members (id, display name, email, role; 🤖 marks agents). Use the ids in <@userId> mentions, and the emails to reach people outside Flow. Some members keep their address private — their line simply has no email, and there is no other way to get it.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -574,10 +592,7 @@ export async function runMcpServer(): Promise<void> {
       }
       case 'list_users': {
         const members = await api.listMembers(workspaceId);
-        const lines = members.map(
-          (m) => `${m.userId}  ${m.displayName}${m.isAgent ? ' 🤖' : ''}  [${m.role}]${m.statusText ? ` — ${m.statusText}` : ''}`,
-        );
-        return toolText(lines.join('\n'));
+        return toolText(members.map(memberLine).join('\n'));
       }
       case 'join_channel': {
         await api.joinChannel(String(args.channelId ?? ''));

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
+import type { BlobStore } from '../src/storage/index.js';
 
 process.env.DATABASE_URL = process.env.FLOW_TEST_DATABASE_URL
   ?? 'postgres://flow:flow_dev@localhost:5442/flow_files_test';
@@ -36,7 +37,7 @@ const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
 const fl = await import('../src/services/files.js');
 const { encryptBlob } = await import('../src/crypto/index.js');
-const { blobStore } = await import('../src/storage/index.js');
+const { blobStore, _setBlobStoreForTests } = await import('../src/storage/index.js');
 const { newId } = await import('../src/lib/ids.js');
 const { eq } = await import('drizzle-orm');
 
@@ -99,10 +100,43 @@ describe('presigned upload lifecycle (local fallback)', () => {
     expect(dl.content.mimeType).toBe('image/png');
     const rows = await fl.validateAttachments([pres.file.id], workspaceId, uploaderId);
     expect(rows).toHaveLength(1);
+    await expect(fl.getThumbUrl(pres.file.id, uploaderId)).resolves.toEqual({ url: null, expiresInSeconds: 0 });
 
     // complete is idempotent
     const again = await fl.completeUpload(pres.file.id, uploaderId);
     expect(again.id).toBe(done.id);
+  });
+
+  it('mints an access-checked direct thumbnail URL when storage can presign', async () => {
+    const data = await png();
+    const pres = await fl.createPresignedUpload(workspaceId, uploaderId, 'direct.png', 'image/png', data.length);
+    await fl.putPendingContent(pres.file.id, uploaderId, data);
+    await fl.completeUpload(pres.file.id, uploaderId);
+
+    const local = blobStore();
+    const calls: Array<{ key: string; ttlSeconds: number | undefined }> = [];
+    const presigningStore: BlobStore = {
+      put: (key, body) => local.put(key, body),
+      get: (key) => local.get(key),
+      delete: (key) => local.delete(key),
+      head: (key) => local.head(key),
+      presignPut: (key, opts) => local.presignPut(key, opts),
+      presignGet: async (key, opts) => {
+        calls.push({ key, ttlSeconds: opts.ttlSeconds });
+        return `https://objects.example/${key}?signed=1`;
+      },
+    };
+    _setBlobStoreForTests(presigningStore);
+    try {
+      await expect(fl.getThumbUrl(pres.file.id, uploaderId)).resolves.toEqual({
+        url: `https://objects.example/thumbs/${pres.file.id}?signed=1`,
+        expiresInSeconds: config.presignGetTtlSeconds,
+      });
+      expect(calls).toEqual([{ key: `thumbs/${pres.file.id}`, ttlSeconds: config.presignGetTtlSeconds }]);
+      await expect(fl.getThumbUrl(pres.file.id, outsiderId)).rejects.toMatchObject({ statusCode: 404 });
+    } finally {
+      _setBlobStoreForTests(local);
+    }
   });
 
   it('binds the declared size: wrong-length PUT and short uploads are rejected', async () => {
