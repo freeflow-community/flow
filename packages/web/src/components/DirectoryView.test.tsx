@@ -56,11 +56,19 @@ describe('filterMembers', () => {
 });
 
 describe('DirectoryGrid render', () => {
-  const render = (rows: DirectoryRow[], query = '', loading = false) =>
+  const render = (rows: DirectoryRow[], query = '', loading = false, canEmailEveryone = false) =>
     renderToStaticMarkup(
       // The pane header carries the mobile hamburger, which reads the nav context.
       <MobileNavContext.Provider value={{ isMobile: false, drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {} }}>
-        <DirectoryGrid rows={rows} loading={loading} query={query} onQuery={() => {}} onSelect={() => {}} />
+        <DirectoryGrid
+          rows={rows}
+          loading={loading}
+          query={query}
+          onQuery={() => {}}
+          onSelect={() => {}}
+          canEmailEveryone={canEmailEveryone}
+          onEmailEveryone={() => {}}
+        />
       </MobileNavContext.Provider>,
     );
 
@@ -118,5 +126,15 @@ describe('DirectoryGrid render', () => {
     const noMatch = render([row('Ada')], 'zzz');
     expect(noMatch).toContain('directory-empty');
     expect(noMatch).not.toContain('Nobody is here yet.');
+  });
+
+  // #481: the broadcast entry point is owner/admin only. The server enforces
+  // it again, but a member should never see a button they can't use.
+  it('shows Email everyone only when the viewer is an owner or admin', () => {
+    expect(render([row('Ada')], '', false, true)).toContain('directory-email-everyone');
+    expect(render([row('Ada')], '', false, true)).toContain('Email everyone');
+    expect(render([row('Ada')], '', false, false)).not.toContain('directory-email-everyone');
+    // absent prop behaves like a plain member, not like an admin
+    expect(render([row('Ada')])).not.toContain('Email everyone');
   });
 });

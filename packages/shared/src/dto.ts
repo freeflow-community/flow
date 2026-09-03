@@ -789,6 +789,21 @@ export interface ScheduledMessageDTO {
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+/** POST /v1/workspaces/:id/email (#481). One send per recipient, so a single
+ * bad address shows up as `failed: 1` rather than aborting the broadcast. */
+export interface WorkspaceEmailResultDTO {
+  sent: number;
+  failed: number;
+}
+
+/** POST /v1/workspaces/:id/email/preview (#481) — the exact sanitized,
+ * inline-styled document the recipients would receive. */
+export interface WorkspaceEmailPreviewDTO {
+  html: string;
+  /** Human members who would receive it, counted the same way the send does. */
+  recipientCount: number;
+}
+
 function clockLabel(hour: number, minute: number): string {
   const h12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${h12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`;
