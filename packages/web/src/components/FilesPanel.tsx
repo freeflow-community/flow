@@ -14,6 +14,7 @@ import { isImageFile, isVideoFile } from '../lib/fileKind';
 import { useChannelFiles, useChannels } from '../hooks';
 import { useSelection } from '../state';
 import { LightboxButton, LightboxShell } from './Lightbox';
+import { useFileImageSource } from './FileImage';
 
 const SORTS: { key: ChannelFileSort; label: string }[] = [
   { key: 'newest', label: 'Newest' },
@@ -229,12 +230,11 @@ function RowThumb({ file }: { file: ChannelFileDTO }) {
   const [duration, setDuration] = useState<number | null>(null);
   const image = isImageFile(file) && file.hasThumb;
   const video = isVideoFile(file);
+  const imageSource = useFileImageSource(file.id, 'thumbnail', image);
 
   useEffect(() => {
     let alive = true;
-    if (image) {
-      void blobUrl(`/v1/files/${file.id}/thumb`).then((u) => { if (alive) setSrc(u); }).catch(() => {});
-    } else if (video) {
+    if (video) {
       // Metadata only — a presigned URL lets the browser read the header (and
       // paint frame one) without pulling a whole video into the panel. When
       // the server can't presign (local dev, legacy rows) we stay on the type
@@ -242,14 +242,26 @@ function RowThumb({ file }: { file: ChannelFileDTO }) {
       void fileStreamUrl(file.id).then((r) => { if (alive && r.url) setSrc(r.url); }).catch(() => {});
     }
     return () => { alive = false; };
-  }, [file.id, image, video]);
+  }, [file.id, video]);
 
   const box = 'h-[38px] w-14 shrink-0 overflow-hidden rounded-[7px]';
   if (image) {
-    return src ? (
-      <img src={src} alt="" className={`${box} bg-daypill object-cover`} />
+    return imageSource.src && imageSource.status !== 'failed' ? (
+      <img
+        src={imageSource.src}
+        alt=""
+        className={`${box} bg-daypill object-cover`}
+        onLoad={imageSource.onLoad}
+        onError={imageSource.onError}
+      />
     ) : (
-      <span className={`${box} block bg-daypill`} />
+      <span
+        role={imageSource.status === 'failed' ? 'img' : 'status'}
+        aria-label={imageSource.status === 'failed' ? 'Preview unavailable' : 'Loading preview'}
+        className={`${box} flex items-center justify-center bg-daypill text-xs text-faint`}
+      >
+        {imageSource.status === 'failed' ? '!' : ''}
+      </span>
     );
   }
   if (video) {
@@ -297,6 +309,7 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
   const video = isVideoFile(file);
   const pdf = file.mimeType === 'application/pdf';
   const inline = image || video || pdf;
+  const imageSource = useFileImageSource(file.id, 'original', image);
 
   useEffect(() => {
     let alive = true;
@@ -304,15 +317,16 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
       void download().finally(() => { if (alive) onClose(); });
       return () => { alive = false; };
     }
+    if (image) return () => { alive = false; };
     // Video prefers the presigned stream URL (seekable, no full download);
-    // everything else — and the local-dev fallback — reads the bytes.
+    // PDF and the local-dev fallback read the bytes.
     const load = video
       ? fileStreamUrl(file.id).then((r) => r.url ?? blobUrl(`/v1/files/${file.id}`))
       : blobUrl(`/v1/files/${file.id}`);
     void load.then((u) => { if (alive) setUrl(u); }).catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file.id, inline, video]);
+  }, [file.id, image, inline, video]);
 
   if (!inline) return null;
 
@@ -327,10 +341,31 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
         </LightboxButton>
       }
     >
-      {!url ? (
+      {image ? (
+        imageSource.src && imageSource.status !== 'failed' ? (
+          <img
+            src={imageSource.src}
+            alt={file.name}
+            className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain"
+            onLoad={imageSource.onLoad}
+            onError={imageSource.onError}
+          />
+        ) : imageSource.status === 'failed' ? (
+          <div role="alert" className="flex flex-col items-center gap-2 text-sm text-white/70">
+            <span>Preview unavailable</span>
+            <button
+              type="button"
+              className="rounded-md border border-white/30 px-3 py-1.5 font-semibold text-white hover:bg-white/10"
+              onClick={imageSource.retry}
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <span className="text-sm text-white/70">Loading…</span>
+        )
+      ) : !url ? (
         <span className="text-sm text-white/70">Loading…</span>
-      ) : image ? (
-        <img src={url} alt={file.name} className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain" />
       ) : video ? (
         <video src={url} controls autoPlay className="max-h-[85vh] max-w-[88vw] rounded-lg bg-black" />
       ) : (

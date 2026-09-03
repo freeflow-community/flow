@@ -972,6 +972,13 @@ export function registerRoutes(app: FastifyInstance): void {
     return fl.getStreamUrl(id, req.user.id);
   });
 
+  // Short-lived thumbnail URL for direct use by <img>. Keeping the presign in
+  // JSON avoids making a bearer-authenticated fetch cross the R2 redirect.
+  app.get('/v1/files/:id/thumb/url', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return fl.getThumbUrl(id, req.user.id);
+  });
+
   // ---- artifacts (phase 13: per-channel shared objects) ----
   app.post('/v1/artifacts', { preHandler: requireAuth }, async (req, reply) => {
     const body = parse(CreateArtifactBody, req.body);
