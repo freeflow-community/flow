@@ -2,6 +2,10 @@
 
 export interface UserDTO {
   id: string;
+  /** The account's email — **'' when it is hidden from you** (#489 privacy
+   * mode). You always see your own address; everyone else sees ''. Empty rather
+   * than absent so every client keeps decoding a plain string, and '' is what
+   * "no address to show" already means for a card. */
   email: string;
   displayName: string;
   avatarUrl: string | null;
@@ -30,6 +34,10 @@ export interface UserDTO {
   notificationPrefs: NotificationPrefs;
   /** While true, all notification alerts are suppressed (status-driven DND). */
   statusSuppressAlerts: boolean;
+  /** #489: the user asked to be left out of the Directory and to have their
+   * email hidden. Not a secret — clients need it to know whom to leave out —
+   * but only the account owner can set it. */
+  privacyMode: boolean;
   createdAt: string;
 }
 
@@ -89,6 +97,7 @@ export type MemberRole = 'owner' | 'admin' | 'member';
 export interface WorkspaceMemberDTO {
   userId: string;
   displayName: string;
+  /** '' when this member has privacy mode on (#489) and you are not them. */
   email: string;
   avatarUrl: string | null;
   statusEmoji: string; // '' = no status
@@ -103,6 +112,9 @@ export interface WorkspaceMemberDTO {
   isBot: boolean;
   /** Agents only: the human member who sponsored (approved) the agent and is responsible for it. */
   sponsorId: string | null;
+  /** #489: leave this member out of the Directory and its search. They stay on
+   * the roster — mentions, channel membership and DMs are unaffected. */
+  privacyMode: boolean;
   role: MemberRole;
   joinedAt: string;
 }

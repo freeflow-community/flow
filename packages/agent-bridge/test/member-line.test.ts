@@ -11,6 +11,7 @@ const member = (over: Partial<WorkspaceMemberDTO> = {}): WorkspaceMemberDTO => (
   statusText: '',
   isAgent: false,
   sponsorId: null,
+  privacyMode: false,
   role: 'member',
   joinedAt: '2026-01-01T00:00:00.000Z',
   ...over,
@@ -36,6 +37,15 @@ describe('memberLine', () => {
     );
     expect(line).toBe(
       '01a0308c-cd76-7b2a-8d3b-a3709d935575  Prism 🤖  agent-prism@agents.flow.local  [admin] — reviewing PRs',
+    );
+  });
+
+  it('omits the address column for a member in privacy mode (#489)', () => {
+    // The server sends '' for a hidden address, so the line has nothing to
+    // print — and prints nothing, rather than a double gap that reads like a
+    // missing field.
+    expect(memberLine(member({ email: '', privacyMode: true, statusText: 'heads down' }))).toBe(
+      '019f7d15-4106-7c1a-9f8e-64bae430b447  Scott Persinger  [member] — heads down',
     );
   });
 });

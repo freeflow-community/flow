@@ -167,7 +167,9 @@ function toSlackUser(u: UserRow, teamId: string): Record<string, unknown> {
     profile: {
       real_name: u.displayName,
       display_name: u.displayName,
-      email: u.email,
+      // #489: Slack-compat is app-facing — an app is never "the user
+      // themselves", so a privacy-mode address is hidden here unconditionally.
+      email: u.privacyMode ? '' : u.email,
       status_emoji: u.statusEmoji,
       status_text: u.statusText,
     },

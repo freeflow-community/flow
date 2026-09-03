@@ -58,6 +58,9 @@ export const users = pgTable('users', {
   statusSuppressAlerts: boolean('status_suppress_alerts').notNull().default(false),
   // Phase 11 §10: don't unfurl links in my own messages.
   unfurlOwnLinks: boolean('unfurl_own_links').notNull().default(true),
+  // #489: hide my email from every API response and keep me out of the
+  // Directory. Written only by the owner of the row (PatchMeBody).
+  privacyMode: boolean('privacy_mode').notNull().default(false),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   // Tombstone: set when a human is removed from their last workspace. The row is
   // kept for message authorship; the service vacates `email` so it frees up.

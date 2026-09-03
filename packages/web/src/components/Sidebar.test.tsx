@@ -145,6 +145,7 @@ const member = (userId: string, displayName: string, isAgent: boolean): Workspac
   userId,
   displayName,
   email: `${userId}@example.com`,
+  privacyMode: false,
   avatarUrl: null,
   statusEmoji: '',
   statusText: '',

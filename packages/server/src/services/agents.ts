@@ -27,7 +27,7 @@ import { publishEvent, subjectMeta } from '../bus.js';
 import { postSystemMessage } from './messages.js';
 import { announceJoin, enrollInWorkspace, requireMembership, toWorkspaceDTO } from './workspaces.js';
 import { removeAgentFromWorkspace } from './memberRemoval.js';
-import { hashSecret, toUserDTO, verifySecret } from './auth.js';
+import { hashSecret, toUserDTO, verifySecret, visibleEmail } from './auth.js';
 import { setAvatar } from './users.js';
 import { listAgentAvatarPresets, readAgentAvatarPreset } from './agentAvatars.js';
 
@@ -210,7 +210,7 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
     data: {
       userId,
       displayName: userRow.displayName,
-      email: userRow.email,
+      email: visibleEmail(userRow), // #489 (an agent's synthetic address, in practice)
       avatarUrl: userRow.avatarUrl,
       statusEmoji: userRow.statusEmoji,
       statusText: userRow.statusText,
@@ -225,7 +225,7 @@ export async function redeemAgentInvite(input: RedeemAgentInviteBody): Promise<A
   if (generalChannel) await postSystemMessage(generalChannel, userId, 'member_joined');
   return {
     agentToken,
-    user: toUserDTO(userRow),
+    user: toUserDTO(userRow, userRow.id),
     workspace: toWorkspaceDTO(wsRow),
   };
 }
@@ -299,7 +299,7 @@ export async function agentLogin(username: string, key: string): Promise<AgentLo
       .where(and(eq(agentTokens.userId, user.id), isNull(agentTokens.revokedAt)));
     await tx.insert(agentTokens).values({ id: newId(), tokenHash: hashToken(agentToken), userId: user.id });
   });
-  return { agentToken, user: toUserDTO(user) };
+  return { agentToken, user: toUserDTO(user, user.id) };
 }
 
 /**
