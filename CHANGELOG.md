@@ -293,7 +293,7 @@ This file keeps two things:
   separately — both already open a thread from an *Activity* row.
 
 ### Deliberate divergences (ruled)
-- **Community email is web-only** (#481, #484, as specified). Composing a
+- **Community email is web-only** (#481, #484, #486, as specified). Composing a
   broadcast is an admin desk job — a markdown editor with a preview pane, and
   now a "Send test to me" button on the confirm step — and the issues scoped it
   to web deliberately. Nothing about it is client-specific: the endpoints

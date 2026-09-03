@@ -15,7 +15,7 @@ import { Modal } from './modals';
 const SUBJECT_MAX = 200;
 const BODY_MAX = 10_000;
 
-/** `N people`, or `1 person` — used in the To chip, the button and the confirm. */
+/** `N people`, or `1 person` — used in the To chip, the confirm and the toast. */
 export function peopleLabel(n: number): string {
   return `${n} ${n === 1 ? 'person' : 'people'}`;
 }
@@ -137,8 +137,6 @@ export function EmailEveryoneModal({
     }
   };
 
-  const sendLabel = count === null ? 'Send' : `Send to ${peopleLabel(count)}`;
-
   return (
     <Modal onClose={onClose} testid="email-everyone-modal" wide>
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -247,19 +245,38 @@ export function EmailEveryoneModal({
           onSendTest={() => void sendTest()}
         />
       ) : (
-        <div className="flex justify-end gap-2">
-          <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
-          <button
-            data-testid="email-everyone-send"
-            className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-            disabled={!ready}
-            onClick={() => setConfirming(true)}
-          >
-            {sendLabel}
-          </button>
-        </div>
+        <ComposeActions ready={ready} onCancel={onClose} onReview={() => setConfirming(true)} />
       )}
     </Modal>
+  );
+}
+
+/**
+ * The compose step's actions. The primary button only opens the confirm step,
+ * so it is worded as one (#486): it used to read "Send to 48 people", which
+ * describes what the *next* button does and made admins afraid to click it.
+ */
+export function ComposeActions({
+  ready,
+  onCancel,
+  onReview,
+}: {
+  ready: boolean;
+  onCancel: () => void;
+  onReview: () => void;
+}) {
+  return (
+    <div className="flex justify-end gap-2">
+      <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onCancel}>Cancel</button>
+      <button
+        data-testid="email-everyone-send"
+        className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+        disabled={!ready}
+        onClick={onReview}
+      >
+        Review &amp; send
+      </button>
+    </div>
   );
 }
 

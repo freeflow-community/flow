@@ -6,7 +6,7 @@
 // until it has already been mailed.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { ConfirmStep, peopleLabel, resultToastText, testResultText } from './EmailEveryoneModal';
+import { ComposeActions, ConfirmStep, peopleLabel, resultToastText, testResultText } from './EmailEveryoneModal';
 
 describe('peopleLabel', () => {
   it('singularizes one and pluralizes everything else', () => {
@@ -41,6 +41,24 @@ describe('testResultText (#484)', () => {
     expect(testResultText({ sent: 0, failed: 1 }, 'olivia@example.com')).toBe(
       'Test send failed — the address bounced.',
     );
+  });
+});
+
+describe('ComposeActions (#486)', () => {
+  const render = (ready = true) =>
+    renderToStaticMarkup(<ComposeActions ready={ready} onCancel={() => {}} onReview={() => {}} />);
+
+  it('promises the review step rather than a send', () => {
+    const html = render();
+    expect(html).toContain('Review &amp; send');
+    // the wording that scared admins off clicking: it described the next step's button
+    expect(html).not.toMatch(/Send to \d/);
+    expect(html).not.toContain('Send now');
+  });
+
+  it('stays the accent primary, and stays disabled until there is something to send', () => {
+    expect(render()).toMatch(/data-testid="email-everyone-send"[^>]*class="[^"]*bg-accent/);
+    expect(render(false)).toMatch(/data-testid="email-everyone-send"[^>]*disabled/);
   });
 });
 
