@@ -449,6 +449,11 @@ struct MyProfileSheet: View {
     /// its own PATCH, so Cancel doesn't undo one.
     @State private var prefs = NotificationPrefs()
     @State private var prefsError: String?
+    /// #490: live-saved like the prefs above, and for the same reason — a
+    /// privacy switch that needed a second click on Save to take effect would
+    /// be the wrong shape.
+    @State private var privacyMode = false
+    @State private var privacyError: String?
 
     private static let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
 
@@ -539,6 +544,7 @@ struct MyProfileSheet: View {
                             }
                     }
 
+                    privacy
                     notifications
                 }
                 .padding(.trailing, 2) // clear of the scroller
@@ -601,11 +607,73 @@ struct MyProfileSheet: View {
             website = app.currentUser?.website ?? ""
             bio = app.currentUser?.bio ?? ""
             prefs = app.currentUser?.prefs ?? NotificationPrefs()
+            privacyMode = app.currentUser?.privacyMode == true
         }
         // A flip made on web or the phone arrives as a new `currentUser`; adopt
         // it. Our own writes land here too, carrying the value we already show.
         .onChange(of: app.currentUser?.notificationPrefs) { _, new in
             if let new { prefs = new }
+        }
+        .onChange(of: app.currentUser?.privacyMode) { _, new in
+            privacyMode = new == true
+        }
+    }
+
+    // MARK: - Privacy (#490)
+
+    /// The web client's Privacy section (#489), on the Mac. The address sits
+    /// directly above the switch that hides it, because "here is the email we
+    /// show people, here is how to stop showing it" is one thought — and this
+    /// sheet is the only place the app ever shows you your own address.
+    private var privacy: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("Privacy").flowFont(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text("Email").flowFont(.caption).foregroundStyle(.secondary)
+                Text(app.currentUser?.email ?? "")
+                    .flowFont(.callout)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("profile.email")
+            }
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Privacy mode").flowFont(.callout)
+                    Text("Hide your email and remove you from the Directory.")
+                        .flowFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Toggle("", isOn: Binding(get: { privacyMode }, set: { setPrivacyMode($0) }))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("profile.privacyMode")
+            }
+            if let privacyError {
+                Text(privacyError)
+                    .flowFont(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("profile.privacyMode.error")
+            }
+        }
+    }
+
+    /// Optimistic then reconciled, exactly like `setPref`: the switch moves
+    /// now and reverts if the write fails. The engine refreshes the roster on
+    /// success, so the Directory adds or drops this member in the same beat.
+    private func setPrivacyMode(_ on: Bool) {
+        let previous = privacyMode
+        privacyMode = on
+        privacyError = nil
+        Task {
+            do {
+                try await app.engine.setPrivacyMode(on)
+            } catch {
+                privacyMode = previous
+                privacyError = error.localizedDescription
+            }
         }
     }
 
