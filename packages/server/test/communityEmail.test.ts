@@ -30,9 +30,10 @@ const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
 const cem = await import('../src/services/communityEmail.js');
 const { _setEmailSenderForTests } = await import('../src/email/index.js');
+const { _resetRateLimitsForTests } = await import('../src/lib/rateLimit.js');
 const { renderMarkdownToEmailHtml, renderBroadcastEmailHtml, renderBroadcastEmailText } =
   await import('../src/email/render.js');
-const { eq } = await import('drizzle-orm');
+const { and, eq } = await import('drizzle-orm');
 
 const { users, workspaceMembers } = schema;
 
@@ -108,6 +109,9 @@ beforeAll(async () => {
 beforeEach(() => {
   mailer = new FakeMailer();
   _setEmailSenderForTests(mailer);
+  // The test-send limiter is keyed per *user*, not per workspace, so
+  // freshWorkspace() cannot clear it the way it clears the broadcast window.
+  _resetRateLimitsForTests();
 });
 
 afterAll(async () => {
@@ -245,6 +249,88 @@ describe('rate limit', () => {
     for (let i = 0; i < 5; i++) {
       await expect(cem.previewBroadcast(id, owner.id, `draft ${i}`)).resolves.toBeTruthy();
     }
+  });
+});
+
+// ---- "Send test to me" (#484) ----------------------------------------
+describe('test send', () => {
+  it('mails only the author, and nobody else in the workspace', async () => {
+    const id = await freshWorkspace();
+    const res = await cem.sendTestBroadcast(id, owner.id, 'Meetup', 'Hi everyone');
+    expect(res).toEqual({ sent: 1, failed: 0 });
+    expect(mailer.sent.map((m) => m.to)).toEqual([owner.email]);
+  });
+
+  it('sends to whoever clicked it, not to the workspace owner', async () => {
+    const id = await freshWorkspace();
+    await cem.sendTestBroadcast(id, adminUser.id, 'Meetup', 'Hi everyone');
+    expect(mailer.sent.map((m) => m.to)).toEqual([adminUser.email]);
+  });
+
+  it('prefixes the subject so it cannot be mistaken for the broadcast', async () => {
+    const id = await freshWorkspace();
+    await cem.sendTestBroadcast(id, owner.id, 'Community meetup', 'Hi');
+    expect(mailer.sent[0]!.subject).toBe('[Test] Community meetup');
+  });
+
+  it('is byte-identical to the broadcast apart from the subject', async () => {
+    const id = await freshWorkspace();
+    const markdown = '## Notice\n\nDowntime [tonight](https://status.example.com).';
+    await cem.sendTestBroadcast(id, owner.id, 'Notice', markdown);
+    await cem.sendBroadcast(id, owner.id, 'Notice', markdown);
+    const test = mailer.sent[0]!;
+    const real = mailer.sent.find((m) => m.to === owner.email && m !== test)!;
+    expect(test.html).toBe(real.html);
+    expect(test.text).toBe(real.text);
+    expect(test.subject).toBe(`[Test] ${real.subject}`);
+  });
+
+  it('403s a plain member', async () => {
+    await expect(cem.sendTestBroadcast(wsId, plain.id, 'Hello', 'Hi')).rejects.toMatchObject({ statusCode: 403 });
+    expect(mailer.sent).toHaveLength(0);
+  });
+
+  it('404s a non-member', async () => {
+    await expect(cem.sendTestBroadcast(wsId, outsider.id, 'Hello', 'Hi')).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('reports {sent: 0, failed: 1} instead of throwing when the address bounces', async () => {
+    const id = await freshWorkspace();
+    mailer.failFor.add(owner.email);
+    expect(await cem.sendTestBroadcast(id, owner.id, 'Hello', 'Hi')).toEqual({ sent: 0, failed: 1 });
+  });
+
+  it('has its own per-user window: a second test 429s, a colleague is unaffected', async () => {
+    const id = await freshWorkspace();
+    await cem.sendTestBroadcast(id, owner.id, 'One', 'x');
+    await expect(cem.sendTestBroadcast(id, owner.id, 'Two', 'y')).rejects.toMatchObject({ statusCode: 429 });
+    // per user, so the other admin still gets their own test
+    await expect(cem.sendTestBroadcast(id, adminUser.id, 'Three', 'z')).resolves.toEqual({ sent: 1, failed: 0 });
+  });
+
+  it('does not consume the broadcast window — a real send right after works', async () => {
+    const id = await freshWorkspace();
+    await cem.sendTestBroadcast(id, owner.id, 'Draft', 'x');
+    await expect(cem.sendBroadcast(id, owner.id, 'Draft', 'x')).resolves.toEqual({ sent: 3, failed: 0 });
+  });
+
+  it('and the broadcast window does not consume the test one', async () => {
+    const id = await freshWorkspace();
+    await cem.sendBroadcast(id, owner.id, 'Draft', 'x');
+    await expect(cem.sendTestBroadcast(id, owner.id, 'Draft', 'x')).resolves.toEqual({ sent: 1, failed: 0 });
+  });
+
+  it('gates on role before the limiter, so rejected attempts burn no window', async () => {
+    const id = await freshWorkspace();
+    for (let i = 0; i < 3; i++) {
+      await expect(cem.sendTestBroadcast(id, plain.id, 'Nope', 'x')).rejects.toMatchObject({ statusCode: 403 });
+    }
+    await db
+      .update(workspaceMembers)
+      .set({ role: 'admin' })
+      .where(and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, plain.id)));
+    // promoted, and the three refusals cost them nothing
+    await expect(cem.sendTestBroadcast(id, plain.id, 'Yes', 'y')).resolves.toEqual({ sent: 1, failed: 0 });
   });
 });
 

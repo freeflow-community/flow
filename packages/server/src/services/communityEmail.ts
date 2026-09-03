@@ -25,6 +25,18 @@ const { users, workspaces, workspaceMembers } = schema;
 const BROADCAST_LIMIT = 1;
 const BROADCAST_WINDOW_MS = 10 * 60_000;
 
+/** A test send goes to one consenting address — the author's own — so it needs
+ * a limit only as an anti-abuse floor, not as a blast-radius cap. Deliberately
+ * a *separate* window from the broadcast one: checking a draft's rendering
+ * must never be the reason the real send is refused. */
+const TEST_LIMIT = 1;
+const TEST_WINDOW_MS = 60_000;
+
+/** Subject prefix on a test send. The point of testing in a real mail client
+ * is that the mail looks real, so the subject is the one place left that can
+ * tell the author this copy is not the broadcast. */
+export const TEST_SUBJECT_PREFIX = '[Test] ';
+
 /** Owner/admin gate, following the `requireAdmin` pattern in services/apps.ts. */
 async function requireAdmin(workspaceId: string, actorId: string) {
   const m = await requireMembership(workspaceId, actorId);
@@ -154,4 +166,52 @@ export async function sendBroadcast(
   }
   console.log(`[ws-email] workspace=${workspaceId} by=${actorId} sent=${sent} failed=${failed}`);
   return { sent, failed };
+}
+
+/**
+ * Mail the current draft to the author alone (#484).
+ *
+ * Same renderer, same footer, same plain-text alternative as `sendBroadcast` —
+ * the whole value of the button is that what lands in the inbox is what the
+ * workspace would get, so the only difference permitted here is the subject
+ * prefix and the recipient list of one.
+ */
+export async function sendTestBroadcast(
+  workspaceId: string,
+  actorId: string,
+  subject: string,
+  markdown: string,
+): Promise<WorkspaceEmailResultDTO> {
+  await requireAdmin(workspaceId, actorId);
+  // Per *user*, not per workspace, and on its own key: a test must not consume
+  // the workspace's broadcast window (a composer that made you wait ten
+  // minutes to send after checking your draft would just stop being used).
+  if (!rateAllow(`ws-email-test:${actorId}`, TEST_LIMIT, TEST_WINDOW_MS)) {
+    throw new ApiError(429, 'rate_limited', 'only one test email per minute');
+  }
+
+  const ctx = await loadContext(workspaceId, actorId);
+  const to = ctx.recipients.find((r) => r.userId === actorId)?.email;
+  // An admin whose address the broadcast would skip (tombstoned, synthetic)
+  // has nowhere to send a test — better a 400 than a silent success.
+  if (!to) throw new ApiError(400, 'no_address', 'your account has no address to send a test to');
+
+  const args = { markdown, senderName: ctx.senderName, workspaceName: ctx.workspaceName };
+  try {
+    await emailSender().send({
+      to,
+      subject: `${TEST_SUBJECT_PREFIX}${subject}`,
+      text: renderBroadcastEmailText(args),
+      html: renderBroadcastEmailHtml(args),
+    });
+    console.log(`[ws-email] test workspace=${workspaceId} by=${actorId} to=${to}`);
+    return { sent: 1, failed: 0 };
+  } catch (err) {
+    console.error(
+      `[ws-email] test send failed workspace=${workspaceId} to=${to}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return { sent: 0, failed: 1 };
+  }
 }

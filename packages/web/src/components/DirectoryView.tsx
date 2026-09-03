@@ -223,6 +223,7 @@ export default function DirectoryView() {
         <EmailEveryoneModal
           workspaceId={sel.workspaceId}
           workspaceName={ws?.name}
+          selfEmail={auth.user.email}
           onClose={() => setEmailOpen(false)}
           onSent={onSent}
         />

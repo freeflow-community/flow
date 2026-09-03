@@ -458,6 +458,14 @@ export function registerRoutes(app: FastifyInstance): void {
     return cem.sendBroadcast(id, req.user.id, body.subject, body.markdown);
   });
 
+  // "Send test to me" (#484): the same draft, to the author alone, on its own
+  // lighter rate limit — so checking the rendering never costs the broadcast.
+  app.post('/v1/workspaces/:id/email/test', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SendWorkspaceEmailBody, req.body);
+    return cem.sendTestBroadcast(id, req.user.id, body.subject, body.markdown);
+  });
+
   app.post('/v1/workspaces/:id/email/preview', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(PreviewWorkspaceEmailBody, req.body);
