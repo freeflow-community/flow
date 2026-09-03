@@ -186,6 +186,11 @@ struct MyProfileView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var confirmDelete = false
     @State private var deleteBusy = false
+    /// #490: saved on the flip rather than on Save, like the notification
+    /// prefs — a privacy switch that waited for a second tap to take effect
+    /// would be the wrong shape.
+    @State private var privacyMode = false
+    @State private var privacyError: String?
 
     private static let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
 
@@ -286,9 +291,32 @@ struct MyProfileView: View {
                     .accessibilityIdentifier("profile.bioCount")
             }
 
-            Section("Email") {
-                Text(app.currentUser?.email ?? "")
-                    .foregroundStyle(MC.inkSoft)
+            // #490: the address sits directly above the switch that hides it,
+            // because "here is the email we show people, here is how to stop
+            // showing it" is one thought — the same shape web uses.
+            Section {
+                HStack {
+                    Text("Email").foregroundStyle(MC.faint)
+                    Spacer(minLength: 12)
+                    Text(app.currentUser?.email ?? "")
+                        .foregroundStyle(MC.inkSoft)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("profile.email")
+                }
+                Toggle(isOn: Binding(get: { privacyMode }, set: { setPrivacyMode($0) })) {
+                    Text("Privacy mode").foregroundStyle(MC.ink)
+                }
+                .accessibilityIdentifier("profile.privacyMode")
+            } header: {
+                Text("Privacy")
+            } footer: {
+                if let privacyError {
+                    Text(privacyError)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("profile.privacyMode.error")
+                } else {
+                    Text("Hide your email and remove you from the Directory.")
+                }
             }
 
             // App Store 5.1.1(v): account deletion must be reachable in-app.
@@ -329,10 +357,33 @@ struct MyProfileView: View {
             timezone = app.currentUser?.timezone ?? TimeZone.current.identifier
             website = app.currentUser?.website ?? ""
             bio = app.currentUser?.bio ?? ""
+            privacyMode = app.currentUser?.privacyMode == true
+        }
+        // A flip made on the Mac or on web arrives as a new `currentUser`;
+        // adopt it. Our own writes land here too, carrying what we already show.
+        .onChange(of: app.currentUser?.privacyMode) { _, new in
+            privacyMode = new == true
         }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             uploadAvatar(item)
+        }
+    }
+
+    /// Optimistic, then reconciled: the switch moves now and reverts if the
+    /// write fails. The engine refreshes the roster on success, so the
+    /// Directory adds or drops this member in the same beat.
+    private func setPrivacyMode(_ on: Bool) {
+        let previous = privacyMode
+        privacyMode = on
+        privacyError = nil
+        Task {
+            do {
+                try await app.engine.setPrivacyMode(on)
+            } catch {
+                privacyMode = previous
+                privacyError = error.localizedDescription
+            }
         }
     }
 

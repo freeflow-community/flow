@@ -39,6 +39,13 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     // what the sole-human check behind Delete workspace turns on (#340).
     var isBot: Bool?
     var sponsorId: String? // agents only: the human member who sponsored them
+    /// #489: this member asked to be hidden — their email is redacted server-side
+    /// and the Directory leaves them out. Not a secret (every client needs it to
+    /// know whom to omit), and only the account owner can set it, via
+    /// `PATCH /v1/me`. Optional like the two above: a server predating the field
+    /// omits it, and so does a row cached before the column existed — both read
+    /// as "not hiding".
+    var privacyMode: Bool?
     var createdAt: String?
 
     /// Display-only name: agents carry the 🤖 badge (mention resolution uses
@@ -762,6 +769,10 @@ struct MemberDTO: Decodable, Sendable {
     /// Agents only: the human member who sponsored them (#432). Carried on the
     /// roster so the Directory can name a sponsor without a fetch per card.
     let sponsorId: String?
+    /// #489: carried on the roster because Directory exclusion is a client-side
+    /// rule — the endpoint must keep returning every member, since mentions,
+    /// DMs and channel membership all read the same list.
+    let privacyMode: Bool?
     let role: String
     let joinedAt: String?
 }
@@ -1151,13 +1162,18 @@ struct PatchMeBody: Encodable, Sendable {
     let title: String?
     /// #251: shallow-merged server-side, so send only the key that changed.
     let notificationPrefs: NotificationPrefs?
+    /// #489: the only write path for privacy mode, and it writes the caller's
+    /// own row — which is what makes "settable only by the user themselves"
+    /// true by construction rather than by a check.
+    let privacyMode: Bool?
 
     init(
         displayName: String? = nil, timezone: String? = nil,
         statusEmoji: String? = nil, statusText: String? = nil,
         statusSuppressAlerts: Bool? = nil,
         website: String? = nil, bio: String? = nil, title: String? = nil,
-        notificationPrefs: NotificationPrefs? = nil
+        notificationPrefs: NotificationPrefs? = nil,
+        privacyMode: Bool? = nil
     ) {
         self.displayName = displayName
         self.timezone = timezone
@@ -1168,6 +1184,7 @@ struct PatchMeBody: Encodable, Sendable {
         self.bio = bio
         self.title = title
         self.notificationPrefs = notificationPrefs
+        self.privacyMode = privacyMode
     }
 }
 /// POST /v1/me/notifications/read — a cursor (`upToId`, opening the Activity

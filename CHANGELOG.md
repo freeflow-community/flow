@@ -13,14 +13,6 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
-- **Privacy mode is web-only to set, and native shows the redaction without
-  explaining it** (#489, native half deliberately deferred to #490). The server
-  hides the address everywhere, so macOS and iOS already show a privacy-mode
-  member with no email — but they have no toggle, and their Directory still
-  lists that member. #490 closes both halves. One wrinkle to close with it: the
-  workspace-wide `user.updated` event carries the redacted DTO, so a
-  privacy-mode member's *own* native cache blanks their address until the next
-  `/v1/me`.
 - **Screen-share audio is Chromium-web only** (#435). The web client asks for
   it (`getDisplayMedia({ audio: true })`) and Chromium supplies tab audio;
   Firefox/Safari ignore the flag and share silently, which is the intended

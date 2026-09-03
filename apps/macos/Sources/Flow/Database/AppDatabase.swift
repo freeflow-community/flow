@@ -294,6 +294,16 @@ struct AppDatabase: Sendable {
             }
         }
 
+        // Privacy mode (#489/#490): carried on the roster, so the Directory can
+        // leave a member out without a fetch per card. Nullable — a row cached
+        // before this column existed reads as nil, which means "not hiding",
+        // the same thing the field's absence means on an older server.
+        migrator.registerMigration("v24") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "privacyMode", .boolean)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

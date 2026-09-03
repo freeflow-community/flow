@@ -256,6 +256,10 @@ targets:
       # The APNs payload contract and the foreground-banner rule (#249) — the
       # rule is iOS's alone, so this is the suite that must keep it honest.
       - path: ../macos/Tests/FlowTests/PushPayloadTests.swift
+      # The Directory's search, labels and privacy-mode exclusion (#432/#490).
+      # One rule, two clients: iOS runs the same suite so a drift shows up on
+      # whichever platform is built first.
+      - path: ../macos/Tests/FlowTests/DirectoryTests.swift
     dependencies:
       - target: Flow
     settings:

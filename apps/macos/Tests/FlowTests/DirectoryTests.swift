@@ -18,6 +18,7 @@ final class DirectoryTests: XCTestCase {
         var isAgent: Bool?
         var isBot: Bool?
         var sponsorId: String?
+        var privacyMode: Bool?
     }
 
     private func row(
@@ -27,7 +28,8 @@ final class DirectoryTests: XCTestCase {
         isAgent: Bool = false,
         isBot: Bool = false,
         sponsorId: String? = nil,
-        title: String? = nil
+        title: String? = nil,
+        privacyMode: Bool? = nil
     ) -> Row {
         Row(
             userId: "u-\(name)",
@@ -37,7 +39,8 @@ final class DirectoryTests: XCTestCase {
             title: title,
             isAgent: isAgent,
             isBot: isBot,
-            sponsorId: sponsorId
+            sponsorId: sponsorId,
+            privacyMode: privacyMode
         )
     }
 
@@ -76,6 +79,22 @@ final class DirectoryTests: XCTestCase {
         let rows = [row("Deploybot", email: "bot-01a0-cafe@agents.flow.local", isBot: true)]
         XCTAssertEqual(names(Directory.filter(rows, query: "deploy")), ["Deploybot"])
         XCTAssertTrue(Directory.filter(rows, query: "cafe").isEmpty)
+    }
+
+    // #489/#490: hidden from the listing *and* from search — a member findable
+    // by typing a name you already know would not be hidden at all. Mirrors
+    // web's `filterMembers` cases exactly.
+    func testLeavesOutAMemberInPrivacyModeWhoeverIsLooking() {
+        let rows = [row("Ada"), row("Hilda", email: "", privacyMode: true), row("Zoe")]
+        XCTAssertEqual(names(Directory.filter(rows, query: "")), ["Ada", "Zoe"])
+        XCTAssertTrue(Directory.filter(rows, query: "hilda").isEmpty)
+    }
+
+    func testStillFindsAMemberWhoTurnedPrivacyModeBackOff() {
+        // Explicitly false, and the nil an older server (or a row cached before
+        // the column existed) sends, both mean "not hiding".
+        XCTAssertEqual(names(Directory.filter([row("Hilda", privacyMode: false)], query: "hilda")), ["Hilda"])
+        XCTAssertEqual(names(Directory.filter([row("Hilda", privacyMode: nil)], query: "hilda")), ["Hilda"])
     }
 
     func testTrimsAndIgnoresSurroundingWhitespace() {
@@ -157,6 +176,12 @@ final class DirectoryTests: XCTestCase {
         XCTAssertEqual(
             Directory.emptyState(total: 11, shown: 0, loading: false, query: " zzzz "),
             .noMatch("zzzz")
+        )
+        // #490: privacy mode can filter every visible member out of a roster
+        // that is not empty. With no query typed that is "nobody is here", not
+        // `No one matches “”.`
+        XCTAssertEqual(
+            Directory.emptyState(total: 11, shown: 0, loading: false, query: ""), .noMembers
         )
         // A cache that already has rows draws them rather than a spinner, even
         // while the refresh is still in flight.

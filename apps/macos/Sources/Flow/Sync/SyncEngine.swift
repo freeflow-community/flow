@@ -626,6 +626,11 @@ actor SyncEngine {
                     // sponsorId is written through here. Falls back to the
                     // cached value, since a server predating the field omits it.
                     sponsorId: m.sponsorId ?? existing?.sponsorId,
+                    // #489: also on the roster, for the same reason as title —
+                    // the Directory has to know whom to leave out without a
+                    // fetch per member. Written through so a flip made on
+                    // another client lands here on the next refresh.
+                    privacyMode: m.privacyMode ?? existing?.privacyMode,
                     createdAt: existing?.createdAt
                 ).save(db)
                 try Member(workspaceId: workspaceId, userId: m.userId, role: m.role).save(db)
@@ -1558,6 +1563,21 @@ actor SyncEngine {
         await appState?.setPhase(.signedIn(me))
     }
 
+    /// Hide (or unhide) this member: no API response carries their email, and
+    /// the Directory leaves them out (#489/#490).
+    ///
+    /// The roster is refreshed in the same beat, because the Directory renders
+    /// from cached member rows — without it the member would keep their own
+    /// card until the next sync. `/v1/me` is the one response that still
+    /// carries the caller's own address, so this cannot blank it locally.
+    func setPrivacyMode(_ on: Bool) async throws {
+        let me: User = try await api.patch("/v1/me", body: PatchMeBody(privacyMode: on))
+        currentUser = me
+        try? await db.writer.write { db in try me.save(db) }
+        await appState?.setPhase(.signedIn(me))
+        for ws in await appState?.openWorkspaceIds ?? [] { await refreshMembers(workspaceId: ws) }
+    }
+
     func uploadAvatar(fileURL: URL) async throws {
         let data = try Data(contentsOf: fileURL)
         let me: User = try await api.upload(
@@ -2153,7 +2173,19 @@ actor SyncEngine {
             }
 
         case .userUpdated(let u):
-            try? await db.writer.write { db in try u.save(db) }
+            // #490: the broadcast is workspace-wide, so it carries the redacted
+            // DTO — a privacy-mode member's own address arrives blank in their
+            // own client. `/v1/me` is the only response that still carries it,
+            // so re-adopting the event verbatim would erase the address from
+            // the profile sheet of the one person entitled to see it. Keep what
+            // we already know instead; every other field still lands.
+            var u = u
+            if u.id == currentUser?.id, u.email.isEmpty, let mine = currentUser?.email,
+                !mine.isEmpty
+            {
+                u.email = mine
+            }
+            try? await db.writer.write { [u] db in try u.save(db) }
             if u.id == currentUser?.id {
                 currentUser = u
                 await appState?.setPhase(.signedIn(u))

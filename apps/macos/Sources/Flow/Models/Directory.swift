@@ -20,6 +20,10 @@ protocol DirectoryMember {
     var isBot: Bool? { get }
     /// Agents only: the human member who sponsored them.
     var sponsorId: String? { get }
+    /// #489: this member asked to be left out of the Directory. nil = no
+    /// (an older server omits the field, and so does a row cached before the
+    /// column existed).
+    var privacyMode: Bool? { get }
 }
 
 /// One card's worth of the roster (member ⋈ user), read straight from the
@@ -38,6 +42,7 @@ struct DirectoryRow: Decodable, FetchableRecord, Equatable, Sendable, Identifiab
     var isAgent: Bool?
     var isBot: Bool?
     var sponsorId: String?
+    var privacyMode: Bool?
     var id: String { userId }
 
     /// The `member ⋈ user` read behind the grid. One SQL string rather than two
@@ -47,7 +52,8 @@ struct DirectoryRow: Decodable, FetchableRecord, Equatable, Sendable, Identifiab
                m.role AS role, u.avatarUrl AS avatarUrl,
                u.statusEmoji AS statusEmoji, u.statusText AS statusText,
                u.title AS title,
-               u.isAgent AS isAgent, u.isBot AS isBot, u.sponsorId AS sponsorId
+               u.isAgent AS isAgent, u.isBot AS isBot, u.sponsorId AS sponsorId,
+               u.privacyMode AS privacyMode
         FROM member m JOIN user u ON u.id = m.userId
         WHERE m.workspaceId = ?
         ORDER BY u.displayName COLLATE NOCASE
@@ -73,9 +79,20 @@ enum Directory {
     /// Humans and agents sort together alphabetically. The Directory answers
     /// "who is here", and splitting it by kind would bury an agent you were
     /// looking for behind every human.
+    ///
+    /// Privacy-mode members (#489) are dropped before the query is applied, so
+    /// they are missing from the listing *and* unfindable by search — a member
+    /// hidden from the grid but reachable by typing a name you already know
+    /// would not be hidden at all. They are dropped for everyone, themselves
+    /// included: the settings toggle is the confirmation that it worked, and a
+    /// roster count that differed per viewer would be the odd thing to explain.
+    /// The roster query itself still returns them, because mentions, DMs and
+    /// channel membership all read the same rows — this is a rule about the
+    /// view, not about who is in the workspace.
     static func filter<Member: DirectoryMember>(_ rows: [Member], query: String) -> [Member] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return rows
+            .filter { $0.privacyMode != true }
             .filter { matches($0, q) }
             .sorted {
                 $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
@@ -158,10 +175,15 @@ enum Directory {
     }
 
     /// Which of the three (if any) the grid should show.
+    ///
+    /// "Nothing matched" is decided by the *query*, not by the row count:
+    /// privacy mode (#489) can filter every visible member out of a non-empty
+    /// roster, and `No one matches “”.` is not a sentence. Web made the same
+    /// correction in the same beat.
     static func emptyState(total: Int, shown: Int, loading: Bool, query: String) -> EmptyState? {
         guard shown == 0 else { return nil }
         if loading && total == 0 { return .loading }
-        if total == 0 { return .noMembers }
-        return .noMatch(query.trimmingCharacters(in: .whitespacesAndNewlines))
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return q.isEmpty ? .noMembers : .noMatch(q)
     }
 }
