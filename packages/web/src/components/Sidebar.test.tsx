@@ -11,6 +11,7 @@ import {
   nestChannels,
   openChannelFromSidebar,
   splitAgents,
+  WorkspaceTitle,
 } from './Sidebar';
 import type { Selection } from '../state';
 
@@ -230,6 +231,34 @@ describe('ActivityBell', () => {
     const html = renderToStaticMarkup(<ActivityBell active unread={0} onOpen={() => {}} />);
     expect(html).toContain('aria-current="page"');
     expect(html).toContain('bg-white');
+  });
+});
+
+// A long workspace name used to shove the header controls off the sidebar edge
+// (#456). The title is the element that yields: it shrinks and ellipsises, and
+// the full name is still readable on hover.
+describe('WorkspaceTitle', () => {
+  it('can shrink below its text and ellipsises what is left', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle name="Flow Home Team" onClick={() => {}} />);
+    expect(html).toContain('min-w-0');
+    expect(html).toContain('truncate');
+  });
+
+  it('keeps the full name reachable on hover', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle name="Flow Home Team" onClick={() => {}} />);
+    expect(html).toContain('title="Flow Home Team"');
+  });
+
+  it('never truncates the switcher chevron along with the name', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle name="Flow Home Team" onClick={() => {}} />);
+    expect(html).toContain('shrink-0');
+    expect(html).toContain('▾');
+  });
+
+  it('falls back to "Workspace" before one is loaded', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle onClick={() => {}} />);
+    expect(html).toContain('Workspace');
+    expect(html).toContain('title="Workspace"');
   });
 });
 
