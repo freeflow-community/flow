@@ -515,6 +515,10 @@ export const PatchMeBody = z
     statusSuppressAlerts: z.boolean().optional(),
     // phase 11 §10: don't unfurl links in my own messages
     unfurlOwnLinks: z.boolean().optional(),
+    // #489: hide my email from the API and drop me from the Directory. This is
+    // the only write path, and it only ever writes the caller's own row — which
+    // is what makes "settable by the user themselves" true by construction.
+    privacyMode: z.boolean().optional(),
   })
   .refine(
     (b) =>
@@ -527,7 +531,8 @@ export const PatchMeBody = z
       b.statusText !== undefined ||
       b.notificationPrefs !== undefined ||
       b.statusSuppressAlerts !== undefined ||
-      b.unfurlOwnLinks !== undefined,
+      b.unfurlOwnLinks !== undefined ||
+      b.privacyMode !== undefined,
     'nothing to update',
   )
   .refine(

@@ -19,6 +19,7 @@ import { config } from '../config.js';
 import { blobStore } from '../storage/index.js';
 import { publishEvent, subjectMeta, subjectUserMeta, subjectUserNotify } from '../bus.js';
 import { emailSender } from '../email/index.js';
+import { visibleEmail } from './auth.js';
 import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents, tombstoneUser } from './memberRemoval.js';
 import { postSystemMessage } from './messages.js';
 
@@ -333,7 +334,11 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
   return rows.map((r) => ({
     userId: r.u.id,
     displayName: r.u.displayName,
-    email: r.u.email,
+    // #489: everyone stays on the roster (mentions, DMs, channel membership
+    // all read it) — a privacy-mode member just travels without their address,
+    // and carries the flag so the Directory knows to leave them out.
+    email: visibleEmail(r.u, userId),
+    privacyMode: r.u.privacyMode,
     avatarUrl: r.u.avatarUrl,
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
@@ -348,7 +353,13 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
   }));
 }
 
-export async function toMemberDTO(workspaceId: string, userId: string): Promise<WorkspaceMemberDTO> {
+/** `viewerId` is who will read the DTO — omitted where it goes to a whole
+ * workspace (member.joined / member.updated events), which redacts. */
+export async function toMemberDTO(
+  workspaceId: string,
+  userId: string,
+  viewerId?: string,
+): Promise<WorkspaceMemberDTO> {
   const rows = await db
     .select({ m: workspaceMembers, u: users })
     .from(workspaceMembers)
@@ -360,7 +371,8 @@ export async function toMemberDTO(workspaceId: string, userId: string): Promise<
   return {
     userId: r.u.id,
     displayName: r.u.displayName,
-    email: r.u.email,
+    email: visibleEmail(r.u, viewerId),
+    privacyMode: r.u.privacyMode,
     avatarUrl: r.u.avatarUrl,
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
@@ -877,7 +889,9 @@ export async function announceJoin(workspaceId: string, userId: string, role: Me
     data: {
       userId,
       displayName: u[0]?.displayName ?? '',
-      email: u[0]?.email ?? '',
+      // #489: a roster event reaches the whole workspace, so it carries no
+      // hidden address.
+      email: u[0] ? visibleEmail(u[0]) : '',
       avatarUrl: u[0]?.avatarUrl ?? null,
       isAgent: u[0]?.isAgent ?? false,
       role,

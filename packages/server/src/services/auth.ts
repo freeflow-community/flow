@@ -30,10 +30,24 @@ export function verifySecret(hash: string, secret: string): Promise<boolean> {
   return argon2.verify(hash, secret).catch(() => false);
 }
 
-export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
+/**
+ * Privacy mode (#489): the address a given viewer may see. Hidden addresses go
+ * out as '' rather than being dropped — the native clients decode `email` as a
+ * non-optional string, and '' is already how a card says "nothing to show".
+ * The default (no viewer) is the redacting one, so a call site that forgets to
+ * say who is looking errs toward hiding.
+ */
+export function visibleEmail(u: { id: string; email: string; privacyMode: boolean }, viewerId?: string): string {
+  return u.privacyMode && u.id !== viewerId ? '' : u.email;
+}
+
+/** `viewerId` is who will read this DTO; pass the subject's own id for the
+ * self-facing paths (/v1/me, sign-in, PATCH /v1/me). */
+export function toUserDTO(u: typeof users.$inferSelect, viewerId?: string): UserDTO {
   return {
     id: u.id,
-    email: u.email,
+    email: visibleEmail(u, viewerId),
+    privacyMode: u.privacyMode,
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
     timezone: u.timezone,
@@ -129,7 +143,7 @@ export async function register(
     const user = inserted[0];
     if (!user) throw conflict('email_taken', 'an account with this email already exists');
     const token = await issueSession(user.id, clientInfo);
-    return { token, user: toUserDTO(user) };
+    return { token, user: toUserDTO(user, user.id) };
   }
 
   const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -192,7 +206,7 @@ export async function completeSignup(
   const user = inserted[0];
   if (!user) throw conflict('email_taken', 'an account with this email already exists');
   const session = await issueSession(user.id, clientInfo);
-  return { token: session, user: toUserDTO(user) };
+  return { token: session, user: toUserDTO(user, user.id) };
 }
 
 export async function login(email: string, password: string, clientInfo?: string): Promise<AuthResponse> {
@@ -207,7 +221,7 @@ export async function login(email: string, password: string, clientInfo?: string
     throw new ApiError(403, 'email_not_verified', 'this email is unverified — use "Forgot password?" to verify it');
   }
   const token = await issueSession(user.id, clientInfo);
-  return { token, user: toUserDTO(user) };
+  return { token, user: toUserDTO(user, user.id) };
 }
 
 /** Always returns ok — never reveals whether the email has an account. */
@@ -244,7 +258,7 @@ export async function resetPassword(token: string, newPassword: string, clientIn
     .where(eq(users.id, user.id));
   await db.delete(sessions).where(eq(sessions.userId, user.id));
   const session = await issueSession(user.id, clientInfo);
-  return { token: session, user: toUserDTO(user) };
+  return { token: session, user: toUserDTO(user, user.id) };
 }
 
 /**
@@ -286,7 +300,7 @@ export async function consumeSigninLink(token: string, clientInfo?: string): Pro
     await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, user.id));
   }
   const session = await issueSession(user.id, clientInfo);
-  return { token: session, user: toUserDTO(user) };
+  return { token: session, user: toUserDTO(user, user.id) };
 }
 
 export async function logout(token: string): Promise<void> {
@@ -314,7 +328,7 @@ async function authenticateAgentToken(tokenHash: Buffer): Promise<UserDTO | null
   if (!row.lastUsedAt || now.getTime() - row.lastUsedAt.getTime() > AGENT_TOKEN_TOUCH_MS) {
     await db.update(agentTokens).set({ lastUsedAt: now }).where(eq(agentTokens.tokenHash, tokenHash));
   }
-  return toUserDTO(row.user);
+  return toUserDTO(row.user, row.user.id);
 }
 
 /**
@@ -350,7 +364,7 @@ export async function authenticateWithKind(token: string): Promise<{ user: UserD
       .set({ expiresAt: new Date(now.getTime() + config.sessionTtlDays * 86400_000) })
       .where(and(eq(sessions.tokenHash, tokenHash), lt(sessions.expiresAt, slideThreshold)));
   }
-  return { user: toUserDTO(row.user), kind: 'session' };
+  return { user: toUserDTO(row.user, row.user.id), kind: 'session' };
 }
 
 /**
@@ -388,7 +402,7 @@ export async function exchangeAppLink(code: string, clientInfo?: string): Promis
   const user = rows[0];
   if (!user) throw unauthorized('invalid or expired app link code');
   const token = await issueSession(user.id, clientInfo);
-  return { token, user: toUserDTO(user) };
+  return { token, user: toUserDTO(user, user.id) };
 }
 
 /** Purge expired sessions (called opportunistically at boot). */

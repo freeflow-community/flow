@@ -846,6 +846,20 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  /** #489: live-saved like the notification prefs rather than waiting on Save —
+   * a privacy switch that needed a second click to take effect would be the
+   * wrong shape. The roster is refetched so the Directory drops (or restores)
+   * this member in the same beat. */
+  const setPrivacyMode = async (value: boolean) => {
+    try {
+      const me = await api<UserDTO>('PATCH', '/v1/me', { privacyMode: value });
+      auth.setUser(me);
+      await qc.invalidateQueries({ queryKey: ['members'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
+
   const pickAvatar = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
@@ -938,6 +952,20 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.sound !== false} onChange={(v) => void setPref('sound', v)} />
       <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
         checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
+
+      {/* #489. The address sits in this section rather than up with the
+          editable fields because it is not editable — and because "here is
+          your email, here is the switch that hides it" is one thought. */}
+      <div className="mt-2 mb-1 border-t border-hairline pt-3 text-xs font-semibold text-faint uppercase">
+        Privacy
+      </div>
+      <p className="mb-1 text-sm text-ink">
+        <span className="text-faint">Email: </span>
+        <span data-testid="profile-email" className="select-all">{auth.user.email}</span>
+      </p>
+      <PrefToggle testid="pref-privacy-mode" label="Privacy mode"
+        hint="Hide your email and remove you from the Directory."
+        checked={auth.user.privacyMode} onChange={(v) => void setPrivacyMode(v)} />
 
       <div className="mt-3 border-t border-hairline pt-3">
         {confirmingDelete ? (
@@ -1162,7 +1190,9 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
             </p>
           )}
           {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
-          <p className="text-sm text-muted select-all">{user.email}</p>
+          {/* #489: '' means the address is hidden — draw no line rather than an
+              empty one that reserves space for something nobody will see. */}
+          {user.email && <p className="text-sm text-muted select-all">{user.email}</p>}
           <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>
           {/* #220: the server only stores http(s) URLs, but re-check before
               making it clickable — a row written before that rule must not

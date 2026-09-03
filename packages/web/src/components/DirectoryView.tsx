@@ -30,6 +30,14 @@ export interface DirectoryRow extends WorkspaceMemberDTO {
  * left out — matching one would only ever be an accident. Humans and agents sort together
  * alphabetically: the Directory answers "who is here", and splitting it by kind
  * would bury an agent you were looking for behind every human.
+ *
+ * Privacy mode (#489) drops a member from the listing *and* from search — one
+ * filter for both, because a member who is hidden from the grid but findable by
+ * typing their name would not be hidden at all. They are still on the roster,
+ * so mentions, DMs and channel membership are untouched; only this view leaves
+ * them out. It leaves them out for everyone, themselves included: the settings
+ * toggle is the confirmation that it worked, and a roster count that differed
+ * per viewer would be the odd thing to explain.
  */
 export function filterMembers(rows: DirectoryRow[], query: string): DirectoryRow[] {
   const q = query.trim().toLowerCase();
@@ -38,6 +46,7 @@ export function filterMembers(rows: DirectoryRow[], query: string): DirectoryRow
     m.displayName.toLowerCase().includes(q) ||
     (!m.isAgent && !m.isBot && m.email.toLowerCase().split('@')[0]!.includes(q));
   return rows
+    .filter((m) => !m.privacyMode)
     .filter(matches)
     .slice()
     .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }));
@@ -112,7 +121,7 @@ export function DirectoryGrid({
           </p>
         ) : shown.length === 0 ? (
           <p className="py-16 text-center text-sm text-faint" data-testid="directory-empty">
-            {rows.length === 0 ? 'Nobody is here yet.' : `No one matches “${query.trim()}”.`}
+            {query.trim() === '' ? 'Nobody is here yet.' : `No one matches “${query.trim()}”.`}
           </p>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">

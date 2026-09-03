@@ -28,6 +28,7 @@ function member(userId: string, role: MemberRole, over: Partial<WorkspaceMemberD
     userId,
     displayName: userId,
     email: `${userId}@example.test`,
+    privacyMode: false,
     avatarUrl: null,
     statusEmoji: '',
     statusText: '',
