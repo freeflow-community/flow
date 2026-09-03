@@ -60,6 +60,25 @@ export function fileStreamUrl(fileId: string): Promise<{ url: string | null; exp
   return api('GET', `/v1/files/${fileId}/url`);
 }
 
+/** Short-lived thumbnail URL for direct use by <img>, or null when the server
+ * must proxy (local dev / legacy rows). Like fileStreamUrl, each call mints a
+ * fresh URL so a retry does not reuse an expired presign. */
+export function fileThumbUrl(fileId: string): Promise<{ url: string | null; expiresInSeconds: number }> {
+  return api('GET', `/v1/files/${fileId}/thumb/url`);
+}
+
+export type FileImageVariant = 'thumbnail' | 'original';
+
+/** Resolve an access-checked file URL that an image element can load itself.
+ * R2-backed files use a direct presigned URL; local and legacy rows retain the
+ * authenticated object-URL fallback. */
+export async function fileImageUrl(fileId: string, variant: FileImageVariant): Promise<string> {
+  const direct = variant === 'thumbnail' ? await fileThumbUrl(fileId) : await fileStreamUrl(fileId);
+  if (direct.url) return direct.url;
+  const suffix = variant === 'thumbnail' ? '/thumb' : '';
+  return blobUrl(`/v1/files/${fileId}${suffix}`);
+}
+
 /** Presigned upload: prepare (downscale/convert oversized images) → reserve →
  * PUT the bytes (direct to R2, or the server-proxied fallback in local dev) →
  * complete (server verifies + thumbnails).
@@ -154,8 +173,10 @@ export function blobUrl(path: string): Promise<string> {
       if (!res.ok) throw new ApiError(res.status, 'blob_failed', `HTTP ${res.status}`);
       return URL.createObjectURL(await res.blob());
     })();
-    cached.then((u) => resolvedBlobUrls.set(path, u));
-    cached.catch(() => blobCache.delete(path));
+    void cached.then(
+      (u) => resolvedBlobUrls.set(path, u),
+      () => blobCache.delete(path),
+    );
     blobCache.set(path, cached);
   }
   return cached;

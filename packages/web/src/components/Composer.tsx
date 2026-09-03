@@ -7,7 +7,7 @@ import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '.
 import { useLive, useSelection } from '../state';
 import { useChannelMembers, useChannels, useMembers, useSendMessage } from '../hooks';
 import { useQueryClient } from '@tanstack/react-query';
-import { AuthImg } from './Avatar';
+import { FileImage } from './FileImage';
 import EmojiPicker from './EmojiPicker';
 import { ScheduleMessageModal } from './ScheduleMessageModal';
 
@@ -526,8 +526,8 @@ export default function Composer({
                 // Image previews sit inside the composer card, below the input
                 // row (issue #471): real thumbnail + ✕ overlay.
                 <span key={f.id} data-testid={`pending-file-${f.name}`} className="relative" title={f.name}>
-                  <AuthImg
-                    path={`/v1/files/${f.id}/thumb`}
+                  <FileImage
+                    fileId={f.id}
                     alt={f.name}
                     className="h-14 w-14 rounded-lg border border-hairline object-cover"
                   />

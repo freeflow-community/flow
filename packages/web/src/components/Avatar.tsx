@@ -74,13 +74,40 @@ export function AuthImg({
   style?: React.CSSProperties;
 }) {
   const [url, setUrl] = useState<string | null>(() => cachedBlobUrl(path) ?? null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
+    setFailed(false);
     const cached = cachedBlobUrl(path);
     if (cached) { setUrl(cached); return; }
-    void blobUrl(path).then((u) => { if (alive) setUrl(u); }).catch(() => {});
+    setUrl(null);
+    void blobUrl(path)
+      .then((u) => { if (alive) setUrl(u); })
+      .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, [path]);
-  if (!url) return <span className={`inline-block animate-pulse rounded-lg bg-daypill ${className ?? ''}`} style={style} />;
-  return <img src={url} alt={alt} className={className} style={style} />;
+  if (failed) {
+    return (
+      <span
+        role="img"
+        aria-label={`${alt || 'Image'} unavailable`}
+        title={`${alt || 'Image'} unavailable`}
+        className={`inline-flex items-center justify-center rounded-lg bg-daypill text-faint ${className ?? ''}`}
+        style={style}
+      >
+        !
+      </span>
+    );
+  }
+  if (!url) {
+    return (
+      <span
+        role="status"
+        aria-label={`Loading ${alt || 'image'}`}
+        className={`inline-block animate-pulse rounded-lg bg-daypill ${className ?? ''}`}
+        style={style}
+      />
+    );
+  }
+  return <img src={url} alt={alt} className={className} style={style} onError={() => setFailed(true)} />;
 }
