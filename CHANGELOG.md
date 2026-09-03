@@ -293,6 +293,13 @@ This file keeps two things:
   separately — both already open a thread from an *Activity* row.
 
 ### Deliberate divergences (ruled)
+- **Community email is web-only** (#481, as specified). Composing a broadcast is
+  an admin desk job — a markdown editor with a preview pane — and the issue
+  scoped it to web deliberately. Nothing about it is client-specific: the
+  endpoints (`POST /v1/workspaces/:id/email` and its `…/email/preview`
+  sibling) are plain REST, render server-side and would work unchanged from a
+  native composer, so this is a scope decision rather than a platform limit.
+  Not a gap to close unless someone asks to compose one from a phone.
 - The **hardened-runtime device entitlements** (#469) are a macOS packaging
   concern with no counterpart elsewhere: only the macOS release signs with
   `--options runtime`, so only it can be refused the mic and camera before TCC

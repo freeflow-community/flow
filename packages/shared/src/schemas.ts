@@ -742,3 +742,19 @@ export const RegisterDeviceBody = z.object({
   bundleId: z.string().min(1).max(255),
 });
 export type RegisterDeviceBody = z.infer<typeof RegisterDeviceBody>;
+
+// ---- community email (#481) ------------------------------------
+/** POST /v1/workspaces/:id/email — admin broadcast to every human member.
+ * Body is markdown; the server renders and sanitizes it (single source of
+ * truth) so the composer's Preview tab and the sent mail cannot diverge. */
+export const SendWorkspaceEmailBody = z.object({
+  subject: z.string().trim().min(1).max(200),
+  markdown: z.string().trim().min(1).max(10_000),
+});
+export type SendWorkspaceEmailBody = z.infer<typeof SendWorkspaceEmailBody>;
+
+/** POST /v1/workspaces/:id/email/preview — same renderer, nothing sent. */
+export const PreviewWorkspaceEmailBody = z.object({
+  markdown: z.string().trim().min(1).max(10_000),
+});
+export type PreviewWorkspaceEmailBody = z.infer<typeof PreviewWorkspaceEmailBody>;
