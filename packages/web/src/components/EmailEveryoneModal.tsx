@@ -28,9 +28,18 @@ export function resultToastText(res: WorkspaceEmailResultDTO): string {
     : `Sent to ${res.sent}, failed for ${res.failed}`;
 }
 
+/** Banner wording for "Send test to me" (#484). The address is named rather
+ * than implied: an admin with a work and a personal account should not have to
+ * guess which inbox to go and look in. */
+export function testResultText(res: WorkspaceEmailResultDTO, email: string | undefined): string {
+  if (res.sent > 0) return email ? `Test sent to ${email}` : 'Test sent to you';
+  return 'Test send failed — the address bounced.';
+}
+
 export function EmailEveryoneModal({
   workspaceId,
   workspaceName,
+  selfEmail,
   onClose,
   onSent,
 }: {
@@ -38,6 +47,8 @@ export function EmailEveryoneModal({
   /** Named in the confirm step: "every human member of <name>" reads as a
    * real consequence in a way "this workspace" does not. */
   workspaceName?: string;
+  /** The signed-in user's address — named back in the test-send banner (#484). */
+  selfEmail?: string;
   onClose: () => void;
   onSent: (res: WorkspaceEmailResultDTO) => void;
 }) {
@@ -47,6 +58,8 @@ export function EmailEveryoneModal({
   const [confirming, setConfirming] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<WorkspaceEmailResultDTO | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -102,6 +115,25 @@ export function EmailEveryoneModal({
       setConfirming(false);
     } finally {
       setSending(false);
+    }
+  };
+
+  /** The whole draft, to the author alone. No confirm: it is one email to the
+   * person clicking, and the modal stays open so they can go and look. */
+  const sendTest = async () => {
+    setTesting(true);
+    setError(null);
+    setTestResult(null);
+    try {
+      const res = await api<WorkspaceEmailResultDTO>('POST', `/v1/workspaces/${workspaceId}/email/test`, {
+        subject: subject.trim(),
+        markdown: markdown.trim(),
+      });
+      setTestResult(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'test send failed');
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -195,32 +227,25 @@ export function EmailEveryoneModal({
       </p>
 
       {error && <p className="mb-2 text-sm text-red-600" data-testid="email-everyone-error">{error}</p>}
+      {testResult && (
+        <p
+          data-testid="email-everyone-test-result"
+          className={`mb-2 text-sm ${testResult.sent > 0 ? 'text-emerald-700' : 'text-red-600'}`}
+        >
+          {testResultText(testResult, selfEmail)}
+        </p>
+      )}
 
       {confirming ? (
-        <div className="rounded-lg border border-hairline2 bg-daypill/40 p-3" data-testid="email-everyone-confirm">
-          <p className="mb-1 text-sm font-bold">Send this email?</p>
-          <p className="mb-3 text-sm text-ink-soft">
-            This will email {count === null ? 'everyone' : <strong>{peopleLabel(count)}</strong>} — every human member
-            of {workspaceName ? <strong>{workspaceName}</strong> : 'this workspace'}. It can’t be unsent.
-          </p>
-          <div className="flex justify-end gap-2">
-            <button
-              className="rounded border border-hairline2 px-3 py-1.5 text-sm"
-              disabled={sending}
-              onClick={() => setConfirming(false)}
-            >
-              Back
-            </button>
-            <button
-              data-testid="email-everyone-confirm-send"
-              className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-              disabled={sending}
-              onClick={() => void send()}
-            >
-              {sending ? 'Sending…' : 'Send now'}
-            </button>
-          </div>
-        </div>
+        <ConfirmStep
+          count={count}
+          workspaceName={workspaceName}
+          sending={sending}
+          testing={testing}
+          onBack={() => setConfirming(false)}
+          onSend={() => void send()}
+          onSendTest={() => void sendTest()}
+        />
       ) : (
         <div className="flex justify-end gap-2">
           <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
@@ -235,5 +260,67 @@ export function EmailEveryoneModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The confirm step (#481) and its test-send escape hatch (#484). Split out so
+ * it can be rendered directly in a test: the step is only reachable through
+ * internal state, and the guarantee worth pinning — that the safe button is
+ * there and the destructive one is still the primary — is presentational.
+ */
+export function ConfirmStep({
+  count,
+  workspaceName,
+  sending,
+  testing,
+  onBack,
+  onSend,
+  onSendTest,
+}: {
+  count: number | null;
+  workspaceName?: string;
+  sending: boolean;
+  testing: boolean;
+  onBack: () => void;
+  onSend: () => void;
+  onSendTest: () => void;
+}) {
+  const busy = sending || testing;
+  return (
+    <div className="rounded-lg border border-hairline2 bg-daypill/40 p-3" data-testid="email-everyone-confirm">
+      <p className="mb-1 text-sm font-bold">Send this email?</p>
+      <p className="mb-3 text-sm text-ink-soft">
+        This will email {count === null ? 'everyone' : <strong>{peopleLabel(count)}</strong>} — every human member
+        of {workspaceName ? <strong>{workspaceName}</strong> : 'this workspace'}. It can’t be unsent.
+      </p>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* Secondary, and pushed to the far left: the last thing under the
+            cursor before "Send now" should be the safe one. */}
+        <button
+          data-testid="email-everyone-send-test"
+          className="mr-auto rounded border border-hairline2 px-3 py-1.5 text-sm text-ink-soft disabled:opacity-50"
+          disabled={busy}
+          onClick={onSendTest}
+        >
+          {testing ? 'Sending test…' : 'Send test to me'}
+        </button>
+        <button
+          className="rounded border border-hairline2 px-3 py-1.5 text-sm"
+          disabled={busy}
+          onClick={onBack}
+        >
+          Back
+        </button>
+        <button
+          data-testid="email-everyone-confirm-send"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={onSend}
+        >
+          {sending ? 'Sending…' : 'Send now'}
+        </button>
+      </div>
+    </div>
   );
 }

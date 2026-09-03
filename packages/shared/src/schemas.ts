@@ -753,6 +753,11 @@ export const SendWorkspaceEmailBody = z.object({
 });
 export type SendWorkspaceEmailBody = z.infer<typeof SendWorkspaceEmailBody>;
 
+/** POST /v1/workspaces/:id/email/test (#484) — the same draft to the author
+ * alone, so it takes the same body; the server adds the `[Test] ` prefix. */
+export const SendTestWorkspaceEmailBody = SendWorkspaceEmailBody;
+export type SendTestWorkspaceEmailBody = z.infer<typeof SendTestWorkspaceEmailBody>;
+
 /** POST /v1/workspaces/:id/email/preview — same renderer, nothing sent. */
 export const PreviewWorkspaceEmailBody = z.object({
   markdown: z.string().trim().min(1).max(10_000),
