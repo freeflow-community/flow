@@ -6,7 +6,15 @@
 // until it has already been mailed.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { ComposeActions, ConfirmStep, peopleLabel, resultToastText, testResultText } from './EmailEveryoneModal';
+import { ApiError } from '../lib/api';
+import {
+  ComposeActions,
+  ConfirmStep,
+  imagePasteErrorText,
+  peopleLabel,
+  resultToastText,
+  testResultText,
+} from './EmailEveryoneModal';
 
 describe('peopleLabel', () => {
   it('singularizes one and pluralizes everything else', () => {
@@ -90,5 +98,55 @@ describe('ConfirmStep (#484)', () => {
     const html = render({ testing: true });
     expect(html).toContain('Sending test…');
     expect(html).toMatch(/data-testid="email-everyone-confirm-send"[^>]*disabled/);
+  });
+});
+
+describe('imagePasteErrorText (#492)', () => {
+  it('turns the server cap into a number a person can act on', () => {
+    const err = new ApiError(400, 'image_too_large', 'email images are limited to 5242880 bytes');
+    // Not the server's wording: "5242880 bytes" is a fact about the API, not
+    // advice to someone holding a screenshot.
+    expect(imagePasteErrorText(err)).toBe('That image is too large to email — the limit is 5 MB.');
+  });
+
+  it('says what to do about an unsupported type', () => {
+    const err = new ApiError(400, 'unsupported_image', "image/svg+xml can't be embedded in an email");
+    expect(imagePasteErrorText(err)).toContain('PNG or JPEG');
+  });
+
+  it('never goes silent on an unexpected failure', () => {
+    // A dropped connection mid-upload still has to say something: the
+    // placeholder has just been pulled out of the body, and a body that
+    // silently lost an image is the failure mode worth ruling out.
+    expect(imagePasteErrorText(new Error('network'))).toBe('Couldn’t upload that image. Try again.');
+    expect(imagePasteErrorText(undefined)).toBe('Couldn’t upload that image. Try again.');
+  });
+});
+
+describe('ConfirmStep shows the mail (#492)', () => {
+  const render = (over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      <ConfirmStep
+        count={48}
+        workspaceName="Locked In"
+        sending={false}
+        testing={false}
+        onBack={() => {}}
+        onSend={() => {}}
+        onSendTest={() => {}}
+        {...over}
+      />,
+    );
+
+  it('renders the server HTML, images and all, so the last look is at the real thing', () => {
+    const html = render({ previewHtml: '<p>Hi</p><img src="https://flow.test/v1/email-images/abc" alt="Pasted image"/>' });
+    expect(html).toContain('src="https://flow.test/v1/email-images/abc"');
+  });
+
+  it('says it is still rendering rather than showing a stale document', () => {
+    // A previous render sitting under a "Send now" button would be a lie about
+    // what is going to be mailed.
+    expect(render({ previewHtml: null })).toContain('Rendering…');
+    expect(render()).toContain('Rendering…');
   });
 });

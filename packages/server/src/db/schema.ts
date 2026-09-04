@@ -694,3 +694,24 @@ export const huddleInviteTargets = pgTable(
   },
   (t) => [primaryKey({ columns: [t.inviteId, t.userId] }), index('huddle_invite_targets_user_idx').on(t.userId)],
 );
+
+/**
+ * Images pasted into a community email (#492, migration 0044).
+ *
+ * The row is a capability, not a copy: the bytes stay in `files`, uploaded
+ * through the ordinary presign flow, and this table's `token` is what lets an
+ * unauthenticated mail client fetch them. It doubles as the sweeper's proof
+ * that an image nobody attached to a message is still load-bearing.
+ */
+export const workspaceEmailImages = pgTable(
+  'workspace_email_images',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('workspace_email_images_file_idx').on(t.fileId)],
+);

@@ -293,13 +293,15 @@ This file keeps two things:
   separately — both already open a thread from an *Activity* row.
 
 ### Deliberate divergences (ruled)
-- **Community email is web-only** (#481, #484, #486, as specified). Composing a
-  broadcast is an admin desk job — a markdown editor with a preview pane, and
-  now a "Send test to me" button on the confirm step — and the issues scoped it
-  to web deliberately. Nothing about it is client-specific: the endpoints
+- **Community email is web-only** (#481, #484, #486, #492, as specified).
+  Composing a broadcast is an admin desk job — a markdown editor with a preview
+  pane, a "Send test to me" button on the confirm step, and now image paste —
+  and the issues scoped it to web deliberately. Nothing about it is client-specific: the endpoints
   (`POST /v1/workspaces/:id/email` and its `…/email/preview` and `…/email/test`
   siblings) are plain REST, render server-side and would work unchanged from a
   native composer, so this is a scope decision rather than a platform limit.
+  #492's image upload is the same shape — `POST …/email/images` adopts an
+  ordinary uploaded file, which every client already knows how to produce.
   Not a gap to close unless someone asks to compose one from a phone.
 - The **hardened-runtime device entitlements** (#469) are a macOS packaging
   concern with no counterpart elsewhere: only the macOS release signs with

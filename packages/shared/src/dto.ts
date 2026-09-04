@@ -816,6 +816,20 @@ export interface WorkspaceEmailPreviewDTO {
   recipientCount: number;
 }
 
+/**
+ * Per-image cap for community-email images (#492). Lives here because both
+ * halves need the same number: the server enforces it, and the composer writes
+ * it into the error a human reads.
+ */
+export const EMAIL_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/** POST /v1/workspaces/:id/email/images (#492). `url` is absolute and
+ * unauthenticated — it is pasted straight into the markdown as an image
+ * target, and the thing that fetches it is a mail client with no session. */
+export interface WorkspaceEmailImageDTO {
+  url: string;
+}
+
 function clockLabel(hour: number, minute: number): string {
   const h12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${h12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`;

@@ -44,6 +44,7 @@ import {
   SendMessageBody,
   SendWorkspaceEmailBody,
   PreviewWorkspaceEmailBody,
+  AdoptEmailImageBody,
   SetChannelEmojiBody,
   SetChannelIndicatorBody,
   SetMemberRoleBody,
@@ -478,6 +479,32 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/workspaces/:id/email/recipients', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return { recipientCount: await cem.countBroadcastRecipients(id, req.user.id) };
+  });
+
+  // Pasted images (#492): the bytes went up through the normal presign flow;
+  // this adopts one as a broadcast image and returns the public URL that goes
+  // into the markdown.
+  app.post('/v1/workspaces/:id/email/images', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(AdoptEmailImageBody, req.body);
+    return reply.status(201).send(await cem.adoptEmailImage(id, req.user.id, body.fileId));
+  });
+
+  // ...and the unauthenticated read. Deliberately no `requireAuth`: the thing
+  // fetching this is a mail client (or Gmail's image proxy) with no session,
+  // and the token in the path is the entire access check.
+  app.get('/v1/email-images/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    const img = await cem.getEmailImage(token);
+    if ('redirect' in img) return reply.redirect(img.redirect, 302);
+    return reply
+      .header('content-type', img.content.mimeType)
+      .header('content-disposition', 'inline')
+      // Immutable: the token names one file's bytes forever, and mail clients
+      // and image proxies re-fetch aggressively.
+      .header('cache-control', 'public, max-age=604800, immutable')
+      .header('x-content-type-options', 'nosniff')
+      .send(img.content.data);
   });
 
   // ---- Slack-compat app management (phase 4, owner/admin, web-only UI) ----

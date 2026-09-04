@@ -768,3 +768,11 @@ export const PreviewWorkspaceEmailBody = z.object({
   markdown: z.string().trim().min(1).max(10_000),
 });
 export type PreviewWorkspaceEmailBody = z.infer<typeof PreviewWorkspaceEmailBody>;
+
+/** POST /v1/workspaces/:id/email/images (#492) — adopt an already-uploaded
+ * file as a broadcast image. The bytes travel by the ordinary presign flow;
+ * this only asks for the public URL that a mail client can fetch. */
+export const AdoptEmailImageBody = z.object({
+  fileId: z.string().uuid(),
+});
+export type AdoptEmailImageBody = z.infer<typeof AdoptEmailImageBody>;
