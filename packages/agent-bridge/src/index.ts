@@ -87,9 +87,17 @@ async function startDaemon(configPath: string): Promise<void> {
   const cfg = loadConfig(configPath);
   const bridge = new AgentBridge(cfg);
   await bridge.start();
+  let shuttingDown = false;
   const shutdown = (): void => {
-    bridge.stop();
-    setTimeout(() => process.exit(0), 200);
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // A failed network leave must not trap the supervisor during shutdown.
+    const forceExit = setTimeout(() => process.exit(0), 2_000);
+    forceExit.unref();
+    void bridge.stop().finally(() => {
+      clearTimeout(forceExit);
+      process.exit(0);
+    });
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

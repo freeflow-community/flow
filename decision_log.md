@@ -1291,3 +1291,20 @@ one-recipient MCP correction).
   `/?native=google` always renders a choice — `Continue as <email>` beside the
   Google button. Do not trade the common case (one tap) for the rare one (wrong
   account) by discarding sessions the user legitimately has.
+
+## 2026-09-04 — Agents answer the existing Huddle, not a second voice mode
+
+- **Calling an agent uses the ordinary DM Huddle ring and room.** The bridge
+  accepts with the agent bearer token and joins LiveKit under that same Flow
+  user id, so every client gets its existing roster, persistent bar, audio,
+  backgrounding and hang-up behavior without an agent-specific call screen.
+- **Realtime conversation and durable work are two layers of one agent.** A
+  low-latency OpenAI Realtime session handles the ongoing, interruptible call;
+  an explicit tool writes the agreed task into the DM and queues the existing
+  CLI runtime for code or research work. The voice layer never claims tool work
+  happened before the chat runtime reports it.
+- **One active voice call per bridge, and no recording.** Caller departure,
+  terminal invite state, model closure or daemon shutdown closes the room and
+  calls the existing leave route. LiveKit Agents recording is disabled. A
+  missing `OPENAI_API_KEY` or disabled voice config declines immediately with
+  an actionable DM message rather than allowing a fake or unanswered call.

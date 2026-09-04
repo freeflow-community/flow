@@ -13,13 +13,15 @@ import { fileURLToPath } from 'node:url';
 import type {
   ChannelDTO,
   Event,
+  HuddleInviteData,
+  HuddleUpdatedData,
   MessageDTO,
   ReactionEventData,
   UserDTO,
   WorkspaceDTO,
   WorkspaceMemberDTO,
 } from '@flow/shared';
-import { resolveWorkspace, type BridgeConfig } from './config.js';
+import { defaultVoiceConfig, resolveWorkspace, type BridgeConfig } from './config.js';
 import { FlowApi } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
@@ -27,6 +29,7 @@ import { ProgressReporter } from './progress.js';
 import { killAllRuntimes, runRuntime, type RunResult } from './runtime.js';
 import { EXIT_RESTART, EXIT_UPDATE } from './supervisor.js';
 import { currentVersion, isOutdated, latestPublishedVersion } from './version.js';
+import { HuddleVoiceManager } from './huddle-voice.js';
 
 const THINKING_PREFIX = '🤖 *thinking…*';
 /** Cap on salvaged text in a failure reply (the API caps a body at 12000). */
@@ -152,6 +155,7 @@ export class AgentBridge {
   private refreshTimer: NodeJS.Timeout | null = null;
   private ipcServer: http.Server | null = null;
   private taskSock: string | null = null;
+  private huddleVoice: HuddleVoiceManager | null = null;
 
   private logStream: fs.WriteStream | null = null;
 
@@ -187,9 +191,28 @@ export class AgentBridge {
     // #357: an agent can belong to several workspaces; this process serves one.
     this.workspace = resolveWorkspace(await this.api.myWorkspaces(), this.cfg.workspace);
     await this.refreshDirectory();
+    const voiceConfig = this.cfg.voice ?? defaultVoiceConfig();
+    this.huddleVoice = new HuddleVoiceManager({
+      api: this.api,
+      agentId: this.me.id,
+      agentName: this.me.displayName,
+      config: voiceConfig,
+      apiKey: process.env.OPENAI_API_KEY,
+      callerName: (userId) => this.senderLabel(userId),
+      isOneToOneDm: (channelId) => this.isOneToOneDm(channelId),
+      buildInstructions: (channelId, callerId) => this.buildVoiceInstructions(channelId, callerId),
+      handoff: (channelId, callerId, request) => this.handoffVoiceTask(channelId, callerId, request),
+      log: (message) => this.log(message),
+    });
+    const voiceState = !voiceConfig.enabled
+      ? 'off'
+      : process.env.OPENAI_API_KEY?.trim()
+        ? `ready (${voiceConfig.model}/${voiceConfig.voice})`
+        : 'waiting for OPENAI_API_KEY';
     this.log(
       `${this.me.displayName} <@${this.me.id}> online in "${this.workspace.name}" — ` +
-        `scope=${this.cfg.eventScope}+DMs progress=${this.cfg.progress} runtime=${this.cfg.runtime.kind} cwd=${this.cfg.runtime.cwd}`,
+        `scope=${this.cfg.eventScope}+DMs progress=${this.cfg.progress} runtime=${this.cfg.runtime.kind} ` +
+        `voice=${voiceState} cwd=${this.cfg.runtime.cwd}`,
     );
     this.socket = new FlowSocket({
       serverUrl: this.cfg.serverUrl,
@@ -369,7 +392,7 @@ export class AgentBridge {
       .catch((err: Error) => this.log(`version notice post failed: ${err.message}`));
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.socket?.close();
     this.ipcServer?.close();
     this.ipcServer = null;
@@ -378,6 +401,8 @@ export class AgentBridge {
     // Runtimes run detached (own process group) so expiry can kill their whole
     // subprocess tree — the flip side is they outlive us unless we end them.
     killAllRuntimes();
+    await this.huddleVoice?.stop();
+    this.huddleVoice = null;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.logStream?.end();
     this.logStream = null;
@@ -411,6 +436,7 @@ export class AgentBridge {
   private handleOwnRemoval(): void {
     if (this.departed) return;
     this.departed = true;
+    void this.huddleVoice?.stop();
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
@@ -443,6 +469,14 @@ export class AgentBridge {
     }
     if (ev.type === 'reaction.added') {
       void this.handleReaction(ev.data as ReactionEventData);
+      return;
+    }
+    if (ev.type === 'huddle.invite') {
+      void this.huddleVoice?.handleInvite(ev.data as HuddleInviteData);
+      return;
+    }
+    if (ev.type === 'huddle.updated') {
+      void this.huddleVoice?.handleRoster(ev.data as HuddleUpdatedData);
       return;
     }
     if (ev.type !== 'message.created' && ev.type !== 'thread.reply') return;
@@ -832,6 +866,13 @@ export class AgentBridge {
     return `#${chan.name ?? 'unknown'}`;
   }
 
+  private async isOneToOneDm(channelId: string): Promise<boolean> {
+    if (!this.channels.has(channelId)) {
+      await this.refreshDirectory().catch((error: Error) => this.log(`directory refresh failed: ${error.message}`));
+    }
+    return this.channels.get(channelId)?.kind === 'dm';
+  }
+
   private buildSystemPrompt(msg: MessageDTO, mcp: boolean): string {
     const threadNote = msg.threadRootId
       ? ' (inside a thread — replies stay in it)'
@@ -854,6 +895,52 @@ export class AgentBridge {
       this.cfg.runtime.systemPromptExtra ?? '',
     ];
     return lines.filter(Boolean).join('\n');
+  }
+
+  /** The voice model is the conversational front door to this same agent. It
+   * gets enough DM history to pick up naturally, but delegates tool-heavy work
+   * to the durable text runtime so the call stays responsive and interruptible. */
+  private async buildVoiceInstructions(channelId: string, callerId: string): Promise<string> {
+    let history = '';
+    try {
+      const page = await this.api.listMessages(channelId, 16);
+      history = page.messages
+        .filter((message) => !message.deletedAt && !message.systemKind && message.body.trim())
+        .slice(0, 16)
+        .reverse()
+        .map((message) => `${this.senderLabel(message.userId)}: ${message.body.trim().slice(0, 600)}`)
+        .join('\n')
+        .slice(-6000);
+    } catch (error) {
+      this.log(`voice history unavailable: ${(error as Error).message}`);
+    }
+
+    const lines = [
+      `You are ${this.me.displayName}, the same AI agent that ${this.senderLabel(callerId)} chats with in the Flow workspace "${this.workspace.name}".`,
+      `This is an ongoing live Huddle call inside ${this.channelLabel(channelId)}, not a voice demo and not a separate assistant.`,
+      'Speak naturally in short conversational turns. Let the caller interrupt you. Do not read markdown, emojis, metadata, or stage directions aloud.',
+      'You can discuss, clarify, brainstorm, and make decisions in real time. You do not directly have repository or external tools in the audio process.',
+      'When the caller explicitly asks you to build, change, research, or otherwise perform substantial work, first collect any missing details and then call handoff_to_chat exactly once with a self-contained request. Preserve every constraint they stated. Tell them it is queued in the Flow chat and that progress/results will appear there while this call continues.',
+      'Never claim that files were changed, tests passed, work finished, or an external action happened unless the handoff tool or visible chat result says so.',
+      this.cfg.runtime.systemPromptExtra ?? '',
+      this.cfg.voice?.instructions ?? '',
+      history ? `Recent Flow conversation, oldest to newest:\n${history}` : '',
+    ];
+    return lines.filter(Boolean).join('\n\n');
+  }
+
+  /** Queue the durable coding runtime and leave an audit note in the same DM.
+   * The realtime session can keep talking while this independent run works. */
+  private async handoffVoiceTask(channelId: string, callerId: string, request: string): Promise<string> {
+    await this.api.sendMessage(channelId, `📞 **Queued from our huddle**\n\n${request}`);
+    const result = await this.startTask({
+      channelId,
+      sourceChannelId: channelId,
+      userId: callerId,
+      prompt: request,
+    });
+    if ('error' in result) throw new Error(result.error);
+    return `${result.note}. Progress and the final result will appear in this Flow conversation.`;
   }
 
   /** Prompt = optional first-turn history + per-message sender metadata + body. */
