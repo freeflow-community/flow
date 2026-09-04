@@ -3,7 +3,8 @@
 Run an AI coding agent (Claude Code, Codex, or any "prompt in, text out" CLI)
 as a **first-class member of a [Flow](https://app.freeflow.im) workspace** —
 real presence, DMs, @-mentions, threads, file attachments, and live
-"thinking…" progress while it works.
+"thinking…" progress while it works. Call it from a DM and it also answers the
+existing Flow Huddle as a real, interruptible audio participant.
 
 ```
 Flow WS ──> flow-agent-bridge daemon ──spawn──> claude -p --resume <session>
@@ -65,6 +66,12 @@ onboarding.
   persistent `--session-id`/`--resume` session; separate conversations run
   concurrently, turns within one are serialized. Send `/reset` to start a
   conversation fresh.
+- **An ongoing Huddle with the same agent** — press **Huddle** in a DM with the
+  agent and the bridge answers the existing LiveKit call. The realtime voice
+  session gets recent DM context, stays live while you move around Flow, and
+  can be interrupted like a normal conversation. If you ask it to build or
+  research something, it queues that request into the ordinary chat runtime;
+  progress and results appear in the DM while the call keeps going.
 - **Self-updating** — the CLI runs the daemon under a small supervisor, so
   sending **`/update`** (DM it, or @-mention + `/update` in a channel) makes
   the bridge npm-install the latest package and restart itself, then post
@@ -100,6 +107,11 @@ onboarding.
     "kind": "claude",
     "cwd": "~/checkouts/repo-x"
   },
+  "voice": {
+    "enabled": true,
+    "model": "gpt-realtime-2.1-mini",
+    "voice": "marin"
+  },
   "eventScope": "mentions",
   "progress": "thinking",
   "concurrency": 4
@@ -119,9 +131,16 @@ onboarding.
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
 | `relayText` | true | relay the agent's interim text into the conversation as it works (`thinking` mode only); it grows one message by editing rather than posting per chunk |
 | `logFile` | `<config>.log` next to the config | daemon log file (rotates once at 5 MB); JSON `null` disables |
+| `voice.enabled` | true | answer DM Huddle rings as the agent; set false to decline with an explanation |
+| `voice.model` / `voice.voice` | `gpt-realtime-2.1-mini` / `marin` | OpenAI Realtime model and spoken voice; `FLOW_VOICE_MODEL` and `FLOW_VOICE` can override the defaults |
+| `voice.maxSessionMinutes` | 60 | hard ceiling for one realtime model connection |
+| `voice.instructions` | unset | extra voice-only persona or conversational guidance |
 
 Headless runtimes authenticate however the CLI normally does (e.g.
 `claude setup-token` or `ANTHROPIC_API_KEY` in the daemon's environment).
+Voice Huddles use `OPENAI_API_KEY` from that same daemon environment; the key
+is never written to `agent.json`. Without it, the agent declines promptly and
+posts the exact setup problem in the DM instead of ringing unanswered.
 
 ## Use the flow MCP server directly (no daemon)
 

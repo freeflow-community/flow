@@ -1,0 +1,287 @@
+import type { HuddleInviteData, HuddleUpdatedData, MessageDTO } from '@flow/shared';
+import { describe, expect, it, vi } from 'vitest';
+import type { VoiceConfig } from '../src/config.js';
+import {
+  HuddleVoiceManager,
+  type HuddleVoiceApi,
+  type LiveVoiceSessionOptions,
+} from '../src/huddle-voice.js';
+
+const AGENT_ID = '00000000-0000-4000-8000-000000000001';
+const CALLER_ID = '00000000-0000-4000-8000-000000000002';
+const OTHER_ID = '00000000-0000-4000-8000-000000000003';
+const CHANNEL_ID = '00000000-0000-4000-8000-000000000004';
+const INVITE_ID = '00000000-0000-4000-8000-000000000005';
+
+const voice: VoiceConfig = {
+  enabled: true,
+  model: 'gpt-realtime-2.1-mini',
+  voice: 'marin',
+  maxSessionMinutes: 60,
+};
+
+function ring(overrides: Partial<HuddleInviteData['invite']> = {}): HuddleInviteData {
+  return {
+    invite: {
+      id: INVITE_ID,
+      workspaceId: 'workspace-1',
+      channelId: CHANNEL_ID,
+      startedBy: CALLER_ID,
+      status: 'ringing',
+      startedAt: '2026-09-04T12:00:00.000Z',
+      answeredAt: null,
+      endedAt: null,
+      targets: [{ userId: AGENT_ID, status: 'ringing', respondedAt: null }],
+      ...overrides,
+    },
+  };
+}
+
+function harness(
+  options: {
+    apiKey?: string;
+    config?: VoiceConfig;
+    oneToOne?: boolean;
+    oneToOneCheck?: () => Promise<boolean>;
+  } = {},
+) {
+  const close = vi.fn(async () => undefined);
+  const api: HuddleVoiceApi = {
+    acceptHuddleInvite: vi.fn(async () => ({
+      token: 'room-token',
+      url: 'wss://livekit.example.test',
+      invite: null,
+      unavailable: [],
+    })),
+    declineHuddleInvite: vi.fn(async () => ({ ok: true })),
+    leaveHuddle: vi.fn(async () => ({ ok: true })),
+    sendMessage: vi.fn(async () => ({}) as MessageDTO),
+  };
+  let sessionOptions: LiveVoiceSessionOptions | null = null;
+  const handoff = vi.fn(async () => 'queued');
+  const sessionFactory = vi.fn(async (received: LiveVoiceSessionOptions) => {
+    sessionOptions = received;
+    return { close };
+  });
+  const manager = new HuddleVoiceManager({
+    api,
+    agentId: AGENT_ID,
+    agentName: 'Prism',
+    config: options.config ?? voice,
+    apiKey: options.apiKey ?? 'openai-test-key',
+    callerName: (id) => (id === CALLER_ID ? 'Mahad' : 'Someone'),
+    isOneToOneDm: vi.fn(options.oneToOneCheck ?? (async () => options.oneToOne ?? true)),
+    buildInstructions: vi.fn(async () => 'voice instructions'),
+    handoff,
+    log: vi.fn(),
+    sessionFactory,
+  });
+  return { manager, api, close, handoff, sessionFactory, getSessionOptions: () => sessionOptions };
+}
+
+describe('agent huddle voice', () => {
+  it('accepts its ring and links the realtime session to the exact caller', async () => {
+    const h = harness();
+
+    await h.manager.handleInvite(ring());
+    await h.manager.handleInvite(ring()); // duplicate delivery is harmless
+
+    expect(h.api.acceptHuddleInvite).toHaveBeenCalledTimes(1);
+    expect(h.api.acceptHuddleInvite).toHaveBeenCalledWith(INVITE_ID);
+    expect(h.sessionFactory).toHaveBeenCalledTimes(1);
+    expect(h.getSessionOptions()).toMatchObject({
+      url: 'wss://livekit.example.test',
+      token: 'room-token',
+      callerId: CALLER_ID,
+      callerName: 'Mahad',
+      agentName: 'Prism',
+      instructions: 'voice instructions',
+    });
+    expect(h.manager.activeChannelId).toBe(CHANNEL_ID);
+  });
+
+  it('passes a clean, self-contained work request into the durable chat handoff', async () => {
+    const h = harness();
+    await h.manager.handleInvite(ring());
+
+    const result = await h.getSessionOptions()!.handoff('  build the approved header  ');
+
+    expect(result).toBe('queued');
+    expect(h.handoff).toHaveBeenCalledWith(CHANNEL_ID, CALLER_ID, 'build the approved header');
+  });
+
+  it('declines with a useful chat explanation when OPENAI_API_KEY is missing', async () => {
+    const h = harness({ apiKey: ' ' });
+
+    await h.manager.handleInvite(ring());
+
+    expect(h.api.declineHuddleInvite).toHaveBeenCalledWith(INVITE_ID);
+    expect(h.api.sendMessage).toHaveBeenCalledWith(CHANNEL_ID, expect.stringContaining('OPENAI_API_KEY'));
+    expect(h.api.acceptHuddleInvite).not.toHaveBeenCalled();
+    expect(h.sessionFactory).not.toHaveBeenCalled();
+  });
+
+  it('declines with a useful chat explanation when voice is explicitly disabled', async () => {
+    const h = harness({ config: { ...voice, enabled: false } });
+
+    await h.manager.handleInvite(ring());
+
+    expect(h.api.declineHuddleInvite).toHaveBeenCalledWith(INVITE_ID);
+    expect(h.api.sendMessage).toHaveBeenCalledWith(CHANNEL_ID, expect.stringContaining('voice.enabled'));
+    expect(h.api.acceptHuddleInvite).not.toHaveBeenCalled();
+  });
+
+  it('ignores a ring meant for somebody else', async () => {
+    const h = harness();
+    await h.manager.handleInvite(
+      ring({ targets: [{ userId: OTHER_ID, status: 'ringing', respondedAt: null }] }),
+    );
+
+    expect(h.api.acceptHuddleInvite).not.toHaveBeenCalled();
+    expect(h.api.declineHuddleInvite).not.toHaveBeenCalled();
+  });
+
+  it('declines group calls so it never pretends to hear participants it is not linked to', async () => {
+    const h = harness({ oneToOne: false });
+
+    await h.manager.handleInvite(ring());
+
+    expect(h.api.declineHuddleInvite).toHaveBeenCalledWith(INVITE_ID);
+    expect(h.api.sendMessage).toHaveBeenCalledWith(CHANNEL_ID, expect.stringContaining('one-to-one'));
+    expect(h.api.acceptHuddleInvite).not.toHaveBeenCalled();
+  });
+
+  it('closes and leaves when the caller disappears from the huddle roster', async () => {
+    const h = harness();
+    await h.manager.handleInvite(ring());
+    const roster: HuddleUpdatedData = {
+      channelId: CHANNEL_ID,
+      participants: [{ userId: AGENT_ID, joinedAt: '2026-09-04T12:00:01.000Z' }],
+    };
+
+    await h.manager.handleRoster(roster);
+
+    expect(h.close).toHaveBeenCalledTimes(1);
+    expect(h.api.leaveHuddle).toHaveBeenCalledWith(CHANNEL_ID);
+    expect(h.manager.activeChannelId).toBeNull();
+  });
+
+  it('leaves the Flow huddle when the realtime session ends itself', async () => {
+    const h = harness();
+    await h.manager.handleInvite(ring());
+
+    h.getSessionOptions()!.onEnded();
+
+    await vi.waitFor(() => expect(h.api.leaveHuddle).toHaveBeenCalledWith(CHANNEL_ID));
+    expect(h.manager.activeChannelId).toBeNull();
+  });
+
+  it('closes the audio session when the invite reaches a terminal state', async () => {
+    const h = harness();
+    await h.manager.handleInvite(ring());
+
+    await h.manager.handleInvite(
+      ring({
+        status: 'ended',
+        endedAt: '2026-09-04T12:05:00.000Z',
+        targets: [{ userId: AGENT_ID, status: 'accepted', respondedAt: '2026-09-04T12:00:01.000Z' }],
+      }),
+    );
+
+    expect(h.close).toHaveBeenCalledTimes(1);
+    expect(h.api.leaveHuddle).toHaveBeenCalledWith(CHANNEL_ID);
+    expect(h.manager.activeChannelId).toBeNull();
+  });
+
+  it('leaves and reports a clear failure if LiveKit or Realtime startup fails', async () => {
+    const h = harness();
+    h.sessionFactory.mockRejectedValueOnce(new Error('native startup failed'));
+
+    await h.manager.handleInvite(ring());
+
+    expect(h.api.leaveHuddle).toHaveBeenCalledWith(CHANNEL_ID);
+    expect(h.api.sendMessage).toHaveBeenCalledWith(CHANNEL_ID, expect.stringContaining('couldn’t start'));
+    expect(h.manager.activeChannelId).toBeNull();
+  });
+
+  it('declines a second ring while already talking in another huddle', async () => {
+    const h = harness();
+    await h.manager.handleInvite(ring());
+    const second = ring({
+      id: '00000000-0000-4000-8000-000000000006',
+      channelId: '00000000-0000-4000-8000-000000000007',
+      startedBy: OTHER_ID,
+    });
+
+    await h.manager.handleInvite(second);
+
+    expect(h.api.declineHuddleInvite).toHaveBeenCalledWith(second.invite.id);
+    expect(h.api.sendMessage).toHaveBeenCalledWith(second.invite.channelId, expect.stringContaining('another huddle'));
+    expect(h.sessionFactory).toHaveBeenCalledTimes(1);
+  });
+
+  it('reserves the call slot while an invite is still in preflight', async () => {
+    let releasePreflight!: () => void;
+    const preflight = new Promise<void>((resolve) => {
+      releasePreflight = resolve;
+    });
+    const firstCheck = vi.fn(async () => preflight.then(() => true));
+    const h = harness({ oneToOneCheck: firstCheck });
+    const second = ring({
+      id: '00000000-0000-4000-8000-000000000006',
+      channelId: '00000000-0000-4000-8000-000000000007',
+      startedBy: OTHER_ID,
+    });
+
+    const firstAnswer = h.manager.handleInvite(ring());
+    await vi.waitFor(() => expect(firstCheck).toHaveBeenCalledTimes(1));
+    await h.manager.handleInvite(second);
+    releasePreflight();
+    await firstAnswer;
+
+    expect(h.api.acceptHuddleInvite).toHaveBeenCalledTimes(1);
+    expect(h.api.acceptHuddleInvite).toHaveBeenCalledWith(INVITE_ID);
+    expect(h.api.declineHuddleInvite).toHaveBeenCalledWith(second.invite.id);
+  });
+
+  it('does not answer an invite that ends during preflight', async () => {
+    let releasePreflight!: () => void;
+    const preflight = new Promise<void>((resolve) => {
+      releasePreflight = resolve;
+    });
+    const firstCheck = vi.fn(async () => preflight.then(() => true));
+    const h = harness({ oneToOneCheck: firstCheck });
+
+    const answer = h.manager.handleInvite(ring());
+    await vi.waitFor(() => expect(firstCheck).toHaveBeenCalledTimes(1));
+    await h.manager.handleInvite(ring({ status: 'cancelled', endedAt: '2026-09-04T12:00:01.000Z' }));
+    releasePreflight();
+    await answer;
+
+    expect(h.api.acceptHuddleInvite).not.toHaveBeenCalled();
+    expect(h.sessionFactory).not.toHaveBeenCalled();
+  });
+
+  it('leaves without starting audio when the bridge stops during accept', async () => {
+    const h = harness();
+    let finishAccept!: (room: Awaited<ReturnType<HuddleVoiceApi['acceptHuddleInvite']>>) => void;
+    const accepting = new Promise<Awaited<ReturnType<HuddleVoiceApi['acceptHuddleInvite']>>>((resolve) => {
+      finishAccept = resolve;
+    });
+    h.api.acceptHuddleInvite = vi.fn(async () => accepting);
+
+    const answer = h.manager.handleInvite(ring());
+    await vi.waitFor(() => expect(h.api.acceptHuddleInvite).toHaveBeenCalledTimes(1));
+    await h.manager.stop();
+    finishAccept({
+      token: 'room-token',
+      url: 'wss://livekit.example.test',
+      invite: null,
+      unavailable: [],
+    });
+    await answer;
+
+    expect(h.sessionFactory).not.toHaveBeenCalled();
+    expect(h.api.leaveHuddle).toHaveBeenCalledWith(CHANNEL_ID);
+  });
+});

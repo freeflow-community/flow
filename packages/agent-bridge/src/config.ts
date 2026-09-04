@@ -15,6 +15,28 @@ export type ProgressMode = 'thinking' | 'typing' | 'silent';
 export type EventScope = 'mentions' | 'all';
 export type RuntimeKind = 'claude' | 'codex' | 'demo';
 
+export interface VoiceConfig {
+  /** Answer DM huddle invites as this agent. */
+  enabled: boolean;
+  /** OpenAI Realtime model used for the low-latency call. */
+  model: string;
+  /** OpenAI Realtime voice name. */
+  voice: string;
+  /** Hard ceiling for one realtime model connection. */
+  maxSessionMinutes: number;
+  /** Extra voice-only persona or conversational guidance. */
+  instructions?: string | undefined;
+}
+
+export function defaultVoiceConfig(): VoiceConfig {
+  return {
+    enabled: true,
+    model: process.env.FLOW_VOICE_MODEL?.trim() || 'gpt-realtime-2.1-mini',
+    voice: process.env.FLOW_VOICE?.trim() || 'marin',
+    maxSessionMinutes: 60,
+  };
+}
+
 export interface RuntimeConfig {
   /**
    * 'claude' (rich: sessions, stream-json thinking steps, MCP),
@@ -100,6 +122,9 @@ export interface BridgeConfig {
    * definition. Set false for the pre-#162 quiet turn (tool status row only).
    */
   relayText: boolean;
+  /** Realtime audio in the existing Flow Huddle. Optional for source-level
+   * callers that construct BridgeConfig directly; loadConfig always fills it. */
+  voice?: VoiceConfig | undefined;
 }
 
 interface RawConfig {
@@ -115,6 +140,7 @@ interface RawConfig {
   concurrency?: number;
   progress?: string;
   relayText?: boolean;
+  voice?: Partial<VoiceConfig>;
 }
 
 export function loadConfig(configPath: string): BridgeConfig {
@@ -180,6 +206,18 @@ export function loadConfig(configPath: string): BridgeConfig {
         ? path.resolve(path.dirname(abs), expandHome(raw.logFile))
         : abs.replace(/\.json$/i, '') + '.log';
 
+  const voiceDefaults = defaultVoiceConfig();
+  const voice: VoiceConfig = {
+    enabled: raw.voice?.enabled ?? voiceDefaults.enabled,
+    model: raw.voice?.model?.trim() || voiceDefaults.model,
+    voice: raw.voice?.voice?.trim() || voiceDefaults.voice,
+    maxSessionMinutes: raw.voice?.maxSessionMinutes ?? voiceDefaults.maxSessionMinutes,
+    instructions: raw.voice?.instructions?.trim() || undefined,
+  };
+  if (!(voice.maxSessionMinutes > 0)) {
+    throw new Error('config: voice.maxSessionMinutes must be a positive number');
+  }
+
   return {
     serverUrl,
     agentToken,
@@ -193,6 +231,7 @@ export function loadConfig(configPath: string): BridgeConfig {
     concurrency: Math.max(1, raw.concurrency ?? 4),
     progress,
     relayText: raw.relayText ?? true,
+    voice,
   };
 }
 

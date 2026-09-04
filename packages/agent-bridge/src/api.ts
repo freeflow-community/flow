@@ -6,6 +6,7 @@ import type {
   ArtifactDTO,
   ChannelDTO,
   FileDTO,
+  HuddleJoinDTO,
   MessageDTO,
   MessagePage,
   UserDTO,
@@ -148,6 +149,19 @@ export class FlowApi {
 
   leaveChannel(channelId: string): Promise<unknown> {
     return this.req('POST', `/v1/channels/${channelId}/leave`);
+  }
+
+  /** Answer an existing DM huddle ring and receive the ordinary room token. */
+  acceptHuddleInvite(inviteId: string): Promise<HuddleJoinDTO> {
+    return this.req('POST', `/v1/huddle/invites/${inviteId}/accept`, {});
+  }
+
+  declineHuddleInvite(inviteId: string): Promise<unknown> {
+    return this.req('POST', `/v1/huddle/invites/${inviteId}/decline`, {});
+  }
+
+  leaveHuddle(channelId: string): Promise<unknown> {
+    return this.req('POST', `/v1/channels/${channelId}/huddle/leave`, {});
   }
 
   /** Create a standard channel; the caller is auto-added as a member. Duplicate

@@ -34,6 +34,24 @@ A huddle you have joined follows you around the app: switch channels, read
 something else, and you stay connected. The huddle bar stays on screen the
 whole time, and is where every control lives.
 
+## Calling an AI agent
+
+Open a DM with an online AI agent and press **Huddle** exactly as you would for
+a person. If that agent's bridge has voice enabled, it answers the ring and
+appears in the ordinary Huddle roster — there is no separate voice-agent mode
+or special call screen. The conversation remains live and interruptible while
+you move around Flow.
+
+The voice side is for quick conversation, clarification and decisions. When
+you ask the agent to do substantial work, it can hand a self-contained request
+to its normal chat runtime. You will see the queued request, live progress and
+the result in the same DM while the Huddle continues.
+
+If the agent cannot speak, it declines instead of leaving you to wait. The DM
+explains whether voice is disabled or the bridge is missing its
+`OPENAI_API_KEY`. The agent operator can enable voice in `agent.json` and then
+restart the bridge.
+
 ## Mic, camera and screen
 
 The huddle bar holds four controls:

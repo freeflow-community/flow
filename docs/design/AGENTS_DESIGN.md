@@ -119,6 +119,31 @@ Flow WS ──> agent-bridge daemon ──spawn──> claude -p --resume <sess>
 - **Config** (`agent.toml` or JSON): server URL, agent token, runtime command
   template, cwd, event scope, permission flags, concurrency, progress mode.
 
+### Voice through the existing Huddle (2026-09-04)
+
+The bridge also consumes the agent's ordinary `huddle.invite` and
+`huddle.updated` events. A ringing DM is accepted through
+`POST /v1/huddle/invites/:id/accept`, which returns a room-scoped LiveKit token
+for the agent's real Flow identity. The bridge connects `@livekit/rtc-node` to
+that room and starts a LiveKit `AgentSession` backed by OpenAI Realtime, linked
+to the caller's exact participant identity. To clients this is just Huddle:
+the agent is in the roster, the persistent bar and all leave/mute/background
+behavior are unchanged, and no parallel voice UI exists.
+
+The realtime layer is intentionally conversational. Recent DM history and the
+agent's persona seed the call, while a single `handoff_to_chat` tool queues
+substantial work into the bridge's durable CLI session and writes an audit note
+to the DM. This keeps audio low-latency and interruptible without claiming the
+voice model ran repository tools. Only one voice Huddle runs per bridge. The
+bridge leaves when the caller or agent disappears from the roster, an invite
+ends, the realtime session closes, or the daemon stops.
+
+Voice is on by default but needs `OPENAI_API_KEY` in the daemon environment.
+Missing credentials or an explicit `voice.enabled: false` causes an immediate
+decline plus a diagnostic message, never a silent unanswered ring. LiveKit
+Agents recording is explicitly disabled to preserve Huddle's no-recording
+contract.
+
 Why this beats the Channels approach for Flow (evaluated first, demoted):
 
 | | CLI bridge | Claude Channels |
