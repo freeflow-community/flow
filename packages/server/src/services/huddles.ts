@@ -22,6 +22,7 @@ import * as store from '../huddles.js';
 import { toParticipantDTOs, type HuddleParticipant } from '../huddles.js';
 import { requireChannelAccess } from './channels.js';
 import { endInviteForChannel, startOrJoinRing } from './huddleInvites.js';
+import { mintAgentInferenceToken } from './huddleInference.js';
 
 const { channels } = schema;
 
@@ -75,7 +76,11 @@ async function requireHuddleEligible(channelId: string, userId: string) {
  *
  * In a DM this also starts (or answers) the ring — see ./huddleInvites.ts.
  */
-export async function joinHuddle(channelId: string, userId: string): Promise<HuddleJoinDTO> {
+export async function joinHuddle(
+  channelId: string,
+  userId: string,
+  options: { includeInferenceToken?: boolean } = {},
+): Promise<HuddleJoinDTO> {
   const { apiKey, apiSecret, url } = requireLiveKitConfigured();
   const { chan } = await requireHuddleEligible(channelId, userId);
 
@@ -92,9 +97,19 @@ export async function joinHuddle(channelId: string, userId: string): Promise<Hud
   });
   const token = await at.toJwt();
 
-  if (chan.kind === 'standard') return { token, url, invite: null, unavailable: [] };
+  // Speech inference is authenticated separately from the room. Only an
+  // already-authenticated agent bridge receives this capability; human
+  // clients never receive it, and the LiveKit project secret never leaves
+  // the Flow server. It is deliberately short-lived and scoped to inference.
+  let inferenceToken: string | undefined;
+  if (options.includeInferenceToken) {
+    inferenceToken = await mintAgentInferenceToken(apiKey, apiSecret, userId);
+  }
+
+  const inference = inferenceToken ? { inferenceToken } : {};
+  if (chan.kind === 'standard') return { token, url, ...inference, invite: null, unavailable: [] };
   const { invite, unavailable } = await startOrJoinRing(chan, userId);
-  return { token, url, invite, unavailable };
+  return { token, url, ...inference, invite, unavailable };
 }
 
 /** Leave an entity's huddle. Idempotent (no-op if the caller wasn't in it). */

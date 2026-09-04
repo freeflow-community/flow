@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { WebSocket } from 'ws';
 import type { HuddleInviteData, HuddleJoinDTO, HuddleUpdatedData, MessageDTO } from '@flow/shared';
 import type { VoiceConfig } from './config.js';
 
 const TERMINAL_INVITE_STATES = new Set(['ended', 'declined', 'missed', 'cancelled']);
-const MAX_HANDOFF_LENGTH = 4000;
 let liveKitLoggerInitialized = false;
 
 export interface HuddleVoiceApi {
@@ -23,11 +24,55 @@ export interface LiveVoiceSessionOptions {
   callerName: string;
   agentName: string;
   instructions: string;
-  apiKey: string;
+  inferenceToken: string;
   config: VoiceConfig;
-  handoff(request: string): Promise<string>;
+  runTurn(options: VoiceRuntimeTurnOptions): Promise<VoiceRuntimeTurnResult>;
   onEnded(): void;
   log(message: string): void;
+}
+
+export interface VoiceRuntimeTurnOptions {
+  /** Latest caller utterance, used by resumable runtimes such as Claude. */
+  prompt: string;
+  /** Complete in-call transcript, used by stateless runtimes such as Codex. */
+  transcript: string;
+  signal: AbortSignal;
+  onText(text: string): void;
+}
+
+export interface VoiceRuntimeTurnResult {
+  ok: boolean;
+  text: string;
+  error?: string;
+  interrupted?: boolean;
+}
+
+export interface VoiceTranscriptMessage {
+  role: 'developer' | 'system' | 'user' | 'assistant';
+  text: string;
+}
+
+/** Convert LiveKit's call history into inputs for resumable and stateless CLIs. */
+export function buildVoiceRuntimeInput(
+  messages: readonly VoiceTranscriptMessage[],
+  callerName: string,
+  agentName: string,
+): { prompt: string; transcript: string } | null {
+  const conversational = messages.filter(
+    (message) =>
+      (message.role === 'user' || message.role === 'assistant') && message.text.trim().length > 0,
+  );
+  const latestUser = [...conversational]
+    .reverse()
+    .find((message) => message.role === 'user')
+    ?.text.trim();
+  if (!latestUser) return null;
+  return {
+    prompt: latestUser,
+    transcript: conversational
+      .map((message) => `${message.role === 'user' ? callerName : agentName}: ${message.text.trim()}`)
+      .join('\n'),
+  };
 }
 
 export type LiveVoiceSessionFactory = (options: LiveVoiceSessionOptions) => Promise<LiveVoiceSession>;
@@ -44,12 +89,14 @@ export interface HuddleVoiceManagerOptions {
   agentId: string;
   agentName: string;
   config: VoiceConfig;
-  /** Runtime secrets stay in the daemon environment, never agent.json. */
-  apiKey?: string | undefined;
   callerName(userId: string): string;
   isOneToOneDm(channelId: string): Promise<boolean>;
   buildInstructions(channelId: string, callerId: string): Promise<string>;
-  handoff(channelId: string, callerId: string, request: string): Promise<string>;
+  runTurn(options: VoiceRuntimeTurnOptions & {
+    sessionId: string;
+    resume: boolean;
+    systemPrompt: string;
+  }): Promise<VoiceRuntimeTurnResult & { sawSession?: boolean }>;
   log(message: string): void;
   sessionFactory?: LiveVoiceSessionFactory | undefined;
 }
@@ -58,7 +105,9 @@ export interface HuddleVoiceManagerOptions {
  * Turns the existing DM ring into a real bot call. The server remains the
  * source of truth for invite and roster state; this class just performs the
  * same accept / join / leave operations as a human client, then attaches a
- * realtime audio participant to the minted LiveKit room token.
+ * realtime audio participant to the minted LiveKit room token. Speech uses a
+ * short-lived inference grant from Flow; reasoning uses the bridge's existing
+ * Claude/Codex runtime login.
  */
 export class HuddleVoiceManager {
   private active: ActiveCall | null = null;
@@ -112,16 +161,6 @@ export class HuddleVoiceManager {
       return;
     }
 
-    const apiKey = this.options.apiKey?.trim();
-    if (!apiKey) {
-      await this.declineWithMessage(
-        invite.id,
-        invite.channelId,
-        `📞 I can’t answer voice yet because my bridge is missing \`OPENAI_API_KEY\`. Add it to the bridge environment, restart me, and call again.`,
-      );
-      return;
-    }
-
     // Reserve the one call slot before the asynchronous directory lookup. Two
     // different rings can arrive on the socket in the same event-loop turn.
     this.acceptingInviteId = invite.id;
@@ -150,6 +189,11 @@ export class HuddleVoiceManager {
         await this.leaveQuietly(invite.channelId);
         return;
       }
+      if (!room.inferenceToken?.trim()) {
+        throw new Error('Flow server did not provide an agent inference token; update the server and bridge together');
+      }
+      const runtimeSessionId = randomUUID();
+      let runtimeStarted = false;
       let endedDuringStart = false;
       const session = await this.sessionFactory({
         url: room.url,
@@ -158,12 +202,17 @@ export class HuddleVoiceManager {
         callerName: this.options.callerName(invite.startedBy),
         agentName: this.options.agentName,
         instructions,
-        apiKey,
+        inferenceToken: room.inferenceToken,
         config: this.options.config,
-        handoff: async (request) => {
-          const clean = request.trim().slice(0, MAX_HANDOFF_LENGTH);
-          if (!clean) return 'Nothing was queued because the request was empty.';
-          return this.options.handoff(invite.channelId, invite.startedBy, clean);
+        runTurn: async (turn) => {
+          const result = await this.options.runTurn({
+            ...turn,
+            sessionId: runtimeSessionId,
+            resume: runtimeStarted,
+            systemPrompt: instructions,
+          });
+          if (result.ok || result.sawSession) runtimeStarted = true;
+          return result;
         },
         onEnded: () => {
           endedDuringStart = true;
@@ -264,74 +313,154 @@ export class HuddleVoiceManager {
 
 /**
  * Production session adapter. Imports are deliberately lazy: a text-only
- * bridge can start without loading LiveKit's native RTC binding, and unit
- * tests exercise the call state machine without a room or API key.
+ * bridge can start without loading LiveKit's native RTC binding. Audio uses
+ * LiveKit Inference with a short-lived server-minted grant; the LLM below is
+ * the bridge's already-authenticated Claude/Codex CLI runtime.
  */
 export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions): Promise<LiveVoiceSession> {
-  const [{ Room, RoomEvent }, agents, openai] = await Promise.all([
+  const [{ Room, RoomEvent }, agents] = await Promise.all([
     import('@livekit/rtc-node'),
     import('@livekit/agents'),
-    import('@livekit/agents-plugin-openai'),
   ]);
-  const { llm, voice } = agents;
-  // Worker-based LiveKit apps get this from cli.runApp(). The bridge embeds an
-  // AgentSession directly, so it must initialize the framework logger itself.
+  const { inference, llm, voice } = agents;
   if (!liveKitLoggerInitialized) {
     agents.initializeLogger({ pretty: false, level: 'warn' });
     liveKitLoggerInitialized = true;
   }
+
+  /** Adapt the bridge's ordinary runtime contract to LiveKit's streaming LLM. */
+  class RuntimeLLM extends llm.LLM {
+    label(): string {
+      return 'flow.bridge-runtime';
+    }
+
+    override get provider(): string {
+      return 'flow';
+    }
+
+    override get model(): string {
+      return 'agent-bridge';
+    }
+
+    chat(args: Parameters<InstanceType<typeof llm.LLM>['chat']>[0]) {
+      return new RuntimeLLMStream(this, {
+        chatCtx: args.chatCtx,
+        ...(args.toolCtx ? { toolCtx: args.toolCtx } : {}),
+        connOptions: args.connOptions ?? agents.DEFAULT_API_CONNECT_OPTIONS,
+      });
+    }
+  }
+
+  class RuntimeLLMStream extends llm.LLMStream {
+    protected async run(): Promise<void> {
+      const messages = this.chatCtx.items.filter((item) => item.type === 'message');
+      const input = buildVoiceRuntimeInput(
+        messages.map((message) => ({ role: message.role, text: message.textContent ?? '' })),
+        options.callerName,
+        options.agentName,
+      );
+      if (!input) return;
+      const responseId = `bridge-${randomUUID()}`;
+      let emitted = false;
+      let previous = '';
+      const emit = (text: string): void => {
+        const clean = text.trim();
+        if (!clean || clean === previous || this.abortController.signal.aborted) return;
+        previous = clean;
+        emitted = true;
+        this.queue.put({ id: responseId, delta: { role: 'assistant', content: `${clean} ` } });
+      };
+
+      const result = await options.runTurn({
+        prompt: input.prompt,
+        transcript: input.transcript,
+        signal: this.abortController.signal,
+        onText: emit,
+      });
+      if (this.abortController.signal.aborted || result.interrupted) return;
+      if (!emitted && result.text.trim()) emit(result.text);
+      if (!result.ok) {
+        options.log(`voice runtime error: ${result.error ?? 'unknown'}`);
+      }
+      if (!emitted && !result.ok) {
+        emit('I hit a problem while working on that. Please try asking me again.');
+      }
+    }
+  }
+
+  const baseUrl = options.config.inferenceUrl.replace(/\/+$/, '');
+  const connect = (path: '/stt' | '/tts', timeout: number, session: Record<string, unknown>) =>
+    connectInferenceWebSocket(baseUrl, path, options.inferenceToken, timeout, session);
+
+  // The SDK normally mints an inference token from LIVEKIT_API_SECRET. Flow
+  // must never place that project secret on a bot host, so construct the
+  // stock streaming codecs and replace only their public WebSocket connector
+  // with one authenticated by the narrow, short-lived token from the server.
+  const speechToText = new inference.STT({
+    model: options.config.sttModel,
+    baseURL: baseUrl,
+    sampleRate: 16_000,
+    encoding: 'pcm_s16le',
+    apiKey: 'server-minted-token',
+    apiSecret: 'not-used-by-flow-bridge',
+  });
+  speechToText.connectWs = (timeout) =>
+    connect('/stt', timeout, {
+      type: 'session.create',
+      model: options.config.sttModel,
+      settings: { sample_rate: '16000', encoding: 'pcm_s16le', extra: {} },
+      connection: { timeout: timeout / 1000, retries: 3 },
+    });
+
+  const textToSpeech = new inference.TTS({
+    model: options.config.ttsModel,
+    voice: options.config.ttsVoice,
+    language: 'en',
+    baseURL: baseUrl,
+    sampleRate: 16_000,
+    encoding: 'pcm_s16le',
+    apiKey: 'server-minted-token',
+    apiSecret: 'not-used-by-flow-bridge',
+  });
+  textToSpeech.connectWs = (timeout) =>
+    connect('/tts', timeout, {
+      type: 'session.create',
+      model: options.config.ttsModel,
+      voice: options.config.ttsVoice,
+      language: 'en',
+      sample_rate: '16000',
+      encoding: 'pcm_s16le',
+      extra: {},
+      connection: { timeout: timeout / 1000, retries: 3 },
+    });
+
   const room = new Room();
   let closing = false;
   let ended = false;
+  let limitTimer: NodeJS.Timeout | undefined;
   const emitEnded = (): void => {
     if (ended) return;
     ended = true;
+    if (limitTimer) clearTimeout(limitTimer);
     options.onEnded();
   };
 
   await room.connect(options.url, options.token, { autoSubscribe: true, dynacast: true });
   room.on(RoomEvent.Disconnected, emitEnded);
 
-  const model = new openai.realtime.RealtimeModel({
-    apiKey: options.apiKey,
-    model: options.config.model,
-    voice: options.config.voice,
-    maxSessionDuration: options.config.maxSessionMinutes * 60_000,
-    turnDetection: {
-      type: 'semantic_vad',
-      eagerness: 'auto',
-      create_response: true,
-      interrupt_response: true,
-    },
-  });
-  const handoffTool = llm.tool({
-    name: 'handoff_to_chat',
-    description:
-      'Queue substantial work in the normal Flow chat agent after the caller explicitly asks you to do it. ' +
-      'Use this for code changes, repository work, research, or anything requiring tools. Ask for missing details first.',
-    parameters: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        request: {
-          type: 'string',
-          minLength: 1,
-          maxLength: MAX_HANDOFF_LENGTH,
-          description: 'A self-contained task request preserving the caller’s constraints and decisions from this call.',
-        },
-      },
-      required: ['request'],
-    },
-    execute: async (args: { request: string }) => options.handoff(args.request),
-  });
   const session = new voice.AgentSession({
-    llm: model,
+    stt: speechToText,
+    llm: new RuntimeLLM(),
+    tts: textToSpeech,
     vad: null,
     userAwayTimeout: null,
-    turnHandling: { turnDetection: 'realtime_llm' },
+    turnHandling: {
+      turnDetection: 'stt',
+      interruption: { enabled: true },
+    },
   });
   session.on(voice.AgentSessionEventTypes.Error, (event) => {
-    options.log(`realtime voice error: ${errorText(event.error)}`);
+    options.log(`huddle voice error: ${errorText(event.error)}`);
   });
   session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (event) => {
     if (event.isFinal && event.transcript.trim()) options.log('heard final voice turn');
@@ -341,10 +470,7 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
   try {
     await session.start({
       room,
-      agent: voice.Agent.create({
-        instructions: options.instructions,
-        tools: [handoffTool],
-      }),
+      agent: voice.Agent.create({ instructions: options.instructions }),
       inputOptions: {
         participantIdentity: options.callerId,
         audioEnabled: true,
@@ -361,13 +487,17 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
       // optional audio, trace, log, and transcript upload disabled as well.
       record: false,
     });
-    session.generateReply({
-      instructions:
-        `Greet ${options.callerName} by name in one short, natural sentence. ` +
-        `You just answered their Flow Huddle, so sound like you picked up a call rather than starting a demo.`,
+    session.say(`Hey ${options.callerName}, I’m here.`, {
       allowInterruptions: true,
+      addToChatCtx: true,
     });
+    limitTimer = setTimeout(() => {
+      options.log(`ending huddle after ${options.config.maxSessionMinutes} minute limit`);
+      void session.close();
+    }, options.config.maxSessionMinutes * 60_000);
+    limitTimer.unref();
   } catch (error) {
+    if (limitTimer) clearTimeout(limitTimer);
     await session.close().catch(() => undefined);
     await room.disconnect().catch(() => undefined);
     throw error;
@@ -377,12 +507,53 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
     close: async () => {
       if (closing) return;
       closing = true;
+      if (limitTimer) clearTimeout(limitTimer);
       await session.close().catch((error: unknown) => options.log(`agent session close failed: ${errorText(error)}`));
       if (room.isConnected) {
         await room.disconnect().catch((error: unknown) => options.log(`LiveKit disconnect failed: ${errorText(error)}`));
       }
     },
   };
+}
+
+/** Connect to LiveKit Inference without ever holding the project API secret. */
+export function connectInferenceWebSocket(
+  baseUrl: string,
+  path: '/stt' | '/tts',
+  token: string,
+  timeout: number,
+  session: Record<string, unknown>,
+): Promise<WebSocket> {
+  const websocketUrl = `${baseUrl.replace(/^http/, 'ws')}${path}`;
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(websocketUrl, { headers: { Authorization: `Bearer ${token}` } });
+    const timer = setTimeout(() => {
+      cleanup();
+      socket.terminate();
+      reject(new Error(`LiveKit inference ${path.slice(1)} connection timed out`));
+    }, timeout);
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      socket.off('open', onOpen);
+      socket.off('error', onError);
+    };
+    const onOpen = (): void => {
+      cleanup();
+      try {
+        socket.send(JSON.stringify(session));
+        resolve(socket);
+      } catch (error) {
+        socket.terminate();
+        reject(error);
+      }
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    socket.once('open', onOpen);
+    socket.once('error', onError);
+  });
 }
 
 function errorText(error: unknown): string {

@@ -13,9 +13,6 @@ importers:
       '@livekit/agents':
         specifier: 1.7.1
         version: 1.7.1(@aws-sdk/credential-provider-node@3.972.70)(@livekit/rtc-node@0.13.34)(@smithy/signature-v4@5.6.7)(@types/node@22.20.1)(typescript@5.9.3)(zod@3.25.76)
-      '@livekit/agents-plugin-openai':
-        specifier: 1.7.1
-        version: 1.7.1(@aws-sdk/credential-provider-node@3.972.70)(@livekit/agents@1.7.1(@aws-sdk/credential-provider-node@3.972.70)(@livekit/rtc-node@0.13.34)(@smithy/signature-v4@5.6.7)(@types/node@22.20.1)(typescript@5.9.3)(zod@3.25.76))(@livekit/rtc-node@0.13.34)(@smithy/signature-v4@5.6.7)(zod@3.25.76)
       '@livekit/rtc-node':
         specifier: 0.13.34
         version: 0.13.34
@@ -1324,13 +1321,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@livekit/agents-plugin-openai@1.7.1':
-    resolution: {integrity: sha512-BCvp+Mx2ZkrxQIAJgbvmr/xtkQWNIPVxY2tLHiMCDo7QhOmho2dgYrZ5Mk9/5VoBROubfdRz6cguKDQcBQHVAg==}
-    peerDependencies:
-      '@livekit/agents': 1.7.1
-      '@livekit/rtc-node': ^0.13.34
-      zod: ^3.25.76 || ^4.1.8
 
   '@livekit/agents@1.7.1':
     resolution: {integrity: sha512-k2vfU+xp7MDrUERJ1REbn18Te8hfJxwJ/SkR/RPGiNvX3udW4LvfBysmYMFVe3oLYHjRBplfy7bGJvGqvtLxwA==}
@@ -4521,21 +4511,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  '@livekit/agents-plugin-openai@1.7.1(@aws-sdk/credential-provider-node@3.972.70)(@livekit/agents@1.7.1(@aws-sdk/credential-provider-node@3.972.70)(@livekit/rtc-node@0.13.34)(@smithy/signature-v4@5.6.7)(@types/node@22.20.1)(typescript@5.9.3)(zod@3.25.76))(@livekit/rtc-node@0.13.34)(@smithy/signature-v4@5.6.7)(zod@3.25.76)':
-    dependencies:
-      '@livekit/agents': 1.7.1(@aws-sdk/credential-provider-node@3.972.70)(@livekit/rtc-node@0.13.34)(@smithy/signature-v4@5.6.7)(@types/node@22.20.1)(typescript@5.9.3)(zod@3.25.76)
-      '@livekit/mutex': 1.1.1
-      '@livekit/rtc-node': 0.13.34
-      openai: 6.49.0(@aws-sdk/credential-provider-node@3.972.70)(@smithy/signature-v4@5.6.7)(ws@8.21.1)(zod@3.25.76)
-      ws: 8.21.1
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@aws-sdk/credential-provider-node'
-      - '@smithy/hash-node'
-      - '@smithy/signature-v4'
-      - bufferutil
-      - utf-8-validate
 
   '@livekit/agents@1.7.1(@aws-sdk/credential-provider-node@3.972.70)(@livekit/rtc-node@0.13.34)(@smithy/signature-v4@5.6.7)(@types/node@22.20.1)(typescript@5.9.3)(zod@3.25.76)':
     dependencies:

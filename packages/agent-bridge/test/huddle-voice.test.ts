@@ -1,8 +1,13 @@
 import type { HuddleInviteData, HuddleUpdatedData, MessageDTO } from '@flow/shared';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { WebSocketServer } from 'ws';
 import { describe, expect, it, vi } from 'vitest';
 import type { VoiceConfig } from '../src/config.js';
 import {
   HuddleVoiceManager,
+  buildVoiceRuntimeInput,
+  connectInferenceWebSocket,
   type HuddleVoiceApi,
   type LiveVoiceSessionOptions,
 } from '../src/huddle-voice.js';
@@ -15,8 +20,10 @@ const INVITE_ID = '00000000-0000-4000-8000-000000000005';
 
 const voice: VoiceConfig = {
   enabled: true,
-  model: 'gpt-realtime-2.1-mini',
-  voice: 'marin',
+  sttModel: 'deepgram/flux-general-en',
+  ttsModel: 'inworld/inworld-tts-2',
+  ttsVoice: 'Ashley',
+  inferenceUrl: 'https://agent-gateway.livekit.cloud/v1',
   maxSessionMinutes: 60,
 };
 
@@ -39,8 +46,8 @@ function ring(overrides: Partial<HuddleInviteData['invite']> = {}): HuddleInvite
 
 function harness(
   options: {
-    apiKey?: string;
     config?: VoiceConfig;
+    inferenceToken?: string;
     oneToOne?: boolean;
     oneToOneCheck?: () => Promise<boolean>;
   } = {},
@@ -50,6 +57,7 @@ function harness(
     acceptHuddleInvite: vi.fn(async () => ({
       token: 'room-token',
       url: 'wss://livekit.example.test',
+      inferenceToken: options.inferenceToken ?? 'short-lived-inference-token',
       invite: null,
       unavailable: [],
     })),
@@ -58,7 +66,8 @@ function harness(
     sendMessage: vi.fn(async () => ({}) as MessageDTO),
   };
   let sessionOptions: LiveVoiceSessionOptions | null = null;
-  const handoff = vi.fn(async () => 'queued');
+  const runTurn = vi.fn(async () => ({ ok: true, text: 'done', sawSession: true }));
+  const log = vi.fn();
   const sessionFactory = vi.fn(async (received: LiveVoiceSessionOptions) => {
     sessionOptions = received;
     return { close };
@@ -68,18 +77,67 @@ function harness(
     agentId: AGENT_ID,
     agentName: 'Prism',
     config: options.config ?? voice,
-    apiKey: options.apiKey ?? 'openai-test-key',
     callerName: (id) => (id === CALLER_ID ? 'Mahad' : 'Someone'),
     isOneToOneDm: vi.fn(options.oneToOneCheck ?? (async () => options.oneToOne ?? true)),
     buildInstructions: vi.fn(async () => 'voice instructions'),
-    handoff,
-    log: vi.fn(),
+    runTurn,
+    log,
     sessionFactory,
   });
-  return { manager, api, close, handoff, sessionFactory, getSessionOptions: () => sessionOptions };
+  return { manager, api, close, runTurn, log, sessionFactory, getSessionOptions: () => sessionOptions };
 }
 
 describe('agent huddle voice', () => {
+  it('builds a latest-turn prompt plus full transcript for Claude and Codex runtimes', () => {
+    expect(
+      buildVoiceRuntimeInput(
+        [
+          { role: 'system', text: 'voice instructions' },
+          { role: 'assistant', text: 'Hey Mahad, I’m here.' },
+          { role: 'user', text: 'fix the PR' },
+          { role: 'assistant', text: 'I found the failing test.' },
+          { role: 'user', text: ' and run it again ' },
+        ],
+        'Mahad',
+        'Prism',
+      ),
+    ).toEqual({
+      prompt: 'and run it again',
+      transcript:
+        'Prism: Hey Mahad, I’m here.\nMahad: fix the PR\nPrism: I found the failing test.\nMahad: and run it again',
+    });
+  });
+
+  it('connects speech with only the short-lived inference token', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    await once(server, 'listening');
+    const port = (server.address() as AddressInfo).port;
+    let authorization = '';
+    let pathname = '';
+    const received = new Promise<Record<string, unknown>>((resolve) => {
+      server.once('connection', (socket, request) => {
+        authorization = request.headers.authorization ?? '';
+        pathname = request.url ?? '';
+        socket.once('message', (data) => resolve(JSON.parse(data.toString()) as Record<string, unknown>));
+      });
+    });
+
+    const socket = await connectInferenceWebSocket(
+      `http://127.0.0.1:${port}/v1`,
+      '/stt',
+      'ephemeral-agent-grant',
+      1_000,
+      { type: 'session.create', model: 'test-stt' },
+    );
+    const session = await received;
+
+    expect(authorization).toBe('Bearer ephemeral-agent-grant');
+    expect(pathname).toBe('/v1/stt');
+    expect(session).toEqual({ type: 'session.create', model: 'test-stt' });
+    socket.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
   it('accepts its ring and links the realtime session to the exact caller', async () => {
     const h = harness();
 
@@ -92,6 +150,7 @@ describe('agent huddle voice', () => {
     expect(h.getSessionOptions()).toMatchObject({
       url: 'wss://livekit.example.test',
       token: 'room-token',
+      inferenceToken: 'short-lived-inference-token',
       callerId: CALLER_ID,
       callerName: 'Mahad',
       agentName: 'Prism',
@@ -100,24 +159,55 @@ describe('agent huddle voice', () => {
     expect(h.manager.activeChannelId).toBe(CHANNEL_ID);
   });
 
-  it('passes a clean, self-contained work request into the durable chat handoff', async () => {
+  it('runs spoken requests through one resumable bridge runtime session', async () => {
     const h = harness();
     await h.manager.handleInvite(ring());
 
-    const result = await h.getSessionOptions()!.handoff('  build the approved header  ');
+    const signal = new AbortController().signal;
+    const onText = vi.fn();
+    await h.getSessionOptions()!.runTurn({
+      prompt: 'fix the PR',
+      transcript: 'Mahad: fix the PR',
+      signal,
+      onText,
+    });
+    await h.getSessionOptions()!.runTurn({
+      prompt: 'and run the tests',
+      transcript: 'Mahad: fix the PR\nPrism: on it\nMahad: and run the tests',
+      signal,
+      onText,
+    });
 
-    expect(result).toBe('queued');
-    expect(h.handoff).toHaveBeenCalledWith(CHANNEL_ID, CALLER_ID, 'build the approved header');
+    expect(h.runTurn).toHaveBeenCalledTimes(2);
+    const first = h.runTurn.mock.calls[0]![0];
+    const second = h.runTurn.mock.calls[1]![0];
+    expect(first).toMatchObject({ prompt: 'fix the PR', resume: false, systemPrompt: 'voice instructions' });
+    expect(first.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second).toMatchObject({ prompt: 'and run the tests', resume: true });
+    expect(second.sessionId).toBe(first.sessionId);
   });
 
-  it('declines with a useful chat explanation when OPENAI_API_KEY is missing', async () => {
-    const h = harness({ apiKey: ' ' });
+  it('needs no model-provider API key on the bot host', async () => {
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    const h = harness();
 
     await h.manager.handleInvite(ring());
 
-    expect(h.api.declineHuddleInvite).toHaveBeenCalledWith(INVITE_ID);
-    expect(h.api.sendMessage).toHaveBeenCalledWith(CHANNEL_ID, expect.stringContaining('OPENAI_API_KEY'));
-    expect(h.api.acceptHuddleInvite).not.toHaveBeenCalled();
+    expect(h.api.acceptHuddleInvite).toHaveBeenCalledWith(INVITE_ID);
+    expect(h.sessionFactory).toHaveBeenCalledTimes(1);
+    expect(h.api.sendMessage).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain('short-lived-inference-token');
+    if (previous !== undefined) process.env.OPENAI_API_KEY = previous;
+  });
+
+  it('leaves with a clear failure when the Flow server is too old to mint speech access', async () => {
+    const h = harness({ inferenceToken: ' ' });
+
+    await h.manager.handleInvite(ring());
+
+    expect(h.api.leaveHuddle).toHaveBeenCalledWith(CHANNEL_ID);
+    expect(h.api.sendMessage).toHaveBeenCalledWith(CHANNEL_ID, expect.stringContaining('couldn’t start'));
     expect(h.sessionFactory).not.toHaveBeenCalled();
   });
 
@@ -193,7 +283,7 @@ describe('agent huddle voice', () => {
     expect(h.manager.activeChannelId).toBeNull();
   });
 
-  it('leaves and reports a clear failure if LiveKit or Realtime startup fails', async () => {
+  it('leaves and reports a clear failure if LiveKit audio startup fails', async () => {
     const h = harness();
     h.sessionFactory.mockRejectedValueOnce(new Error('native startup failed'));
 

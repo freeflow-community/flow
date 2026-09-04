@@ -6,6 +6,7 @@ import {
   DEMO_REPLY,
   StreamJsonParser,
   buildClaudeArgs,
+  buildCodexArgs,
   describeResultError,
   formatToolStep,
   runRuntime,
@@ -182,6 +183,31 @@ describe('buildClaudeArgs permissions', () => {
   it('runtime.model passes --model; unset omits it', () => {
     expect(buildClaudeArgs({ ...base, model: 'opus' }, opts).join(' ')).toContain('--model opus');
     expect(buildClaudeArgs(base, opts).join(' ')).not.toContain('--model');
+  });
+});
+
+describe('buildCodexArgs', () => {
+  const config: RuntimeConfig = {
+    kind: 'codex', command: 'codex', extraArgs: [], cwd: '/tmp',
+    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300, idleTimeoutSec: 120,
+    mcp: false, systemPromptExtra: undefined,
+  };
+
+  it('carries the voice/system instructions into the authenticated CLI invocation', () => {
+    const args = buildCodexArgs(config, {
+      sessionId: 'unused',
+      resume: false,
+      prompt: 'Mahad: fix the PR',
+      systemPrompt: 'You are the same Flow agent in a live Huddle.',
+      onToolStep: () => {},
+      log: () => {},
+    });
+
+    expect(args).toEqual([
+      'exec',
+      '--skip-git-repo-check',
+      'You are the same Flow agent in a live Huddle.\n\nMahad: fix the PR',
+    ]);
   });
 });
 

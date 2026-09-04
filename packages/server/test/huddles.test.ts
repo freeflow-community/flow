@@ -206,11 +206,26 @@ describe('huddle store', () => {
 
 describe('joinHuddle / leaveHuddle', () => {
   it('mints a token and publishes on the first join', async () => {
-    const { token, url } = await hd.joinHuddle(channelId, aliceId);
+    const { token, url, inferenceToken } = await hd.joinHuddle(channelId, aliceId);
     expect(typeof token).toBe('string');
     expect(token.split('.')).toHaveLength(3); // JWT
     expect(url).toBe(process.env.LIVEKIT_URL);
+    expect(inferenceToken).toBeUndefined();
     expect(store.huddleParticipants(channelId).map((p) => p.userId)).toEqual([aliceId]);
+  });
+
+  it('mints a narrow, short-lived inference grant only when requested for an agent bridge', async () => {
+    const { inferenceToken } = await hd.joinHuddle(channelId, aliceId, { includeInferenceToken: true });
+    expect(inferenceToken?.split('.')).toHaveLength(3);
+    const claims = JSON.parse(Buffer.from(inferenceToken!.split('.')[1]!, 'base64url').toString()) as {
+      inference: { perform: boolean };
+      video?: unknown;
+      nbf: number;
+      exp: number;
+    };
+    expect(claims.inference).toEqual({ perform: true });
+    expect(claims.video).toBeUndefined();
+    expect(claims.exp - claims.nbf).toBe(70 * 60);
   });
 
   it('is idempotent: rejoining succeeds without duplicating the roster entry', async () => {

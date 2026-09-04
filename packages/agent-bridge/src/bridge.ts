@@ -197,18 +197,27 @@ export class AgentBridge {
       agentId: this.me.id,
       agentName: this.me.displayName,
       config: voiceConfig,
-      apiKey: process.env.OPENAI_API_KEY,
       callerName: (userId) => this.senderLabel(userId),
       isOneToOneDm: (channelId) => this.isOneToOneDm(channelId),
       buildInstructions: (channelId, callerId) => this.buildVoiceInstructions(channelId, callerId),
-      handoff: (channelId, callerId, request) => this.handoffVoiceTask(channelId, callerId, request),
+      runTurn: ({ sessionId, resume, prompt, transcript, systemPrompt, signal, onText }) =>
+        runRuntime(this.cfg.runtime, {
+          sessionId,
+          resume,
+          // Claude resumes a real CLI session. Codex's current bridge adapter
+          // is stateless, so give it the complete in-call transcript each turn.
+          prompt: this.cfg.runtime.kind === 'codex' ? transcript : prompt,
+          systemPrompt,
+          signal,
+          onToolStep: (step) => this.log(`voice tool: ${step}`),
+          onText,
+          log: (message) => this.log(message),
+        }),
       log: (message) => this.log(message),
     });
     const voiceState = !voiceConfig.enabled
       ? 'off'
-      : process.env.OPENAI_API_KEY?.trim()
-        ? `ready (${voiceConfig.model}/${voiceConfig.voice})`
-        : 'waiting for OPENAI_API_KEY';
+      : `ready via bridge runtime (${voiceConfig.sttModel} → ${voiceConfig.ttsModel}/${voiceConfig.ttsVoice})`;
     this.log(
       `${this.me.displayName} <@${this.me.id}> online in "${this.workspace.name}" — ` +
         `scope=${this.cfg.eventScope}+DMs progress=${this.cfg.progress} runtime=${this.cfg.runtime.kind} ` +
@@ -897,9 +906,9 @@ export class AgentBridge {
     return lines.filter(Boolean).join('\n');
   }
 
-  /** The voice model is the conversational front door to this same agent. It
-   * gets enough DM history to pick up naturally, but delegates tool-heavy work
-   * to the durable text runtime so the call stays responsive and interruptible. */
+  /** Voice is a live front door to the same bridge runtime. Recent DM history
+   * seeds a dedicated in-call CLI session; every utterance can therefore use
+   * the same repository tools and authenticated Claude/Codex harness as chat. */
   private async buildVoiceInstructions(channelId: string, callerId: string): Promise<string> {
     let history = '';
     try {
@@ -919,28 +928,14 @@ export class AgentBridge {
       `You are ${this.me.displayName}, the same AI agent that ${this.senderLabel(callerId)} chats with in the Flow workspace "${this.workspace.name}".`,
       `This is an ongoing live Huddle call inside ${this.channelLabel(channelId)}, not a voice demo and not a separate assistant.`,
       'Speak naturally in short conversational turns. Let the caller interrupt you. Do not read markdown, emojis, metadata, or stage directions aloud.',
-      'You can discuss, clarify, brainstorm, and make decisions in real time. You do not directly have repository or external tools in the audio process.',
-      'When the caller explicitly asks you to build, change, research, or otherwise perform substantial work, first collect any missing details and then call handoff_to_chat exactly once with a self-contained request. Preserve every constraint they stated. Tell them it is queued in the Flow chat and that progress/results will appear there while this call continues.',
-      'Never claim that files were changed, tests passed, work finished, or an external action happened unless the handoff tool or visible chat result says so.',
+      'You are running through your normal agent bridge, so you can use your repository and external tools directly when the caller asks. Keep the call alive while you work and give brief spoken progress when useful.',
+      'Never claim that files changed, tests passed, work finished, or an external action happened unless you actually verified it with your tools.',
+      'Do not post Flow messages from this call. Speak progress and results in the Huddle.',
       this.cfg.runtime.systemPromptExtra ?? '',
       this.cfg.voice?.instructions ?? '',
       history ? `Recent Flow conversation, oldest to newest:\n${history}` : '',
     ];
     return lines.filter(Boolean).join('\n\n');
-  }
-
-  /** Queue the durable coding runtime and leave an audit note in the same DM.
-   * The realtime session can keep talking while this independent run works. */
-  private async handoffVoiceTask(channelId: string, callerId: string, request: string): Promise<string> {
-    await this.api.sendMessage(channelId, `📞 **Queued from our huddle**\n\n${request}`);
-    const result = await this.startTask({
-      channelId,
-      sourceChannelId: channelId,
-      userId: callerId,
-      prompt: request,
-    });
-    if ('error' in result) throw new Error(result.error);
-    return `${result.note}. Progress and the final result will appear in this Flow conversation.`;
   }
 
   /** Prompt = optional first-turn history + per-message sender metadata + body. */

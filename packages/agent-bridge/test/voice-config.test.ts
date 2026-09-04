@@ -29,24 +29,34 @@ afterEach(() => {
 describe('voice configuration', () => {
   it('is enabled by default for existing agent.json files', () => {
     const cfg = loadConfig(configFile());
-    expect(cfg.voice).toMatchObject({ enabled: true, voice: 'marin', maxSessionMinutes: 60 });
-    expect(cfg.voice?.model).toBeTruthy();
+    expect(cfg.voice).toMatchObject({
+      enabled: true,
+      sttModel: 'deepgram/flux-general-en',
+      ttsModel: 'inworld/inworld-tts-2',
+      ttsVoice: 'Ashley',
+      maxSessionMinutes: 60,
+    });
+    expect(cfg.voice?.inferenceUrl).toBe('https://agent-gateway.livekit.cloud/v1');
   });
 
-  it('reads explicit model, voice, duration, and instructions', () => {
+  it('reads explicit speech models, voice, gateway, duration, and instructions', () => {
     const cfg = loadConfig(
       configFile({
         enabled: false,
-        model: ' custom-realtime ',
-        voice: ' coral ',
+        sttModel: ' custom-stt ',
+        ttsModel: ' custom-tts ',
+        ttsVoice: ' custom-voice ',
+        inferenceUrl: ' https://inference.example.test/v1 ',
         maxSessionMinutes: 25,
         instructions: ' Be upbeat. ',
       }),
     );
     expect(cfg.voice).toEqual({
       enabled: false,
-      model: 'custom-realtime',
-      voice: 'coral',
+      sttModel: 'custom-stt',
+      ttsModel: 'custom-tts',
+      ttsVoice: 'custom-voice',
+      inferenceUrl: 'https://inference.example.test/v1',
       maxSessionMinutes: 25,
       instructions: 'Be upbeat.',
     });

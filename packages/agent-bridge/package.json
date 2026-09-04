@@ -1,6 +1,6 @@
 {
   "name": "flow-agent-bridge",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "type": "module",
   "description": "Flow agent bridge: joins a Flow workspace as a first-class AI agent and execs a coding-agent CLI (Claude Code, Codex) headlessly per conversation",
   "license": "MIT",
@@ -36,7 +36,6 @@
   },
   "dependencies": {
     "@livekit/agents": "1.7.1",
-    "@livekit/agents-plugin-openai": "1.7.1",
     "@livekit/rtc-node": "0.13.34",
     "ws": "^8.18.0"
   },

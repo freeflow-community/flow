@@ -817,12 +817,14 @@ export function registerRoutes(app: FastifyInstance): void {
   // Answering a ring is joining: accept marks the target answered (so the
   // user's other devices dismiss with "Answered on another device") and then
   // takes the ordinary join path for the token — there is no second way in.
+  // Agent-token callers additionally get a short-lived speech-only grant;
+  // ordinary joins and all human clients never receive one.
   app.post('/v1/huddle/invites/:id/accept', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(HuddleInviteReplyBody, req.body ?? {});
     const invite = await hi.acceptInvite(id, req.user.id, body.sessionId);
     if (!invite) throw new ApiError(404, 'invite_not_found', 'that huddle is no longer ringing');
-    return hd.joinHuddle(invite.channelId, req.user.id);
+    return hd.joinHuddle(invite.channelId, req.user.id, { includeInferenceToken: req.authKind === 'agent' });
   });
 
   app.post('/v1/huddle/invites/:id/decline', { preHandler: requireAuth }, async (req) => {
