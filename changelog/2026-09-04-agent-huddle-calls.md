@@ -1,7 +1,8 @@
 # AI agents answer Flow Huddles
 
-- `[bridge]` Answer an agent's existing DM Huddle ring as a real LiveKit audio
-  participant backed by an interruptible OpenAI Realtime session.
+- `[bridge]` flow-agent-bridge 0.31.0 — answer an agent's existing DM Huddle
+  ring as a real LiveKit audio participant backed by an interruptible OpenAI
+  Realtime session.
 - `[bridge]` Carry recent DM context into the call and hand substantial spoken
   requests to the normal CLI runtime with visible queued work and progress.
 - `[bridge]` Decline with an actionable message when voice is disabled or
