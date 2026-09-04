@@ -898,8 +898,25 @@ actor SyncEngine {
         threadRootId: String? = nil,
         attachments: [FileAttachment] = []
     ) async -> [MentionMiss] {
+        await sendMessageWithReceipt(
+            channelId: channelId,
+            body: body,
+            threadRootId: threadRootId,
+            attachments: attachments
+        )?.mentionMisses ?? []
+    }
+
+    /// The same optimistic-send path with a receipt for a caller that must
+    /// correlate a later response with this exact message. Existing composers
+    /// intentionally keep the lightweight mention-only result above.
+    func sendMessageWithReceipt(
+        channelId: String,
+        body: String,
+        threadRootId: String? = nil,
+        attachments: [FileAttachment] = []
+    ) async -> MessageSendReceipt? {
         var outgoing = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !outgoing.isEmpty || !attachments.isEmpty, let uid = currentUser?.id else { return [] }
+        guard !outgoing.isEmpty || !attachments.isEmpty, let uid = currentUser?.id else { return nil }
         if outgoing.isEmpty { outgoing = " " } // server requires a non-empty body
         // Composer sugar → wire format: :shortcode: → unicode; @Name → <@id>;
         // @channel/@here/@everyone → <!token>. Returns resolved mention ids.
@@ -930,11 +947,21 @@ actor SyncEngine {
         }
         // A send failure no longer aborts with a toast: `deliver` flags the row
         // `failed` (kept in place with a Retry affordance) and returns false.
-        guard await deliver(local, mentions: mentions) else { return [] }
+        guard await deliver(local, mentions: mentions) else {
+            return MessageSendReceipt(messageId: local.id, delivered: false, mentionMisses: [])
+        }
+        let confirmedId: String = (try? await db.reader.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT id FROM message WHERE clientMsgId = ?",
+                arguments: [clientMsgId]
+            )
+        }) ?? local.id
         // Web-parity: after a successful send, flag mentioned users who aren't
         // in this channel — they won't see the mention (an agent never even
         // processes it) until added.
-        return await channelMentionMisses(channelId: channelId, mentionIds: mentions)
+        let misses = await channelMentionMisses(channelId: channelId, mentionIds: mentions)
+        return MessageSendReceipt(messageId: confirmedId, delivered: true, mentionMisses: misses)
     }
 
     /// POST an already-inserted optimistic row and reconcile it. On network or

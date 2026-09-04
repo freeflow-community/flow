@@ -107,8 +107,9 @@ targets:
           - UIInterfaceOrientationPortrait
         # Two uses now: a photo for the composer, and video in a huddle (#435).
         NSCameraUsageDescription: Take a photo to share, or turn on your camera in a huddle.
-        # Huddles (Phase 1).
-        NSMicrophoneUsageDescription: Flow needs microphone access to let you talk in a huddle.
+        # Huddles and ongoing one-to-one agent calls.
+        NSMicrophoneUsageDescription: Flow needs microphone access to let you talk in a huddle or agent call.
+        NSSpeechRecognitionUsageDescription: Flow turns speech into messages during an agent call.
         # An ambient huddle has to survive backgrounding/lock-screen, not just
         # in-app navigation (decision log 2026-08-20), or it fails the "feels
         # like a real call" bar the moment you switch apps.
@@ -245,6 +246,7 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
+      - path: Tests
       - path: ../macos/Tests/FlowTests/MiniAppTests.swift
       - path: ../macos/Tests/FlowTests/AppTokenTests.swift
       - path: ../macos/Tests/FlowTests/MessageDeletePolicyTests.swift

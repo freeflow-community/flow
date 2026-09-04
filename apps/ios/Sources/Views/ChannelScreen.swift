@@ -9,6 +9,7 @@ struct ChannelScreen: View {
     /// the system bar is hidden, and the drawer state lives in `MainView`.
     var onOpenDrawer: () -> Void = {}
     @EnvironmentObject var app: AppState
+    @EnvironmentObject private var agentCall: AgentCallCoordinator
     @StateObject private var messages = DBObserved<[Message]>(initial: [])
     @StateObject private var pinnedMessages = DBObserved<[Message]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
@@ -39,6 +40,7 @@ struct ChannelScreen: View {
     /// The member whose profile card is open (#223). One sheet for the whole
     /// transcript, driven by whichever row was tapped.
     @State private var profileRoute: ProfileRoute?
+    @State private var startingAgentCall = false
 
     /// The open artifact (#157), presented as a sheet over the conversation.
     /// Driven by `AppState.selectedArtifactId` — the same selection macOS uses
@@ -70,6 +72,23 @@ struct ChannelScreen: View {
         return "# \(ch.name ?? "channel")"
     }
 
+    /// An agent call is deliberately one-to-one. Group DMs keep their normal
+    /// LiveKit huddle because a spoken turn cannot be paired safely with one
+    /// responding agent when several people or agents share the room.
+    private var agentParticipantId: String? {
+        guard let ch = channel.value else { return nil }
+        return AgentCallEligibility.participantId(
+            channelKind: ch.kind,
+            memberIds: ch.memberIds,
+            currentUserId: app.currentUser?.id,
+            agentIds: app.agentIds
+        )
+    }
+
+    private var agentParticipant: User? {
+        agentParticipantId.flatMap { usersById[$0] }
+    }
+
     /// The topic, when there is one worth a line. DMs have none, and an empty
     /// or whitespace topic means "cleared" — not "blank second line".
     private var topic: String? {
@@ -87,34 +106,75 @@ struct ChannelScreen: View {
     private var huddleButton: some View {
         Group {
             if let ch = channel.value, ch.archivedAt == nil {
-                let isDm = ch.kind != "standard"
-                let inThisHuddle = app.activeHuddleChannelId == channelId
-                let roster = app.huddleRosters[channelId] ?? []
-                Button {
-                    if inThisHuddle {
-                        app.leaveHuddle()
-                    } else if let workspaceId = channel.value?.workspaceId {
-                        app.joinHuddle(channelId: channelId, workspaceId: workspaceId)
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                        if !inThisHuddle, !roster.isEmpty {
-                            Text("\(roster.count)")
-                                .font(.system(size: 12, weight: .bold))
+                if agentParticipantId != nil {
+                    if let agent = agentParticipant {
+                        let inThisCall = agentCall.activeCall?.channelId == channelId
+                        Button {
+                            startAgentCall(with: agent)
+                        } label: {
+                            Image(systemName: inThisCall ? "waveform" : "mic.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 32, minHeight: 32)
+                                .padding(.horizontal, 6)
+                                .background(Capsule().fill(.white.opacity(inThisCall ? 0.35 : 0.2)))
                         }
+                        .buttonStyle(.plain)
+                        .disabled(startingAgentCall || app.huddleConnecting)
+                        .accessibilityLabel(inThisCall ? "Open agent call" : "Call agent")
+                        .accessibilityIdentifier("agentCall.start")
+                    } else {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: 44, height: 32)
                     }
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 32, minHeight: 32)
-                    .padding(.horizontal, 6)
-                    .background(Capsule().fill(.white.opacity(inThisHuddle ? 0.35 : 0.2)))
+                } else {
+                    let isDm = ch.kind != "standard"
+                    let inThisHuddle = app.activeHuddleChannelId == channelId
+                    let roster = app.huddleRosters[channelId] ?? []
+                    Button {
+                        agentCall.end()
+                        if inThisHuddle {
+                            app.leaveHuddle()
+                        } else {
+                            app.joinHuddle(channelId: channelId, workspaceId: ch.workspaceId)
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                            if !inThisHuddle, !roster.isEmpty {
+                                Text("\(roster.count)")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 32, minHeight: 32)
+                        .padding(.horizontal, 6)
+                        .background(Capsule().fill(.white.opacity(inThisHuddle ? 0.35 : 0.2)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(app.huddleConnecting)
+                    .accessibilityLabel(inThisHuddle ? "Leave huddle" : isDm ? "Start a huddle" : "Join huddle")
+                    .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
                 }
-                .buttonStyle(.plain)
-                .disabled(app.huddleConnecting)
-                .accessibilityLabel(inThisHuddle ? "Leave huddle" : isDm ? "Start a huddle" : "Join huddle")
-                .accessibilityIdentifier(inThisHuddle ? "huddle.leave" : "huddle.join")
             }
+        }
+    }
+
+    private func startAgentCall(with agent: User) {
+        if agentCall.activeCall?.channelId == channelId {
+            agentCall.show()
+            return
+        }
+        guard let workspaceId = channel.value?.workspaceId, !startingAgentCall else { return }
+        startingAgentCall = true
+        Task {
+            if app.activeHuddleChannelId != nil {
+                await app.leaveHuddleAndWait()
+            }
+            agentCall.start(channelId: channelId, workspaceId: workspaceId, agent: agent)
+            startingAgentCall = false
         }
     }
 
