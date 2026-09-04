@@ -116,7 +116,7 @@ export function HowItWorks() {
         <Reveal delay={280}>
           <p className="mt-8 flex flex-wrap items-center justify-center gap-2 text-center text-[14px] text-muted">
             <Github className="size-4" />
-            Nothing to sign up for — the whole thing is a repo.
+            Nothing to sign up for. The whole thing is a repo.
           </p>
         </Reveal>
       </Container>

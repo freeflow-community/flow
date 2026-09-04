@@ -2,7 +2,7 @@
  * All list-shaped copy for the site. Editing text here never touches JSX.
  *
  * Copy rule: cards get ONE sentence. If an idea needs a paragraph, it needs a
- * diagram instead. Nothing here is invented — every claim maps to something in
+ * diagram instead. Nothing here is invented. Every claim maps to something in
  * the repo (docs/specs/overview.md, CHANGELOG.md).
  */
 
@@ -104,7 +104,7 @@ export const freeFacts = [
 ] as const;
 
 /* -------------------------------------------------------------------------- */
-/*  Features — bullets do the talking, no paragraphs                           */
+/*  Features: bullets do the talking, no paragraphs                           */
 /* -------------------------------------------------------------------------- */
 
 export const featureGroups = [
@@ -232,7 +232,7 @@ export const compareRows: { label: string; note?: string; cells: Cell[] }[] = [
 ];
 
 /* -------------------------------------------------------------------------- */
-/*  Non-goals — stated plainly, because pretending is worse                     */
+/*  Non-goals: stated plainly, because pretending is worse                     */
 /* -------------------------------------------------------------------------- */
 
 export const nonGoals = [
@@ -251,19 +251,19 @@ export const nonGoals = [
 export const faqs = [
   {
     q: "What is the catch?",
-    a: "You run it. Freeflow gives you the server, both clients, and the deployment docs — you bring a box and a Postgres. If you would rather someone else own uptime at 3am, pay for a hosted product. Freeflow is for teams who would rather own it.",
+    a: "You run it. Freeflow gives you the server, both clients, and the deployment docs. You bring a box and a Postgres. If you would rather someone else own uptime at 3am, pay for a hosted product. Freeflow is for teams who would rather own it.",
   },
   {
     q: "Do I need to write code to get an agent?",
-    a: "No. Describe what it should do, point it at a repo, and give it a channel — the agent runtime is part of Freeflow, not something you install. Code is the escape hatch when you want custom tools, not the price of entry.",
+    a: "No. Describe what it should do, point it at a repo, and give it a channel. The agent runtime is part of Freeflow, not something you install. Code is the escape hatch when you want custom tools, not the price of entry.",
   },
   {
     q: "Which model runs the agents?",
-    a: "Yours. Freeflow ships the runtime — the seat in the channel, the thread context, the tool calls, the permission model. You point it at whichever provider or self-hosted model you already trust, and swap it without rewriting your agents.",
+    a: "Yours. Freeflow ships the runtime: the seat in the channel, the thread context, the tool calls, and the permission model. You point it at whichever provider or self-hosted model you already trust, and swap it without rewriting your agents.",
   },
   {
     q: "Can an agent really merge my pull requests?",
-    a: "It can, and whether it should is your call. You scope what an agent can touch when you create it — repos, commands, channels — and revoke any of it in a click. Most teams start read-only, then hand over the merge button for a narrow case once they trust it. Every action lands in the transcript.",
+    a: "It can, and whether it should is your call. You scope what an agent can touch when you create it, including repos, commands, and channels, and revoke any of it in a click. Most teams start read-only, then hand over the merge button for a narrow case once they trust it. Every action lands in the transcript.",
   },
   {
     q: "How are messages and files protected?",
@@ -271,7 +271,7 @@ export const faqs = [
   },
   {
     q: "What does Freeflow deliberately not do?",
-    a: "Canvas, BlockKit, video calls, message search, drafts, and guest orgs. These are ruled non-goals written down in the spec, not oversights. Search is the one most teams ask for. (Audio-only voice huddles shipped — video/screenshare didn't.)",
+    a: "Canvas, BlockKit, huddles and audio/video, message search, drafts, and guest orgs. These are ruled non-goals written down in the spec, not oversights. Search is the one most teams ask for.",
   },
   {
     q: "Windows, Linux, iOS?",
@@ -283,6 +283,6 @@ export const faqs = [
   },
   {
     q: "How stable is this, honestly?",
-    a: "Phases 1–6 are complete and every feature ships on both clients or gets a written entry in the parity ledger. The changelog is public — read it before you trust it with your team.",
+    a: "Phases 1–6 are complete and every feature ships on both clients or gets a written entry in the parity ledger. The changelog is public. Read it before you trust it with your team.",
   },
 ];
