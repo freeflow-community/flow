@@ -256,6 +256,12 @@ export interface HuddleInviteDTO {
 export interface HuddleJoinDTO {
   token: string;
   url: string;
+  /**
+   * Short-lived LiveKit Cloud Inference grant. The server includes this only
+   * when an agent-token caller accepts a ring, so a bridge can transcribe and
+   * speak without storing the LiveKit project secret (or a provider API key).
+   */
+  inferenceToken?: string;
   invite: HuddleInviteDTO | null;
   unavailable: string[];
 }

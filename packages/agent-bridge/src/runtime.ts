@@ -3,8 +3,8 @@
 // Claude runtime (primary): `claude -p --output-format stream-json --verbose`
 // with `--session-id <uuid>` on the first turn and `--resume <uuid>` after.
 // Tool calls stream by as stream-json events → surfaced as thinking steps.
-// Codex runtime: STUB — baseline "prompt in, stdout out" contract, no session
-// resume, no thinking steps. Untested; see AGENT_MEMBERS.md.
+// Codex runtime: baseline "prompt in, stdout out" contract, no session resume
+// or thinking steps yet. The system prompt is folded into each invocation.
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { RuntimeConfig } from './config.js';
@@ -190,9 +190,11 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   return args;
 }
 
-function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
-  // STUB: baseline contract only (stdout = reply). No session resume.
-  return ['exec', '--skip-git-repo-check', ...cfg.extraArgs, opts.prompt];
+export function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
+  // Baseline contract only (stdout = reply). No session resume, so callers
+  // that need continuity include the transcript in opts.prompt.
+  const prompt = `${opts.systemPrompt}\n\n${opts.prompt}`;
+  return ['exec', '--skip-git-repo-check', ...cfg.extraArgs, prompt];
 }
 
 /** Demo mode: static canned reply, no CLI spawn. */

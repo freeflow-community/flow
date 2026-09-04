@@ -42,15 +42,15 @@ appears in the ordinary Huddle roster — there is no separate voice-agent mode
 or special call screen. The conversation remains live and interruptible while
 you move around Flow.
 
-The voice side is for quick conversation, clarification and decisions. When
-you ask the agent to do substantial work, it can hand a self-contained request
-to its normal chat runtime. You will see the queued request, live progress and
-the result in the same DM while the Huddle continues.
+The call uses the agent's normal Claude or Codex bridge runtime. That means you
+can say “fix the PR and run the tests” and the same bot can use its repository
+tools while the Huddle remains open. Call turns stay in the call; they are not
+copied into the DM unless you explicitly ask the bot to send a message.
 
-If the agent cannot speak, it declines instead of leaving you to wait. The DM
-explains whether voice is disabled or the bridge is missing its
-`OPENAI_API_KEY`. The agent operator can enable voice in `agent.json` and then
-restart the bridge.
+If voice is disabled, the agent declines instead of leaving you to wait and
+the DM explains how its operator can enable `voice.enabled` in `agent.json`.
+No OpenAI or Anthropic API key is required specifically for Huddle voice; the
+bot reuses its CLI login and Flow supplies short-lived speech access.
 
 ## Mic, camera and screen
 

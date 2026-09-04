@@ -18,11 +18,15 @@ export type RuntimeKind = 'claude' | 'codex' | 'demo';
 export interface VoiceConfig {
   /** Answer DM huddle invites as this agent. */
   enabled: boolean;
-  /** OpenAI Realtime model used for the low-latency call. */
-  model: string;
-  /** OpenAI Realtime voice name. */
-  voice: string;
-  /** Hard ceiling for one realtime model connection. */
+  /** LiveKit Inference speech-to-text model. */
+  sttModel: string;
+  /** LiveKit Inference text-to-speech model. */
+  ttsModel: string;
+  /** Voice understood by the selected text-to-speech model. */
+  ttsVoice: string;
+  /** LiveKit Cloud agent inference gateway. */
+  inferenceUrl: string;
+  /** Hard ceiling for one live call. */
   maxSessionMinutes: number;
   /** Extra voice-only persona or conversational guidance. */
   instructions?: string | undefined;
@@ -31,8 +35,11 @@ export interface VoiceConfig {
 export function defaultVoiceConfig(): VoiceConfig {
   return {
     enabled: true,
-    model: process.env.FLOW_VOICE_MODEL?.trim() || 'gpt-realtime-2.1-mini',
-    voice: process.env.FLOW_VOICE?.trim() || 'marin',
+    sttModel: process.env.FLOW_VOICE_STT_MODEL?.trim() || 'deepgram/flux-general-en',
+    ttsModel: process.env.FLOW_VOICE_TTS_MODEL?.trim() || 'inworld/inworld-tts-2',
+    ttsVoice: process.env.FLOW_VOICE_TTS_VOICE?.trim() || 'Ashley',
+    inferenceUrl:
+      process.env.FLOW_VOICE_INFERENCE_URL?.trim() || 'https://agent-gateway.livekit.cloud/v1',
     maxSessionMinutes: 60,
   };
 }
@@ -40,7 +47,7 @@ export function defaultVoiceConfig(): VoiceConfig {
 export interface RuntimeConfig {
   /**
    * 'claude' (rich: sessions, stream-json thinking steps, MCP),
-   * 'codex' (stub: baseline stdout contract), or
+   * 'codex' (baseline stdout contract; voice supplies transcript continuity), or
    * 'demo' (no CLI at all — always replies "Your message was received";
    * exercises the full event→reply pipeline for local testing).
    */
@@ -122,7 +129,7 @@ export interface BridgeConfig {
    * definition. Set false for the pre-#162 quiet turn (tool status row only).
    */
   relayText: boolean;
-  /** Realtime audio in the existing Flow Huddle. Optional for source-level
+  /** Live audio in the existing Flow Huddle. Optional for source-level
    * callers that construct BridgeConfig directly; loadConfig always fills it. */
   voice?: VoiceConfig | undefined;
 }
@@ -209,8 +216,10 @@ export function loadConfig(configPath: string): BridgeConfig {
   const voiceDefaults = defaultVoiceConfig();
   const voice: VoiceConfig = {
     enabled: raw.voice?.enabled ?? voiceDefaults.enabled,
-    model: raw.voice?.model?.trim() || voiceDefaults.model,
-    voice: raw.voice?.voice?.trim() || voiceDefaults.voice,
+    sttModel: raw.voice?.sttModel?.trim() || voiceDefaults.sttModel,
+    ttsModel: raw.voice?.ttsModel?.trim() || voiceDefaults.ttsModel,
+    ttsVoice: raw.voice?.ttsVoice?.trim() || voiceDefaults.ttsVoice,
+    inferenceUrl: raw.voice?.inferenceUrl?.trim() || voiceDefaults.inferenceUrl,
     maxSessionMinutes: raw.voice?.maxSessionMinutes ?? voiceDefaults.maxSessionMinutes,
     instructions: raw.voice?.instructions?.trim() || undefined,
   };

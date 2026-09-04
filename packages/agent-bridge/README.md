@@ -67,11 +67,11 @@ onboarding.
   concurrently, turns within one are serialized. Send `/reset` to start a
   conversation fresh.
 - **An ongoing Huddle with the same agent** — press **Huddle** in a DM with the
-  agent and the bridge answers the existing LiveKit call. The realtime voice
-  session gets recent DM context, stays live while you move around Flow, and
-  can be interrupted like a normal conversation. If you ask it to build or
-  research something, it queues that request into the ordinary chat runtime;
-  progress and results appear in the DM while the call keeps going.
+  agent and the bridge answers the existing LiveKit call. Speech is routed
+  into the same authenticated Claude or Codex CLI runtime used by chat, so
+  “hey, fix the PR and test it” can use the bot's real repository tools while
+  the call stays open and interruptible. It does not create DM messages unless
+  you explicitly ask it to send one.
 - **Self-updating** — the CLI runs the daemon under a small supervisor, so
   sending **`/update`** (DM it, or @-mention + `/update` in a channel) makes
   the bridge npm-install the latest package and restart itself, then post
@@ -109,8 +109,9 @@ onboarding.
   },
   "voice": {
     "enabled": true,
-    "model": "gpt-realtime-2.1-mini",
-    "voice": "marin"
+    "sttModel": "deepgram/flux-general-en",
+    "ttsModel": "inworld/inworld-tts-2",
+    "ttsVoice": "Ashley"
   },
   "eventScope": "mentions",
   "progress": "thinking",
@@ -120,7 +121,7 @@ onboarding.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `runtime.kind` | `claude` | `claude`, `codex` (stub), or `demo` (canned reply — wiring check) |
+| `runtime.kind` | `claude` | `claude`, `codex` (baseline CLI adapter), or `demo` (canned reply — wiring check) |
 | `runtime.cwd` | config dir | working directory the CLI runs in (`~` expands) |
 | `runtime.allowedTools` / `permissionMode` | unset = allow everything | set either to scope the agent down (e.g. `["Read", "Grep"]`) |
 | `runtime.idleTimeoutSec` | 120 | kill a turn after this long with **no output** — a turn that keeps working never expires, however long it takes |
@@ -132,15 +133,19 @@ onboarding.
 | `relayText` | true | relay the agent's interim text into the conversation as it works (`thinking` mode only); it grows one message by editing rather than posting per chunk |
 | `logFile` | `<config>.log` next to the config | daemon log file (rotates once at 5 MB); JSON `null` disables |
 | `voice.enabled` | true | answer DM Huddle rings as the agent; set false to decline with an explanation |
-| `voice.model` / `voice.voice` | `gpt-realtime-2.1-mini` / `marin` | OpenAI Realtime model and spoken voice; `FLOW_VOICE_MODEL` and `FLOW_VOICE` can override the defaults |
-| `voice.maxSessionMinutes` | 60 | hard ceiling for one realtime model connection |
+| `voice.sttModel` | `deepgram/flux-general-en` | LiveKit Inference speech-to-text model; `FLOW_VOICE_STT_MODEL` overrides it |
+| `voice.ttsModel` / `voice.ttsVoice` | `inworld/inworld-tts-2` / `Ashley` | LiveKit Inference speech model and voice; `FLOW_VOICE_TTS_MODEL` / `FLOW_VOICE_TTS_VOICE` override them |
+| `voice.inferenceUrl` | LiveKit Cloud agent gateway | advanced override for the speech gateway (`FLOW_VOICE_INFERENCE_URL`) |
+| `voice.maxSessionMinutes` | 60 | hard ceiling for one live call |
 | `voice.instructions` | unset | extra voice-only persona or conversational guidance |
 
 Headless runtimes authenticate however the CLI normally does (e.g.
 `claude setup-token` or `ANTHROPIC_API_KEY` in the daemon's environment).
-Voice Huddles use `OPENAI_API_KEY` from that same daemon environment; the key
-is never written to `agent.json`. Without it, the agent declines promptly and
-posts the exact setup problem in the DM instead of ringing unanswered.
+Voice Huddles reuse that exact runtime authentication for both Claude and
+Codex. Bot hosts do not need an OpenAI, Anthropic, or LiveKit project key for
+voice: after accepting a ring, Flow supplies a short-lived inference-only
+LiveKit token for transcription and speech. The project secret stays on the
+Flow server.
 
 ## Use the flow MCP server directly (no daemon)
 

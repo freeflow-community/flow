@@ -125,24 +125,25 @@ The bridge also consumes the agent's ordinary `huddle.invite` and
 `huddle.updated` events. A ringing DM is accepted through
 `POST /v1/huddle/invites/:id/accept`, which returns a room-scoped LiveKit token
 for the agent's real Flow identity. The bridge connects `@livekit/rtc-node` to
-that room and starts a LiveKit `AgentSession` backed by OpenAI Realtime, linked
-to the caller's exact participant identity. To clients this is just Huddle:
+that room and starts a LiveKit `AgentSession` linked to the caller's exact
+participant identity. To clients this is just Huddle:
 the agent is in the roster, the persistent bar and all leave/mute/background
 behavior are unchanged, and no parallel voice UI exists.
 
-The realtime layer is intentionally conversational. Recent DM history and the
-agent's persona seed the call, while a single `handoff_to_chat` tool queues
-substantial work into the bridge's durable CLI session and writes an audit note
-to the DM. This keeps audio low-latency and interruptible without claiming the
-voice model ran repository tools. Only one voice Huddle runs per bridge. The
+The audio pipeline is LiveKit Inference STT → the bridge's existing Claude or
+Codex CLI runtime → LiveKit Inference TTS. Recent DM history and the agent's
+persona seed a dedicated call session, and substantial work runs directly in
+the bot's normal cwd with its normal tools. The call does not mirror turns into
+the DM. Only one voice Huddle runs per bridge. The
 bridge leaves when the caller or agent disappears from the roster, an invite
 ends, the realtime session closes, or the daemon stops.
 
-Voice is on by default but needs `OPENAI_API_KEY` in the daemon environment.
-Missing credentials or an explicit `voice.enabled: false` causes an immediate
-decline plus a diagnostic message, never a silent unanswered ring. LiveKit
-Agents recording is explicitly disabled to preserve Huddle's no-recording
-contract.
+Voice is on by default and needs no model-provider key on the bot host. The
+authenticated Flow server adds a short-lived, inference-only LiveKit grant to
+agent join responses; the LiveKit project secret remains server-side. An
+explicit `voice.enabled: false` causes an immediate decline plus a diagnostic
+message, never a silent unanswered ring. LiveKit Agents recording is explicitly
+disabled to preserve Huddle's no-recording contract.
 
 Why this beats the Channels approach for Flow (evaluated first, demoted):
 
