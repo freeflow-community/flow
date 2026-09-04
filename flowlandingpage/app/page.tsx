@@ -1,7 +1,11 @@
 import { site } from "@/site.config";
 import { Hero } from "@/components/sections/hero";
-import { Onboarding } from "@/components/sections/onboarding";
-import { Agents } from "@/components/sections/agents";
+import {
+  BeforeAfter,
+  Benefits,
+  HowItWorksStory,
+  OpenSourceBand,
+} from "@/components/sections/collaboration-story";
 import { FinalCta } from "@/components/sections/final-cta";
 
 const jsonLd = {
@@ -27,8 +31,10 @@ export default function HomePage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       <Hero />
-      <Onboarding />
-      <Agents />
+      <BeforeAfter />
+      <HowItWorksStory />
+      <Benefits />
+      <OpenSourceBand />
       <FinalCta />
     </>
   );

@@ -31,7 +31,7 @@ const capabilities = [
   {
     icon: PullRequest,
     title: "Review pull requests",
-    body: "Reads the diff, posts findings in the thread — file, line, and a patch.",
+    body: "Reads the diff, then posts findings in the thread with the file, line, and a patch.",
   },
   {
     icon: Shield,
@@ -71,7 +71,7 @@ const controls = [
   },
   {
     title: "The audit trail is the transcript",
-    body: "Who asked, what it did, what it returned — in order, in public.",
+    body: "Who asked, what it did, and what it returned, in order and in public.",
   },
   {
     title: "Your runner, your credentials",
@@ -89,7 +89,7 @@ const slashCommands = [
 ];
 
 /* -------------------------------------------------------------------------- */
-/*  The thread mock — a PR going from opened to merged without leaving chat    */
+/*  The thread mock: a PR going from opened to merged without leaving chat    */
 /* -------------------------------------------------------------------------- */
 
 function Avatar({
@@ -223,7 +223,7 @@ function PrThread() {
           <div className="min-w-0 flex-1">
             <Author name="review-bot" time="14:06" app />
             <p className="mt-0.5 text-[13.5px] leading-relaxed text-body">
-              Read the diff. Encryption path looks right — three things before
+              Read the diff. Encryption path looks right. Three things before
               this merges.
             </p>
             <ul className="mt-2 divide-y divide-line rounded-panel border border-line px-4 py-1">
@@ -369,7 +369,7 @@ export function Workflows() {
                   it back.
                 </h3>
                 <p className="mt-3 text-[15px] leading-relaxed text-white/60">
-                  Here is exactly what an agent holds — and exactly how you take
+                  Here is exactly what an agent holds and exactly how you take
                   it away.
                 </p>
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row">

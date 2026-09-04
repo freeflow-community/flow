@@ -2,16 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { links, routes } from "@/site.config";
+import { links } from "@/site.config";
 import { Button } from "@/components/ui";
 import { Github, Logo, Menu, Cross } from "@/components/icons";
 
-/** Hidden routes stay out of the nav until their flag flips in site.config. */
 const nav = [
-  { label: "Agents", href: links.agents, show: routes.agents },
-  { label: "Self-host", href: links.selfHost, show: routes.selfHost },
-  { label: "Migrate", href: links.migrate, show: routes.migrate },
-].filter((item) => item.show);
+  { label: "How it works", href: "/#how-it-works" },
+  { label: "Why Freeflow", href: "/#why-freeflow" },
+  { label: "Open source", href: "/#open-source" },
+];
 
 export function Nav() {
   const [scrolled, setScrolled] = useState(false);
@@ -30,8 +29,6 @@ export function Nav() {
       document.body.style.overflow = "";
     };
   }, [open]);
-
-  const hasLinks = nav.length > 0;
 
   return (
     <header
@@ -54,20 +51,18 @@ export function Nav() {
           <span className="text-[17px]">Freeflow</span>
         </Link>
 
-        {hasLinks ? (
-          <ul className="hidden items-center gap-1 lg:flex">
-            {nav.map((item) => (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className="rounded-full px-3 py-2 text-[15px] font-medium text-body transition-colors hover:bg-mist hover:text-ink"
-                >
-                  {item.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <ul className="hidden items-center gap-1 lg:flex">
+          {nav.map((item) => (
+            <li key={item.href}>
+              <Link
+                href={item.href}
+                className="rounded-full px-3 py-2 text-[14px] font-medium text-body transition-colors hover:bg-mist hover:text-ink"
+              >
+                {item.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
 
         <div className="hidden items-center gap-2 lg:flex">
           <a
@@ -94,25 +89,19 @@ export function Nav() {
           >
             <Github className="size-[19px]" />
           </a>
-          {hasLinks ? (
-            <button
-              type="button"
-              aria-label={open ? "Close menu" : "Open menu"}
-              aria-expanded={open}
-              onClick={() => setOpen((v) => !v)}
-              className="inline-flex size-10 items-center justify-center rounded-full border border-line text-ink"
-            >
-              {open ? <Cross className="size-5" /> : <Menu className="size-5" />}
-            </button>
-          ) : (
-            <Button href={links.signup} variant="primary" external>
-              Sign up
-            </Button>
-          )}
+          <button
+            type="button"
+            aria-label={open ? "Close menu" : "Open menu"}
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+            className="inline-flex size-10 items-center justify-center rounded-full border border-line text-ink"
+          >
+            {open ? <Cross className="size-5" /> : <Menu className="size-5" />}
+          </button>
         </div>
       </nav>
 
-      {open && hasLinks ? (
+      {open ? (
         <div className="border-t border-line bg-paper lg:hidden">
           <ul className="mx-auto flex w-full max-w-6xl flex-col px-5 py-3 sm:px-8">
             {nav.map((item) => (
