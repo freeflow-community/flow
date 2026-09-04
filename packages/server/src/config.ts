@@ -33,6 +33,15 @@ export const config = {
   get emailFrom(): string {
     return process.env.FLOW_EMAIL_FROM ?? 'noreply@mail.freeflow.im';
   },
+  /**
+   * Display name paired with `emailFrom` on community broadcasts (#493), so an
+   * announcement arrives from "Free Flow" rather than a naked noreply address.
+   * Auth mail keeps the bare address — a verification link is transactional and
+   * a friendly name there just invites spoofing complaints.
+   */
+  get emailFromName(): string {
+    return process.env.FLOW_EMAIL_FROM_NAME ?? 'Free Flow';
+  },
   get cloudflareAccountId(): string | undefined {
     return process.env.CLOUDFLARE_ACCOUNT_ID;
   },

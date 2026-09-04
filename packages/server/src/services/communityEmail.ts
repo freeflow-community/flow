@@ -163,7 +163,9 @@ export async function sendBroadcast(
   let failed = 0;
   for (const r of ctx.recipients) {
     try {
-      await sender.send({ to: r.email, subject, text, html });
+      // A display name on the From header (#493): "Free Flow <noreply@…>"
+      // reads as a sender, a naked noreply address reads as spam.
+      await sender.send({ to: r.email, subject, text, html, fromName: config.emailFromName });
       sent += 1;
     } catch (err) {
       failed += 1;
@@ -213,6 +215,7 @@ export async function sendTestBroadcast(
       subject: `${TEST_SUBJECT_PREFIX}${subject}`,
       text: renderBroadcastEmailText(args),
       html: renderBroadcastEmailHtml(args),
+      fromName: config.emailFromName,
     });
     console.log(`[ws-email] test workspace=${workspaceId} by=${actorId} to=${to}`);
     return { sent: 1, failed: 0 };

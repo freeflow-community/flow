@@ -38,7 +38,8 @@ const ws = await import('../src/services/workspaces.js');
 const cem = await import('../src/services/communityEmail.js');
 const fl = await import('../src/services/files.js');
 const { blobStore } = await import('../src/storage/index.js');
-const { _setEmailSenderForTests } = await import('../src/email/index.js');
+const { _setEmailSenderForTests, formatFrom } = await import('../src/email/index.js');
+const { config } = await import('../src/config.js');
 const { _resetRateLimitsForTests } = await import('../src/lib/rateLimit.js');
 const { renderMarkdownToEmailHtml, renderBroadcastEmailHtml, renderBroadcastEmailText } =
   await import('../src/email/render.js');
@@ -51,6 +52,7 @@ interface SentMail {
   subject: string;
   text: string;
   html?: string;
+  fromName?: string;
 }
 
 /** Records everything sent; `failFor` makes exactly those addresses throw, the
@@ -227,6 +229,17 @@ describe('message shape', () => {
     expect(mail.text).toContain('Sent by Olivia Owner');
   });
 
+  it('mails from the friendly display name, not the naked address (#493)', async () => {
+    const id = await freshWorkspace();
+    await cem.sendBroadcast(id, owner.id, 'Meetup', 'Hi everyone');
+    expect(mailer.sent).toHaveLength(3);
+    for (const m of mailer.sent) expect(m.fromName).toBe('Free Flow');
+    // and that is exactly the From header the driver builds from it
+    expect(formatFrom(config.emailFrom, mailer.sent[0]!.fromName)).toBe(
+      'Free Flow <noreply@mail.freeflow.im>',
+    );
+  });
+
   it('previews byte-for-byte what the send would mail', async () => {
     const id = await freshWorkspace();
     const markdown = '## Notice\n\nDowntime [tonight](https://status.example.com).';
@@ -292,6 +305,7 @@ describe('test send', () => {
     expect(test.html).toBe(real.html);
     expect(test.text).toBe(real.text);
     expect(test.subject).toBe(`[Test] ${real.subject}`);
+    expect(test.fromName).toBe(real.fromName);
   });
 
   it('403s a plain member', async () => {

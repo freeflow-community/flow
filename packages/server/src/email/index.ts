@@ -15,6 +15,21 @@ export interface EmailMessage {
    * message is multipart: `text` stays the fallback for clients that refuse
    * HTML, and the two must say the same thing. Auth flows send text only. */
   html?: string;
+  /** Optional display name for the From header (#493) — the address itself is
+   * still the driver's, so a caller can label its mail but never impersonate a
+   * different sender. Omitted means the bare address, which is what auth mail
+   * still sends. */
+  fromName?: string;
+}
+
+/** RFC 5322 `Display Name <addr>`. Anything outside the unquoted-atom set —
+ * dots, commas, quotes, brackets — has to go inside a quoted-string, or the
+ * header parses as a different address than the one we meant. */
+export function formatFrom(address: string, name?: string): string {
+  if (!name) return address;
+  const safe = /^[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~ ]+$/.test(name);
+  const display = safe ? name : `"${name.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+  return `${display} <${address}>`;
 }
 
 export interface EmailSender {
@@ -29,10 +44,17 @@ class DevMailer implements EmailSender {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const slug = msg.to.replace(/[^a-zA-Z0-9@._-]/g, '_');
     const file = path.join(this.dir, `${stamp}-${slug}.json`);
-    await fs.writeFile(file, JSON.stringify({ ...msg, sentAt: new Date().toISOString() }, null, 2));
+    await fs.writeFile(
+      file,
+      JSON.stringify(
+        { ...msg, from: formatFrom(config.emailFrom, msg.fromName), sentAt: new Date().toISOString() },
+        null,
+        2,
+      ),
+    );
     const link = msg.text.match(/https?:\/\/\S+/)?.[0];
     console.log(
-      `[email:dev] to=${msg.to} subject="${msg.subject}"${link ? ` link=${link}` : ''}${msg.html ? ' +html' : ''} (${file})`,
+      `[email:dev] from=${formatFrom(config.emailFrom, msg.fromName)} to=${msg.to} subject="${msg.subject}"${link ? ` link=${link}` : ''}${msg.html ? ' +html' : ''} (${file})`,
     );
   }
 }
@@ -59,7 +81,7 @@ class CloudflareMailer implements EmailSender {
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          from: this.from,
+          from: formatFrom(this.from, msg.fromName),
           to: msg.to,
           subject: msg.subject,
           text: msg.text,
