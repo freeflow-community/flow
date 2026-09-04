@@ -19,7 +19,7 @@ const facts = [
   {
     icon: "users" as const,
     title: "Community built",
-    body: "The roadmap is a public issue tracker. Disagree with a decision and you can argue it in the open — or ship the alternative.",
+    body: "The roadmap is a public issue tracker. Disagree with a decision and you can argue it in the open or ship the alternative.",
   },
   {
     icon: "server" as const,
@@ -46,7 +46,7 @@ export function Community() {
                 <em className="serif-accent text-free">founder</em>. Not us.
               </>
             }
-            body="Every chat tool your team has outgrown was owned by someone with a quarter to hit. Freeflow is built in the open by the people who run it — so there’s no investor to satisfy, no acquisition to survive, and no version where your history quietly moves behind a paywall."
+            body="Every chat tool your team has outgrown was owned by someone with a quarter to hit. Freeflow is built in the open by the people who run it. There’s no investor to satisfy, no acquisition to survive, and no version where your history quietly moves behind a paywall."
           />
         </Reveal>
 
@@ -79,7 +79,7 @@ export function Community() {
                 <p className="mt-3 text-[15px] leading-relaxed text-body">
                   Anyone can relicense future code. Nobody can reach backwards
                   and revoke the version sitting in your repo. That&rsquo;s not
-                  a promise from us — it&rsquo;s how the licence works.
+                  a promise from us. It&rsquo;s how the licence works.
                 </p>
                 <div className="mt-4">
                   <TextLink href={links.license} external>

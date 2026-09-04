@@ -125,7 +125,7 @@ export function Compare() {
 
         <Reveal delay={200}>
           <p className="mt-6 text-center text-[13.5px] text-muted">
-            Slack does things Freeflow deliberately does not — Canvas, huddles,
+            Slack does things Freeflow deliberately does not, including Canvas, huddles,
             BlockKit, message search.{" "}
             <a href="#faq" className="text-accent hover:text-accent-hover">
               We list every one of them below.
