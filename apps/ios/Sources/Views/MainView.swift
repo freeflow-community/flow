@@ -13,6 +13,7 @@ struct MainView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var allChannels = DBObserved<[Channel]>(initial: [])
+    @StateObject private var agentCall = AgentCallCoordinator()
     @State private var drawerOpen = false
 
     var body: some View {
@@ -25,12 +26,17 @@ struct MainView: View {
                     // (#435); an audio-only huddle is the bar alone, as before.
                     HuddleGridView()
                     HuddleBar()
+                    AgentCallBar()
                 }
                 // The ring floats over everything — it is the one thing that
                 // has to be answerable from wherever you are looking (#436).
                 .overlay(alignment: .bottom) {
                     IncomingHuddleView().padding(.bottom, 90)
                 }
+
+                // Zero-sized: it owns the automatic voice loop while the call
+                // sheet is minimized or another channel is on screen.
+                AgentCallRuntimeView()
 
                 if drawerOpen {
                     Color.black.opacity(0.4)
@@ -82,7 +88,21 @@ struct MainView: View {
         // The workspace and the cached channel rows arrive in either order on a
         // cold launch, and the restore needs both — so try again from this side.
         .onChange(of: app.selectedWorkspaceId) { _, _ in restoreLastChannel(allChannels.value) }
+        // A LiveKit huddle and an agent call both own the microphone. Joining
+        // the former always releases the latter, including from an incoming ring.
+        .onChange(of: app.activeHuddleChannelId) { _, channelId in
+            if channelId != nil { agentCall.end() }
+        }
+        .onDisappear { agentCall.end() }
+        .sheet(isPresented: $agentCall.showingCall) {
+            if let call = agentCall.activeCall {
+                AgentCallView(call: call, session: agentCall.session)
+                    .environmentObject(app)
+                    .environmentObject(agentCall)
+            }
+        }
         .environmentObject(app)
+        .environmentObject(agentCall)
     }
 
     /// The full-screen conversation pane. A `NavigationStack` so a channel can

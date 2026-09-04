@@ -920,6 +920,14 @@ struct MentionMiss: Identifiable, Hashable, Sendable {
     let id: String // userId
     let name: String
 }
+/// The durable identity and delivery outcome of one optimistic send. Most
+/// composers only need mention misses; call-like flows also need the exact
+/// message boundary that a later reply must follow.
+struct MessageSendReceipt: Sendable {
+    let messageId: String
+    let delivered: Bool
+    let mentionMisses: [MentionMiss]
+}
 struct MessagesResponse: Decodable, Sendable {
     let messages: [Message] // newest first
     let hasMore: Bool

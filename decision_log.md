@@ -1,5 +1,21 @@
 # Decision log
 
+## 2026-09-03 — Agent calls borrow the huddle lifecycle, not LiveKit transport
+
+- A one-to-one agent DM's huddle control starts an ongoing iOS agent call. The
+  call is app-owned, survives navigation and sheet dismissal, minimizes to a
+  persistent bar, and ends only from an explicit red call control.
+- Speech remains the existing conversation protocol: a pause posts the
+  transcript as a normal message, the first durable agent reply after that
+  exact message is spoken, and listening resumes. Raw audio is never sent to
+  Flow or joined to a LiveKit room.
+- LiveKit huddles and agent calls are mutually exclusive microphone owners.
+  Starting an agent call waits for a current huddle to disconnect; accepting or
+  joining a huddle ends the agent call.
+- Unlike a LiveKit huddle, speech recognition pauses while iOS backgrounds the
+  app and resumes on return. Multi-person agent calls, video and a separate
+  voice transcript protocol are outside this slice.
+
 ## 2026-09-02 — #469 was the hardened runtime, not the signing identity
 
 The issue's stated hypothesis was that `tccd` auto-denies because the release
