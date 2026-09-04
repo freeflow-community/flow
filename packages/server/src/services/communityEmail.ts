@@ -9,15 +9,25 @@
 // bounces must not cost the other N-1 people their email, so each send is
 // awaited inside its own try and only tallied.
 import { and, eq, isNull } from 'drizzle-orm';
-import type { WorkspaceEmailPreviewDTO, WorkspaceEmailResultDTO } from '@flow/shared';
+import { EMAIL_IMAGE_MAX_BYTES } from '@flow/shared';
+import type {
+  WorkspaceEmailImageDTO,
+  WorkspaceEmailPreviewDTO,
+  WorkspaceEmailResultDTO,
+} from '@flow/shared';
+import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
-import { forbidden, notFound, ApiError } from '../lib/errors.js';
+import { badRequest, forbidden, notFound, ApiError } from '../lib/errors.js';
+import { newId } from '../lib/ids.js';
+import { newLinkToken } from '../lib/tokens.js';
 import { rateAllow } from '../lib/rateLimit.js';
+import { blobStore } from '../storage/index.js';
 import { emailSender } from '../email/index.js';
 import { renderBroadcastEmailHtml, renderBroadcastEmailText } from '../email/render.js';
+import { readBlob } from './files.js';
 import { requireMembership } from './workspaces.js';
 
-const { users, workspaces, workspaceMembers } = schema;
+const { files, users, workspaces, workspaceEmailImages, workspaceMembers } = schema;
 
 /** One broadcast per workspace per 10 minutes — stops a double-clicked confirm
  * from mailing everyone twice, and caps the blast radius of a compromised
@@ -214,4 +224,113 @@ export async function sendTestBroadcast(
     );
     return { sent: 0, failed: 1 };
   }
+}
+
+// ---- pasted images (#492) --------------------------------------------------
+//
+// A broadcast is HTML in a stranger's mail client: no Flow session, no bearer
+// token, often a proxy fetching the image on the reader's behalf (Gmail does).
+// So `/v1/files/:id`, which checks workspace membership, renders as a broken
+// image in every inbox — the images need a public URL, and that is the whole
+// reason this section exists.
+//
+// The bytes still travel by the ordinary presign→PUT→complete flow, which is
+// what keeps client-side downscaling, thumbnails and R2 in one place. Adoption
+// is a second, tiny step that mints the capability token and tells the orphan
+// sweeper the file is load-bearing.
+
+/** The cap is defined in @flow/shared and enforced *here*: the web client
+ * downscales to 1024px on the way up, so most pastes never approach it, but a
+ * client-side limit is a suggestion and this is the only place it binds.
+ * Re-exported so the composer and this service quote the same number. */
+export { EMAIL_IMAGE_MAX_BYTES };
+
+/** What a mail client will actually paint. Deliberately the same set the
+ * server thumbnails (`IMAGE_MIMES` in services/files.ts) minus nothing: an
+ * SVG in an email is a scripting surface, and no major client renders it. */
+const EMAIL_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Absolute, because the only reader is a mail client with no base URL to
+ * resolve against — and the sanitizer drops relative and protocol-relative
+ * sources for exactly that reason. */
+export function emailImageUrl(token: string): string {
+  return `${config.webUrlBase.replace(/\/+$/, '')}/v1/email-images/${token}`;
+}
+
+/**
+ * Turn an uploaded file into a broadcast image and hand back its public URL.
+ *
+ * Idempotent per file: re-adopting returns the original token, so a composer
+ * that retries never leaves a second permanent URL for the same bytes.
+ */
+export async function adoptEmailImage(
+  workspaceId: string,
+  actorId: string,
+  fileId: string,
+): Promise<WorkspaceEmailImageDTO> {
+  await requireAdmin(workspaceId, actorId);
+
+  const rows = await db
+    .select()
+    .from(files)
+    .where(and(eq(files.id, fileId), eq(files.workspaceId, workspaceId), isNull(files.deletedAt)))
+    .limit(1);
+  const f = rows[0];
+  // Same 404 for "no such file" and "not in this workspace": an admin of one
+  // workspace should not be able to probe another's file ids.
+  if (!f || f.status !== 'ready') throw notFound('file not found');
+  if (!EMAIL_IMAGE_MIMES.has(f.mimeType)) {
+    throw badRequest('unsupported_image', `${f.mimeType} can't be embedded in an email`);
+  }
+  if (f.sizeBytes > EMAIL_IMAGE_MAX_BYTES) {
+    throw badRequest('image_too_large', `email images are limited to ${EMAIL_IMAGE_MAX_BYTES} bytes`);
+  }
+
+  const existing = await db
+    .select({ token: workspaceEmailImages.token })
+    .from(workspaceEmailImages)
+    .where(eq(workspaceEmailImages.fileId, fileId))
+    .limit(1);
+  if (existing[0]) return { url: emailImageUrl(existing[0].token) };
+
+  const token = newLinkToken();
+  await db.insert(workspaceEmailImages).values({
+    id: newId(),
+    workspaceId,
+    fileId,
+    createdBy: actorId,
+    token,
+  });
+  return { url: emailImageUrl(token) };
+}
+
+export type EmailImageDownload =
+  | { redirect: string }
+  | { content: { data: Buffer; mimeType: string } };
+
+/**
+ * Serve one by its token — the unauthenticated half. The token *is* the access
+ * check; there is no user to check anything else against.
+ */
+export async function getEmailImage(token: string): Promise<EmailImageDownload> {
+  const rows = await db
+    .select({ storageKey: files.storageKey, encKeyId: files.encKeyId, mimeType: files.mimeType })
+    .from(workspaceEmailImages)
+    .innerJoin(files, eq(files.id, workspaceEmailImages.fileId))
+    .where(and(eq(workspaceEmailImages.token, token), isNull(files.deletedAt)))
+    .limit(1);
+  const f = rows[0];
+  if (!f) throw notFound('image not found');
+
+  if (!f.encKeyId) {
+    // `inline`, not `attachment`: this URL is the src of an <img>, and a
+    // download disposition makes some clients refuse to paint it.
+    const url = await blobStore().presignGet(f.storageKey, {
+      contentType: f.mimeType,
+      inline: true,
+      ttlSeconds: config.presignGetTtlSeconds,
+    });
+    if (url) return { redirect: url };
+  }
+  return { content: { data: await readBlob(f.storageKey, f.encKeyId), mimeType: f.mimeType } };
 }

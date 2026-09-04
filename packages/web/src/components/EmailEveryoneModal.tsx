@@ -8,12 +8,42 @@
 // a second implementation of both rules, free to drift from the one that
 // actually goes out to people.
 import { useEffect, useRef, useState } from 'react';
-import type { WorkspaceEmailPreviewDTO, WorkspaceEmailResultDTO } from '@flow/shared';
-import { api } from '../lib/api';
+import { EMAIL_IMAGE_MAX_BYTES } from '@flow/shared';
+import type {
+  WorkspaceEmailImageDTO,
+  WorkspaceEmailPreviewDTO,
+  WorkspaceEmailResultDTO,
+} from '@flow/shared';
+import { ApiError, api, uploadFile } from '../lib/api';
+import {
+  applyImagePaste,
+  imagesFromClipboard,
+  pastedImageMarkdown,
+  pastedImageUrls,
+  removeUploadPlaceholder,
+  replaceUploadPlaceholder,
+  uploadPlaceholder,
+} from '../lib/emailImagePaste';
 import { Modal } from './modals';
 
 const SUBJECT_MAX = 200;
 const BODY_MAX = 10_000;
+
+/**
+ * What a rejected paste says (#492). The server owns the cap and the type
+ * list — it is the only place they bind — so this only translates its codes
+ * into something a person composing an announcement can act on.
+ */
+export function imagePasteErrorText(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === 'image_too_large') {
+      const mb = Math.round(EMAIL_IMAGE_MAX_BYTES / (1024 * 1024));
+      return `That image is too large to email — the limit is ${mb} MB.`;
+    }
+    if (err.code === 'unsupported_image') return 'That image type can’t be shown in an email. Try a PNG or JPEG.';
+  }
+  return 'Couldn’t upload that image. Try again.';
+}
 
 /** `N people`, or `1 person` — used in the To chip, the confirm and the toast. */
 export function peopleLabel(n: number): string {
@@ -63,9 +93,17 @@ export function EmailEveryoneModal({
   const [count, setCount] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(0);
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const confirmRef = useRef<HTMLDivElement | null>(null);
+  // Monotonic, so two screenshots pasted a second apart can't race to replace
+  // each other's placeholder.
+  const pasteSeq = useRef(0);
 
-  const ready = subject.trim().length > 0 && markdown.trim().length > 0;
+  // An upload in flight means the body still holds an "Uploading image…"
+  // placeholder, which would go out as literal text — so it blocks the send.
+  const ready = subject.trim().length > 0 && markdown.trim().length > 0 && uploading === 0;
 
   // The recipient count, from the server that owns the definition of one.
   useEffect(() => {
@@ -86,19 +124,98 @@ export function EmailEveryoneModal({
     el.style.height = `${Math.min(el.scrollHeight, 420)}px`;
   }, [markdown, tab]);
 
-  // Preview is fetched on entering the tab, not on every keystroke: it is a
-  // round trip, and it only has to be right at the moment someone looks.
+  // Preview is fetched on entering the tab (or the confirm step), not on every
+  // keystroke: it is a round trip, and it only has to be right at the moment
+  // someone looks. You cannot type on the Preview tab, so this refetches at
+  // most once per visit there; the confirm step leaves the body editable, so a
+  // late edit re-renders.
   useEffect(() => {
-    if (tab !== 'preview' || !markdown.trim()) return;
+    if ((tab !== 'preview' && !confirming) || !markdown.trim()) return;
     let live = true;
     setPreviewError(null);
+    // Never show a previous render next to "Send this email?" — a stale
+    // preview under a confirm button is worse than no preview.
+    setPreview(null);
     api<WorkspaceEmailPreviewDTO>('POST', `/v1/workspaces/${workspaceId}/email/preview`, { markdown })
       .then((r) => { if (live) setPreview(r.html); })
       .catch((err) => {
         if (live) setPreviewError(err instanceof Error ? err.message : 'preview failed');
       });
     return () => { live = false; };
-  }, [tab, markdown, workspaceId]);
+  }, [tab, confirming, markdown, workspaceId]);
+
+  // The confirm step now carries the whole rendered email (#492), which pushes
+  // its own buttons below the fold in a short window. Following its height
+  // rather than scrolling once is the point: the images in the render arrive
+  // after the HTML does, so a single scroll lands short by exactly however
+  // tall they turn out to be.
+  useEffect(() => {
+    const el = confirmRef.current;
+    if (!confirming || !el) return;
+    const show = () => el.scrollIntoView({ block: 'end' });
+    show();
+    const ro = new ResizeObserver(show);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [confirming, preview]);
+
+  /**
+   * Upload one pasted image and swap its placeholder for the real thing.
+   *
+   * Two hops: the bytes go up through the ordinary presign flow (so they get
+   * the same client-side downscaling every attachment gets), then the file is
+   * adopted as an email image, which is what mints a URL a mail client with no
+   * Flow session can fetch.
+   */
+  const uploadPastedImage = async (n: number, file: File) => {
+    setUploading((c) => c + 1);
+    try {
+      const uploaded = await uploadFile(workspaceId, file);
+      const { url } = await api<WorkspaceEmailImageDTO>(
+        'POST',
+        `/v1/workspaces/${workspaceId}/email/images`,
+        { fileId: uploaded.id },
+      );
+      setMarkdown((md) => replaceUploadPlaceholder(md, n, pastedImageMarkdown(url)));
+    } catch (err) {
+      // Never leave the placeholder behind: a body that still says "Uploading
+      // image…" when it isn't is worse than the image being gone, and it would
+      // go out in the mail as literal text.
+      setMarkdown((md) => removeUploadPlaceholder(md, n));
+      setPasteError(imagePasteErrorText(err));
+    } finally {
+      setUploading((c) => c - 1);
+    }
+  };
+
+  /** No image on the clipboard → no `preventDefault`, so plain-text paste is
+   * exactly the browser's own behaviour, undo stack included. */
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = imagesFromClipboard(e.clipboardData);
+    if (images.length === 0) return;
+    e.preventDefault();
+    setPasteError(null);
+
+    const el = e.currentTarget;
+    const ns = images.map(() => (pasteSeq.current += 1));
+    const { value, caret } = applyImagePaste({
+      value: markdown,
+      selectionStart: el.selectionStart,
+      selectionEnd: el.selectionEnd,
+      // Mixed clipboard content: the text lands where the default paste would
+      // have put it, and the images follow.
+      text: e.clipboardData.getData('text/plain'),
+      placeholders: ns.map(uploadPlaceholder),
+    });
+    setMarkdown(value);
+    // After React has written the new value, or the caret jumps to the end.
+    requestAnimationFrame(() => {
+      el.selectionStart = caret;
+      el.selectionEnd = caret;
+    });
+
+    images.forEach((file, i) => void uploadPastedImage(ns[i]!, file));
+  };
 
   const send = async () => {
     setSending(true);
@@ -197,6 +314,7 @@ export function EmailEveryoneModal({
           placeholder={'# Community meetup 🎉\n\nWe’re getting together **in person** on *Friday*.'}
           value={markdown}
           onChange={(e) => setMarkdown(e.target.value)}
+          onPaste={onPaste}
         />
       ) : (
         <div
@@ -218,11 +336,46 @@ export function EmailEveryoneModal({
         </div>
       )}
 
+      {/* A textarea cannot render a picture, so the Write tab shows a URL where
+          the author expected their screenshot. This is where they see it. */}
+      {tab === 'write' && pastedImageUrls(markdown).length > 0 && (
+        <div className="mb-2" data-testid="email-everyone-images">
+          <p className="mb-1 text-[11px] font-bold tracking-wide text-muted uppercase">Images in this email</p>
+          <div className="flex flex-wrap gap-2">
+            {pastedImageUrls(markdown).map((url) => (
+              // `contain`, not `cover`: a wide screenshot cropped square shows
+              // its middle and nothing identifying.
+              <img
+                key={url}
+                src={url}
+                alt=""
+                className="h-14 w-auto max-w-[140px] rounded border border-hairline2 bg-daypill/40 object-contain"
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       <p className="mb-3 text-[11px] text-faint">
         {tab === 'write'
-          ? 'Markdown: # headings · **bold** · *italic* · [links](url) · ![images](url)'
+          ? 'Markdown: # headings · **bold** · *italic* · [links](url) · paste an image to add it'
           : 'Preview = the exact sanitized HTML recipients get.'}
       </p>
+
+      {uploading > 0 && (
+        <p className="mb-2 flex items-center gap-2 text-sm text-muted" data-testid="email-everyone-uploading">
+          <span
+            aria-hidden
+            className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-hairline2 border-t-accent"
+          />
+          {uploading === 1 ? 'Uploading image…' : `Uploading ${uploading} images…`}
+        </p>
+      )}
+      {pasteError && (
+        <p className="mb-2 text-sm text-red-600" data-testid="email-everyone-paste-error">
+          {pasteError}
+        </p>
+      )}
 
       {error && <p className="mb-2 text-sm text-red-600" data-testid="email-everyone-error">{error}</p>}
       {testResult && (
@@ -235,15 +388,18 @@ export function EmailEveryoneModal({
       )}
 
       {confirming ? (
-        <ConfirmStep
-          count={count}
-          workspaceName={workspaceName}
-          sending={sending}
-          testing={testing}
-          onBack={() => setConfirming(false)}
-          onSend={() => void send()}
-          onSendTest={() => void sendTest()}
-        />
+        <div ref={confirmRef}>
+          <ConfirmStep
+            count={count}
+            workspaceName={workspaceName}
+            previewHtml={preview}
+            sending={sending}
+            testing={testing}
+            onBack={() => setConfirming(false)}
+            onSend={() => void send()}
+            onSendTest={() => void sendTest()}
+          />
+        </div>
       ) : (
         <ComposeActions ready={ready} onCancel={onClose} onReview={() => setConfirming(true)} />
       )}
@@ -285,10 +441,16 @@ export function ComposeActions({
  * it can be rendered directly in a test: the step is only reachable through
  * internal state, and the guarantee worth pinning — that the safe button is
  * there and the destructive one is still the primary — is presentational.
+ *
+ * It now shows the mail itself (#492). "Review & send" promised a review and
+ * gave you a sentence about the recipient count; with images in the body, the
+ * last look before an unsendable send has to be at the actual document — the
+ * same server-rendered HTML the Preview tab shows, and the same one that ships.
  */
 export function ConfirmStep({
   count,
   workspaceName,
+  previewHtml,
   sending,
   testing,
   onBack,
@@ -297,6 +459,8 @@ export function ConfirmStep({
 }: {
   count: number | null;
   workspaceName?: string;
+  /** Null while it is still being rendered by the server. */
+  previewHtml?: string | null;
   sending: boolean;
   testing: boolean;
   onBack: () => void;
@@ -307,6 +471,17 @@ export function ConfirmStep({
   return (
     <div className="rounded-lg border border-hairline2 bg-daypill/40 p-3" data-testid="email-everyone-confirm">
       <p className="mb-1 text-sm font-bold">Send this email?</p>
+      <div
+        data-testid="email-everyone-confirm-preview"
+        className="mc-scroll mb-3 max-h-[220px] overflow-y-auto rounded border border-hairline2 bg-white p-3"
+      >
+        {previewHtml === null || previewHtml === undefined ? (
+          <p className="text-sm text-faint">Rendering…</p>
+        ) : (
+          // Server-sanitized, and the literal document the recipients get.
+          <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
+        )}
+      </div>
       <p className="mb-3 text-sm text-ink-soft">
         This will email {count === null ? 'everyone' : <strong>{peopleLabel(count)}</strong>} — every human member
         of {workspaceName ? <strong>{workspaceName}</strong> : 'this workspace'}. It can’t be unsent.

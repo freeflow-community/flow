@@ -35,6 +35,18 @@ const INLINE: Record<string, string> = {
 };
 
 /**
+ * Is this an image source a mail client can actually fetch? Only an absolute
+ * http(s) URL is — a relative `/logo.png` has nothing to resolve against once
+ * the message is in an inbox, and `allowProtocolRelative` catches `//host` but
+ * not that. Pasted images (#492) always carry an absolute URL from the server,
+ * so this only bites markdown someone typed by hand; a dropped image is a
+ * better answer than a broken one.
+ */
+function fetchableImageSrc(src: string | undefined): boolean {
+  return typeof src === 'string' && /^https?:\/\//i.test(src);
+}
+
+/**
  * Render the admin's markdown to the email's inner HTML: sanitized, styled,
  * without the shell. Exported for tests; production goes through
  * `renderBroadcastEmailHtml`.
@@ -78,6 +90,10 @@ export function renderMarkdownToEmailHtml(markdown: string): string {
     // Text inside a stripped tag is kept (so <script>alert(1)</script> would
     // leave "alert(1)" behind) — for these it is markup, not prose.
     nonTextTags: ['script', 'style', 'textarea', 'noscript', 'iframe', 'title'],
+    // Drop the whole <img> rather than emit one with no usable src — an image
+    // element that cannot load is the broken-picture icon, which is worse in a
+    // mail client than the image simply not being there.
+    exclusiveFilter: (frame) => frame.tag === 'img' && !fetchableImageSrc(frame.attribs.src),
   });
 }
 

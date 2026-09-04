@@ -7,10 +7,17 @@
 // be made to fail on demand.
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 process.env.DATABASE_URL = process.env.FLOW_TEST_DATABASE_URL
   ?? 'postgres://flow:flow_dev@localhost:5442/flow_community_email_test';
 process.env.FLOW_DATA_KEY = randomBytes(32).toString('base64');
+// #492 needs real blobs and a stable public origin to assert image URLs against.
+process.env.FLOW_FILE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-ws-email-test-'));
+process.env.FLOW_WEB_URL = 'https://flow.example.test';
+delete process.env.FLOW_BLOB_DRIVER; // force the local driver regardless of shell env
 
 // self-sufficient: create the scratch database if it doesn't exist yet
 {
@@ -29,13 +36,15 @@ const { db, schema, closeDb } = await import('../src/db/index.js');
 const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
 const cem = await import('../src/services/communityEmail.js');
+const fl = await import('../src/services/files.js');
+const { blobStore } = await import('../src/storage/index.js');
 const { _setEmailSenderForTests } = await import('../src/email/index.js');
 const { _resetRateLimitsForTests } = await import('../src/lib/rateLimit.js');
 const { renderMarkdownToEmailHtml, renderBroadcastEmailHtml, renderBroadcastEmailText } =
   await import('../src/email/render.js');
 const { and, eq } = await import('drizzle-orm');
 
-const { users, workspaceMembers } = schema;
+const { files, users, workspaceEmailImages, workspaceMembers } = schema;
 
 interface SentMail {
   to: string;
@@ -437,5 +446,137 @@ describe('markdown → email HTML', () => {
     const text = renderBroadcastEmailText({ markdown: md, senderName: 'Scott', workspaceName: 'Locked In' });
     expect(text.startsWith(md)).toBe(true);
     expect(text).toContain('— Sent by Scott to all members of the Locked In workspace on Flow.');
+  });
+});
+
+/**
+ * Pasted images (#492). The interesting property is not that an image renders
+ * — markdown already did that — but that the URL in the mail works for someone
+ * with no Flow session, and that nothing later deletes the bytes out from
+ * under mail that has already been delivered.
+ */
+describe('pasted images', () => {
+  /** A real 1x1 PNG: sharp thumbnails it, so this exercises the same path a
+   * pasted screenshot takes rather than a fake row. */
+  const PNG_1X1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  async function uploadPng(workspaceId: string, userId = owner.id) {
+    return fl.uploadFile(workspaceId, userId, 'shot.png', 'image/png', PNG_1X1);
+  }
+
+  /** A row whose metadata says what we need to test without moving megabytes. */
+  async function fakeFileRow(workspaceId: string, over: { mimeType?: string; sizeBytes?: number }) {
+    const id = randomUUID();
+    await blobStore().put(`files/${id}`, PNG_1X1);
+    await db.insert(files).values({
+      id,
+      workspaceId,
+      userId: owner.id,
+      name: 'shot.png',
+      mimeType: over.mimeType ?? 'image/png',
+      sizeBytes: over.sizeBytes ?? PNG_1X1.length,
+      storageKey: `files/${id}`,
+      encKeyId: null,
+    });
+    return id;
+  }
+
+  it('mints an absolute, public URL an admin can paste into the markdown', async () => {
+    const f = await uploadPng(wsId);
+    const { url } = await cem.adoptEmailImage(wsId, adminUser.id, f.id);
+    // Absolute and https: the sanitizer drops relative and protocol-relative
+    // sources, and a mail client has no base URL to resolve against anyway.
+    expect(url.startsWith('https://flow.example.test/v1/email-images/')).toBe(true);
+  });
+
+  it('is idempotent per file — a retry keeps the original URL', async () => {
+    const f = await uploadPng(wsId);
+    const first = await cem.adoptEmailImage(wsId, owner.id, f.id);
+    const second = await cem.adoptEmailImage(wsId, owner.id, f.id);
+    expect(second.url).toBe(first.url);
+    const rows = await db.select().from(workspaceEmailImages).where(eq(workspaceEmailImages.fileId, f.id));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('refuses a non-admin', async () => {
+    const f = await uploadPng(wsId);
+    await expect(cem.adoptEmailImage(wsId, plain.id, f.id)).rejects.toThrow(/owners and admins/);
+  });
+
+  it('refuses a file from another workspace with a 404, not a 403', async () => {
+    const other = await freshWorkspace();
+    const f = await uploadPng(other, owner.id);
+    // Same answer as "no such file": an admin of one workspace must not be
+    // able to probe another's file ids.
+    await expect(cem.adoptEmailImage(wsId, adminUser.id, f.id)).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('refuses an oversized image with a clear error', async () => {
+    const id = await fakeFileRow(wsId, { sizeBytes: cem.EMAIL_IMAGE_MAX_BYTES + 1 });
+    await expect(cem.adoptEmailImage(wsId, adminUser.id, id)).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'image_too_large',
+    });
+  });
+
+  it('refuses a type no mail client paints', async () => {
+    const id = await fakeFileRow(wsId, { mimeType: 'image/svg+xml' });
+    await expect(cem.adoptEmailImage(wsId, adminUser.id, id)).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'unsupported_image',
+    });
+  });
+
+  it('serves the bytes to an unauthenticated caller holding the token', async () => {
+    const f = await uploadPng(wsId);
+    const { url } = await cem.adoptEmailImage(wsId, adminUser.id, f.id);
+    const token = url.split('/').pop()!;
+    const got = await cem.getEmailImage(token);
+    if (!('content' in got)) throw new Error('local driver cannot presign, expected proxied bytes');
+    expect(got.content.mimeType).toBe('image/png');
+    expect(got.content.data.equals(PNG_1X1)).toBe(true);
+  });
+
+  it('404s on a token nobody minted', async () => {
+    await expect(cem.getEmailImage('not-a-real-token')).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('survives the orphan sweep', async () => {
+    const f = await uploadPng(wsId);
+    await cem.adoptEmailImage(wsId, adminUser.id, f.id);
+    // Age it past the 24h cutoff: an email image is never attached to a
+    // message, so without the sweeper's NOT EXISTS this is exactly the row
+    // that would vanish and break every mail already delivered.
+    await db.update(files).set({ createdAt: new Date(Date.now() - 90 * 3600_000) }).where(eq(files.id, f.id));
+    await fl.sweepOrphanFiles();
+    const still = await db.select().from(files).where(eq(files.id, f.id));
+    expect(still).toHaveLength(1);
+  });
+
+  it('carries the image through to the outgoing mail, in both HTML and text', async () => {
+    const id = await freshWorkspace();
+    const f = await uploadPng(id, owner.id);
+    const { url } = await cem.adoptEmailImage(id, owner.id, f.id);
+
+    const res = await cem.sendBroadcast(id, owner.id, 'Meetup', `Look:\n\n![Pasted image](${url})`);
+    expect(res.sent).toBe(3);
+
+    const mail = mailer.sent[0]!;
+    // The assembled message, not a re-render: this is what leaves the server.
+    expect(mail.html).toContain(`<img src="${url}"`);
+    expect(mail.html).toContain('max-width:100%'); // the inline style, since email clients drop <style>
+    expect(mail.html).toContain('alt="Pasted image"');
+    // The plain-text alternative keeps the markdown, so a text-only client
+    // still gets a link to the picture rather than nothing.
+    expect(mail.text).toContain(url);
+  });
+
+  it('still drops an image whose source the sanitizer will not allow', () => {
+    const html = renderMarkdownToEmailHtml('![x](javascript:alert(1))\n\n![y](/relative.png)');
+    expect(html).not.toContain('javascript:');
+    expect(html).not.toContain('/relative.png');
   });
 });

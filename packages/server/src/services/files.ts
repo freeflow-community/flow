@@ -286,7 +286,10 @@ export interface FileContent {
  * one (client is 302'd straight to R2), else the proxied bytes. */
 export type FileDownload = { redirect: string } | { content: FileContent };
 
-function readBlob(key: string, encKeyId: string | null): Promise<Buffer> {
+/** Bytes for a storage key, decrypting legacy rows. No access check — every
+ * caller does its own first (community-email images carry a capability token
+ * instead of a membership, #492). */
+export function readBlob(key: string, encKeyId: string | null): Promise<Buffer> {
   return blobStore()
     .get(key)
     .then((blob) => (encKeyId ? decryptBlob(blob, encKeyId) : blob));
@@ -416,6 +419,10 @@ export async function sweepOrphanFiles(): Promise<number> {
         // phase 9: artifact-only files (e.g. MCP create_artifact uploads) are
         // never attached to a message but must not be reaped
         sql`NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.file_id = ${files.id})`,
+        // #492: an image pasted into a community email is never attached to a
+        // message either, and reaping it would break the picture in mail that
+        // has already been delivered.
+        sql`NOT EXISTS (SELECT 1 FROM workspace_email_images ei WHERE ei.file_id = ${files.id})`,
       ),
     );
   const store = blobStore();
@@ -441,6 +448,7 @@ export async function reapFileIfUnreferenced(fileId: string): Promise<boolean> {
           eq(files.id, fileId),
           sql`NOT EXISTS (SELECT 1 FROM message_files mf WHERE mf.file_id = ${files.id})`,
           sql`NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.file_id = ${files.id})`,
+          sql`NOT EXISTS (SELECT 1 FROM workspace_email_images ei WHERE ei.file_id = ${files.id})`,
         ),
       )
       .limit(1);
