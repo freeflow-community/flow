@@ -34,6 +34,10 @@ operator's screen, so they're safe to run any time.
    The scroll test wants a transcript long enough to actually scroll — seed a
    fresh channel with a few dozen messages rather than reusing `#general`.
 
+   `AgentCallTests` additionally needs `FLOW_TEST_DM` set to a one-to-one DM
+   between Alice and an agent. It injects speech through a DEBUG-only hook, so
+   simulator microphone input is not required.
+
    **If `TEST_RUNNER_…` is ignored** (seen on Xcode 17.4 / iOS 26.5 — the
    runner keeps the in-code 8787 default and every test fails with "never
    signed in"), inject the variable into the `.xctestrun` instead. This always
@@ -75,6 +79,9 @@ checks")`, the simulator is wedged from a previous run:
 
 ## Tests
 
+- `AgentCallTests` — starts an ongoing agent call, records the listening UI,
+  minimizes it to the persistent bar, reopens it, and ends it explicitly. Five
+  screenshots are attached to the xcresult.
 - `KeyboardDismissTests` — #69/#139: the keyboard goes down when the drawer
   opens, and on any tap or scroll of the chat area. Verified red before each
   fix, green after.

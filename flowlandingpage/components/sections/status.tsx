@@ -14,7 +14,7 @@ const phases = [
 
 /**
  * Deliberately not a testimonial wall. This project has no customer logos to
- * show, so it shows the changelog instead — which this audience trusts more.
+ * show, so it shows the changelog instead, which this audience trusts more.
  */
 export function Status() {
   return (
@@ -27,7 +27,7 @@ export function Status() {
                 Built in the open, at a readable pace.
               </h2>
               <p className="mt-2 text-[14.5px] leading-relaxed text-body">
-                No customer logos here — Freeflow is young and pretending otherwise
+                No customer logos here. Freeflow is young and pretending otherwise
                 would be the first lie on this page. What it has instead is a
                 public changelog, a parity ledger, and a decision log you can
                 argue with.

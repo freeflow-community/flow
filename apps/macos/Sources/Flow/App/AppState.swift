@@ -779,6 +779,13 @@ final class AppState: ObservableObject {
         Task { await leaveHuddleAsync() }
     }
 
+    /// Synchronous hand-off point for another audio mode. UI leave buttons use
+    /// the fire-and-forget method above; a caller taking over AVAudioSession
+    /// must wait until LiveKit has disconnected first.
+    func leaveHuddleAndWait() async {
+        await leaveHuddleAsync()
+    }
+
     private func leaveHuddleAsync() async {
         guard let channelId = activeHuddleChannelId else { return }
         let room = huddleRoom

@@ -13,6 +13,9 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Ongoing agent calls are iOS-only.** One-to-one agent DMs on iPhone can
+  listen, send each pause as a normal message, speak the answer and minimize
+  into a persistent call bar. Web and macOS keep text agent conversations.
 - **Screen-share audio is Chromium-web only** (#435). The web client asks for
   it (`getDisplayMedia({ audio: true })`) and Chromium supplies tab audio;
   Firefox/Safari ignore the flag and share silently, which is the intended

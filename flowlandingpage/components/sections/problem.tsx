@@ -5,7 +5,7 @@ import { Icon } from "@/components/icons";
 
 /**
  * The whole argument in one picture: one line climbs with headcount, the other
- * never leaves the floor. No dollar figures — we do not quote competitor
+ * never leaves the floor. No dollar figures. We do not quote competitor
  * pricing we cannot verify, and the shape is the point anyway.
  */
 function CostChart() {
@@ -105,7 +105,7 @@ function CostChart() {
         fontSize="15"
         fontWeight="600"
       >
-        Freeflow — $0, forever
+        Freeflow: $0, forever
       </text>
 
       {/* headcount axis */}
