@@ -226,22 +226,34 @@ final class AgentVoiceSession: NSObject, ObservableObject {
                 fail("No microphone input is available.")
                 return
             }
-            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
-                request.append(buffer)
+            // Same trap as the @Sendable on requestAuthorization above: these
+            // two closures are invoked off the main actor (the tap on the
+            // audio engine's realtime queue — the 2.2 (547) crash — and the
+            // result handler on a Speech framework queue), so they must not
+            // inherit this class's @MainActor isolation. `append` is designed
+            // to be called from the audio thread, hence nonisolated(unsafe).
+            nonisolated(unsafe) let tapRequest = request
+            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { @Sendable buffer, _ in
+                tapRequest.append(buffer)
             }
             inputTapInstalled = true
 
-            recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
+                // SFSpeechRecognitionResult is not Sendable, so read the plain
+                // values here and let only those cross to the main actor.
+                let text = result?.bestTranscription.formattedString
+                let isFinal = result?.isFinal ?? false
+                let failed = result == nil && error != nil
                 Task { @MainActor in
                     guard let self, self.phase == .listening else { return }
-                    if let result {
-                        self.transcript = result.bestTranscription.formattedString
-                        if result.isFinal {
+                    if let text {
+                        self.transcript = text
+                        if isFinal {
                             self.finishCurrentUtterance()
-                        } else if !self.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        } else if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             self.scheduleEndpoint()
                         }
-                    } else if error != nil {
+                    } else if failed {
                         if self.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             self.fail("I couldn't make out any speech. Please try again.")
                         } else {
