@@ -11,6 +11,7 @@
 import { useEffect, useRef } from 'react';
 import type { TrackPublication } from 'livekit-client';
 import { useHuddle, type HuddleTile } from '../huddle';
+import { peerConnected } from '../lib/huddleConnection';
 import { useMembers } from '../hooks';
 import { Avatar } from './Avatar';
 
@@ -55,17 +56,21 @@ function Tile({
   tile,
   name,
   avatarUrl,
+  isAgent,
   big,
   onFocus,
 }: {
   tile: HuddleTile;
   name: string;
   avatarUrl: string | null;
+  isAgent: boolean;
   big: boolean;
   onFocus(): void;
 }) {
   const camera = tile.camera?.isSubscribed || tile.isLocal ? tile.camera : null;
   const showVideo = camera?.track && !camera.isMuted;
+  // Per-tile connection state (#508), on the same rule the bar reads.
+  const connected = peerConnected({ userId: tile.userId, audioLive: tile.audioLive, isAgent });
   return (
     <button
       type="button"
@@ -85,6 +90,16 @@ function Tile({
       <span className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-black/70 to-transparent px-2 py-1 text-[11px] font-semibold text-white">
         {/* Per-tile badges: mic and camera state, so the grid answers "can
             they hear me / can I see them" without anyone having to ask. */}
+        {!tile.isLocal && (
+          <span
+            data-testid={`huddle-tile-state-${tile.userId}`}
+            data-state={connected ? 'connected' : 'connecting'}
+            title={connected ? 'Connected' : 'Connecting…'}
+            className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+              connected ? 'bg-online' : 'animate-pulse bg-white/60'
+            }`}
+          />
+        )}
         <span title={tile.micOn ? 'Mic on' : 'Muted'}>{tile.micOn ? '🎤' : '🔇'}</span>
         {showVideo && <span title="Camera on">📹</span>}
         <span className="truncate">
@@ -102,6 +117,7 @@ export default function HuddleGrid() {
   const byId = new Map((members.data ?? []).map((m) => [m.userId, m]));
   const nameOf = (userId: string): string => byId.get(userId)?.displayName ?? 'Someone';
   const avatarOf = (userId: string): string | null => byId.get(userId)?.avatarUrl ?? null;
+  const isAgentId = (userId: string): boolean => byId.get(userId)?.isAgent ?? false;
 
   if (!huddle.channelId || !huddle.hasVideo) return null;
 
@@ -143,6 +159,7 @@ export default function HuddleGrid() {
                 tile={t}
                 name={nameOf(t.userId)}
                 avatarUrl={avatarOf(t.userId)}
+                isAgent={isAgentId(t.userId)}
                 big={false}
                 onFocus={() => huddle.focus(huddle.focusedUserId === t.userId ? null : t.userId)}
               />
@@ -156,6 +173,7 @@ export default function HuddleGrid() {
             tile={focused}
             name={nameOf(focused.userId)}
             avatarUrl={avatarOf(focused.userId)}
+            isAgent={isAgentId(focused.userId)}
             big
             onFocus={() => huddle.focus(null)}
           />
@@ -168,6 +186,7 @@ export default function HuddleGrid() {
                   tile={t}
                   name={nameOf(t.userId)}
                   avatarUrl={avatarOf(t.userId)}
+                  isAgent={isAgentId(t.userId)}
                   big={false}
                   onFocus={() => huddle.focus(t.userId)}
                 />
@@ -182,6 +201,7 @@ export default function HuddleGrid() {
               tile={t}
               name={nameOf(t.userId)}
               avatarUrl={avatarOf(t.userId)}
+              isAgent={isAgentId(t.userId)}
               big={false}
               onFocus={() => huddle.focus(t.userId)}
             />

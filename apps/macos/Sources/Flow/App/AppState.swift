@@ -125,6 +125,17 @@ final class AppState: ObservableObject {
     @Published var huddleFocusedUserId: String?
     /// Transient one-liner over the huddle UI ("Ada started sharing").
     @Published private(set) var huddleNotice: String?
+    /// Is the other side of the call actually here (#508)? The rule itself is
+    /// `huddleConnection` in Support/HuddleConnection.swift — shared with iOS,
+    /// mirrored by the web client.
+    @Published private(set) var huddleConnectionState: HuddleConnection = .idle
+    /// Invite targets that said yes but have not turned up in the room yet.
+    private var huddleAccepted: [String] = []
+    /// One connect chime per call (#509), cleared only when the call ends.
+    private var huddleChimed = false
+    /// Which of this workspace's users are agents. Silence from a person is a
+    /// choice; silence from an agent is a symptom — see `peerConnected`.
+    private var huddleAgentIds: Set<String> = []
     /// Set when backgrounding turned the camera off, so returning turns it
     /// back on — and says so (#435).
     private var cameraSuspendedByBackground = false
@@ -739,6 +750,9 @@ final class AppState: ObservableObject {
     private func joinHuddleAsync(channelId: String, workspaceId: String, accepting inviteId: String?) async {
         if activeHuddleChannelId != nil { await leaveHuddleAsync() }
         huddleConnecting = true
+        huddleAccepted = []
+        huddleChimed = false
+        huddleConnectionState = .idle
         defer { huddleConnecting = false }
         do {
             let resp: HuddleJoinResponse
@@ -769,6 +783,8 @@ final class AppState: ObservableObject {
             // "Ringing…", or name who could not be reached.
             outgoingHuddleInvite = resp.invite?.status == .ringing ? resp.invite : nil
             huddleUnavailable = resp.unavailable ?? []
+            huddleAccepted = resp.invite?.targets.filter { $0.status == .accepted }.map(\.userId) ?? []
+            await refreshHuddleAgentIds()
             syncHuddleTiles()
         } catch {
             errorMessage = "Couldn't join the huddle: \(error.localizedDescription)"
@@ -799,6 +815,9 @@ final class AppState: ObservableObject {
         huddleFocusedUserId = nil
         outgoingHuddleInvite = nil
         huddleUnavailable = []
+        huddleAccepted = []
+        huddleChimed = false
+        huddleConnectionState = .idle
         cameraSuspendedByBackground = false
         await room?.disconnect()
         await engine.leaveHuddle(channelId: channelId)
@@ -819,13 +838,55 @@ final class AppState: ObservableObject {
                 camera: p.firstCameraVideoTrack,
                 screen: p.firstScreenShareVideoTrack,
                 micOn: p.isMicrophoneEnabled(),
-                speaking: p.isSpeaking
+                speaking: p.isSpeaking,
+                // A *muted* publication still counts: LiveKit keeps it across
+                // a mute, so unmuting mid-call doesn't reconnect anyone. What
+                // this rules out is a participant that published no audio.
+                audioLive: p.audioTracks.contains { $0.source == .microphone && $0.isSubscribed }
             )
         }
         huddleTiles = [tile(room.localParticipant, isLocal: true)]
             + room.remoteParticipants.values.map { tile($0, isLocal: false) }
         huddleCameraOn = room.localParticipant.isCameraEnabled()
         huddleSharing = room.localParticipant.isScreenShareEnabled()
+        updateHuddleConnection()
+    }
+
+    /// Re-read the connection state, and chime the first time a call comes up
+    /// (#509). Called from every place the room or the ring changes, so the
+    /// badge and the sound share one edge rather than two near-enough ones.
+    private func updateHuddleConnection() {
+        let remotes = huddleTiles.filter { !$0.isLocal }
+        let inRoom = Set(remotes.map(\.userId))
+        let peers = remotes.map {
+            HuddlePeerState(userId: $0.userId, audioLive: $0.audioLive, isAgent: huddleAgentIds.contains($0.userId))
+        }
+        huddleConnectionState = huddleConnection(
+            peers: peers,
+            awaiting: huddleAccepted.filter { !inRoom.contains($0) }
+        )
+        if shouldChime(huddleConnectionState, alreadyChimed: huddleChimed) {
+            huddleChimed = true
+            ConnectChime.play()
+        }
+    }
+
+    /// Per-tile connection state for the grid (#508). Your own tile is never
+    /// "connecting" — you are already here.
+    func huddleTileConnected(_ tile: HuddleTile) -> Bool {
+        if tile.isLocal { return true }
+        return peerConnected(
+            HuddlePeerState(userId: tile.userId, audioLive: tile.audioLive, isAgent: huddleAgentIds.contains(tile.userId))
+        )
+    }
+
+    /// Who in the local user cache is an agent. Loaded per join (and when
+    /// somebody new arrives) rather than kept live: a call's participants
+    /// don't change species mid-call.
+    private func refreshHuddleAgentIds() async {
+        huddleAgentIds = (try? await db.reader.read { db in
+            Set(try User.fetchAll(db).filter { $0.isAgent == true }.map(\.id))
+        }) ?? []
     }
 
     /// Whoever is currently sharing a screen — at most one (see below).
@@ -959,6 +1020,13 @@ final class AppState: ObservableObject {
     /// so macOS, iOS and web all read one rule.
     func huddleInviteEvent(_ data: HuddleInviteData) {
         guard let selfId = currentUser?.id else { return }
+        // Our own ring: remember who said yes. Once a target accepts, the
+        // invite stops being "ringing" and the ring state drops it — but we
+        // are still waiting for that participant to turn up (#508).
+        if data.invite.startedBy == selfId {
+            huddleAccepted = data.invite.targets.filter { $0.status == .accepted }.map(\.userId)
+            updateHuddleConnection()
+        }
         switch ringEffect(
             data.invite,
             selfId: selfId,
@@ -1082,12 +1150,16 @@ struct HuddleTile: Identifiable, Equatable {
     let screen: VideoTrack?
     let micOn: Bool
     let speaking: Bool
+    /// They have an audio track published to the room — muted or not. The mic
+    /// badge answers "are they talking"; this answers "is there a voice path
+    /// at all", which is what a silent agent gets wrong (#508).
+    let audioLive: Bool
 
     var id: String { userId }
 
     static func == (a: HuddleTile, b: HuddleTile) -> Bool {
         a.userId == b.userId && a.isLocal == b.isLocal && a.micOn == b.micOn && a.speaking == b.speaking
-            && a.camera?.sid == b.camera?.sid && a.screen?.sid == b.screen?.sid
+            && a.audioLive == b.audioLive && a.camera?.sid == b.camera?.sid && a.screen?.sid == b.screen?.sid
     }
 }
 
@@ -1108,13 +1180,24 @@ extension AppState: RoomDelegate {
             self.huddleSharing = false
             self.huddleTiles = []
             self.outgoingHuddleInvite = nil
+            self.huddleAccepted = []
+            self.huddleChimed = false
+            self.huddleConnectionState = .idle
         }
     }
 
     // Every media change funnels into one rebuild (see syncHuddleTiles): a
     // callback per event, each doing the same whole-state refresh, is far
     // easier to keep correct than half a dozen partial patches.
-    nonisolated func room(_ room: Room, participantDidConnect _: RemoteParticipant) { refreshTiles(room) }
+    /// Someone arrived: re-read who is an agent first, since the rule for
+    /// "connected" differs for one (see `peerConnected`).
+    nonisolated func room(_ room: Room, participantDidConnect _: RemoteParticipant) {
+        Task { @MainActor [weak self] in
+            guard let self, self.huddleRoom === room else { return }
+            await self.refreshHuddleAgentIds()
+            self.syncHuddleTiles()
+        }
+    }
     nonisolated func room(_ room: Room, participantDidDisconnect _: RemoteParticipant) { refreshTiles(room) }
     nonisolated func room(_ room: Room, didUpdateSpeakingParticipants _: [Participant]) { refreshTiles(room) }
     nonisolated func room(_ room: Room, participant _: Participant, trackPublication _: TrackPublication, didUpdateIsMuted _: Bool) {

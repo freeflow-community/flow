@@ -45,6 +45,23 @@ struct HuddleBar: View {
                         .foregroundStyle(MC.muted)
                         .accessibilityIdentifier("huddle.ringing")
                 }
+                // Is the other side actually here (#508)? Nothing while
+                // you're alone in a channel huddle — this is call feedback,
+                // not a diagnostics panel.
+                if app.huddleConnectionState != .idle {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(app.huddleConnectionState == .connected ? MC.online : MC.faint)
+                            .frame(width: 6, height: 6)
+                        Text(app.huddleConnectionState == .connected ? "Connected" : "Connecting…")
+                            .flowFont(size: 11, weight: .semibold)
+                            .foregroundStyle(MC.muted)
+                    }
+                    .help(app.huddleConnectionState == .connected
+                        ? "Connected — their audio is live"
+                        : "Connecting — waiting for their audio")
+                    .accessibilityIdentifier("huddle.connection")
+                }
                 if !app.huddleUnavailable.isEmpty {
                     Text(unavailableText)
                         .flowFont(size: 11, weight: .semibold)
