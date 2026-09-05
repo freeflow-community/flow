@@ -105,6 +105,12 @@ struct HuddleGridView: View {
                 // Per-tile badges: mic and camera state, so the grid answers
                 // "can they hear me / can I see them" without anyone asking.
                 HStack(spacing: 4) {
+                    // Is their voice path up (#508)? Same rule as the bar.
+                    if !tile.isLocal {
+                        Circle()
+                            .fill(app.huddleTileConnected(tile) ? MC.online : Color.white.opacity(0.6))
+                            .frame(width: 5, height: 5)
+                    }
                     Image(systemName: tile.micOn ? "mic.fill" : "mic.slash.fill")
                     if tile.camera != nil { Image(systemName: "video.fill") }
                     Text(tile.isLocal ? "\(name(tile.userId)) (you)" : name(tile.userId))

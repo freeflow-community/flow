@@ -25,7 +25,17 @@ struct HuddleBar: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "mic.fill")
-                        Text(app.outgoingHuddleInvite != nil ? "Ringing…" : "Huddle in \(label)")
+                        // Is the other side actually here (#508)? A phone bar
+                        // has no room for a second line, so the state borrows
+                        // the title while it is worth saying and hands it back
+                        // — with a green dot — once the call is up.
+                        if app.huddleConnectionState == .connected {
+                            Circle()
+                                .fill(MC.online)
+                                .frame(width: 6, height: 6)
+                                .accessibilityLabel("Connected")
+                        }
+                        Text(title)
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
                     }
@@ -33,7 +43,7 @@ struct HuddleBar: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier(app.outgoingHuddleInvite != nil ? "huddle.ringing" : "huddle.open")
+                .accessibilityIdentifier(accessibilityId)
 
                 Button {
                     app.toggleHuddleMute()
@@ -108,6 +118,20 @@ struct HuddleBar: View {
             }
             .accessibilityIdentifier("huddle.bar")
         }
+    }
+
+    /// The bar's one line of text: the ring first, then the connection state
+    /// while it is still resolving, then the ordinary title.
+    private var title: String {
+        if app.outgoingHuddleInvite != nil { return "Ringing…" }
+        if app.huddleConnectionState == .connecting { return "Connecting…" }
+        return "Huddle in \(label)"
+    }
+
+    private var accessibilityId: String {
+        if app.outgoingHuddleInvite != nil { return "huddle.ringing" }
+        if app.huddleConnectionState == .connecting { return "huddle.connecting" }
+        return "huddle.open"
     }
 
     /// `#name` for a channel; a DM has no `name`, so it names who it's with —

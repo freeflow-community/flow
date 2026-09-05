@@ -52,6 +52,27 @@ export default function HuddleMiniBar() {
           Ringing…
         </span>
       )}
+      {/* Is the other side actually here (#508)? Nothing while you're alone in
+          a channel huddle — this is call feedback, not a diagnostics panel. */}
+      {huddle.connection !== 'idle' && (
+        <span
+          data-testid="huddle-connection"
+          data-state={huddle.connection}
+          title={
+            huddle.connection === 'connected'
+              ? 'Connected — their audio is live'
+              : 'Connecting — waiting for their audio'
+          }
+          className="flex items-center gap-1.5 text-xs font-semibold text-muted"
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+              huddle.connection === 'connected' ? 'bg-online' : 'animate-pulse bg-faint'
+            }`}
+          />
+          {huddle.connection === 'connected' ? 'Connected' : 'Connecting…'}
+        </span>
+      )}
       {huddle.unavailable.length > 0 && (
         <span data-testid="huddle-unavailable" className="text-xs font-semibold text-muted">
           {huddle.unavailable.join(', ')} {huddle.unavailable.length === 1 ? "isn't" : "aren't"} available

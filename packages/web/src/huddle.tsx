@@ -25,6 +25,9 @@ import {
 } from 'livekit-client';
 import type { HuddleInviteDTO, HuddleJoinDTO } from '@flow/shared';
 import { api } from './lib/api';
+import { useMembers } from './hooks';
+import { playConnectChime } from './lib/connectChime';
+import { huddleConnection, shouldChime, type HuddleConnection, type HuddlePeerState } from './lib/huddleConnection';
 import { ringEffect } from './lib/huddleRing';
 
 /** One person in the huddle, as the grid draws them. */
@@ -37,6 +40,10 @@ export interface HuddleTile {
   screen: TrackPublication | null;
   micOn: boolean;
   speaking: boolean;
+  /** They have an audio track published to the room — muted or not. The mic
+   * badge answers "are they talking"; this answers "is there a voice path at
+   * all", which is what a silent agent gets wrong (#508). */
+  audioLive: boolean;
 }
 
 export interface HuddleState {
@@ -59,6 +66,8 @@ export interface HuddleState {
   focus(userId: string | null): void;
   /** Transient one-liner over the huddle UI ("Ada started sharing"). */
   notice: string | null;
+  /** Whether the other side is actually here yet (#508). */
+  connection: HuddleConnection;
 
   // ---- DM ring (#436) ----
   /** A ring aimed at us, if one is live. Drives the incoming-call overlay. */
@@ -137,6 +146,12 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
   const [outgoing, setOutgoing] = useState<HuddleInviteDTO | null>(null);
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [answeredElsewhere, setAnsweredElsewhere] = useState(false);
+  /** Invite targets that have said yes. They are on their way into the room
+   * but LiveKit has not seen them yet — the "Connecting…" case #508 names. */
+  const [accepted, setAccepted] = useState<string[]>([]);
+  /** One chime per call establishment (#509), never per reconnect. Cleared
+   * only when the call ends, so a track resubscribing can't ring it again. */
+  const chimed = useRef(false);
 
   const flash = useCallback((text: string) => {
     setNotice(text);
@@ -163,6 +178,18 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
       // A remote track we haven't subscribed to has nothing to draw yet.
       return isLocal || pub.isSubscribed ? pub : null;
     };
+    /**
+     * Is their voice path up? Unlike video, a *muted* mic publication still
+     * counts — LiveKit keeps the publication across a mute, and someone who
+     * unmutes mid-call was connected all along. What this rules out is the
+     * case #508 is about: a participant in the room that has published no
+     * audio at all.
+     */
+    const audioLive = (p: Participant, isLocal: boolean): boolean => {
+      const pub = p.getTrackPublication(Track.Source.Microphone);
+      if (!pub) return false;
+      return isLocal ? pub.track != null : pub.isSubscribed && pub.track != null;
+    };
     const build = (p: Participant, isLocal: boolean): HuddleTile => ({
       userId: p.identity,
       isLocal,
@@ -170,6 +197,7 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
       screen: showing(p, Track.Source.ScreenShare, isLocal),
       micOn: p.isMicrophoneEnabled,
       speaking: p.isSpeaking,
+      audioLive: audioLive(p, isLocal),
     });
     const next = [
       build(room.localParticipant, true),
@@ -196,6 +224,8 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
     setFocusedUserId(null);
     setOutgoing(null);
     setUnavailable([]);
+    setAccepted([]);
+    chimed.current = false;
   }, []);
 
   const leave = useCallback(async () => {
@@ -284,6 +314,8 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
       if (channelId) await leave(); // switching huddles: leave the old one first
       setConnecting(true);
       setUnavailable([]);
+      setAccepted([]);
+      chimed.current = false;
       try {
         const res = await api<HuddleJoinDTO>('POST', `/v1/channels/${newChannelId}/huddle/join`);
         await connect(newChannelId, newWorkspaceId, res);
@@ -392,6 +424,12 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
    * answer came from a sibling device rather than this one, it says so.
    */
   const applyInviteEvent = useCallback<HuddleState['applyInviteEvent']>((invite, meta) => {
+    // Our own ring: remember who said yes. Once a target accepts, the invite
+    // stops being "ringing" and the ring state drops it — but the caller is
+    // still waiting for that participant to turn up in the room (#508).
+    if (invite.startedBy === meta.selfId) {
+      setAccepted(invite.targets.filter((t) => t.status === 'accepted').map((t) => t.userId));
+    }
     const effect = ringEffect(invite, { ...meta, mySessionId: sessionIdRef.current });
     switch (effect.kind) {
       case 'ring':
@@ -427,6 +465,36 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
   const screenSharerId = tiles.find((t) => t.screen)?.userId ?? null;
   const hasVideo = tiles.some((t) => t.camera || t.screen);
 
+  // Is the other side actually here (#508)? The rule itself lives in
+  // lib/huddleConnection so macOS and iOS read the same one; all this does is
+  // feed it the room as it stands, plus whoever has accepted but not arrived.
+  const members = useMembers(workspaceId);
+  const agentIds = useMemo(
+    () => new Set((members.data ?? []).filter((m) => m.isAgent).map((m) => m.userId)),
+    [members.data],
+  );
+  const peers = useMemo<HuddlePeerState[]>(
+    () =>
+      tiles
+        .filter((t) => !t.isLocal)
+        .map((t) => ({ userId: t.userId, audioLive: t.audioLive, isAgent: agentIds.has(t.userId) })),
+    [tiles, agentIds],
+  );
+  const awaiting = useMemo(() => {
+    const inRoom = new Set(peers.map((p) => p.userId));
+    return accepted.filter((id) => !inRoom.has(id));
+  }, [accepted, peers]);
+  const connection = huddleConnection(peers, awaiting);
+
+  // The connect chime (#509) rides the same edge as the badge: one soft tone
+  // the moment the call is genuinely up, and none at all for a call that never
+  // connects.
+  useEffect(() => {
+    if (!shouldChime(connection, chimed.current)) return;
+    chimed.current = true;
+    playConnectChime();
+  }, [connection]);
+
   const value = useMemo<HuddleState>(
     () => ({
       channelId,
@@ -441,6 +509,7 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
       focusedUserId,
       focus: setFocusedUserId,
       notice,
+      connection,
       incoming,
       outgoing,
       unavailable,
@@ -459,7 +528,7 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       channelId, workspaceId, connecting, muted, cameraOn, sharing, tiles, screenSharerId, hasVideo,
-      focusedUserId, notice, incoming, outgoing, unavailable, answeredElsewhere, join, leave, toggleMute,
+      focusedUserId, notice, connection, incoming, outgoing, unavailable, answeredElsewhere, join, leave, toggleMute,
       toggleCamera, toggleScreenShare, acceptIncoming, declineIncoming, cancelOutgoing, applyInviteEvent,
       setSessionId,
     ],

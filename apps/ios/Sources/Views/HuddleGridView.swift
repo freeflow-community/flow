@@ -92,6 +92,12 @@ struct HuddleGridView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 HStack(spacing: 3) {
+                    // Is their voice path up (#508)? Same rule as the bar.
+                    if !tile.isLocal {
+                        Circle()
+                            .fill(app.huddleTileConnected(tile) ? MC.online : Color.white.opacity(0.6))
+                            .frame(width: 5, height: 5)
+                    }
                     Image(systemName: tile.micOn ? "mic.fill" : "mic.slash.fill")
                     if tile.camera != nil { Image(systemName: "video.fill") }
                     Text(tile.isLocal ? "You" : name(tile.userId)).lineLimit(1)
