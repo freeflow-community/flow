@@ -214,7 +214,9 @@ describe('buildCodexArgs', () => {
 // A run ends when it goes quiet, not when it gets long: these drive real
 // spawns through fake runtime scripts, so the timers, the process-group kill
 // and the stdout rearm are all exercised for real.
-describe('run expiry', () => {
+// These fixtures require /bin/sh and POSIX process groups. Cross-platform
+// subprocess input is covered separately in huddle-integration.test.ts.
+describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-runtime-'));
   const TICK = '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"tick"}}]}}';
   const DONE = '{"type":"result","subtype":"success","result":"done","is_error":false}';

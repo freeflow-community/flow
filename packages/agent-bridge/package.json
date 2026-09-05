@@ -1,6 +1,6 @@
 {
   "name": "flow-agent-bridge",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "type": "module",
   "description": "Flow agent bridge: joins a Flow workspace as a first-class AI agent and execs a coding-agent CLI (Claude Code, Codex) headlessly per conversation",
   "license": "MIT",
@@ -18,7 +18,7 @@
     "bridge"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20.16.0 <21 || >=22.3.0"
   },
   "bin": {
     "flow-agent-bridge": "dist/index.js"
@@ -29,20 +29,25 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsx src/index.ts",
-    "test": "vitest run",
+    "dev": "pnpm build && tsx src/index.ts",
+    "test": "pnpm build && vitest run",
     "prepack": "pnpm build",
     "pack:tarball": "pnpm pack"
   },
   "dependencies": {
     "@livekit/agents": "1.7.1",
     "@livekit/rtc-node": "0.13.34",
+    "@napi-rs/canvas": "0.1.100",
+    "exceljs": "4.4.0",
+    "mammoth": "1.11.0",
+    "pdfjs-dist": "5.4.624",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@flow/shared": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
+    "jszip": "3.10.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.0",
     "vitest": "^2.1.8"

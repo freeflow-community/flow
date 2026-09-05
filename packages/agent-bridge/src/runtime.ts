@@ -10,6 +10,10 @@ import path from 'node:path';
 import type { RuntimeConfig } from './config.js';
 
 export interface RunOpts {
+  /** Prepared call images/PDF previews. Claude reads paths; Codex receives image inputs. */
+  imagePaths?: string[] | undefined;
+  /** Avoid OS command-line limits for document context and call transcripts. */
+  stdinPrompt?: boolean;
   sessionId: string;
   /** false → --session-id (new session); true → --resume. */
   resume: boolean;
@@ -186,7 +190,7 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   }
   if (allowed.length) args.push(`--allowedTools=${allowed.join(',')}`);
   args.push(...cfg.extraArgs);
-  args.push(opts.prompt);
+  if (!opts.stdinPrompt) args.push(opts.prompt);
   return args;
 }
 
@@ -194,7 +198,9 @@ export function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   // Baseline contract only (stdout = reply). No session resume, so callers
   // that need continuity include the transcript in opts.prompt.
   const prompt = `${opts.systemPrompt}\n\n${opts.prompt}`;
-  return ['exec', '--skip-git-repo-check', ...cfg.extraArgs, prompt];
+  const images = (opts.imagePaths ?? []).map((image) => `--image=${image}`);
+  return ['exec', '--skip-git-repo-check', ...images, ...cfg.extraArgs,
+    ...(images.length || opts.stdinPrompt ? ['--'] : []), opts.stdinPrompt ? '-' : prompt];
 }
 
 /** Demo mode: static canned reply, no CLI spawn. */
@@ -269,7 +275,7 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
   return new Promise((resolve) => {
     const child = spawn(cfg.command, args, {
       cwd: cfg.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [opts.stdinPrompt ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: { ...process.env },
       // Own process group, so expiry can kill the agent's whole subprocess tree
       // rather than just the CLI. Costs us the automatic teardown on bridge
@@ -277,6 +283,10 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       detached: true,
     });
     if (child.pid) liveGroups.add(child.pid);
+    if (opts.stdinPrompt && child.stdin) {
+      child.stdin.on('error', () => { /* Spawn/exit handlers report a failed CLI. */ });
+      child.stdin.end(cfg.kind === 'codex' ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt);
+    }
     const parser = new StreamJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
     let stdout = '';
     let stderr = '';
@@ -328,13 +338,13 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
     capTimer = setTimeout(() => expire(`hit the ${cfg.timeoutSec}s run cap`), cfg.timeoutSec * 1000);
     bumpIdle();
 
-    child.stdout.on('data', (d: Buffer) => {
+    child.stdout!.on('data', (d: Buffer) => {
       bumpIdle();
       const s = d.toString('utf8');
       stdout += s;
       if (cfg.kind === 'claude') parser.feed(s);
     });
-    child.stderr.on('data', (d: Buffer) => {
+    child.stderr!.on('data', (d: Buffer) => {
       bumpIdle();
       stderr += d.toString('utf8');
     });
