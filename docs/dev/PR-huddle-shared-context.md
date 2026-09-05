@@ -1,14 +1,13 @@
-# PR draft: Discuss shared documents inside an ongoing bot Huddle
+# Discuss shared documents inside an ongoing bot Huddle
 
-Status: local implementation and automated checks complete; live-call acceptance
-is still pending. No GitHub PR, push, merge, deployment or live DM was performed
-for this follow-up.
+Status: implementation and automated checks complete; live-call acceptance
+is still pending. Prepared for GitHub review at the user's request. No merge,
+deployment or live DM is part of this follow-up.
 
-Local branch: `codex/huddle-shared-context`.
-Base: `630faaf` on the existing `codex/bridge-runtime-huddle` work, not a fresh
-main checkout. Review this follow-up against that base; it depends on the
-existing bridge-runtime Huddle implementation. Recheck the eventual target
-branch before publishing; this work does not merge or rebase anything.
+PR branch: `codex/huddle-shared-material-pr`, based on `main` at `5a9226e`.
+The earlier bridge-runtime Huddle implementation landed in PR #504. Only this
+follow-up feature was cherry-picked onto current main; the original local
+branch `codex/huddle-shared-context` is preserved.
 
 ## User experience
 
@@ -43,7 +42,7 @@ prerequisite. Existing bridge slash commands keep their behavior.
   are coalesced instead of interrupting speech.
 - Hangup aborts runtime work and file preparation, then removes call-owned
   temporary files. Participant access loss also ends the call.
-- Bridge version becomes 0.32.0; package includes the compiled worker. Node
+- Bridge version becomes 0.33.0; package includes the compiled worker. Node
   minimum follows PDF.js: 20.16+ on 20.x, or 22.3+.
 
 ## Boundaries and safety
