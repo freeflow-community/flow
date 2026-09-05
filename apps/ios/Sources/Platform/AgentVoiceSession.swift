@@ -159,7 +159,11 @@ final class AgentVoiceSession: NSObject, ObservableObject {
         case .authorized:
             requestMicrophonePermission()
         case .notDetermined:
-            SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            // @Sendable keeps this closure nonisolated: without it, a closure
+            // formed in a @MainActor class inherits main-actor isolation, and
+            // TCC invokes the completion on a background queue — the runtime
+            // isolation check then traps (EXC_BREAKPOINT) before the Task runs.
+            SFSpeechRecognizer.requestAuthorization { @Sendable [weak self] status in
                 Task { @MainActor in
                     guard let self else { return }
                     if status == .authorized {
