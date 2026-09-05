@@ -5,7 +5,7 @@
 //      rooted at it — DMs stay inline.
 //   2. Once we've spoken in a thread, we answer every reply in it, mentioned
 //      or not.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ChannelDTO, MessageDTO } from '@flow/shared';
 import { AgentBridge, failureReply } from '../src/bridge.js';
 import type { BridgeConfig } from '../src/config.js';
@@ -99,6 +99,18 @@ function bridge(cfg = config(), chans: ChannelDTO[] = [channel()]): any {
   b.log = () => {};
   return b;
 }
+
+describe('active Huddle routing', () => {
+  it('consumes the call DM before enqueueing but still handles other DMs', async () => {
+    const b = bridge(config(), [channel({ id: 'dm', kind: 'dm' }), channel({ id: 'other-dm', kind: 'dm' })]);
+    b.huddleVoice = { handleMessage: vi.fn((m: MessageDTO) => m.channelId === 'dm') };
+    b.enqueue = vi.fn();
+    await b.handleMessage(message({ channelId: 'dm', body: '', files: [{ id: 'pdf' }] as never }));
+    expect(b.enqueue).not.toHaveBeenCalled();
+    await b.handleMessage(message({ channelId: 'other-dm' }));
+    expect(b.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('replyRoot — where the answer goes', () => {
   it('opens a new thread on a top-level channel message', () => {

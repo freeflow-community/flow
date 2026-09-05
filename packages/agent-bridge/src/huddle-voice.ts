@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
-import type { HuddleInviteData, HuddleJoinDTO, HuddleUpdatedData, MessageDTO } from '@flow/shared';
+import type { ArtifactDTO, HuddleInviteData, HuddleJoinDTO, HuddleUpdatedData, MessageDTO, MessagePage } from '@flow/shared';
 import type { VoiceConfig } from './config.js';
+import { CallTurnQueue, HuddleContext } from './huddle-context.js';
+import { SharedReplyScheduler } from './huddle-replies.js';
 
 const TERMINAL_INVITE_STATES = new Set(['ended', 'declined', 'missed', 'cancelled']);
 let liveKitLoggerInitialized = false;
@@ -11,10 +13,13 @@ export interface HuddleVoiceApi {
   declineHuddleInvite(inviteId: string): Promise<unknown>;
   leaveHuddle(channelId: string): Promise<unknown>;
   sendMessage(channelId: string, body: string): Promise<MessageDTO>;
+  downloadCallFile?(fileId: string, signal: AbortSignal): Promise<Buffer>;
+  listMessages?(channelId: string, limit?: number, before?: string): Promise<MessagePage>;
 }
 
 export interface LiveVoiceSession {
   close(): Promise<void>;
+  sharedMaterialChanged?(): void;
 }
 
 export interface LiveVoiceSessionOptions {
@@ -32,6 +37,7 @@ export interface LiveVoiceSessionOptions {
 }
 
 export interface VoiceRuntimeTurnOptions {
+  imagePaths?: string[];
   /** Latest caller utterance, used by resumable runtimes such as Claude. */
   prompt: string;
   /** Complete in-call transcript, used by stateless runtimes such as Codex. */
@@ -92,6 +98,7 @@ export interface HuddleVoiceManagerOptions {
   callerName(userId: string): string;
   isOneToOneDm(channelId: string): Promise<boolean>;
   buildInstructions(channelId: string, callerId: string): Promise<string>;
+  listArtifacts?(): Promise<ArtifactDTO[]>;
   runTurn(options: VoiceRuntimeTurnOptions & {
     sessionId: string;
     resume: boolean;
@@ -116,13 +123,59 @@ export class HuddleVoiceManager {
   private readonly terminalInvites = new Set<string>();
   private readonly handledInvites = new Set<string>();
   private readonly sessionFactory: LiveVoiceSessionFactory;
+  private shared: {
+    inviteId: string; channelId: string; callerId: string; startedAt: string;
+    context: HuddleContext; abort: AbortController; turns: CallTurnQueue;
+    session: LiveVoiceSession | null; changed: boolean;
+  } | null = null;
 
   constructor(private readonly options: HuddleVoiceManagerOptions) {
     this.sessionFactory = options.sessionFactory ?? createLiveKitVoiceSession;
   }
 
   get activeChannelId(): string | null {
-    return this.active?.channelId ?? null;
+    return this.active?.channelId ?? this.shared?.channelId ?? null;
+  }
+
+  handleMessage(message: MessageDTO, notify = true): boolean {
+    return this.shared?.context.message(message, notify) ?? false;
+  }
+
+  handleArtifact(artifact: ArtifactDTO, deleted = false): void {
+    this.shared?.context.artifact(artifact, deleted);
+  }
+
+  removeMessage(id: string, channelId: string, at: string): void {
+    if (this.shared?.channelId === channelId) this.shared.context.removeMessage(id, at);
+  }
+
+  /** Backfill after socket reconnect; versions/deduplication preserve newer live events. */
+  async refreshContext(initial = false): Promise<void> {
+    const shared = this.shared;
+    if (!shared) return;
+    const at = new Date().toISOString();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const [page, artifacts] = await Promise.race([
+        Promise.all([
+          this.options.api.listMessages?.(shared.channelId, 200),
+          this.options.listArtifacts?.(),
+        ]),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Context refresh timed out')), 5000); }),
+      ]);
+      if (this.shared !== shared) return;
+      if (page) shared.context.reconcileMessages(page.messages, at, initial ? undefined : shared.startedAt);
+      if (artifacts) shared.context.reconcileArtifacts(artifacts, at, initial ? undefined : shared.startedAt);
+    } catch { this.options.log('could not refresh shared call material'); }
+    finally { if (timeout) clearTimeout(timeout); }
+  }
+
+  async memberLeft(channelId: string, userId: string): Promise<void> {
+    const shared = this.shared;
+    if (shared?.channelId !== channelId || (userId !== this.options.agentId && userId !== shared.callerId)) return;
+    this.rememberTerminal(shared.inviteId);
+    await this.endActive('call participant lost channel access');
+    await this.closeShared(shared.inviteId);
   }
 
   async handleInvite(data: HuddleInviteData): Promise<void> {
@@ -176,6 +229,25 @@ export class HuddleVoiceManager {
       }
       if (this.stopping || this.terminalInvites.has(invite.id)) return;
 
+      const shared = {
+        inviteId: invite.id, channelId: invite.channelId, callerId: invite.startedBy, startedAt: new Date().toISOString(),
+        abort: new AbortController(), turns: new CallTurnQueue(),
+        session: null as LiveVoiceSession | null, changed: false,
+        context: null as unknown as HuddleContext,
+      };
+      shared.context = new HuddleContext({
+        channelId: invite.channelId, callerId: invite.startedBy,
+        download: (id, signal) => {
+          if (!this.options.api.downloadCallFile) throw new Error('Call file downloads are unavailable');
+          return this.options.api.downloadCallFile(id, signal);
+        },
+        changed: () => {
+          shared.changed = true;
+          shared.session?.sharedMaterialChanged?.();
+        },
+      });
+      this.shared = shared;
+
       // Accept first so the caller stops hearing a ring immediately. Context
       // loading and model connection happen while both users are in the room.
       const room = await this.options.api.acceptHuddleInvite(invite.id);
@@ -185,6 +257,7 @@ export class HuddleVoiceManager {
         return;
       }
       const instructions = await this.options.buildInstructions(invite.channelId, invite.startedBy);
+      await this.refreshContext(true);
       if (this.stopping || this.terminalInvites.has(invite.id)) {
         await this.leaveQuietly(invite.channelId);
         return;
@@ -205,14 +278,23 @@ export class HuddleVoiceManager {
         inferenceToken: room.inferenceToken,
         config: this.options.config,
         runTurn: async (turn) => {
-          const result = await this.options.runTurn({
-            ...turn,
-            sessionId: runtimeSessionId,
-            resume: runtimeStarted,
-            systemPrompt: instructions,
+          const signal = AbortSignal.any([turn.signal, shared.abort.signal]);
+          return shared.turns.run(signal, async () => {
+            const material = shared.context.snapshot();
+            const context = material.text ? `\n\n${material.text}` : '';
+            const result = await this.options.runTurn({
+              ...turn, signal,
+              prompt: turn.prompt + context,
+              transcript: turn.transcript + context,
+              imagePaths: material.imagePaths,
+              sessionId: runtimeSessionId,
+              resume: runtimeStarted,
+              systemPrompt: instructions,
+            });
+            if (result.ok || result.sawSession) runtimeStarted = true;
+            if (result.ok && !result.interrupted && !signal.aborted) material.acknowledge();
+            return result;
           });
-          if (result.ok || result.sawSession) runtimeStarted = true;
-          return result;
         },
         onEnded: () => {
           endedDuringStart = true;
@@ -233,6 +315,8 @@ export class HuddleVoiceManager {
         callerId: invite.startedBy,
         session,
       };
+      shared.session = session;
+      if (shared.changed) session.sharedMaterialChanged?.();
       this.options.log(`answered huddle from ${this.options.callerName(invite.startedBy)}`);
     } catch (error) {
       this.options.log(`could not start huddle voice: ${errorText(error)}`);
@@ -246,6 +330,7 @@ export class HuddleVoiceManager {
           .catch((sendError: unknown) => this.options.log(`could not post voice failure: ${errorText(sendError)}`));
       }
     } finally {
+      if (this.active?.inviteId !== invite.id) await this.closeShared(invite.id);
       if (this.acceptingInviteId === invite.id) this.acceptingInviteId = null;
     }
   }
@@ -262,6 +347,16 @@ export class HuddleVoiceManager {
   async stop(): Promise<void> {
     this.stopping = true;
     await this.endActive('bridge stopping');
+    if (this.shared) await this.closeShared(this.shared.inviteId);
+  }
+
+  private async closeShared(inviteId: string): Promise<void> {
+    const shared = this.shared;
+    if (!shared || shared.inviteId !== inviteId) return;
+    this.shared = null;
+    shared.abort.abort();
+    await shared.turns.idle();
+    await shared.context.close().catch(() => this.options.log('call temporary-file cleanup failed'));
   }
 
   private async declineWithMessage(inviteId: string, channelId: string, message: string): Promise<void> {
@@ -277,6 +372,7 @@ export class HuddleVoiceManager {
     const active = this.active;
     if (!active || active.inviteId !== inviteId) return;
     this.active = null;
+    await this.closeShared(inviteId);
     await this.leaveQuietly(active.channelId);
     this.options.log('huddle voice session ended');
   }
@@ -285,8 +381,10 @@ export class HuddleVoiceManager {
     const active = this.active;
     if (!active) return;
     this.active = null;
+    this.shared?.abort.abort();
     this.options.log(`ending huddle voice (${reason})`);
     await active.session.close().catch((error: unknown) => this.options.log(`voice close failed: ${errorText(error)}`));
+    await this.closeShared(active.inviteId);
     await this.leaveQuietly(active.channelId);
   }
 
@@ -323,6 +421,7 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
     import('@livekit/agents'),
   ]);
   const { inference, llm, voice } = agents;
+  let sharedReplies: SharedReplyScheduler | undefined;
   if (!liveKitLoggerInitialized) {
     agents.initializeLogger({ pretty: false, level: 'warn' });
     liveKitLoggerInitialized = true;
@@ -360,6 +459,7 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
         options.agentName,
       );
       if (!input) return;
+      sharedReplies?.consumed();
       const responseId = `bridge-${randomUUID()}`;
       let emitted = false;
       let previous = '';
@@ -441,6 +541,7 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
   const emitEnded = (): void => {
     if (ended) return;
     ended = true;
+    sharedReplies?.close();
     if (limitTimer) clearTimeout(limitTimer);
     options.onEnded();
   };
@@ -458,6 +559,16 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
       turnDetection: 'stt',
       interruption: { enabled: true },
     },
+  });
+  sharedReplies = new SharedReplyScheduler({
+    idle: () => session.agentState === 'listening' && session.userState !== 'speaking' && !closing && !ended,
+    reply: async () => {
+      await session.generateReply({
+        userInput: '[Flow call update: shared material changed. Acknowledge newly received files briefly, without claiming to have inspected them. If a NEW typed message asks a question, answer it aloud using the shared material. If a file the caller asked about has finished opening, continue their request. Do not repeat completed requests from older messages. Do not post a chat reply.]',
+        allowInterruptions: true,
+      }).waitForPlayout();
+    },
+    error: () => options.log('could not speak shared call update'),
   });
   session.on(voice.AgentSessionEventTypes.Error, (event) => {
     options.log(`huddle voice error: ${errorText(event.error)}`);
@@ -504,9 +615,11 @@ export async function createLiveKitVoiceSession(options: LiveVoiceSessionOptions
   }
 
   return {
+    sharedMaterialChanged: () => sharedReplies?.changed(),
     close: async () => {
       if (closing) return;
       closing = true;
+      sharedReplies?.close();
       if (limitTimer) clearTimeout(limitTimer);
       await session.close().catch((error: unknown) => options.log(`agent session close failed: ${errorText(error)}`));
       if (room.isConnected) {

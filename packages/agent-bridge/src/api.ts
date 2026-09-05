@@ -197,6 +197,30 @@ export class FlowApi {
     return (await this.downloadFileWithMeta(fileId)).data;
   }
 
+  /** Bounded streaming download for live calls; cancel on hangup or timeout. */
+  async downloadCallFile(fileId: string, signal: AbortSignal): Promise<Buffer> {
+    const limit = 20 * 1024 * 1024;
+    const res = await fetch(`${this.serverUrl}/v1/files/${encodeURIComponent(fileId)}`, {
+      headers: { authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+    });
+    if (!res.ok) await parseError(res);
+    if (!res.body) throw new Error('File download returned no content');
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) throw new Error('File exceeds the 20 MB call limit');
+        chunks.push(value);
+      }
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+    return Buffer.concat(chunks);
+  }
+
   /** As `downloadFile`, plus the name and type the bytes came labelled with —
    * a caller holding only a file id (the MCP `download_file` tool) needs the
    * real extension for the file it writes. Either header may be missing when

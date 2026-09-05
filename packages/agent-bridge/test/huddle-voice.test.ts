@@ -2,7 +2,7 @@ import type { HuddleInviteData, HuddleUpdatedData, MessageDTO } from '@flow/shar
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { VoiceConfig } from '../src/config.js';
 import {
   HuddleVoiceManager,
@@ -17,6 +17,9 @@ const CALLER_ID = '00000000-0000-4000-8000-000000000002';
 const OTHER_ID = '00000000-0000-4000-8000-000000000003';
 const CHANNEL_ID = '00000000-0000-4000-8000-000000000004';
 const INVITE_ID = '00000000-0000-4000-8000-000000000005';
+
+const managers: HuddleVoiceManager[] = [];
+afterEach(async () => { await Promise.all(managers.splice(0).map((manager) => manager.stop())); });
 
 const voice: VoiceConfig = {
   enabled: true,
@@ -84,10 +87,25 @@ function harness(
     log,
     sessionFactory,
   });
+  managers.push(manager);
   return { manager, api, close, runTurn, log, sessionFactory, getSessionOptions: () => sessionOptions };
 }
 
 describe('agent huddle voice', () => {
+  it('supplies incoming text to both runtime inputs without posting a DM', async () => {
+    const h = harness();
+    await h.manager.handleInvite(ring());
+    expect(h.manager.handleMessage({ id: 'incoming', channelId: CHANNEL_ID, userId: CALLER_ID,
+      body: 'The revised budget is 12500', files: [], systemKind: null,
+      createdAt: new Date().toISOString(), editedAt: null, deletedAt: null } as MessageDTO)).toBe(true);
+    await h.getSessionOptions()!.runTurn({ prompt: 'What is the budget?', transcript: 'Mahad: What is the budget?',
+      signal: new AbortController().signal, onText: vi.fn() });
+    const turn = h.runTurn.mock.calls[0]![0];
+    expect(turn.prompt).toContain('The revised budget is 12500');
+    expect(turn.transcript).toContain('The revised budget is 12500');
+    expect(h.api.sendMessage).not.toHaveBeenCalled();
+    expect(h.manager.handleMessage({ channelId: 'unrelated' } as MessageDTO)).toBe(false);
+  });
   it('builds a latest-turn prompt plus full transcript for Claude and Codex runtimes', () => {
     expect(
       buildVoiceRuntimeInput(
@@ -280,6 +298,16 @@ describe('agent huddle voice', () => {
 
     expect(h.close).toHaveBeenCalledTimes(1);
     expect(h.api.leaveHuddle).toHaveBeenCalledWith(CHANNEL_ID);
+    expect(h.manager.activeChannelId).toBeNull();
+  });
+
+  it('ends the call when a participant loses access, but ignores unrelated membership changes', async () => {
+    const h = harness();
+    await h.manager.handleInvite(ring());
+    await h.manager.memberLeft(CHANNEL_ID, OTHER_ID);
+    expect(h.close).not.toHaveBeenCalled();
+    await h.manager.memberLeft(CHANNEL_ID, AGENT_ID);
+    expect(h.close).toHaveBeenCalledOnce();
     expect(h.manager.activeChannelId).toBeNull();
   });
 

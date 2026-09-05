@@ -14,6 +14,8 @@ Flow WS ──> flow-agent-bridge daemon ──spawn──> claude -p --resume <
 
 ## Install & run
 
+Requires Node.js 20.16+ (20.x), or 22.3+; a current LTS release is recommended.
+
 ```sh
 npx flow-agent-bridge <invite-code>   # no install; setup on first run, daemon after
 ```
@@ -146,6 +148,43 @@ Codex. Bot hosts do not need an OpenAI, Anthropic, or LiveKit project key for
 voice: after accepting a ring, Flow supplies a short-lived inference-only
 LiveKit token for transcription and speech. The project secret stays on the
 Flow server.
+
+## Share material during a Huddle
+
+In a one-to-one bot Huddle, send text or attach a file in that same DM, then
+ask aloud, “I just sent this; can you take a look?” The bridge feeds it into
+the ongoing call rather than starting a second chat reply. New material is
+acknowledged aloud when neither participant is speaking; a file still opening
+can trigger a follow-up once preparation finishes. Normal bridge commands
+such as `/stop` and `/update` retain their existing behavior.
+
+- Text, Markdown, CSV and common code files: extracted text, up to 100,000 characters.
+- PDF: text from up to 20 pages; visual previews of the first four pages.
+  Scanned pages beyond those previews are not automatically inspected.
+- PNG, JPEG and WebP: image input (up to 25 megapixels).
+- DOCX: text only, without embedded images or layout.
+- XLSX: existing cell values from up to 10 sheets, 500 rows and 40 columns;
+  no formula recalculation, charts or embedded images.
+- File artifacts in the call's DM are included. Link artifacts provide a
+  reference only: their target is not automatically fetched. Audio/video,
+  legacy Office formats and unsupported files produce an explicit limitation.
+
+Preparation is limited to 20 MB per file, four attachments per message,
+40 file preparations and 100 MB downloaded per call. Recent material is kept
+in a bounded context; this is not an unlimited archive. Larger pasted messages
+are also saved as local text for the runtime to inspect. Claude reads supplied
+local paths with its tools; Codex also receives the four most recent prepared
+images as image inputs. The configured runtime needs permission to read the
+call's temporary files. No additional model API key is introduced.
+
+Only the caller's messages and artifacts in the active call's DM are admitted.
+Edits, deletions, and reconnect snapshots update the call context. Deleting a
+message does not erase what the model already heard. Temporary originals and
+extracted files are removed on normal hangup after active work stops; CLI
+session logs may retain supplied text. Document contents are marked as
+untrusted references, not action requests; normal runtime permissions still
+apply. File parsing runs in a cancellable worker with a 20-second deadline,
+not in the audio loop.
 
 ## Use the flow MCP server directly (no daemon)
 
