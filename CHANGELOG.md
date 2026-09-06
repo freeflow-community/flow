@@ -296,6 +296,10 @@ This file keeps two things:
   separately — both already open a thread from an *Activity* row.
 
 ### Deliberate divergences (ruled)
+- **Side-panel keep-alive is web + macOS only** (#513). Both keep a link
+  artifact's frame mounted while another tab shows; iOS has nothing to keep —
+  its artifact viewer is a full-screen sheet, so dismissing it *is* closing the
+  artifact and there is no other tab to toggle to. Not a gap to close.
 - **Community email is web-only** (#481, #484, #486, #492, as specified).
   Composing a broadcast is an admin desk job — a markdown editor with a preview
   pane, a "Send test to me" button on the confirm step, and now image paste —

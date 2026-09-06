@@ -6,6 +6,12 @@ import SwiftUI
 // the panel close, and the leading-edge shadow, and shows the active tab's body
 // (ThreadPanelView embedded, or ArtifactPanelView). Threads and artifacts
 // coexist; the tab strip picks which one shows. Mirrors the web SidePanel.
+//
+// One body is an exception to "show the active tab": a link artifact's web view
+// (the mini-browser / mini app) stays mounted, transparent and untappable, when
+// you switch to another tab — so a Thread <-> app toggle doesn't reload the page
+// through the tunnel and re-mint a token every time (#513). WindowState.keepAlive
+// decides which one, and the same rule runs on the web client.
 struct SidePanelView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
@@ -30,6 +36,19 @@ struct SidePanelView: View {
         )
     }
 
+    /// The held frame, if its tab is still in this channel — an artifact
+    /// deleted out from under us drops it (and closes the panel as before).
+    private var keptAliveArtifactId: String? {
+        guard let held = win.keepAlive, held.channelId == win.selectedChannelId,
+              channelArtifacts.contains(where: { $0.id == held.artifactId })
+        else { return nil }
+        return held.artifactId
+    }
+
+    private var keepAliveShowing: Bool {
+        keptAliveArtifactId != nil && !win.filesOpen && win.selectedArtifactId == keptAliveArtifactId
+    }
+
     private var threadParent: (connector: String, name: String)? {
         currentChannel?.threadParentLabel(
             userNames: users.value, currentUserId: app.currentUser?.id
@@ -40,15 +59,27 @@ struct SidePanelView: View {
         VStack(spacing: 0) {
             tabStrip
             Divider()
-            if win.filesOpen, let channelId = win.selectedChannelId {
-                FilesPanelView(channelId: channelId)
-                    .id(channelId)
-            } else if let artifactId = win.selectedArtifactId {
-                ArtifactPanelView(artifactId: artifactId)
-                    .id(artifactId)
-            } else if let rootId = win.openThreadRootId {
-                ThreadPanelView(rootId: rootId, embedded: true)
-                    .id(rootId)
+            ZStack {
+                // The kept-alive artifact is always in this one spot in the
+                // hierarchy, showing or not: moving a WKWebView between
+                // positions would rebuild it, which is the cost being avoided.
+                if let keptId = keptAliveArtifactId {
+                    ArtifactPanelView(artifactId: keptId)
+                        .id(keptId)
+                        .opacity(keepAliveShowing ? 1 : 0)
+                        .allowsHitTesting(keepAliveShowing)
+                        .accessibilityHidden(!keepAliveShowing)
+                }
+                if win.filesOpen, let channelId = win.selectedChannelId {
+                    FilesPanelView(channelId: channelId)
+                        .id(channelId)
+                } else if let artifactId = win.selectedArtifactId, artifactId != keptAliveArtifactId {
+                    ArtifactPanelView(artifactId: artifactId)
+                        .id(artifactId)
+                } else if win.selectedArtifactId == nil, let rootId = win.openThreadRootId {
+                    ThreadPanelView(rootId: rootId, embedded: true)
+                        .id(rootId)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

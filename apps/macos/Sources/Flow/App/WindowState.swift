@@ -14,7 +14,11 @@ final class WindowState: ObservableObject {
     @Published var openThreadRootId: String?
     /// Open artifact (phase 13) — when set, the right-hand side panel shows the
     /// artifact next to its channel (mutually exclusive with the thread panel).
-    @Published var selectedArtifactId: String?
+    @Published var selectedArtifactId: String? { didSet { refreshKeepAlive() } }
+    /// The link artifact whose web view the side panel keeps mounted while
+    /// another tab is showing (#513), so a Thread <-> app toggle doesn't reload
+    /// the page (and re-mint a token) every time. See `nextKeepAlive`.
+    @Published private(set) var keepAlive: KeepAlive?
     /// Channel Files tab (#347) — another tab on the same side panel as the
     /// thread and the artifacts. True means the Files tab is the visible one.
     @Published var filesOpen: Bool = false
@@ -205,6 +209,7 @@ final class WindowState: ObservableObject {
         rememberOpenThread()
         selectedChannelId = id
         Self.lastChannelId = id
+        refreshKeepAlive() // a held frame belongs to the channel we just left
         openThreadRootId = id.flatMap { openThreadByChannel[$0] }
         let restored = openThreadRootId
         // Local capture: the task must not retain the window (a closed one
@@ -296,6 +301,7 @@ final class WindowState: ObservableObject {
     /// Close the whole side panel — clears the thread and the active artifact.
     func closeSidePanel() {
         selectedArtifactId = nil
+        keepAlive = nil // closing the panel is what drops a kept-alive frame (#513)
         filesOpen = false
         if openThreadRootId != nil {
             openThreadRootId = nil
@@ -345,6 +351,48 @@ final class WindowState: ObservableObject {
         if selectedArtifactId == artifactId {
             selectedArtifactId = nil
         }
+    }
+
+    // MARK: - Side-panel keep-alive (#513)
+
+    /// A held frame and the channel it belongs to — a web view is only worth
+    /// keeping while you are still in the channel whose panel shows it.
+    struct KeepAlive: Equatable {
+        let channelId: String
+        let artifactId: String
+    }
+
+    /**
+     Which artifact's web view the side panel keeps mounted while another tab is
+     showing. Mirrors the web client's `nextKeepAlive` (SidePanel.tsx).
+
+     Only link artifacts qualify: rebuilding one costs a token mint and a full
+     load through the app tunnel, while an image/PDF viewer re-reads a cached
+     file. At most one is held — selecting another link replaces it — and it is
+     dropped when the channel changes, which caps what a hidden web view can
+     hold. Selecting a *non*-link artifact keeps the previous frame: that is the
+     point, it is what you are coming back to.
+     */
+    nonisolated static func nextKeepAlive(
+        prev: KeepAlive?, channelId: String?, selected: Artifact?
+    ) -> KeepAlive? {
+        if let channelId, let selected, selected.kind == "link" {
+            return KeepAlive(channelId: channelId, artifactId: selected.id)
+        }
+        return prev?.channelId == channelId ? prev : nil
+    }
+
+    /// Re-run the decision after anything that moves the panel's selection.
+    /// The lookup is channel-scoped the way the web client's is: mid-switch the
+    /// artifact selection can still name the channel we are leaving, and that
+    /// one is not a tab on the panel we are about to draw.
+    private func refreshKeepAlive() {
+        let selected = selectedArtifactId.flatMap { id in
+            artifacts().first { $0.id == id && $0.channelId == selectedChannelId }
+        }
+        keepAlive = Self.nextKeepAlive(
+            prev: keepAlive, channelId: selectedChannelId, selected: selected
+        )
     }
 
     /// This window's workspace's visible artifacts (newest first).
