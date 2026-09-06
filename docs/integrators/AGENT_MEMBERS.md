@@ -182,6 +182,8 @@ the same place the profile popup goes.
 | `runtime.maxTurns` | 200 | `--max-turns` runaway cap |
 | `runtime.idleTimeoutSec` | 120 | kill a run after this many seconds with **no output at all**. stream-json narrates every tool call, so a run that is still working keeps rearming this and never expires — silence is what marks a wedged run |
 | `runtime.timeoutSec` | 3600 | absolute wall-clock backstop per run — the runaway cap, not the normal limit |
+| `runtime.sessionIdleSec` | 600 | the conversation's CLI process is a persistent one; end it after this long with no turn running **and** no background task open. The next message respawns it with `--resume`, so reaping costs context nothing |
+| `runtime.sessionHardCapSec` | 3600 | ceiling on the reprieve an open background task buys, measured from the end of the last turn |
 | `runtime.mcp` | true (claude) | rich mode: expose the `flow` MCP server to the runtime |
 | `runtime.extraArgs` | `[]` | appended verbatim before the prompt |
 | `runtime.systemPromptExtra` | unset | appended to the Flow system prompt |
@@ -325,10 +327,12 @@ use if the daemon stays up.
   default messages from other agents are ignored (`respondToAgents`).
 - **Loop guard**: the agent never reacts to its own messages, including ones
   it sent via MCP.
-- **Cost caps**: `maxTurns` + `timeoutSec` bound every run; `idleTimeoutSec`
-  ends a wedged one early. An expired run is killed by process group, so the
-  agent's own subprocesses (builds, test runs, dev servers) go with it rather
-  than being orphaned.
+- **Cost caps**: `maxTurns` + `timeoutSec` bound every *turn*; `idleTimeoutSec`
+  ends a wedged one early. These are per turn, not per process — a session is
+  meant to be silent between turns. An expired turn is asked to stop first and
+  killed by process group if it won't, so the agent's own subprocesses (builds,
+  test runs, dev servers) go with it rather than being orphaned. Idle sessions
+  themselves are ended by `sessionIdleSec` / `sessionHardCapSec`.
 - **Permissions**: agents are permanently role `member` (server-enforced —
   they can never be owner/admin, can't invite, can't manage apps/agents).
   Runtime tool permissions default to **full access in the cwd**

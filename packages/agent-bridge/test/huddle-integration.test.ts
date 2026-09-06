@@ -10,7 +10,7 @@ import type { RuntimeConfig } from '../src/config.js';
 const cfg = (kind: 'claude' | 'codex'): RuntimeConfig => ({
   kind, command: process.execPath, extraArgs: [], allowedTools: [], mcp: false,
   cwd: fileURLToPath(new URL('./fixtures/call-runtime/', import.meta.url)),
-  maxTurns: 5, timeoutSec: 10, idleTimeoutSec: 5,
+  maxTurns: 5, timeoutSec: 10, idleTimeoutSec: 5, sessionIdleSec: 600, sessionHardCapSec: 3600,
 });
 
 describe('shared material through a running call', () => {

@@ -157,7 +157,7 @@ describe('formatToolStep', () => {
 describe('buildClaudeArgs permissions', () => {
   const base: RuntimeConfig = {
     kind: 'claude', command: 'claude', extraArgs: [], cwd: '/tmp',
-    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300, idleTimeoutSec: 120,
+    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300, idleTimeoutSec: 120, sessionIdleSec: 600, sessionHardCapSec: 3600,
     mcp: false, systemPromptExtra: undefined,
   };
   const opts = { sessionId: 's', resume: false, prompt: 'p', systemPrompt: '', onToolStep: () => {}, log: () => {} };
@@ -189,7 +189,7 @@ describe('buildClaudeArgs permissions', () => {
 describe('buildCodexArgs', () => {
   const config: RuntimeConfig = {
     kind: 'codex', command: 'codex', extraArgs: [], cwd: '/tmp',
-    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300, idleTimeoutSec: 120,
+    permissionMode: undefined, allowedTools: [], maxTurns: 100, timeoutSec: 300, idleTimeoutSec: 120, sessionIdleSec: 600, sessionHardCapSec: 3600,
     mcp: false, systemPromptExtra: undefined,
   };
 
@@ -230,7 +230,7 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
   function cfg(command: string, over: Partial<RuntimeConfig> = {}): RuntimeConfig {
     return {
       kind: 'claude', command, extraArgs: [], cwd: dir, permissionMode: undefined,
-      allowedTools: [], maxTurns: 10, timeoutSec: 30, idleTimeoutSec: 0.4,
+      allowedTools: [], maxTurns: 10, timeoutSec: 30, idleTimeoutSec: 0.4, sessionIdleSec: 600, sessionHardCapSec: 3600,
       mcp: false, systemPromptExtra: undefined, ...over,
     };
   }
@@ -252,7 +252,9 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
   // it names has to be the one this run was actually given.
   it('reports a turn-cap failure by name, with the run’s own cap', async () => {
     const capped = '{"type":"result","subtype":"error_max_turns","result":"Now a unit test:","is_error":true}';
-    const res = await run(cfg(script('capped', `echo '${TICK}'; echo '${capped}'`), { maxTurns: 200 }));
+    // A real idle window: this run is about its *result*, and on a busy box the
+    // 0.4s default expired it before the script got a chance to print.
+    const res = await run(cfg(script('capped', `echo '${TICK}'; echo '${capped}'`), { maxTurns: 200, idleTimeoutSec: 10 }));
     expect(res.ok).toBe(false);
     expect(res.error).toBe('agent exceeded max turns (200)');
     expect(res.text).toBe('Now a unit test:'); // partial work still rides along as salvage
@@ -311,7 +313,9 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
     expect(res.ok).toBe(false);
     const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
     expect(pid).toBeGreaterThan(0);
-    for (let i = 0; i < 40 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50));
+    // Long enough to cover the SIGTERM→SIGKILL escalation (5s), not just the
+    // SIGTERM: waiting only 2s made this fail whenever the box was busy.
+    for (let i = 0; i < 130 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50));
     expect(alive(pid)).toBe(false);
   });
 });
@@ -337,6 +341,9 @@ describe('loadConfig', () => {
     expect(cfg.runtime.mcp).toBe(true);
     expect(cfg.runtime.maxTurns).toBe(200); // a runaway backstop, not a work limit
     expect(cfg.runtime.idleTimeoutSec).toBe(120);
+    // #519: reaper defaults — 10 minutes idle, an hour of held-off cap.
+    expect(cfg.runtime.sessionIdleSec).toBe(600);
+    expect(cfg.runtime.sessionHardCapSec).toBe(3600);
     expect(cfg.runtime.timeoutSec).toBe(3600); // backstop only — idle is the real limit
     fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -347,6 +354,10 @@ describe('loadConfig', () => {
     const base = { serverUrl: 'http://x', agentToken: 't', runtime: { kind: 'demo' } };
     fs.writeFileSync(p, JSON.stringify({ ...base, runtime: { kind: 'demo', idleTimeoutSec: 0 } }));
     expect(() => loadConfig(p)).toThrow(/idleTimeoutSec must be a positive number/);
+    fs.writeFileSync(p, JSON.stringify({ ...base, runtime: { kind: 'demo', sessionIdleSec: 0 } }));
+    expect(() => loadConfig(p)).toThrow(/sessionIdleSec must be a positive number/);
+    fs.writeFileSync(p, JSON.stringify({ ...base, runtime: { kind: 'demo', sessionHardCapSec: -1 } }));
+    expect(() => loadConfig(p)).toThrow(/sessionHardCapSec must be a positive number/);
     fs.writeFileSync(p, JSON.stringify({ ...base, runtime: { kind: 'demo', timeoutSec: -1 } }));
     expect(() => loadConfig(p)).toThrow(/timeoutSec must be a positive number/);
     fs.rmSync(dir, { recursive: true, force: true });

@@ -1,8 +1,11 @@
-// Runtime exec: spawn a coding-agent CLI headlessly per conversation turn.
+// Runtime exec: spawn a coding-agent CLI headlessly.
 //
-// Claude runtime (primary): `claude -p --output-format stream-json --verbose`
-// with `--session-id <uuid>` on the first turn and `--resume <uuid>` after.
-// Tool calls stream by as stream-json events → surfaced as thinking steps.
+// Claude runtime (primary) runs as a *persistent* process per conversation —
+// see session.ts, which owns the lifecycle; this module supplies the pieces
+// both paths share: the argv builder, the stream-json parser, and process-group
+// bookkeeping. `runRuntime` below is the one-shot path, still used by the codex
+// and demo runtimes and by voice calls (whose lifetime is the call, not the
+// conversation).
 // Codex runtime: baseline "prompt in, stdout out" contract, no session resume
 // or thinking steps yet. The system prompt is folded into each invocation.
 import { spawn } from 'node:child_process';
@@ -94,7 +97,32 @@ interface StreamEvent {
   subtype?: string;
   result?: string;
   is_error?: boolean;
-  message?: { content?: Array<{ type?: string; name?: string; input?: unknown; text?: string }> };
+  message?: {
+    content?: Array<{ type?: string; id?: string; name?: string; input?: unknown; text?: string }>;
+  };
+  /** system/background_tasks_changed: the complete set of tasks running right now. */
+  tasks?: Array<{ task_id?: string; description?: string }>;
+  /** system/task_started, system/task_notification. */
+  task_id?: string;
+  description?: string;
+  tool_use_id?: string;
+  is_backgrounded?: boolean;
+  status?: string;
+  summary?: string;
+}
+
+/**
+ * Turn-scoped signals a persistent session needs and a one-shot run doesn't:
+ * where one turn ends and the next begins, and whether the agent still has
+ * background work running (which is what holds the idle reaper off).
+ */
+export interface StreamHooks {
+  /** A turn began — `system`/`init`, which the CLI re-emits for every turn. */
+  onTurnStart?(): void;
+  /** The turn's terminal `result` event; the parser's per-turn fields are set. */
+  onResult?(): void;
+  /** The count of open background tasks changed. */
+  onPendingChange?(pending: number): void;
 }
 
 /**
@@ -127,10 +155,33 @@ export class StreamJsonParser {
    * (#162). A block identical to the one before it is swallowed: relaying the
    * same sentence twice reads as a glitch, never as progress.
    */
+  /**
+   * Background work the agent started and has not finished — the reason a
+   * session with no turn in flight is still not idle. Keyed by
+   * `tool:<tool_use_id>` until the CLI gives the task an id of its own, then by
+   * `task:<task_id>`; the value is a human description for the logs.
+   */
+  readonly pending = new Map<string, string>();
+
   constructor(
     private readonly onToolStep: (step: string) => void,
     private readonly onText: (text: string) => void = () => {},
+    private readonly hooks: StreamHooks = {},
   ) {}
+
+  /**
+   * Forget the last turn so the next one is judged on its own events. Only the
+   * per-turn verdict is cleared: `sawEvent` (the session exists, so a respawn
+   * can `--resume`) and `pending` (background work outlives the turn that
+   * started it) are properties of the session, not of any one turn.
+   */
+  resetTurn(): void {
+    this.finalText = '';
+    this.isError = false;
+    this.sawResult = false;
+    this.errorSubtype = '';
+    this.lastText = '';
+  }
 
   feed(chunk: string): void {
     this.buf += chunk;
@@ -151,9 +202,13 @@ export class StreamJsonParser {
       return; // non-JSON noise
     }
     if (typeof ev.type === 'string') this.sawEvent = true;
+    if (ev.type === 'system') return this.handleSystem(ev);
     if (ev.type === 'assistant') {
       for (const block of ev.message?.content ?? []) {
-        if (block.type === 'tool_use' && block.name) this.onToolStep(formatToolStep(block.name, block.input));
+        if (block.type === 'tool_use' && block.name) {
+          this.openIfBackgrounded(block.id, block.name, block.input);
+          this.onToolStep(formatToolStep(block.name, block.input));
+        }
         else if (block.type === 'text' && block.text?.trim()) {
           const text = block.text.trim();
           if (text !== this.lastText) this.onText(text);
@@ -166,12 +221,82 @@ export class StreamJsonParser {
       this.isError = ev.is_error === true || (ev.subtype !== undefined && ev.subtype !== 'success');
       this.errorSubtype = this.isError ? (ev.subtype ?? '') : '';
       this.finalText = ev.result ?? '';
+      this.hooks.onResult?.();
     }
+  }
+
+  /**
+   * `system` events carry the session's out-of-band state: `init` opens every
+   * turn (including the ones the SDK starts by itself when a background task
+   * finishes), and the task events say what is still running.
+   *
+   * `background_tasks_changed` is a full snapshot and therefore authoritative —
+   * it is what stops a task that never really started from pinning a session
+   * open forever. The narrower events keep the count honest in between.
+   */
+  private handleSystem(ev: StreamEvent): void {
+    const before = this.pending.size;
+    switch (ev.subtype) {
+      case 'init':
+        this.hooks.onTurnStart?.();
+        return;
+      case 'background_tasks_changed': {
+        for (const key of [...this.pending.keys()]) if (key.startsWith('task:')) this.pending.delete(key);
+        for (const t of ev.tasks ?? []) if (t.task_id) this.pending.set(`task:${t.task_id}`, t.description ?? t.task_id);
+        // Nothing is running, so no tool_use can still be waiting to start.
+        if ((ev.tasks ?? []).length === 0) this.pending.clear();
+        break;
+      }
+      case 'task_started': {
+        if (ev.tool_use_id) this.pending.delete(`tool:${ev.tool_use_id}`);
+        if (ev.is_backgrounded && ev.task_id) this.pending.set(`task:${ev.task_id}`, ev.description ?? ev.task_id);
+        break;
+      }
+      case 'task_notification': {
+        // Anything but "running" is terminal — completed, failed, killed.
+        if (ev.status === 'running') break;
+        if (ev.task_id) this.pending.delete(`task:${ev.task_id}`);
+        if (ev.tool_use_id) this.pending.delete(`tool:${ev.tool_use_id}`);
+        break;
+      }
+      default:
+        return;
+    }
+    if (this.pending.size !== before) this.hooks.onPendingChange?.(this.pending.size);
+  }
+
+  /**
+   * A `run_in_background` tool call opens a pending entry straight away, keyed
+   * by the tool_use id: the task's own id only arrives with `task_started`, and
+   * between those two events the reaper must already know work is starting.
+   */
+  private openIfBackgrounded(id: string | undefined, name: string, input: unknown): void {
+    const i = (input ?? {}) as Record<string, unknown>;
+    if (i.run_in_background !== true || !id) return;
+    this.pending.set(`tool:${id}`, formatToolStep(name, input));
+    this.hooks.onPendingChange?.(this.pending.size);
   }
 }
 
-export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
+/** Just the fields the argv depends on — `RunOpts` satisfies it structurally. */
+export interface ClaudeArgsOpts {
+  sessionId: string;
+  resume: boolean;
+  prompt: string;
+  systemPrompt: string;
+  mcpConfigPath?: string | undefined;
+  stdinPrompt?: boolean | undefined;
+  /**
+   * Persistent session: turns arrive as stream-json user messages on stdin, so
+   * there is no prompt on the command line at all and the process outlives the
+   * turn (see session.ts).
+   */
+  streamInput?: boolean | undefined;
+}
+
+export function buildClaudeArgs(cfg: RuntimeConfig, opts: ClaudeArgsOpts): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+  if (opts.streamInput) args.push('--input-format', 'stream-json');
   args.push(opts.resume ? '--resume' : '--session-id', opts.sessionId);
   args.push('--append-system-prompt', opts.systemPrompt);
   args.push('--max-turns', String(cfg.maxTurns));
@@ -190,7 +315,7 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   }
   if (allowed.length) args.push(`--allowedTools=${allowed.join(',')}`);
   args.push(...cfg.extraArgs);
-  if (!opts.stdinPrompt) args.push(opts.prompt);
+  if (!opts.stdinPrompt && !opts.streamInput) args.push(opts.prompt);
   return args;
 }
 
@@ -216,7 +341,7 @@ const liveGroups = new Set<number>();
  * unsupervised. SIGTERM first so the CLI can flush its session transcript —
  * that transcript is what makes the next turn resumable.
  */
-function killGroup(pid: number, graceMs: number): void {
+export function killGroup(pid: number, graceMs: number): void {
   const send = (sig: NodeJS.Signals): void => {
     try {
       process.kill(-pid, sig);
@@ -233,9 +358,19 @@ function killGroup(pid: number, graceMs: number): void {
   t.unref();
 }
 
+/** Persistent sessions join the same registry, so shutdown reaches them too. */
+export function registerGroup(pid: number): void {
+  liveGroups.add(pid);
+}
+
+export function unregisterGroup(pid: number): void {
+  liveGroups.delete(pid);
+}
+
 /**
  * Shutdown hook: runtimes are spawned detached (own process group), so they no
  * longer die with the bridge on Ctrl-C — the daemon has to end them itself.
+ * Covers persistent sessions as well as one-shot runs (AC 6 of #519).
  */
 export function killAllRuntimes(): void {
   for (const pid of liveGroups) killGroup(pid, 0);

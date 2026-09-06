@@ -73,6 +73,19 @@ export interface RuntimeConfig {
   timeoutSec: number;
   /** Kill a run after this many seconds with no output of any kind. */
   idleTimeoutSec: number;
+  /**
+   * Persistent sessions (#519): end a conversation's CLI process after this
+   * many seconds with no turn running *and* no background task open. The next
+   * message respawns it with `--resume`, so reaping costs context nothing —
+   * only the background work it was holding, which is why a pending task holds
+   * the reaper off (up to sessionHardCapSec).
+   */
+  sessionIdleSec: number;
+  /**
+   * …and the ceiling on that reprieve, counted from the end of the last turn:
+   * a background task that never finishes cannot pin a session open forever.
+   */
+  sessionHardCapSec: number;
   /** MCP rich mode: expose the flow MCP server to the runtime (claude only). */
   mcp: boolean;
   /** Extra text appended to the Flow system prompt. */
@@ -186,12 +199,17 @@ export function loadConfig(configPath: string): BridgeConfig {
     // an absolute runaway backstop, set far above any healthy turn.
     idleTimeoutSec: r.idleTimeoutSec ?? 120,
     timeoutSec: r.timeoutSec ?? 3600,
+    // Ten minutes of true quiet is plenty: a resumed session is indistinguishable
+    // from one that never stopped, so the only cost of reaping early is losing
+    // background work — and that is exactly what the pending check prevents.
+    sessionIdleSec: r.sessionIdleSec ?? 600,
+    sessionHardCapSec: r.sessionHardCapSec ?? 3600,
     mcp: r.mcp ?? (kind === 'claude'),
     systemPromptExtra: r.systemPromptExtra,
   };
 
   // Zero or negative would expire every run the instant it starts.
-  for (const k of ['timeoutSec', 'idleTimeoutSec'] as const) {
+  for (const k of ['timeoutSec', 'idleTimeoutSec', 'sessionIdleSec', 'sessionHardCapSec'] as const) {
     if (!(runtime[k] > 0)) throw new Error(`config: runtime.${k} must be a positive number`);
   }
 

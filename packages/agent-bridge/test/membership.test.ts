@@ -26,6 +26,8 @@ function config(): BridgeConfig {
       maxTurns: 10,
       timeoutSec: 30,
       idleTimeoutSec: 10,
+      sessionIdleSec: 600,
+      sessionHardCapSec: 3600,
       mcp: false,
     },
     eventScope: 'mentions',

@@ -2,8 +2,11 @@
 // headlessly per conversation, post the reply back (AGENTS_DESIGN.md).
 //
 // One CLI session per conversation: (channelId, threadRootId) → session uuid,
-// `--session-id` on the first turn, `--resume` after. Conversations run
-// concurrently (cap N), messages within one conversation run serially.
+// `--session-id` on the first spawn, `--resume` after. That session is a
+// *persistent* process (session.ts) rather than one process per turn, so
+// background work the agent starts survives the turn that started it (#519).
+// Conversations run concurrently (cap N), messages within one conversation run
+// serially.
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -27,6 +30,7 @@ import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
 import { ProgressReporter } from './progress.js';
 import { killAllRuntimes, runRuntime, type RunResult } from './runtime.js';
+import { SessionManager, type SessionOpts } from './session.js';
 import { EXIT_RESTART, EXIT_UPDATE } from './supervisor.js';
 import { currentVersion, isOutdated, latestPublishedVersion } from './version.js';
 import { HuddleVoiceManager } from './huddle-voice.js';
@@ -103,6 +107,12 @@ interface LiveRun {
   progress: ProgressReporter;
   /** Who pressed stop — named in the reply. Null until someone does. */
   stoppedBy: string | null;
+  /**
+   * No Flow message asked for this turn: the SDK re-invoked the agent when a
+   * background task finished. It has no waiting `runTurn` promise, so stopping
+   * it goes straight to the session.
+   */
+  ambient: boolean;
 }
 
 interface Conversation {
@@ -111,6 +121,16 @@ interface Conversation {
   started: boolean;
   queue: MessageDTO[];
   running: boolean;
+  /** Where this conversation posts — fixed, since convKey is channel+thread. */
+  channelId: string;
+  replyRoot: string | undefined;
+  /**
+   * The most recent message we answered here. A session process is spawned
+   * once and respawned later, so the spawn-time context (MCP env, system
+   * prompt) is built from the newest message rather than the one that happened
+   * to open the conversation.
+   */
+  lastMsg: MessageDTO;
 }
 
 class Semaphore {
@@ -151,6 +171,8 @@ export class AgentBridge {
   private threadParticipation = new Map<string, boolean>();
   /** convKey → the turn currently running there, for `/stop` and 🛑. */
   private liveRuns = new Map<string, LiveRun>();
+  /** convKey → the conversation's persistent CLI process (claude runtime). */
+  private readonly sessions: SessionManager;
   private readonly sem: Semaphore;
   private refreshTimer: NodeJS.Timeout | null = null;
   private ipcServer: http.Server | null = null;
@@ -162,6 +184,12 @@ export class AgentBridge {
   constructor(private readonly cfg: BridgeConfig) {
     this.api = new FlowApi(cfg.serverUrl, cfg.agentToken);
     this.sem = new Semaphore(cfg.concurrency);
+    this.sessions = new SessionManager({
+      cfg: cfg.runtime,
+      idleMs: cfg.runtime.sessionIdleSec * 1000,
+      hardCapMs: cfg.runtime.sessionHardCapSec * 1000,
+      log: (m) => this.log(m),
+    });
     if (cfg.logFile) {
       try {
         // One-shot rotation at 5 MB so the file can't grow unbounded.
@@ -413,6 +441,9 @@ export class AgentBridge {
     this.taskSock = null;
     // Runtimes run detached (own process group) so expiry can kill their whole
     // subprocess tree — the flip side is they outlive us unless we end them.
+    // Persistent sessions outlive a turn by design, so they need saying twice:
+    // killAll() ends the map, killAllRuntimes() the process groups.
+    this.sessions.killAll();
     killAllRuntimes();
     await this.huddleVoice?.stop();
     this.huddleVoice = null;
@@ -537,6 +568,9 @@ export class AgentBridge {
     run.stoppedBy = byUserId;
     this.log(`interrupting the run in ${key}${byUserId ? ` (asked by ${this.senderLabel(byUserId)})` : ''}`);
     run.controller.abort();
+    // A follow-up turn has no runTurn promise listening to that signal — ask
+    // the session itself. Either way the session survives the interrupt.
+    if (run.ambient) this.sessions.get(key)?.interrupt();
   }
 
   /**
@@ -763,7 +797,9 @@ export class AgentBridge {
   }
 
   private async handleReset(msg: MessageDTO): Promise<void> {
-    this.conversations.delete(this.convKey(msg));
+    const key = this.convKey(msg);
+    this.conversations.delete(key);
+    this.sessions.dispose(key, 'context reset');
     await this.api
       .sendMessage(msg.channelId, '🤖 context reset — the next message starts a fresh session.', this.replyRoot(msg))
       .catch((err: Error) => this.log(`reset reply failed: ${err.message}`));
@@ -773,7 +809,15 @@ export class AgentBridge {
     const key = this.convKey(msg);
     let conv = this.conversations.get(key);
     if (!conv) {
-      conv = { sessionId: randomUUID(), started: false, queue: [], running: false };
+      conv = {
+        sessionId: randomUUID(),
+        started: false,
+        queue: [],
+        running: false,
+        channelId: msg.channelId,
+        replyRoot: this.replyRoot(msg),
+        lastMsg: msg,
+      };
       this.conversations.set(key, conv);
     }
     conv.queue.push(msg);
@@ -818,17 +862,26 @@ export class AgentBridge {
       (m) => this.log(m),
     );
     progress.start();
-    const mcpConfigPath = this.cfg.runtime.mcp ? this.writeMcpConfig(msg, replyRoot) : undefined;
+    conv.lastMsg = msg;
+    // The persistent session owns its own MCP config for as long as its process
+    // lives; only the one-shot path writes (and deletes) one per turn.
+    const persistent = this.cfg.runtime.kind === 'claude';
+    const mcpConfigPath =
+      !persistent && this.cfg.runtime.mcp ? this.writeMcpConfig(msg, replyRoot) : undefined;
     // Registered before the runtime starts, so a stop that arrives in the gap
-    // still lands: runRuntime checks the signal before it spawns anything.
-    const live: LiveRun = { controller: new AbortController(), progress, stoppedBy: null };
+    // still lands: both paths check the signal before they send anything.
+    const live: LiveRun = { controller: new AbortController(), progress, stoppedBy: null, ambient: false };
     this.liveRuns.set(key, live);
     try {
       const prompt = await this.buildPrompt(conv, msg);
-      const run = (resume: boolean) =>
-        runRuntime(this.cfg.runtime, {
+      let result: RunResult;
+      if (persistent) {
+        const session = this.sessions.session(key, () => this.sessionOpts(conv, key));
+        result = await session.runTurn(prompt, live.controller.signal);
+      } else {
+        result = await runRuntime(this.cfg.runtime, {
           sessionId: conv.sessionId,
-          resume,
+          resume: conv.started,
           prompt,
           systemPrompt: this.buildSystemPrompt(msg, mcpConfigPath !== undefined),
           mcpConfigPath,
@@ -837,14 +890,6 @@ export class AgentBridge {
           onText: (text) => progress.onText(text),
           log: (m) => this.log(m),
         });
-      let result = await run(conv.started);
-      // Session-id collision (a prior turn died after the CLI created the
-      // session, e.g. hitting --max-turns): the session exists — flip to
-      // --resume and transparently retry this same message, no error posted.
-      if (!result.ok && !conv.started && result.error?.includes('already in use')) {
-        this.log('session collision — retrying this message with --resume');
-        conv.started = true;
-        result = await run(true);
       }
       // The reply we're about to post is (for claude) the last text block we
       // already relayed — hand it over so the narration doesn't end on it.
@@ -874,7 +919,12 @@ export class AgentBridge {
         // resumable with all its context; anything else retries on a fresh id.
         if (!conv.started) {
           if (result.sawSession) conv.started = true;
-          else conv.sessionId = randomUUID();
+          else {
+            conv.sessionId = randomUUID();
+            // The session object still names the old id — retire it so the next
+            // message spawns under the new one.
+            this.sessions.dispose(key, 'retrying on a fresh session id');
+          }
         }
         await this.api.sendMessage(msg.channelId, failureReply(result), replyRoot).catch(() => {});
       }
@@ -882,6 +932,87 @@ export class AgentBridge {
       if (this.liveRuns.get(key) === live) this.liveRuns.delete(key);
       await progress.finish().catch(() => {});
       if (mcpConfigPath) fs.rmSync(mcpConfigPath, { force: true });
+    }
+  }
+
+  /**
+   * How a conversation's session process is built, and what it does with the
+   * events that arrive when no message is waiting on them.
+   *
+   * `makeSpawn` runs on every spawn — the first one and every respawn after a
+   * reap or a crash — so a session that comes back gets current context rather
+   * than whatever was true when the conversation opened.
+   */
+  private sessionOpts(conv: Conversation, key: string): SessionOpts {
+    return {
+      cfg: this.cfg.runtime,
+      sessionId: conv.sessionId,
+      resume: conv.started,
+      makeSpawn: () => {
+        const mcpConfigPath = this.cfg.runtime.mcp
+          ? this.writeMcpConfig(conv.lastMsg, conv.replyRoot)
+          : undefined;
+        return {
+          systemPrompt: this.buildSystemPrompt(conv.lastMsg, mcpConfigPath !== undefined),
+          mcpConfigPath,
+          cleanup: mcpConfigPath ? () => fs.rmSync(mcpConfigPath, { force: true }) : undefined,
+        };
+      },
+      hooks: {
+        // Whichever turn is live owns the narration — the one a message asked
+        // for, or the follow-up the SDK started by itself.
+        onToolStep: (step) => this.liveRuns.get(key)?.progress.onStep(step),
+        onText: (text) => this.liveRuns.get(key)?.progress.onText(text),
+        onAmbientStart: () => this.startAmbientTurn(key, conv),
+        onAmbientEnd: (result) => void this.finishAmbientTurn(key, conv, result),
+        log: (m) => this.log(m),
+      },
+    };
+  }
+
+  /**
+   * A background task finished and the SDK re-invoked the agent. Nobody is
+   * waiting on this turn, so give it its own progress row — which also makes it
+   * interruptible like any other.
+   */
+  private startAmbientTurn(key: string, conv: Conversation): void {
+    if (this.liveRuns.has(key)) return; // a solicited turn is already narrating
+    const progress = new ProgressReporter(
+      this.api,
+      this.socket,
+      this.cfg.progress,
+      this.cfg.relayText,
+      conv.channelId,
+      conv.replyRoot,
+      (m) => this.log(m),
+    );
+    progress.start();
+    this.liveRuns.set(key, { controller: new AbortController(), progress, stoppedBy: null, ambient: true });
+  }
+
+  /** …and its reply is posted like any other, with no message to reply to. */
+  private async finishAmbientTurn(key: string, conv: Conversation, result: RunResult): Promise<void> {
+    const live = this.liveRuns.get(key);
+    if (!live?.ambient) return;
+    this.liveRuns.delete(key);
+    try {
+      await live.progress.finish(result.text);
+      const text = result.text.trim();
+      if (result.interrupted) {
+        await this.api
+          .sendMessage(conv.channelId, interruptReply(result, live.stoppedBy), conv.replyRoot)
+          .catch(() => {});
+      } else if (!result.ok) {
+        this.log(`follow-up turn failed: ${result.error ?? 'unknown'}`);
+        await this.api.sendMessage(conv.channelId, failureReply(result), conv.replyRoot).catch(() => {});
+      } else if (text.length > 0) {
+        await this.api.sendMessage(conv.channelId, text, conv.replyRoot).catch((err: Error) =>
+          this.log(`follow-up reply failed: ${err.message}`),
+        );
+      }
+      if (conv.replyRoot) this.threadParticipation.set(conv.replyRoot, true);
+    } finally {
+      await live.progress.finish().catch(() => {});
     }
   }
 

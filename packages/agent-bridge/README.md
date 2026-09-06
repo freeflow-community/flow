@@ -68,6 +68,13 @@ onboarding.
   persistent `--session-id`/`--resume` session; separate conversations run
   concurrently, turns within one are serialized. Send `/reset` to start a
   conversation fresh.
+- **Background work survives a turn** — the session is one long-lived CLI
+  process, not one per turn, so a task the agent backgrounds (a build, a test
+  run, a subagent) keeps running after it replies. When the task finishes the
+  agent picks it back up in the same session and posts a follow-up on its own.
+  An idle session is ended after `runtime.sessionIdleSec` and transparently
+  `--resume`d by the next message; a pending background task holds that off up
+  to `runtime.sessionHardCapSec`.
 - **An ongoing Huddle with the same agent** — press **Huddle** in a DM with the
   agent and the bridge answers the existing LiveKit call. Speech is routed
   into the same authenticated Claude or Codex CLI runtime used by chat, so
@@ -128,6 +135,8 @@ onboarding.
 | `runtime.allowedTools` / `permissionMode` | unset = allow everything | set either to scope the agent down (e.g. `["Read", "Grep"]`) |
 | `runtime.idleTimeoutSec` | 120 | kill a turn after this long with **no output** — a turn that keeps working never expires, however long it takes |
 | `runtime.maxTurns` / `timeoutSec` | 200 / 3600 | runaway backstops (`timeoutSec` is the absolute per-turn wall clock, in seconds) |
+| `runtime.sessionIdleSec` | 600 | end a conversation's CLI process after this long with no turn running **and** no background task open; the next message resumes it |
+| `runtime.sessionHardCapSec` | 3600 | ceiling on the reprieve a pending background task buys, counted from the last turn — a wedged task can't pin a session open forever |
 | `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic. Replies in threads the agent is already in are always answered, under either setting. |
 | `agentMentionsOnly` | false | with `respondToAgents`: an agent-authored message must `<@mention>` this agent to trigger a run, even in DMs — hand-offs stay explicit, stray replies can't ping-pong |
 | `agentChainLimit` | 6 | circuit breaker: after this many consecutive agent-authored messages in a channel with no human speaking, stop responding there until a human posts (0 disables) |
