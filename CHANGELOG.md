@@ -13,6 +13,12 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Sending a message never re-pins the scroll on web** (#494, which scoped
+  itself to the native clients). Both native clients follow *my own* send back
+  to the end however far up I was reading; web's `MessageList` pins on
+  proximity to the bottom only, so a back-scrolled sender — in a channel or in
+  the thread panel over the same component — watches their own message land off
+  screen. Closing it is one own-message check where `pinnedRef` is set.
 - **Ongoing agent calls are iOS-only.** One-to-one agent DMs on iPhone can
   listen, send each pause as a normal message, speak the answer and minimize
   into a persistent call bar. Web and macOS keep text agent conversations.
