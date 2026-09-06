@@ -9,6 +9,7 @@ import ChannelMembersPopover, { type MemberRow } from './ChannelMembersPopover';
 import ChannelOverflowMenu from './ChannelOverflowMenu';
 import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
+import FindBar, { useChatFind } from './FindBar';
 import { MobileMenuButton } from './MobileMenuButton';
 import { useHoverTooltip } from './HoverTooltip';
 import { ChannelOptionsModal, Modal, UserCard } from './modals';
@@ -35,6 +36,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const [pinsOpen, setPinsOpen] = useState(false);
   // Reconnect bar (#234) — delayed and floored so short drops don't flash.
   const showSyncBar = useSyncBar(live.syncing);
+  // cmd-F find bar (#518) — searches the transcript this pane has loaded.
+  const paneRef = useRef<HTMLElement>(null);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
   // This channel's artifacts, for the "⋯" menu's Artifacts section (#188).
@@ -44,6 +47,9 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     [artifacts.data, channelId],
   );
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
+  // The find bar re-runs whenever the loaded set changes — a new message, or an
+  // older page arriving — so the counter never describes a stale transcript.
+  const find = useChatFind(paneRef, `${channelId}:${messages.length}:${messages.at(-1)?.id ?? ''}`);
 
   // Mark read whenever the newest visible message changes — but only while
   // the tab is actually visible. The WS keeps filling the cache in a hidden
@@ -141,7 +147,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   // `bg-base` — messages read cleaner, and it is what the macOS client paints
   // now too. Every other surface keeps `bg-base`.
   return (
-    <section className="flex min-w-0 flex-1 flex-col bg-white">
+    <section ref={paneRef} className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
         <MobileMenuButton />
         <div className="min-w-0 flex-1">
@@ -263,6 +269,10 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           )}
         </div>
       </header>
+
+      {/* #518: the find bar slides in under the header, above the transcript —
+          it pushes the list down rather than floating over the newest message. */}
+      {find.open && <FindBar find={find} />}
 
       {showSyncBar && (
         <div

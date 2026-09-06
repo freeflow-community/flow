@@ -24,6 +24,12 @@ struct ChannelView: View {
     @State private var loadedMembers: LoadedMembers?
     @State private var showMembers = false
     @State private var showPins = false
+    /// Inline find (#518). A `StateObject` rather than plain `@State` so the
+    /// Edit ▸ Find menu item can reach it through `focusedSceneValue`.
+    @StateObject private var find = ChatFindModel()
+    /// Rendered-body match texts, cached per message so a keystroke re-matches
+    /// strings instead of re-parsing every body's markdown.
+    @State private var findIndex = ChatSearchIndex()
     /// How many of the newest cached messages the transcript shows. A hot
     /// channel accumulates thousands of rows in SQLite, and rendering them
     /// all is both slow and — worse — pushes the list onto the LazyVStack
@@ -110,10 +116,40 @@ struct ChannelView: View {
         return msgs.count > transcriptWindow ? Array(msgs.dropFirst()) : msgs
     }
 
+    /// Every match in the loaded transcript, top to bottom — the list the find
+    /// bar's cursor indexes into. Nothing here reads the network or the
+    /// database: what is on screen is what is searchable (#518).
+    private var findMatches: [ChatSearch.Match] {
+        guard find.isOpen, !find.query.isEmpty else { return [] }
+        return findIndex.matches(in: transcript, names: userNames, query: find.query)
+    }
+
+    /// The current match, if there is one — the row to scroll to, and the
+    /// occurrence inside it to paint in the stronger colour.
+    private var findCursor: ChatSearch.Match? {
+        let matches = findMatches
+        guard find.index >= 0, find.index < matches.count else { return nil }
+        return matches[find.index]
+    }
+
+    /// Move the cursor and let `MessageListView` do the scrolling. Enter with
+    /// nothing found leaves everything alone, deliberately.
+    private func stepFind(_ direction: Int) {
+        find.index = ChatSearch.step(
+            current: find.index, total: findMatches.count, direction: direction
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            // #518: the find bar sits under the header and above the
+            // transcript, pushing the list down rather than floating over the
+            // newest message.
+            if find.isOpen {
+                FindBarView(find: find, total: findMatches.count, onStep: stepFind)
+            }
             SyncBar(syncing: app.isSyncing)
 
             MessageListView(
@@ -159,7 +195,9 @@ struct ChannelView: View {
                 // Jump-to-message (phase 12): the main list owns the target
                 // unless it's a thread reply (ThreadPanelView handles those).
                 focusMessageId: win.openThreadRootId == nil ? win.focusMessageId : nil,
-                onFocused: { win.focusMessageId = nil }
+                onFocused: { win.focusMessageId = nil },
+                searchQuery: find.isOpen ? find.query : "",
+                searchCursor: findCursor
             )
 
             TypingIndicatorView(channelId: channelId, userNames: userNames)
@@ -179,7 +217,15 @@ struct ChannelView: View {
                 )
             }
         }
+        // Lets Edit > Find in Conversation reach this window's bar.
+        .focusedSceneValue(\.chatFind, find)
+        // A new query starts at the first match; the cursor only moves on
+        // purpose after that (Enter, the arrows).
+        .onChange(of: find.query) { _, _ in find.index = findMatches.isEmpty ? -1 : 0 }
         .task(id: channelId) {
+            // Switching channels leaves no stale query searching a transcript
+            // it was never typed against.
+            find.close()
             window = LoadedWindow(channelId: channelId, count: Self.windowStep)
             channel.start(db: app.db, key: channelId, reset: nil, Self.channelQuery(channelId))
             startMessages()

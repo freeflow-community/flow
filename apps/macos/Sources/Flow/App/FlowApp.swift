@@ -43,6 +43,13 @@ struct FlowApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesCommand(updater: updater)
             }
+            // Find lives at the foot of the Edit menu, where every Mac app
+            // keeps it — and owning the ⌘F key equivalent there is what stops
+            // AppKit offering its own find bar on the composer (#518).
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                ChatFindCommands()
+            }
             // `.sidebar` anchors the top of the View menu — where Mac apps
             // keep zoom.
             CommandGroup(after: .sidebar) {

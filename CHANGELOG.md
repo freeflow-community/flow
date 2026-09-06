@@ -302,6 +302,12 @@ This file keeps two things:
   separately — both already open a thread from an *Activity* row.
 
 ### Deliberate divergences (ruled)
+- **Inline chat find (cmd-F) is web + macOS only** (#518, as specified). Both
+  clients open a find bar over the loaded transcript; iOS was scoped out because
+  there is no hardware find shortcut to hang it on. Nothing about the search is
+  desktop-specific — `Support/ChatSearch.swift` already compiles into the iOS
+  target — so closing it later is a bar and a way to summon it, not a new
+  engine.
 - **Side-panel keep-alive is web + macOS only** (#513). Both keep a link
   artifact's frame mounted while another tab shows; iOS has nothing to keep —
   its artifact viewer is a full-screen sheet, so dismissing it *is* closing the

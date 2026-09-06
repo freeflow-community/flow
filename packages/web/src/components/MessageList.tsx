@@ -510,11 +510,19 @@ function MessageRow({
               </div>
             )}
             {message.body.trim() && (
-              <div className="text-sm leading-normal break-words whitespace-pre-wrap">
+              // data-search-body marks what the cmd-F find bar searches (#518):
+              // the rendered body only, so a query never matches chrome. The
+              // "(edited)" marker sits inside it, hence the skip flag.
+              <div
+                data-search-body=""
+                className="text-sm leading-normal break-words whitespace-pre-wrap"
+              >
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
                   {renderBlocks(message.body, names, auth.user.id)}
                 </InlineLinkContext.Provider>
-                {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
+                {message.editedAt && (
+                  <span data-search-skip="" className="ml-1 text-xs text-faint">(edited)</span>
+                )}
               </div>
             )}
             {thinking && (

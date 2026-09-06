@@ -44,6 +44,12 @@ struct MessageListView: View {
     /// it's in the list, then call onFocused. Nil in the normal case.
     var focusMessageId: String? = nil
     var onFocused: () -> Void = {}
+    /// Inline find (#518): the live query, empty when the bar is closed. Rows
+    /// paint every occurrence of it in their own body.
+    var searchQuery: String = ""
+    /// The one match the find bar's cursor is on — painted stronger, and
+    /// scrolled into view when it moves.
+    var searchCursor: ChatSearch.Match? = nil
 
     /// Precomputed rows (grouping, day dividers, parsed markdown) rebuilt only
     /// when the message array actually changes — never per render pass. A
@@ -176,6 +182,11 @@ struct MessageListView: View {
                                     showThreadAffordances: showThreadAffordances,
                                     threadUnread: unreadThreadRootIds.contains(row.message.id),
                                     highlighted: row.message.id == flashId,
+                                    search: searchQuery.isEmpty ? nil : ChatSearch.RowHighlight(
+                                        query: searchQuery,
+                                        currentOccurrence: searchCursor?.messageId == row.message.id
+                                            ? searchCursor?.occurrence : nil
+                                    ),
                                     onOpenThread: onOpenThread,
                                     onEdit: onEdit,
                                     onDelete: onDelete,
@@ -379,6 +390,22 @@ struct MessageListView: View {
             }
             // A jump target may arrive only after older history pages in.
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
+            // The find cursor owns the scroll position exactly like a jump
+            // target does, for as long as it exists (#518).
+            .onChange(of: searchCursor) { _, new in
+                guard let new else {
+                    // Bar closed (or query cleared): hand the position back to
+                    // the follow model without moving anything.
+                    if searchQuery.isEmpty { followBox.model.focusActive = false }
+                    return
+                }
+                guard let key = messages.rowKey(forMessageId: new.messageId) else { return }
+                followBox.model.focusEngaged()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(key, anchor: .center)
+                }
+                appliedKey = scrollKey
+            }
             .onAppear {
                 followBox.model.focusActive = focusMessageId != nil
                 tryFocus(proxy)
@@ -612,6 +639,9 @@ struct MessageRow: View, @preconcurrency Equatable {
     var threadUnread: Bool = false
     /// Flashing after a jump-to-message (phase 12).
     var highlighted: Bool = false
+    /// Inline find (#518): the query to paint, and — when the find bar's
+    /// cursor is inside this row — which of its occurrences is the current one.
+    var search: ChatSearch.RowHighlight? = nil
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
     let onDelete: (Message, Bool) -> Void
@@ -629,6 +659,7 @@ struct MessageRow: View, @preconcurrency Equatable {
             && a.showThreadAffordances == b.showThreadAffordances
             && a.threadUnread == b.threadUnread
             && a.highlighted == b.highlighted
+            && a.search == b.search
             && a.currentUserId == b.currentUserId
             && a.canPermanentlyDelete == b.canPermanentlyDelete
             && a.userNames == b.userNames
@@ -1167,19 +1198,24 @@ struct MessageRow: View, @preconcurrency Equatable {
     /// pills or markdown inside code).
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        Group {
+        // Find matches are numbered per message (#518), so each block needs to
+        // know how many came before it to recognise the current one as its own.
+        let bases = search.map {
+            ChatSearch.segmentBases(segments, names: userNames, query: $0.query)
+        }
+        return Group {
             if segments.count == 1, case .paragraph(let text) = segments[0] {
                 // Fast path: single plain paragraph keeps the original inline
                 // layout (baseline-aligned edited/pending markers).
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    paragraphText(text)
+                    paragraphText(text, base: 0)
                     trailingMarkers
                 }
             } else {
                 HStack(alignment: .bottom, spacing: 4) {
                     VStack(alignment: .leading, spacing: Self.blockSpacing * textZoom) {
-                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                            segmentView(segment)
+                        ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                            segmentView(segment, base: bases?[index] ?? 0)
                         }
                     }
                     trailingMarkers
@@ -1199,10 +1235,10 @@ struct MessageRow: View, @preconcurrency Equatable {
     }
 
     @ViewBuilder
-    private func segmentView(_ segment: MarkdownBlocks.Segment) -> some View {
+    private func segmentView(_ segment: MarkdownBlocks.Segment, base: Int) -> some View {
         switch segment {
         case .paragraph(let text):
-            paragraphText(text)
+            paragraphText(text, base: base)
         case .quote(let text):
             // The accent bar is an overlay, not an HStack sibling (#195). A
             // Shape has no ideal height, so as a sibling it reported an
@@ -1212,7 +1248,7 @@ struct MessageRow: View, @preconcurrency Equatable {
             // text's own size, so the text alone sets the block height and the
             // bar spans exactly the quote. Leading padding = bar width + the
             // old HStack spacing, so the text sits where it always did.
-            paragraphText(text)
+            paragraphText(text, base: base)
                 .foregroundStyle(MC.inkSoft)
                 .padding(.leading, 11)
                 .overlay(alignment: .leading) {
@@ -1222,14 +1258,17 @@ struct MessageRow: View, @preconcurrency Equatable {
                 }
                 .accessibilityIdentifier("msg.quoteBlock")
         case .heading(let level, let text):
-            headingText(level: level, text: text)
+            headingText(level: level, text: text, base: base)
         case .code(let text):
             // Trailing padding is wider than the leading side to leave the copy
             // button (#260) a lane of its own, so it never lands on the code.
             // Bottom rather than top: the row's hover menu is a `.topTrailing`
             // overlay, and a button you reach for by hovering cannot sit under
             // the toolbar that hovering summons.
-            Text(text.isEmpty ? " " : text)
+            // Code is drawn verbatim, so it is searched verbatim — the
+            // AttributedString carries only the find highlight; the font and
+            // colour still come from the modifiers below.
+            Text(highlighted(text.isEmpty ? " " : text, base: base))
                 .flowFont(size: 12, design: .monospaced)
                 .foregroundStyle(MC.ink)
                 .textSelection(.enabled)
@@ -1250,11 +1289,12 @@ struct MessageRow: View, @preconcurrency Equatable {
                 userNames: userNames, currentUserId: currentUserId
             )
         case .ulist(let items):
-            listView(items.map { (marker: "•", text: $0) }, bulleted: true)
+            listView(items.map { (marker: "•", text: $0) }, bulleted: true, base: base)
         case .olist(let start, let items):
             listView(
                 items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) },
-                bulleted: false
+                bulleted: false,
+                base: base
             )
         case .hr:
             Rectangle()
@@ -1279,15 +1319,29 @@ struct MessageRow: View, @preconcurrency Equatable {
     /// and leave bullet lists looser than numbered ones. Bold widens the glyph
     /// to about web's disc without touching the line box. Markers take the text
     /// colour, as web's `currentColor` ones do, instead of the softer ink.
-    private func listView(_ items: [(marker: String, text: String)], bulleted: Bool) -> some View {
-        VStack(alignment: .leading, spacing: Self.listSpacing * textZoom) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+    private func listView(
+        _ items: [(marker: String, text: String)], bulleted: Bool, base: Int
+    ) -> some View {
+        // Each item is its own searchable string, so the running offset walks
+        // the list the same way the eye does (#518).
+        var running = base
+        let itemBases: [Int] = items.map { item in
+            let at = running
+            if let search {
+                running += ChatSearch.ranges(
+                    in: ChatSearch.renderedText(item.text, names: userNames), query: search.query
+                ).count
+            }
+            return at
+        }
+        return VStack(alignment: .leading, spacing: Self.listSpacing * textZoom) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(item.marker)
                         .flowFont(.callout, weight: bulleted ? .bold : nil)
                         .foregroundStyle(MC.ink)
                         .frame(minWidth: 14, alignment: .trailing)
-                    paragraphText(item.text)
+                    paragraphText(item.text, base: itemBases[index])
                 }
             }
         }
@@ -1301,12 +1355,9 @@ struct MessageRow: View, @preconcurrency Equatable {
     /// distinguished by weight — which is what `HEADING_CLASS` does. Sizes go
     /// through `flowFont(size:)` so text zoom (#105) still applies, and the
     /// inline pass runs inside the heading so mentions and `**bold**` work.
-    private func headingText(level: Int, text: String) -> some View {
+    private func headingText(level: Int, text: String, base: Int) -> some View {
         let size: CGFloat = level == 1 ? 17 : (level == 2 ? 15.5 : 13)
-        let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId,
-            scale: textZoom, codeChips: true
-        )
+        let attributed = inlineText(text, base: base)
         return Text(attributed)
             .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
             .foregroundStyle(MC.ink)
@@ -1328,11 +1379,39 @@ struct MessageRow: View, @preconcurrency Equatable {
     static let listSpacing: CGFloat = 6
     static let blockSpacing: CGFloat = 10
 
-    private func paragraphText(_ text: String) -> some View {
-        let attributed = MentionRendering.attributed(
+    /// One inline span, rendered and then find-highlighted (#518). `base` is
+    /// how many of this message's matches came before this span, so the row can
+    /// tell which occurrence — if any — is the find bar's current one.
+    private func inlineText(_ text: String, base: Int) -> AttributedString {
+        var attributed = MentionRendering.attributed(
             text, names: userNames, currentUserId: currentUserId,
             scale: textZoom, codeChips: true
         )
+        if let search {
+            ChatSearch.paint(
+                &attributed,
+                query: search.query,
+                currentOccurrence: search.currentOccurrence.map { $0 - base }
+            )
+        }
+        return attributed
+    }
+
+    /// A verbatim run (a code block) with the find highlight applied.
+    private func highlighted(_ text: String, base: Int) -> AttributedString {
+        var attributed = AttributedString(text)
+        if let search {
+            ChatSearch.paint(
+                &attributed,
+                query: search.query,
+                currentOccurrence: search.currentOccurrence.map { $0 - base }
+            )
+        }
+        return attributed
+    }
+
+    private func paragraphText(_ text: String, base: Int) -> some View {
+        let attributed = inlineText(text, base: base)
         return Text(attributed)
             .flowFont(.callout)
             .lineSpacing(Self.lineSpacing * textZoom)
