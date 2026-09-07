@@ -13,6 +13,12 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **Confetti on a 🎉/🎊 reaction is web-only** (#514, which scoped itself to
+  web). The trigger is client-side and needs no server or DTO change — the
+  reaction event both native clients already receive is all it takes — so
+  closing the gap is a particle overlay per client (SwiftUI `TimelineView` over
+  a `Canvas`, gated on `accessibilityReduceMotion`) fired from the same
+  count-went-up rule as `lib/confetti.ts`.
 - **Sending a message never re-pins the scroll on web** (#494, which scoped
   itself to the native clients). Both native clients follow *my own* send back
   to the end however far up I was reading; web's `MessageList` pins on

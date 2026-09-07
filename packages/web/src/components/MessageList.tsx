@@ -5,6 +5,7 @@ import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
+import { burstConfetti, celebrationsAdded } from '../lib/confetti';
 import { SCHEDULED_VIEW_ID, useAuth, useSelection } from '../state';
 import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
 import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
@@ -410,6 +411,23 @@ function MessageRow({
     (r) => r.emoji === INTERRUPT_EMOJI && r.userIds.includes(auth.user.id),
   );
 
+  // Confetti when a 🎉 lands (#514). This runs after commit, so the reaction
+  // row it fires from is already on screen — and `celebrationsAdded` is what
+  // keeps it to genuine additions rather than every render of history.
+  const reactionRowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const added = celebrationsAdded(message.id, message.reactions);
+    const row = reactionRowRef.current;
+    if (added.length === 0 || !row) return;
+    for (const emoji of added) {
+      // From the pill that just changed, not the middle of the row — the row is
+      // as wide as the message, so its centre is nowhere near the reaction.
+      const pill = row.querySelector(`[data-testid="reaction-${emoji}"]`) ?? row;
+      const rect = pill.getBoundingClientRect();
+      burstConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    }
+  }, [message.id, message.reactions]);
+
   const deleteSelectedMessage = async () => {
     if (!deleteMode || deleting) return;
     setDeleting(true);
@@ -584,7 +602,7 @@ function MessageRow({
               />
             ))}
             {message.reactions.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1">
+              <div ref={reactionRowRef} className="mt-1 flex flex-wrap gap-1">
                 {message.reactions.map((r) => {
                   const mineR = r.userIds.includes(auth.user.id);
                   return (
