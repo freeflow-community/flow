@@ -15,6 +15,9 @@ struct RootView: View {
             }
         }
         .animation(.default, value: app.phase)
+        // Confetti overlay for 🎉 reactions (#524) — same host modifier the
+        // macOS root mounts; the overlay and the rule are shared code.
+        .confettiHost()
         .debugAutoLogin(app)
         // Port of the macOS `RootView` alert. `showError` has always set
         // `errorMessage` on iOS too, but nothing rendered it — every failure on

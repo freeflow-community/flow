@@ -30,6 +30,9 @@ struct RootView: View {
             }
         }
         .environmentObject(win)
+        // Confetti overlay for 🎉 reactions (#524). Per window, so a burst
+        // lands in the window whose pill was reacted to and nowhere else.
+        .confettiHost()
         .debugAutoLogin(app)
         // Banner taps and accepted invites navigate the key window — tell the
         // shared state which one that is.

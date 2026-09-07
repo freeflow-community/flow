@@ -894,6 +894,10 @@ struct MessageRow: View, @preconcurrency Equatable {
         }
         .contentShape(Rectangle())
         .onHover { setHovering($0) }
+        // Confetti when a 🎉 lands (#524). On the whole row, so a message with
+        // no reactions yet is already "seen" by the time the first one arrives
+        // — the count-went-up rule itself lives in `CelebrationMemory`.
+        .celebrationBursts(messageId: message.id, reactions: message.reactions)
         // Hover menu (web parity, ui_nits items 2+3): react / reply-in-thread,
         // plus edit + delete on the author's own messages. The menu must stay
         // mounted while the picker is open: the react button is the popover's
@@ -1517,9 +1521,12 @@ struct MessageRow: View, @preconcurrency Equatable {
                 .help((agg.userIds.compactMap { userNames[$0] }).joined(separator: ", "))
                 .accessibilityIdentifier("msg.reaction.\(agg.emoji)")
                 .accessibilityValue("\(agg.count)\(mine ? " including you" : "")")
+                // Where a 🎉 burst starts (#524) — the pill, not the row.
+                .confettiPill(messageId: message.id, emoji: agg.emoji)
             }
         }
         .padding(.top, 2)
+        .confettiReactionRow(messageId: message.id)
     }
 
     private var avatarPath: String? {

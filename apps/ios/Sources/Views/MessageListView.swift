@@ -745,6 +745,10 @@ struct MessageRow: View, @preconcurrency Equatable {
         .background(highlighted ? MC.unread.opacity(0.16) : Color.clear)
         .animation(.easeOut(duration: 0.6), value: highlighted)
         .opacity(pendingSlow ? 0.55 : 1)
+        // Confetti when a 🎉 lands (#524). On the whole row, so a message with
+        // no reactions yet is already "seen" by the time the first one arrives
+        // — the count-went-up rule itself lives in `CelebrationMemory`.
+        .celebrationBursts(messageId: message.id, reactions: message.reactions)
         // Keyed off createdAt so a row remount mid-wait doesn't restart the
         // clock; the id change on pending -> confirmed resets the state.
         .task(id: message.pending) {
@@ -955,9 +959,12 @@ struct MessageRow: View, @preconcurrency Equatable {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("msg.reaction.\(agg.emoji)")
                 .accessibilityValue("\(agg.count)\(mine ? " including you" : "")")
+                // Where a 🎉 burst starts (#524) — the pill, not the row.
+                .confettiPill(messageId: message.id, emoji: agg.emoji)
             }
         }
         .padding(.top, 2)
+        .confettiReactionRow(messageId: message.id)
     }
 
     // MARK: - Body blocks (shared MarkdownBlocks grammar, macOS-parity styling)
