@@ -99,24 +99,36 @@ function fakeDom({ reducedMotion = false, hasContext = true } = {}) {
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
   vi.stubGlobal('cancelAnimationFrame', () => {});
 
-  /** Drive the loop by hand: `n` frames `stepMs` apart. */
+  /** Drive the loop by hand: `n` frames `stepMs` apart. The clock starts from
+   * the real `performance.now()` the module read when it scheduled the first
+   * frame, and keeps running across calls — restart it and the first frame's
+   * dt comes out negative, which is a fake-clock artefact, not behaviour. */
+  let clock: number | null = null;
   const runFrames = (n: number, stepMs = 50) => {
-    let t = 0;
+    if (clock === null) clock = performance.now();
     for (let i = 0; i < n; i++) {
       const cb = frames.shift();
       if (!cb) return;
-      t += stepMs;
-      cb(t);
+      clock += stepMs;
+      cb(clock);
     }
   };
   return { appended, canvases, ctx, fillRect, runFrames };
 }
 
 describe('burstConfetti', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  // The module keeps one canvas and one animation frame; run every burst out
+  // even if an assertion failed, so a failure can't leak state into the next
+  // test and report a second, invented failure.
+  let dom: ReturnType<typeof fakeDom> | null = null;
+  afterEach(() => {
+    dom?.runFrames(80);
+    dom = null;
+    vi.unstubAllGlobals();
+  });
 
   it('draws particles and cleans the canvas up once the burst is over', () => {
-    const dom = fakeDom();
+    dom = fakeDom();
     burstConfetti(300, 400);
     const overlay = dom.appended[0];
     expect(dom.appended).toHaveLength(1);
@@ -133,24 +145,22 @@ describe('burstConfetti', () => {
   });
 
   it('caps the particle count so a pile-on stays cheap', () => {
-    const dom = fakeDom();
+    dom = fakeDom();
     for (let i = 0; i < 20; i++) burstConfetti(300, 400);
     dom.runFrames(1);
     expect(dom.fillRect.mock.calls.length).toBeLessThanOrEqual(200);
     expect(dom.fillRect.mock.calls.length).toBeGreaterThan(100);
-    // Let it finish so the module's canvas doesn't outlive these globals.
-    dom.runFrames(30);
   });
 
   it('does nothing under prefers-reduced-motion', () => {
-    const dom = fakeDom({ reducedMotion: true });
+    dom = fakeDom({ reducedMotion: true });
     burstConfetti(300, 400);
     expect(dom.canvases).toHaveLength(0);
     expect(dom.appended).toHaveLength(0);
   });
 
   it('does nothing when the browser gives no 2d context', () => {
-    const dom = fakeDom({ hasContext: false });
+    dom = fakeDom({ hasContext: false });
     burstConfetti(300, 400);
     expect(dom.appended).toHaveLength(0);
   });

@@ -132,8 +132,10 @@ function resize(): void {
 function step(now: number): void {
   frame = 0;
   if (!ctx || !canvas) return;
-  // Clamp dt so a backgrounded tab doesn't resume with one enormous jump.
-  const dt = Math.min(now - lastFrameAt, 50) / 1000;
+  // Clamp dt so a backgrounded tab doesn't resume with one enormous jump, and
+  // never let it go negative — a clock that runs backwards ages particles
+  // backwards, and they stop dying.
+  const dt = Math.max(0, Math.min(now - lastFrameAt, 50)) / 1000;
   lastFrameAt = now;
   resize();
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
