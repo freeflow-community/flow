@@ -171,6 +171,16 @@ export class AgentBridge {
   private threadParticipation = new Map<string, boolean>();
   /** convKey → the turn currently running there, for `/stop` and 🛑. */
   private liveRuns = new Map<string, LiveRun>();
+  /**
+   * convKey → the follow-up turn's own run, held directly (#534).
+   *
+   * `liveRuns` is a slot, and a message arriving mid-follow-up-turn takes it.
+   * Reading the reporter back out of that slot at the end of the turn therefore
+   * found somebody else's run and finished nothing — leaving a reporter whose
+   * 30s interval re-asserted the channel spinner forever. The turn that made a
+   * reporter keeps the reference to it.
+   */
+  private ambientRuns = new Map<string, LiveRun>();
   /** convKey → the conversation's persistent CLI process (claude runtime). */
   private readonly sessions: SessionManager;
   private readonly sem: Semaphore;
@@ -861,18 +871,25 @@ export class AgentBridge {
       replyRoot,
       (m) => this.log(m),
     );
-    progress.start();
-    conv.lastMsg = msg;
     // The persistent session owns its own MCP config for as long as its process
     // lives; only the one-shot path writes (and deletes) one per turn.
     const persistent = this.cfg.runtime.kind === 'claude';
-    const mcpConfigPath =
-      !persistent && this.cfg.runtime.mcp ? this.writeMcpConfig(msg, replyRoot) : undefined;
+    let mcpConfigPath: string | undefined;
     // Registered before the runtime starts, so a stop that arrives in the gap
     // still lands: both paths check the signal before they send anything.
     const live: LiveRun = { controller: new AbortController(), progress, stoppedBy: null, ambient: false };
+    // A follow-up turn may still hold the row (#534). Hand it over rather than
+    // stacking two live reporters on one channel — its reply still posts when
+    // it settles, and finish() is idempotent.
+    const displaced = this.liveRuns.get(key);
+    if (displaced?.ambient) await displaced.progress.finish().catch(() => {});
     this.liveRuns.set(key, live);
+    // Inside the try from here: anything that throws must reach the `finally`
+    // that finishes this reporter, or the spinner it just lit stays lit.
     try {
+      progress.start();
+      conv.lastMsg = msg;
+      if (!persistent && this.cfg.runtime.mcp) mcpConfigPath = this.writeMcpConfig(msg, replyRoot);
       const prompt = await this.buildPrompt(conv, msg);
       let result: RunResult;
       if (persistent) {
@@ -987,14 +1004,18 @@ export class AgentBridge {
       (m) => this.log(m),
     );
     progress.start();
-    this.liveRuns.set(key, { controller: new AbortController(), progress, stoppedBy: null, ambient: true });
+    const live: LiveRun = { controller: new AbortController(), progress, stoppedBy: null, ambient: true };
+    this.ambientRuns.set(key, live);
+    this.liveRuns.set(key, live);
   }
 
   /** …and its reply is posted like any other, with no message to reply to. */
   private async finishAmbientTurn(key: string, conv: Conversation, result: RunResult): Promise<void> {
-    const live = this.liveRuns.get(key);
-    if (!live?.ambient) return;
-    this.liveRuns.delete(key);
+    const live = this.ambientRuns.get(key);
+    if (!live) return; // a solicited turn held the row, so this turn never made a reporter
+    this.ambientRuns.delete(key);
+    // Only if it is still ours: a message arriving mid-turn takes the slot.
+    if (this.liveRuns.get(key) === live) this.liveRuns.delete(key);
     try {
       await live.progress.finish(result.text);
       const text = result.text.trim();
