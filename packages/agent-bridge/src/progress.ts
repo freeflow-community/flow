@@ -53,6 +53,8 @@ export class ProgressReporter {
   private typingTimer: NodeJS.Timeout | null = null;
   private indicatorTimer: NodeJS.Timeout | null = null;
   private statusMessageId: string | null = null;
+  /** What the status row currently says, so it can be re-posted verbatim. */
+  private statusBody: string | null = null;
   private inFlight = false;
   private pendingStep: string | null = null;
   private finished = false;
@@ -62,6 +64,8 @@ export class ProgressReporter {
   /** The narration message being grown, and the blocks currently in it. */
   private narrationMessageId: string | null = null;
   private narrationChunks: string[] = [];
+  /** Narration messages this turn has opened — >1 means it has rolled over. */
+  private narrationCount = 0;
   private lastNarrationWrite = 0;
   private waitTimer: NodeJS.Timeout | null = null;
   private waitResolve: (() => void) | null = null;
@@ -159,6 +163,7 @@ export class ProgressReporter {
           const step = this.pendingStep;
           this.pendingStep = null;
           const body = `🤖 *thinking…* — ${step}`;
+          this.statusBody = body;
           try {
             if (this.statusMessageId === null) {
               const msg = await this.api.sendMessage(this.channelId, body, this.threadRootId);
@@ -226,13 +231,54 @@ export class ProgressReporter {
     return this.narrationChunks.join('\n\n');
   }
 
+  /**
+   * Keep the status row the newest message of the turn (#528).
+   *
+   * Message ids are time-ordered, so a narration message created *after* the
+   * status row renders below it — and a turn that talks past
+   * NARRATION_MAX_CHARS creates one every rollover. That splits what the agent
+   * said either side of a row that is hard-deleted at the end anyway:
+   * everything written before the rollover is stranded above a live row with
+   * new text growing underneath it, so in a transcript that follows the bottom
+   * it marches up and out of the viewport while the thinking line stays put and
+   * keeps updating. That is what "the narration disappeared mid-turn and came
+   * back when the turn finished" is — a reorder, not a delete; the settle at
+   * the end makes the messages contiguous again.
+   *
+   * Re-posting the row after the new narration message restores one reading
+   * order: commentary in the order it was said, the live row last. The id
+   * changes, which the Interrupt path reads live off `statusId`, and a 🛑 that
+   * lands on the row we just removed is reaped as an orphan by the bridge.
+   */
+  private async keepStatusLast(): Promise<void> {
+    const previous = this.statusMessageId;
+    if (previous === null || this.statusBody === null || this.finished) return;
+    // Cleared first: if the re-post fails, the next step opens a fresh row
+    // rather than editing one that is about to be deleted.
+    this.statusMessageId = null;
+    try {
+      const msg = await this.api.sendMessage(this.channelId, this.statusBody, this.threadRootId);
+      this.statusMessageId = msg.id;
+    } catch (err) {
+      this.log(`status re-post failed: ${(err as Error).message}`);
+    }
+    await this.api.deleteMessage(previous, { hard: true }).catch((err: Error) => {
+      this.log(`status move failed: ${err.message}`);
+    });
+  }
+
   /** Create the narration message, or edit it to its current contents. */
   private async putNarration(): Promise<void> {
     const body = this.narrationBody();
     try {
       if (this.narrationMessageId === null) {
+        const rollover = this.narrationCount > 0;
         const msg = await this.api.sendMessage(this.channelId, body, this.threadRootId);
         this.narrationMessageId = msg.id;
+        this.narrationCount += 1;
+        // Only a successor strands anything: the turn's first narration message
+        // has nothing above it to cut off from.
+        if (rollover) await this.keepStatusLast();
       } else {
         await this.api.editMessage(this.narrationMessageId, body);
       }
