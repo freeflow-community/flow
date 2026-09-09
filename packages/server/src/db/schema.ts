@@ -127,6 +127,21 @@ export const appLinkCodes = pgTable('app_link_codes', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
 
+/** Pending client-initiated PKCE operations; separate from unbound legacy codes. */
+export const authHandoffs = pgTable('auth_handoffs', {
+  requestHash: bytea('request_hash').primaryKey(),
+  connectionId: text('connection_id').notNull(),
+  operationId: text('operation_id').notNull(),
+  state: text('state').notNull(),
+  serverOrigin: text('server_origin').notNull(),
+  clientOrigin: text('client_origin'),
+  returnUrl: text('return_url').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  codeHash: bytea('code_hash').unique(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey(),
   slug: citext('slug').notNull().unique(),
@@ -607,6 +622,7 @@ export const deviceTokens = pgTable(
     id: uuid('id').primaryKey(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     token: text('token').notNull().unique(), // APNs device token, hex
+    routingId: text('routing_id'), // null is the legacy absolute-badge contract
     platform: text('platform').notNull(), // 'ios' (macOS later)
     // Narrowed at the type level so the sender seam's PushDevice takes a row
     // straight through with no adapter — the API's zod schema is what enforces

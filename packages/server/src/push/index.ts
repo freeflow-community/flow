@@ -11,9 +11,11 @@
 // the server, but the real driver can name a device without importing the
 // factory that builds it.
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { config } from '../config.js';
 import { ApnsHttp2PushSender } from './apnsSender.js';
+import { fitPayload } from './payload.js';
 import { apnsEnvFor, apnsTopicFor } from './target.js';
 import type { ApnsHeaders, ApnsPayload, PushDevice, PushResult, PushSender } from './types.js';
 
@@ -61,6 +63,20 @@ export function pushSender(): PushSender {
     sender = config.pushDriver === 'apns' ? new ApnsHttp2PushSender() : new DevPushSender(config.pushOutboxDir);
   }
   return sender;
+}
+
+/** Apply the registration contract before any transport (including test drivers). */
+export async function sendPush(driver: PushSender, device: PushDevice, payload: ApnsPayload, opts: ApnsHeaders): Promise<PushResult> {
+  if (!device.routingId) return driver.send(device, payload, opts);
+  // Multi-server clients own the aggregate badge. Muted/read corrections
+  // have nothing to deliver; never let a background path overwrite it.
+  if (!payload.aps.alert) return { ok: true };
+  const aps = { ...payload.aps };
+  delete aps.badge;
+  if (aps['thread-id']) {
+    aps['thread-id'] = createHash('sha256').update(JSON.stringify([device.routingId, aps['thread-id']])).digest('hex');
+  }
+  return driver.send(device, fitPayload({ ...payload, aps, routingId: device.routingId }), opts);
 }
 
 /** Tests only: inject a fake or reset the singleton. */

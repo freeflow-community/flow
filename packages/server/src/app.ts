@@ -8,11 +8,13 @@ import fastifyStatic from '@fastify/static';
 import { registerRoutes } from './routes/index.js';
 import { registerSlackCompat } from './slackcompat/index.js';
 import { config } from './config.js';
+import { registerBrowserPolicy } from './lib/browserPolicy.js';
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
   });
+  registerBrowserPolicy(app);
   void app.register(formbody); // Slack SDKs send application/x-www-form-urlencoded
   void app.register(multipart, {
     // server-buffered path keeps the small cap; big files go via presign→R2

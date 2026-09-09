@@ -11,6 +11,8 @@
  * these fields satisfies this.
  */
 export interface PushDevice {
+  /** Client-owned opaque connection/identity route; present means no absolute badge. */
+  routingId?: string | null;
   /** APNs device token, hex. */
   token: string;
   /** 'ios' today (macOS later). */

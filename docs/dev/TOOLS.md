@@ -1,5 +1,7 @@
 # Local dev tools
 
+Independent backend operators: [multi-server connection protocol and setup](MULTISERVER.md).
+
 Five commands that replace the setup work every recent change to this repo did
 by hand: bringing a server and fixtures up, checking both native clients
 compile, putting a push in front of a simulator, running the live API tests

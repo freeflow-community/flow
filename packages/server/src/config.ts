@@ -10,6 +10,14 @@ const rootEnv = path.resolve(pkgRoot, '..', '..', '.env');
 if (fs.existsSync(rootEnv)) process.loadEnvFile(rootEnv);
 
 export const config = {
+  get serverDisplayName(): string { return process.env.FLOW_SERVER_NAME ?? 'Flow'; },
+  get allowedWebOrigins(): string[] {
+    return (process.env.FLOW_ALLOWED_WEB_ORIGINS ?? '').split(',').map(v => v.trim()).filter(Boolean);
+  },
+  get handoffReturnUrls(): string[] {
+    return (process.env.FLOW_HANDOFF_RETURN_URLS ?? '').split(',').map(v => v.trim()).filter(Boolean);
+  },
+  get registrationEnabled(): boolean { return process.env.FLOW_REGISTRATION_ENABLED !== '0'; },
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://flow:flow_dev@localhost:5442/flow',
   natsUrl: process.env.NATS_URL ?? 'nats://127.0.0.1:4222',
   port: Number(process.env.PORT ?? 8787),

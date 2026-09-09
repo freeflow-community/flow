@@ -127,6 +127,7 @@ export async function register(
   opts: { password?: string | undefined; displayName?: string | undefined; autoVerify?: boolean | undefined } = {},
   clientInfo?: string,
 ): Promise<RegisterResponse> {
+  if (!config.registrationEnabled) throw new ApiError(403, 'registration_disabled', 'Account registration is disabled on this server');
   if (opts.autoVerify === true && config.emailDriver === 'dev') {
     const passwordHash = await argon2.hash(opts.password ?? '', ARGON2_OPTS);
     const inserted = await db
@@ -191,6 +192,7 @@ export async function completeSignup(
   password: string,
   clientInfo?: string,
 ): Promise<AuthResponse> {
+  if (!config.registrationEnabled) throw new ApiError(403, 'registration_disabled', 'Account registration is disabled on this server');
   const consumed = await db
     .delete(pendingSignups)
     .where(and(eq(pendingSignups.tokenHash, hashToken(token)), gt(pendingSignups.expiresAt, sql`now()`)))
