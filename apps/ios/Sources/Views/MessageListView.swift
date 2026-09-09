@@ -666,7 +666,12 @@ struct MessageRow: View, @preconcurrency Equatable {
                             onOpenProfile(message.userId)
                         } label: {
                             Text(senderName)
-                                .font(.system(size: 14, weight: .bold))
+                                // 15, not 14 (#531): the name was already
+                                // `.bold`, but a bold 14 above a `.callout`
+                                // (16) body is *smaller* than the text it
+                                // labels, which is why it stopped reading as
+                                // the strongest thing in the row.
+                                .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(MC.ink)
                         }
                         .buttonStyle(.plain)

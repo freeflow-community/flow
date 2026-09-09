@@ -13,6 +13,12 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **The lightened mention highlight is macOS + iOS only** (#531, which scoped
+  web out). Both native clients now draw an in-message mention as accent text
+  on a 10% accent wash (20% for a mention of you); `packages/web`'s
+  `renderBody` still paints `bg-accent/15 font-semibold` and a solid
+  `bg-accent` block for the strong case. Closing it is two class strings in
+  `packages/web/src/lib/format.tsx`.
 - **Sending a message never re-pins the scroll on web** (#494, which scoped
   itself to the native clients). Both native clients follow *my own* send back
   to the end however far up I was reading; web's `MessageList` pins on
