@@ -13,6 +13,15 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- **A mid-session 401 signs you out on macOS + iOS, but not on web** (#540, which
+  built the mechanism on all three). Both native clients tear the session down
+  and drop to the sign-in screen; web now records the connection as
+  `unauthorized` in the registry but leaves the UI signed in, reading from its
+  caches until the next failure surfaces in a component. The auth-generation
+  guard that makes a *stale* 401 harmless is in all three. Closing it is a
+  handler in `packages/web/src/App.tsx` that runs the existing `signOut`
+  teardown — deliberately out of scope here, because #540's own acceptance
+  criteria required no behaviour change on upgrade.
 - **The lightened mention highlight is macOS + iOS only** (#531, which scoped
   web out). Both native clients now draw an in-message mention as accent text
   on a 10% accent wash (20% for a mention of you); `packages/web`'s

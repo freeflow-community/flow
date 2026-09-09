@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fileImageUrl } from './api';
+import { ConnectionManager, __setConnectionManager } from './connectionRuntime';
 
 const okJson = (body: unknown) => ({
   ok: true,
@@ -8,15 +9,22 @@ const okJson = (body: unknown) => ({
 });
 
 describe('fileImageUrl', () => {
+  // Requests now resolve against the *owning connection's* origin rather than
+  // the page's, so the URLs below are absolute on that backend.
+  const ORIGIN = 'https://flow.example.com';
+
   beforeEach(() => {
+    const store = new Map<string, string>([['flow.token', 'test-token']]);
     vi.stubGlobal('localStorage', {
-      getItem: vi.fn(() => 'test-token'),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
     });
+    __setConnectionManager(new ConnectionManager(ORIGIN));
   });
 
   afterEach(() => {
+    __setConnectionManager(null);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -31,7 +39,8 @@ describe('fileImageUrl', () => {
     await expect(fileImageUrl('f-direct', 'thumbnail')).resolves.toBe(
       'https://objects.example/thumb.webp?signed=1',
     );
-    expect(fetchMock).toHaveBeenCalledWith('/v1/files/f-direct/thumb/url', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith(`${ORIGIN}/v1/files/f-direct/thumb/url`, expect.objectContaining({
+      credentials: 'omit',
       headers: expect.objectContaining({ authorization: 'Bearer test-token' }),
     }));
   });
@@ -45,7 +54,7 @@ describe('fileImageUrl', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:local-preview');
 
     await expect(fileImageUrl('f-local', 'thumbnail')).resolves.toBe('blob:local-preview');
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/files/f-local/thumb', expect.objectContaining({
+    expect(fetchMock).toHaveBeenNthCalledWith(2, `${ORIGIN}/v1/files/f-local/thumb`, expect.objectContaining({
       headers: expect.objectContaining({ authorization: 'Bearer test-token' }),
     }));
   });
@@ -73,6 +82,6 @@ describe('fileImageUrl', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(fileImageUrl('f-gif', 'original')).resolves.toContain('original.gif');
-    expect(fetchMock).toHaveBeenCalledWith('/v1/files/f-gif/url', expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(`${ORIGIN}/v1/files/f-gif/url`, expect.any(Object));
   });
 });

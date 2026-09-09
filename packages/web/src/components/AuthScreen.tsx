@@ -6,7 +6,7 @@ import type {
   RegisterPendingResponse,
   WorkspaceDTO,
 } from '@flow/shared';
-import { api } from '../lib/api';
+import { api, scopedStorageKey } from '../lib/api';
 import { loadGoogleIdentity, publicConfig } from '../lib/google';
 import { MAC_DOWNLOAD_URL } from './OpenInApp';
 
@@ -126,7 +126,8 @@ export default function AuthScreen({
   // yet — default them to Register (email-first) rather than Sign In. Explicit
   // email-link tokens still win (they target a specific existing flow).
   const invited =
-    !!joinWorkspace || (typeof localStorage !== 'undefined' && !!localStorage.getItem('flow.pendingInvite'));
+    !!joinWorkspace
+    || (typeof localStorage !== 'undefined' && !!localStorage.getItem(scopedStorageKey('pendingInvite')));
   const [mode, setMode] = useState<Mode>(
     signinToken ? 'signin-link'
       : signupToken ? 'complete'

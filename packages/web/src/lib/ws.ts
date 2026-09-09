@@ -37,9 +37,13 @@ export class SocketClient {
     if (document.visibilityState === 'visible') this.dropIfSilent(SOCKET_WAKE_DEADLINE_MS);
   };
 
+  /** `url` is the owning backend's `/v1/ws`, not one derived from the page's
+   * origin — in a multi-server client those are different servers. Defaults to
+   * the page origin so a caller with no connection context behaves as before. */
   constructor(
     private readonly token: string,
     private readonly handlers: SocketHandlers,
+    private readonly url: string = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/v1/ws`,
   ) {}
 
   start(): void {
@@ -65,8 +69,7 @@ export class SocketClient {
   private connect(): void {
     if (this.stopped) return;
     this.handlers.onStatus(this.backoff === 500 ? 'connecting' : 'reconnecting');
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/v1/ws`);
+    const ws = new WebSocket(this.url);
     this.ws = ws;
 
     // Arm the watchdog from the attempt, not from `hello`: a socket that opens

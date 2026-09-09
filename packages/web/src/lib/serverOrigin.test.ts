@@ -1,0 +1,110 @@
+import { describe, expect, it } from 'vitest';
+import {
+  ServerOriginError,
+  canonicalizeOrigin,
+  isSameOrigin,
+  originLabel,
+  socketUrlFor,
+  tryCanonicalizeOrigin,
+} from './serverOrigin';
+
+const secure = { allowInsecureLoopback: false };
+const dev = { allowInsecureLoopback: true };
+
+function codeOf(fn: () => unknown): string {
+  try {
+    fn();
+  } catch (e) {
+    return (e as ServerOriginError).code;
+  }
+  return 'no_throw';
+}
+
+describe('canonicalizeOrigin', () => {
+  it('normalizes scheme, host case, default port and trailing slash', () => {
+    expect(canonicalizeOrigin('https://Flow.Example.COM/', secure).origin).toBe('https://flow.example.com');
+    expect(canonicalizeOrigin('https://flow.example.com:443', secure).origin).toBe('https://flow.example.com');
+    expect(canonicalizeOrigin('HTTPS://flow.example.com', secure).origin).toBe('https://flow.example.com');
+  });
+
+  it('keeps a non-default port as the effective port', () => {
+    const o = canonicalizeOrigin('https://flow.example.com:8443', secure);
+    expect(o.origin).toBe('https://flow.example.com:8443');
+    expect(o.effectivePort).toBe(8443);
+  });
+
+  it('reports the effective port even when it is the default', () => {
+    expect(canonicalizeOrigin('https://flow.example.com', secure).effectivePort).toBe(443);
+    expect(canonicalizeOrigin('http://127.0.0.1', dev).effectivePort).toBe(80);
+  });
+
+  it('defaults a bare host to https rather than rejecting it', () => {
+    expect(canonicalizeOrigin('flow.example.com', secure).origin).toBe('https://flow.example.com');
+  });
+
+  it('rejects userinfo, query, fragment and non-root paths instead of trimming them', () => {
+    expect(codeOf(() => canonicalizeOrigin('https://user:pw@flow.example.com', secure))).toBe(
+      'userinfo_not_allowed',
+    );
+    expect(codeOf(() => canonicalizeOrigin('https://flow.example.com/?join=abc', secure))).toBe(
+      'query_not_allowed',
+    );
+    expect(codeOf(() => canonicalizeOrigin('https://flow.example.com/#/x', secure))).toBe(
+      'fragment_not_allowed',
+    );
+    expect(codeOf(() => canonicalizeOrigin('https://example.com/flow', secure))).toBe('path_not_allowed');
+    expect(codeOf(() => canonicalizeOrigin('https://example.com/join/acme/tok', secure))).toBe(
+      'path_not_allowed',
+    );
+  });
+
+  it('requires https off loopback, and allows http on loopback only in dev', () => {
+    expect(codeOf(() => canonicalizeOrigin('http://flow.example.com', dev))).toBe('insecure');
+    expect(codeOf(() => canonicalizeOrigin('http://127.0.0.1:8787', secure))).toBe('insecure');
+    expect(canonicalizeOrigin('http://127.0.0.1:8787', dev).origin).toBe('http://127.0.0.1:8787');
+    expect(canonicalizeOrigin('http://localhost:5173', dev).origin).toBe('http://localhost:5173');
+    // A private-network deployment over HTTPS is fine.
+    expect(canonicalizeOrigin('https://192.168.1.9:8443', secure).origin).toBe('https://192.168.1.9:8443');
+  });
+
+  it('rejects non-http schemes and unparseable input', () => {
+    expect(codeOf(() => canonicalizeOrigin('flow://signin?code=1', secure))).toBe('scheme_not_supported');
+    expect(codeOf(() => canonicalizeOrigin('   ', secure))).toBe('empty');
+    expect(codeOf(() => canonicalizeOrigin('https://', secure))).toBe('unparseable');
+  });
+
+  it('tryCanonicalizeOrigin returns null instead of throwing', () => {
+    expect(tryCanonicalizeOrigin('https://example.com/flow', secure)).toBeNull();
+    expect(tryCanonicalizeOrigin('https://example.com', secure)?.origin).toBe('https://example.com');
+  });
+});
+
+describe('isSameOrigin', () => {
+  const origin = 'https://flow.example.com';
+
+  it('accepts the exact origin and relative paths resolved against it', () => {
+    expect(isSameOrigin(origin, 'https://flow.example.com/v1/me')).toBe(true);
+    expect(isSameOrigin(origin, '/v1/files/abc')).toBe(true);
+    expect(isSameOrigin(origin, 'https://flow.example.com:443/v1/me')).toBe(true);
+  });
+
+  it('rejects a different scheme, host or port — the bearer must not follow', () => {
+    expect(isSameOrigin(origin, 'http://flow.example.com/v1/me')).toBe(false);
+    expect(isSameOrigin(origin, 'https://flow.example.com:8443/v1/me')).toBe(false);
+    expect(isSameOrigin(origin, 'https://evil.example.com/v1/me')).toBe(false);
+    // The shape a presigned storage URL actually arrives in.
+    expect(isSameOrigin(origin, 'https://bucket.r2.cloudflarestorage.com/o?X-Amz-Signature=x')).toBe(false);
+  });
+});
+
+describe('socketUrlFor / originLabel', () => {
+  it('derives the ws endpoint from the owning origin', () => {
+    expect(socketUrlFor('https://flow.example.com')).toBe('wss://flow.example.com/v1/ws');
+    expect(socketUrlFor('http://127.0.0.1:8787')).toBe('ws://127.0.0.1:8787/v1/ws');
+  });
+
+  it('labels an origin without its scheme', () => {
+    expect(originLabel('https://flow.example.com')).toBe('flow.example.com');
+    expect(originLabel('http://127.0.0.1:8787')).toBe('127.0.0.1:8787');
+  });
+});

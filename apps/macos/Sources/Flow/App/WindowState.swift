@@ -56,7 +56,12 @@ final class WindowState: ObservableObject {
 
     // MARK: - Workspace
 
-    private static let activeWorkspaceKey = "activeWorkspaceId" + Profile.suffix
+    /// Navigation entries belong to the signed-in connection+identity (#540).
+    /// The migrated default connection resolves these to the exact keys an
+    /// existing install already has.
+    private static var activeWorkspaceKey: String {
+        ConnectionManager.shared.activeSessionScope.key("activeWorkspaceId")
+    }
 
     func selectWorkspace(_ id: String?) {
         selectedWorkspaceId = id
@@ -76,10 +81,28 @@ final class WindowState: ObservableObject {
         } else {
             UserDefaults.standard.removeObject(forKey: Self.activeWorkspaceKey)
         }
+        rememberNavigationTarget()
         if let id {
             let engine = self.engine
             Task { await engine.selectWorkspace(id) }
         }
+    }
+
+    /// Record where this connection+identity is parked, in the registry rather
+    /// than only in the two flat defaults keys above (#540). A `NavigationTarget`
+    /// carries the connection it belongs to, so a second connection's landing
+    /// spot cannot overwrite this one's.
+    private func rememberNavigationTarget() {
+        guard let workspaceId = selectedWorkspaceId,
+              let userId = app.currentUser?.id
+        else { return }
+        ConnectionManager.shared.rememberNavigation(NavigationTarget(
+            connectionId: app.connectionId,
+            userId: userId,
+            workspaceId: workspaceId,
+            channelId: selectedChannelId,
+            threadRootId: openThreadRootId
+        ))
     }
 
     /// Restore the last active workspace when the window opens (validated by
@@ -95,7 +118,9 @@ final class WindowState: ObservableObject {
 
     // MARK: - Channel
 
-    private static let lastChannelKey = "lastChannelId" + Profile.suffix
+    private static var lastChannelKey: String {
+        ConnectionManager.shared.activeSessionScope.key("lastChannelId")
+    }
 
     /// The channel to reopen on the next launch, or nil if there isn't one.
     /// Written on every selection (so backgrounding needs no hook of its own)
@@ -218,6 +243,7 @@ final class WindowState: ObservableObject {
         rememberOpenThread()
         selectedChannelId = id
         Self.lastChannelId = id
+        rememberNavigationTarget()
         refreshKeepAlive() // a held frame belongs to the channel we just left
         openThreadRootId = id.flatMap { openThreadByChannel[$0] }
         let restored = openThreadRootId

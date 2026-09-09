@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
+import { api, blobUrl, fileStreamUrl, fileText, scopedStorageKey } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
@@ -801,11 +801,13 @@ function MessageRow({
 }
 
 // Collapsed-image state (phase 5 ruling): persisted per device, capped list.
-const COLLAPSE_KEY = 'flow.collapsedImages';
+// The file ids are one server's, so the key is per connection+identity — the
+// same id on another backend is a different file.
+const collapseKey = (): string => scopedStorageKey('collapsedImages');
 const COLLAPSE_CAP = 500;
 function collapsedIds(): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]');
+    const v = JSON.parse(localStorage.getItem(collapseKey()) ?? '[]');
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
   } catch {
     return [];
@@ -814,7 +816,7 @@ function collapsedIds(): string[] {
 function persistCollapsed(fileId: string, collapsed: boolean): void {
   const ids = collapsedIds().filter((id) => id !== fileId);
   if (collapsed) ids.push(fileId);
-  localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids.slice(-COLLAPSE_CAP)));
+  localStorage.setItem(collapseKey(), JSON.stringify(ids.slice(-COLLAPSE_CAP)));
 }
 
 const TEXT_PREVIEW_LINES = 10;

@@ -7,15 +7,29 @@ struct AppDatabase: Sendable {
     let writer: any DatabaseWriter
     var reader: any DatabaseReader { writer }
 
-    static func open() throws -> AppDatabase {
+    /// The cache belongs to one connection+identity (#540). The migrated
+    /// default connection resolves to `Flow<Profile.suffix>` — the directory an
+    /// existing install already has — so an upgrade re-downloads nothing.
+    static func directory(for scope: StorageScope) throws -> URL {
         let fm = FileManager.default
         let support = try fm.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: true
         )
-        let dir = support.appendingPathComponent(
-            "Flow" + Profile.suffix, isDirectory: true
-        )
+        return support.appendingPathComponent(scope.databaseDirectoryName, isDirectory: true)
+    }
+
+    /// Delete a scope's cache outright. Used when a connection is removed or
+    /// its identity changes: cached rows whose ownership we can no longer
+    /// establish are discarded and refetched, never handed to another user.
+    static func destroy(scope: StorageScope) {
+        guard let dir = try? directory(for: scope) else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    static func open(scope: StorageScope = .legacy) throws -> AppDatabase {
+        let fm = FileManager.default
+        let dir = try directory(for: scope)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let pool = try DatabasePool(path: dir.appendingPathComponent("flow.sqlite").path)
         let db = AppDatabase(writer: pool)

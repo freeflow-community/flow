@@ -37,12 +37,28 @@ actor SyncEngine {
     /// conversation (#269).
     private static let historyAttempts = 3
 
-    private static let currentUserIdKey = "currentUserId" + Profile.suffix
+    /// The connection this engine belongs to, and the storage scope its
+    /// session owns (#540). Held as values rather than read from the manager on
+    /// each use: an operation that started under one identity must not pick up
+    /// a scope that rotated under it.
+    private let connectionId: String
+    private let scope: StorageScope
 
-    init(db: AppDatabase, api: APIClient, socket: SocketClient) {
+    private var currentUserIdKey: String { scope.key("currentUserId") }
+    private var keychainAccount: String { scope.keychainAccount }
+
+    init(
+        db: AppDatabase,
+        api: APIClient,
+        socket: SocketClient,
+        connectionId: String = "",
+        scope: StorageScope = .legacy
+    ) {
         self.db = db
         self.api = api
         self.socket = socket
+        self.connectionId = connectionId
+        self.scope = scope
     }
 
     func attach(_ appState: AppState) {
@@ -64,7 +80,8 @@ actor SyncEngine {
     /// message ("invalid or expired token") in whatever sheet triggered it.
     func sessionExpired() async {
         guard currentUser != nil else { return }
-        Keychain.deleteToken()
+        Keychain.deleteToken(account: keychainAccount)
+        await appState?.markConnectionUnauthorized(connectionId: connectionId)
         await api.setToken(nil)
         await socket.stop()
         socketConsumer?.cancel()
@@ -79,7 +96,11 @@ actor SyncEngine {
         await api.setUnauthorizedHandler { [weak self] in
             await self?.sessionExpired()
         }
-        guard let token = Keychain.loadToken() else {
+        guard let token = Keychain.loadToken(account: keychainAccount) else {
+            // No credential in this session's slot: record it on the connection
+            // too, so the registry does not claim a session the app does not
+            // have (#540).
+            await appState?.markConnectionSignedOut(connectionId: connectionId)
             await appState?.setPhase(.signedOut)
             return
         }
@@ -88,12 +109,13 @@ actor SyncEngine {
             let me: User = try await api.get("/v1/me")
             await didSignIn(user: me, token: token, persistToken: false)
         } catch let e as APIError where e.status == 401 {
-            Keychain.deleteToken()
+            Keychain.deleteToken(account: keychainAccount)
             await api.setToken(nil)
+            await appState?.markConnectionSignedOut(connectionId: connectionId)
             await appState?.setPhase(.signedOut)
         } catch {
             // Server unreachable: start offline from the cache if possible.
-            let cachedId = UserDefaults.standard.string(forKey: Self.currentUserIdKey)
+            let cachedId = UserDefaults.standard.string(forKey: currentUserIdKey)
             let cached: User? = if let cachedId {
                 try? await db.reader.read { db in try User.fetchOne(db, key: cachedId) }
             } else { nil }
@@ -225,8 +247,9 @@ actor SyncEngine {
         // running, so it has nothing of the sort to clean up.)
         await Banners.clearDelivered()
         #endif
-        Keychain.deleteToken()
-        UserDefaults.standard.removeObject(forKey: Self.currentUserIdKey)
+        Keychain.deleteToken(account: keychainAccount)
+        UserDefaults.standard.removeObject(forKey: currentUserIdKey)
+        await appState?.markConnectionSignedOut(connectionId: connectionId)
         await api.setToken(nil)
         await socket.stop()
         socketConsumer?.cancel()
@@ -243,9 +266,14 @@ actor SyncEngine {
     /// rebuild (SecItemDelete on an item the new binary isn't trusted for yet).
     private func didSignIn(user: User, token: String, persistToken: Bool = true) async {
         currentUser = user
-        if persistToken { Keychain.saveToken(token) }
-        UserDefaults.standard.set(user.id, forKey: Self.currentUserIdKey)
+        if persistToken { Keychain.saveToken(token, account: keychainAccount) }
+        UserDefaults.standard.set(user.id, forKey: currentUserIdKey)
         try? await db.writer.write { db in try user.save(db) }
+        // The server issued this session, so the identity is verified: commit
+        // it to the registry. A *different* identity on this connection rotates
+        // the session scope, so the previous one's credential and defaults are
+        // discarded rather than inherited (#540).
+        await appState?.bindConnectionIdentity(connectionId: connectionId, userId: user.id)
         await appState?.setPhase(.signedIn(user))
         await Banners.requestPermissionIfNeeded()
         startSocket(token: token)
@@ -258,7 +286,7 @@ actor SyncEngine {
     /// Where the last registered APNs token is kept so sign-out can delete the
     /// right row. Not the Keychain: it is not a secret, and it must survive a
     /// launch in which APNs hasn't answered yet.
-    private static let deviceTokenKey = "pushDeviceToken" + Profile.suffix
+    private var deviceTokenKey: String { scope.key("pushDeviceToken") }
 
     /// Register (or re-register) this device — called from the iOS app delegate
     /// every time APNs hands over a token, which is every cold start. Silent on
@@ -266,7 +294,7 @@ actor SyncEngine {
     /// the socket, so this must never surface as an error the user can see.
     func registerPushDevice(token: String, environment: String, bundleId: String) async {
         guard currentUser != nil else { return }
-        UserDefaults.standard.set(token, forKey: Self.deviceTokenKey)
+        UserDefaults.standard.set(token, forKey: deviceTokenKey)
         let _: OkResponse? = try? await api.post(
             "/v1/me/devices",
             body: RegisterDeviceBody(
@@ -279,7 +307,7 @@ actor SyncEngine {
     /// while the session is still valid — see `logout()`. No token stored
     /// (macOS today, or a launch that never registered) means nothing to do.
     private func unregisterPushDevice() async {
-        guard let token = UserDefaults.standard.string(forKey: Self.deviceTokenKey) else { return }
+        guard let token = UserDefaults.standard.string(forKey: deviceTokenKey) else { return }
         forgetPushDevice()
         let _: OkResponse? = try? await api.delete("/v1/me/devices/\(token)")
     }
@@ -287,7 +315,7 @@ actor SyncEngine {
     /// Local half only: forget the token so the next session doesn't try to
     /// delete a row that is no longer ours.
     private func forgetPushDevice() {
-        UserDefaults.standard.removeObject(forKey: Self.deviceTokenKey)
+        UserDefaults.standard.removeObject(forKey: deviceTokenKey)
     }
 
     // MARK: - Socket lifecycle

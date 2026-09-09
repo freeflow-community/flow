@@ -31,12 +31,22 @@ struct APIError: Error, LocalizedError, Sendable {
     }
 }
 
-/// Strips the Authorization header when a redirect leaves the API host — the
-/// server 302s file downloads to presigned R2 URLs, and S3-style endpoints
-/// reject requests carrying both a signed query string and an Authorization
-/// header. (CFNetwork's own header handling on redirects is inconsistent
-/// across OS versions; this makes the behavior explicit.)
+/// Strips the Authorization header the moment a redirect leaves the backend's
+/// exact origin — the server 302s file downloads to presigned R2 URLs, and
+/// S3-style endpoints reject requests carrying both a signed query string and
+/// an Authorization header. (CFNetwork's own header handling on redirects is
+/// inconsistent across OS versions; this makes the behavior explicit.)
+///
+/// The test is scheme + host + port, not host alone (#540): a redirect that
+/// keeps the hostname but drops to `http://`, or moves to another port, is a
+/// different server as far as a credential is concerned.
 private final class RedirectSanitizer: NSObject, URLSessionTaskDelegate {
+    private let origin: CanonicalOrigin?
+
+    init(origin: CanonicalOrigin?) {
+        self.origin = origin
+    }
+
     func urlSession(
         _ session: URLSession, task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
@@ -44,7 +54,7 @@ private final class RedirectSanitizer: NSObject, URLSessionTaskDelegate {
         completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) {
         var req = request
-        if req.url?.host != task.originalRequest?.url?.host {
+        if let url = req.url, origin?.owns(url) != true {
             req.setValue(nil, forHTTPHeaderField: "Authorization")
         }
         completionHandler(req)
@@ -55,6 +65,10 @@ private final class RedirectSanitizer: NSObject, URLSessionTaskDelegate {
 /// are async/await over URLSession.
 actor APIClient {
     private let baseURL: URL
+    /// The one origin this client's bearer may be sent to. Everything else —
+    /// a presigned storage URL, a cross-origin redirect, an absolute URL a
+    /// caller handed in — goes out unauthenticated.
+    private let origin: CanonicalOrigin?
     private var token: String?
     private let session: URLSession
     private let decoder = JSONDecoder()
@@ -76,17 +90,44 @@ actor APIClient {
     /// trigger their own sign-out.
     private var reportedUnauthorized = false
 
-    init(baseURL: URL) {
+    /// Bumped on every token replacement. A request captures the generation it
+    /// went out under; a 401 is only believed when it still matches, so a slow
+    /// request from before a refresh cannot sign out the session that replaced
+    /// it (#540).
+    private var generation = 0
+
+    /// `protocolClasses` is a test seam: the auth-generation guard and the
+    /// "bearer only to this exact origin" rule are transport behaviour, and the
+    /// only honest way to check them is to answer a real request. Nil in the
+    /// app, where the default stack applies.
+    init(baseURL: URL, protocolClasses: [AnyClass]? = nil) {
         self.baseURL = baseURL
+        let origin = CanonicalOrigin.originOf(baseURL)
+        self.origin = origin
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
         config.waitsForConnectivity = false
-        self.session = URLSession(configuration: config, delegate: RedirectSanitizer(), delegateQueue: nil)
+        if let protocolClasses { config.protocolClasses = protocolClasses }
+        self.session = URLSession(
+            configuration: config,
+            delegate: RedirectSanitizer(origin: origin),
+            delegateQueue: nil
+        )
     }
 
-    func setToken(_ token: String?) {
+    var authGeneration: Int { generation }
+
+    /// Does this URL belong to the backend that may see our bearer?
+    nonisolated func owns(_ url: URL) -> Bool {
+        CanonicalOrigin.originOf(baseURL)?.owns(url) == true
+    }
+
+    @discardableResult
+    func setToken(_ token: String?) -> Int {
         self.token = token
+        generation += 1
         reportedUnauthorized = false
+        return generation
     }
 
     func setUnauthorizedHandler(_ handler: (@Sendable () async -> Void)?) {
@@ -95,9 +136,13 @@ actor APIClient {
 
     /// Report a 401 on an authenticated request, once. `sentToken` is false for
     /// requests that deliberately go out unauthenticated (a presigned R2 PUT),
-    /// where a 401 says nothing about our session.
-    private func reportIfUnauthorized(status: Int, sentToken: Bool) async {
-        guard status == 401, sentToken, !reportedUnauthorized, let onUnauthorized else { return }
+    /// where a 401 says nothing about our session. `generation` is the one the
+    /// request went out under: a 401 answering a pre-refresh request says
+    /// nothing about the token that replaced it, so it is dropped.
+    private func reportIfUnauthorized(status: Int, sentToken: Bool, generation: Int) async {
+        guard status == 401, sentToken, generation == self.generation,
+              !reportedUnauthorized, let onUnauthorized
+        else { return }
         reportedUnauthorized = true
         await onUnauthorized()
     }
@@ -165,11 +210,16 @@ actor APIClient {
         var req = URLRequest(url: url)
         req.httpMethod = "PUT"
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        // Authenticate only when the resolved target really is on our backend.
+        // The server-relative local-dev fallback needs the bearer; an external
+        // presigned URL must never see it — decided by the origin, not by the
+        // shape of the string we were handed.
         var sentToken = false
-        if target.hasPrefix("/"), let token {
+        if origin?.owns(url) == true, let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             sentToken = true
         }
+        let generation = self.generation
         let response: URLResponse
         do {
             (_, response) = try await session.upload(for: req, fromFile: fileURL)
@@ -178,7 +228,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            await reportIfUnauthorized(status: status, sentToken: sentToken)
+            await reportIfUnauthorized(status: status, sentToken: sentToken, generation: generation)
             throw APIError(status: status, code: "upload_failed", message: "upload failed (HTTP \(status))")
         }
     }
@@ -189,6 +239,7 @@ actor APIClient {
     func downloadToFile(_ path: String) async throws -> URL {
         var req = URLRequest(url: baseURL.appending(path: path))
         let sentToken = token != nil
+        let generation = self.generation
         if let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -201,7 +252,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            await reportIfUnauthorized(status: status, sentToken: sentToken)
+            await reportIfUnauthorized(status: status, sentToken: sentToken, generation: generation)
             throw APIError(status: status, code: "http_\(status)", message: "HTTP \(status)")
         }
         return tmp
@@ -211,6 +262,7 @@ actor APIClient {
     func getData(_ path: String) async throws -> Data {
         var req = URLRequest(url: baseURL.appending(path: path))
         let sentToken = token != nil
+        let generation = self.generation
         if let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -222,7 +274,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            await reportIfUnauthorized(status: status, sentToken: sentToken)
+            await reportIfUnauthorized(status: status, sentToken: sentToken, generation: generation)
             throw APIError(status: status, code: "http_\(status)", message: "HTTP \(status)")
         }
         return data
@@ -250,6 +302,7 @@ actor APIClient {
         var req = URLRequest(url: url)
         req.httpMethod = method
         let sentToken = token != nil
+        let generation = self.generation
         if let token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -267,7 +320,7 @@ actor APIClient {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            await reportIfUnauthorized(status: status, sentToken: sentToken)
+            await reportIfUnauthorized(status: status, sentToken: sentToken, generation: generation)
             if let env = try? decoder.decode(ErrorEnvelope.self, from: data) {
                 throw APIError(status: status, code: env.error.code, message: env.error.message)
             }

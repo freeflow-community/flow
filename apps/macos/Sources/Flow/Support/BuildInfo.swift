@@ -5,6 +5,17 @@ import Foundation
 /// from `apps/macos/VERSION`). The bare SwiftPM executable (dev/QA path) has no
 /// plist, so it falls back to the commit SHA — same signal as `Banners.available`.
 enum BuildInfo {
+    /// Is this a development build? The one thing it gates is the HTTP-loopback
+    /// allowance in `CanonicalOrigin.normalize` — a release client requires
+    /// HTTPS for every server address it is given (#540).
+    static var isDebugBuild: Bool {
+        #if DEBUG
+        return true
+        #else
+        return false
+        #endif
+    }
+
     /// Marketing version of a packaged build, e.g. `2.2.16`; nil when unbundled.
     static var version: String? {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String

@@ -1538,8 +1538,13 @@ struct MessageRow: View, @preconcurrency Equatable {
 // MARK: - Attachments
 
 /// Collapsed-image state (phase 5 ruling): persisted per device, capped list.
+@MainActor
 enum CollapsedImages {
-    private static let key = "collapsedImages" + Profile.suffix
+    /// A read marker over one server's file ids — the same id on another
+    /// backend is a different file, so the key is per connection+identity.
+    private static var key: String {
+        ConnectionManager.shared.activeSessionScope.key("collapsedImages")
+    }
     private static let cap = 500
 
     static func contains(_ fileId: String) -> Bool {
