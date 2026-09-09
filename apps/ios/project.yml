@@ -28,6 +28,7 @@ targets:
       - path: ../macos/Sources/Flow/Database
       - path: ../macos/Sources/Flow/Sync
       - path: ../macos/Sources/Flow/App/AppState.swift
+      - path: ../macos/Sources/Flow/App/ConnectionManager.swift
       - path: ../macos/Sources/Flow/App/WindowState.swift
       - path: ../macos/Sources/Flow/Support
         # Updater.swift is Sparkle (macOS-only auto-update); iOS ships through
@@ -163,6 +164,12 @@ targets:
       - path: ../macos/Sources/Flow/Support/Server.swift
       - path: ../macos/Sources/Flow/Support/Profile.swift
       - path: ../macos/Sources/Flow/Support/Keychain.swift
+      # APIClient decides what may carry the bearer by canonical origin (#540).
+      # BuildInfo comes with it for the HTTP-loopback development allowance.
+      # The connection registry itself stays out: this process reads the
+      # default connection's Keychain account and nothing else.
+      - path: ../macos/Sources/Flow/Support/CanonicalOrigin.swift
+      - path: ../macos/Sources/Flow/Support/BuildInfo.swift
       - path: ../macos/Sources/Flow/Support/ImagePrep.swift
       - path: ../macos/Sources/Flow/Support/ISO8601.swift
       - path: ../macos/Sources/Flow/Support/UUIDv7.swift

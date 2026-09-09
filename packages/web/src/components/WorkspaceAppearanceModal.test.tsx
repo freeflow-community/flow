@@ -3,6 +3,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceDTO } from '@flow/shared';
 
+// Avatars resolve through the active connection's runtime now (#540), which
+// reads the page origin and the connection registry. Vitest runs in node, so
+// give it both.
+const store = new Map<string, string>();
+vi.stubGlobal('location', { origin: 'http://localhost:8787' });
+vi.stubGlobal('localStorage', {
+  getItem: (k: string) => store.get(k) ?? null,
+  setItem: (k: string, v: string) => void store.set(k, v),
+  removeItem: (k: string) => void store.delete(k),
+});
+
 // The workspace-branding modal (#336) reads the workspace out of the cached
 // list, so stub the hook and render it statically for each of the two states
 // that matter: no avatar (upload prompt) and one set (replace + remove).

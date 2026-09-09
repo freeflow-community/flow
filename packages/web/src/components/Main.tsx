@@ -16,10 +16,10 @@ import type {
 } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { applyChannelEmoji, applyHuddle, applyIndicator } from '../lib/channelCache';
-import { api, getToken } from '../lib/api';
+import { api } from '../lib/api';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
-import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useRuntime, useSelection } from '../state';
 import { HuddleProvider, useHuddle, type HuddleState } from '../huddle';
 import { useNameMap, useWorkspaceInvites, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
@@ -41,6 +41,9 @@ import { RailUnreadBadge } from './RailUnreadBadge';
 export default function Main() {
   const auth = useAuth();
   const sel = useSelection();
+  // Every request and the socket below belong to this connection, not to the
+  // page's origin — see docs/specs/multi-server-workspaces.md.
+  const runtime = useRuntime();
   const qc = useQueryClient();
   const [status, setStatus] = useState<SocketStatus>('connecting');
   // Post-connect refetches in flight (#234) — see the socket effect below.
@@ -91,17 +94,18 @@ export default function Main() {
     const workspaceId = selRef.current.workspaceId;
     if (!workspaceId) return;
     try {
-      const r = await fetch(`/v1/me/notifications?limit=1&workspaceId=${workspaceId}`, {
-        headers: { authorization: `Bearer ${getToken() ?? ''}` },
-      });
-      const j = (await r.json()) as { unreadCount?: number };
+      const j = await runtime.api<{ unreadCount?: number }>(
+        'GET', `/v1/me/notifications?limit=1&workspaceId=${workspaceId}`,
+      );
       // A slower response for a previously selected workspace must not clobber
-      // the badge after a quick switch.
+      // the badge after a quick switch — nor a response for a connection that
+      // has since been disposed.
+      if (runtime.isDisposed) return;
       if (selRef.current.workspaceId === workspaceId) setNotificationUnread(j.unreadCount ?? 0);
     } catch {
       /* offline */
     }
-  }, []);
+  }, [runtime]);
 
   useEffect(() => {
     void refreshNotificationBadge();
@@ -129,7 +133,7 @@ export default function Main() {
   }, [sel.channelId, sel.artifactId]);
 
   useEffect(() => {
-    const token = getToken();
+    const token = runtime.getToken();
     if (!token) return;
     const client = new SocketClient(token, {
       onStatus: (s) => {
@@ -148,7 +152,7 @@ export default function Main() {
       },
       onEvent: (event: Event) => handleEvent(event),
       onSession: (sessionId) => huddleBridge.current?.setSessionId(sessionId),
-    });
+    }, runtime.socketUrl);
     socketRef.current = client;
     client.start();
     return () => {
@@ -156,7 +160,7 @@ export default function Main() {
       socketRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [runtime]);
 
   function clearTyping(key: string, userId: string): void {
     setTyping((prev) => {

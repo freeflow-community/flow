@@ -3,6 +3,7 @@
 import { createContext, useContext } from 'react';
 import type { UserDTO } from '@flow/shared';
 import type { SocketStatus } from './lib/ws';
+import { activeRuntime, type ConnectionRuntime } from './lib/connectionRuntime';
 
 export interface AuthState {
   user: UserDTO;
@@ -144,10 +145,23 @@ export function typingKey(channelId: string, threadRootId?: string | null): stri
   return `${channelId}|${threadRootId ?? ''}`;
 }
 
+/** The connection whose session everything below this provider belongs to
+ * (docs/specs/multi-server-workspaces.md, "Runtime architecture"). Views take
+ * their backend from here rather than from the page's origin, and an operation
+ * that reads it once at start cannot be retargeted by a later switch. */
+export const ConnectionContext = createContext<ConnectionRuntime | null>(null);
+
 export const AuthContext = createContext<AuthState | null>(null);
 export const SelectionContext = createContext<Selection | null>(null);
 export const LiveContext = createContext<LiveState | null>(null);
 export const MobileNavContext = createContext<MobileNav | null>(null);
+
+/** The runtime for the connection this subtree is mounted on. Falls back to
+ * the active connection so a component rendered outside a provider (tests,
+ * the signed-out screens) still works. */
+export function useRuntime(): ConnectionRuntime {
+  return useContext(ConnectionContext) ?? activeRuntime();
+}
 
 export function useAuth(): AuthState {
   const v = useContext(AuthContext);

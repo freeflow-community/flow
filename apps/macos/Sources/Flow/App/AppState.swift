@@ -301,20 +301,46 @@ final class AppState: ObservableObject {
         openWorkspaceIds.contains(id)
     }
 
-    init() {
-        do {
-            self.db = try AppDatabase.open()
-        } catch {
-            fatalError("Cannot open local database: \(error)")
-        }
-        let api = APIClient(baseURL: Server.baseURL)
-        let socket = SocketClient(url: Server.wsURL)
-        self.engine = SyncEngine(db: db, api: api, socket: socket)
+    /// The connection this app instance is pointed at. One today — the default
+    /// created by the first-upgrade migration — but everything below now goes
+    /// through its runtime rather than through a global `Server.baseURL`, so
+    /// phase 3's switcher has something to switch (#540).
+    let connections: ConnectionManager
+    private let runtime: ConnectionRuntime
+
+    init(connections: ConnectionManager = .shared) {
+        self.connections = connections
+        let runtime = connections.active()
+        self.runtime = runtime
+        self.db = runtime.db
+        self.engine = runtime.engine
+        let api = runtime.api
         Task {
             await ImageLoader.shared.configure(api: api)
             await engine.attach(self)
             await engine.bootstrap()
         }
+    }
+
+    /// The runtime's connection id — what identity and navigation records are
+    /// keyed by.
+    var connectionId: String { runtime.connection.connectionId }
+
+    /// Commit a validated identity for this connection (called by the engine
+    /// after `/v1/me` or a successful sign-in).
+    func bindConnectionIdentity(connectionId: String, userId: String) {
+        connections.bindIdentity(connectionId: connectionId, userId: userId)
+    }
+
+    func markConnectionSignedOut(connectionId: String) {
+        connections.markSignedOut(connectionId: connectionId)
+    }
+
+    /// The backend rejected this connection's bearer. The API client only
+    /// reports a 401 whose auth generation still matches, so a late 401 from a
+    /// pre-refresh request never reaches here.
+    func markConnectionUnauthorized(connectionId: String) {
+        connections.markUnauthorized(connectionId: connectionId)
     }
 
     var currentUser: User? {
