@@ -47,7 +47,7 @@
 // a round trip per read to save a push nobody asked for.
 import { and, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
-import { pushSender, type PushDevice } from '../push/index.js';
+import { sendPush, pushSender, type PushDevice } from '../push/index.js';
 import { badgeSyncHeaders, buildBadgeSyncPayload } from '../push/payload.js';
 
 const { deviceTokens } = schema;
@@ -199,7 +199,7 @@ async function flush(userId: string): Promise<void> {
   const sender = pushSender();
   for (const device of devices) {
     try {
-      const result = await sender.send(device as PushDevice, payload, headers);
+      const result = await sendPush(sender, device as PushDevice, payload, headers);
       if (!result.ok && result.disableDevice) {
         // APNs 410 / BadDeviceToken, same handling as the outbox: kept, not
         // deleted, so the next cold start's register revives the row.

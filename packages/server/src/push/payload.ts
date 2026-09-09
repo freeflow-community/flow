@@ -335,7 +335,7 @@ export function badgeSyncHeaders(): ApnsHeaders {
 }
 
 /** Shrink the body until the encoded payload fits the alert cap. */
-function fitPayload(payload: ApnsPayload): ApnsPayload {
+export function fitPayload(payload: ApnsPayload): ApnsPayload {
   let body = payload.aps.alert?.body;
   while (body && Buffer.byteLength(JSON.stringify(payload)) > PAYLOAD_MAX_BYTES) {
     body = truncate(body, Math.floor([...body].length / 2));

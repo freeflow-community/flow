@@ -7,7 +7,8 @@ import { emailDomain, type OAuthIdentityDTO, type WorkspaceDTO } from '@flow/sha
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { newToken } from '../lib/tokens.js';
-import { conflict } from '../lib/errors.js';
+import { config } from '../config.js';
+import { ApiError, conflict } from '../lib/errors.js';
 import { announceJoin, enrollInWorkspace, toWorkspaceDTO } from './workspaces.js';
 
 const { users, workspaces, workspaceMembers, oauthIdentities } = schema;
@@ -70,6 +71,8 @@ export async function resolveOAuthUser(profile: OAuthProfile): Promise<string> {
     }
     return existing.id;
   }
+
+  if (!config.registrationEnabled) throw new ApiError(403, 'registration_disabled', 'Account registration is disabled on this server');
 
   // Provider-first account: a real verified email, no usable password. The
   // sentinel hash mirrors the `!agent:` / `!bot:` trick so `password_hash`

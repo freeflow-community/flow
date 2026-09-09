@@ -31,7 +31,6 @@ import {
   PatchMeBody,
   PresignUploadBody,
   RegisterBody,
-  RegisterDeviceBody,
   CreateAppBody,
   CreateArtifactBody,
   UpdateArtifactBody,
@@ -72,6 +71,7 @@ const UPDATE_MAC_PREFIX = 'downloads/mac/';
 const UPDATE_ASSET_RE = /^(appcast\.xml|Flow-[A-Za-z0-9._-]+\.zip|Flow[0-9]+-[0-9]+\.delta)$/;
 import { config } from '../config.js';
 import * as auth from '../services/auth.js';
+import * as handoff from '../services/handoff.js';
 import * as google from '../services/oauthGoogle.js';
 import * as apple from '../services/oauthApple.js';
 import { listIdentities } from '../services/oauthAccounts.js';
@@ -148,6 +148,22 @@ export function registerRoutes(app: FastifyInstance): void {
     }
     app.log.error(err);
     return reply.status(500).send({ error: { code: 'internal', message: 'internal server error' } });
+  });
+
+  app.get('/v1/client-info', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return {
+      protocolVersion: 1,
+      displayName: config.serverDisplayName,
+      authMethods: ['password', 'email-link', ...(config.googleEnabled ? ['google'] : []), ...(config.appleEnabled ? ['apple'] : [])],
+      registrationAvailable: config.registrationEnabled,
+      capabilities: {
+        browserConnections: true,
+        authHandoff: config.handoffReturnUrls.length > 0,
+        push: config.pushDriver === 'apns' && !!(config.apnsKey && config.apnsKeyId && config.apnsTeamId),
+        pushRouting: true,
+      },
+    };
   });
 
   app.get('/healthz', async () => ({ ok: true }));
@@ -327,6 +343,23 @@ export function registerRoutes(app: FastifyInstance): void {
     return auth.exchangeAppLink(body.code, req.headers['user-agent']);
   });
 
+  // Bound handoff endpoints are separate so old app-link exchanges cannot downgrade PKCE.
+  app.post('/v1/auth/handoff/start', async (req, reply) => {
+    if (!await rateAllowDb(`handoff-start:${req.ip}`, 30, 10 * 60_000)) throw new ApiError(429, 'rate_limited', 'Too many handoff attempts');
+    reply.header('Cache-Control', 'no-store');
+    return reply.code(201).send(await handoff.startHandoff(parse(handoff.HandoffStart, req.body), req.headers.origin));
+  });
+  app.post('/v1/auth/handoff/approve', { preHandler: requireAuth }, async (req, reply) => {
+    if (req.authKind !== 'session' || req.user.isAgent) throw unauthorized('A human session is required');
+    reply.header('Cache-Control', 'no-store');
+    return handoff.approveHandoff(req.user.id, parse(handoff.HandoffApprove, req.body));
+  });
+  app.post('/v1/auth/handoff/exchange', async (req, reply) => {
+    if (!await rateAllowDb(`handoff-exchange:${req.ip}`, 60, 10 * 60_000)) throw new ApiError(429, 'rate_limited', 'Too many handoff attempts');
+    reply.header('Cache-Control', 'no-store');
+    return handoff.exchangeHandoff(parse(handoff.HandoffExchange, req.body), req.headers.origin, req.headers['user-agent']);
+  });
+
   // ---- me ------------------------------------------------------
   app.get('/v1/me', { preHandler: requireAuth }, async (req) => req.user);
 
@@ -377,7 +410,7 @@ export function registerRoutes(app: FastifyInstance): void {
   // Registration is idempotent and called on every cold start; the upsert
   // rebinds a token that has changed hands rather than duplicating it.
   app.post('/v1/me/devices', { preHandler: requireAuth }, async (req) => {
-    const body = parse(RegisterDeviceBody, req.body);
+    const body = parse(dv.ConnectionDeviceBody, req.body);
     return dv.registerDevice(req.user.id, body);
   });
 
@@ -386,7 +419,8 @@ export function registerRoutes(app: FastifyInstance): void {
   // owner of the phone gets someone else's pushes until APNs 410s the token.
   app.delete('/v1/me/devices/:token', { preHandler: requireAuth }, async (req) => {
     const { token } = req.params as { token: string };
-    return dv.unregisterDevice(req.user.id, parse(DeviceTokenParam, token));
+    const { routingId } = parse(dv.UnregisterDeviceQuery, req.query);
+    return dv.unregisterDevice(req.user.id, parse(DeviceTokenParam, token), routingId);
   });
 
   // ---- users / avatars -----------------------------------------

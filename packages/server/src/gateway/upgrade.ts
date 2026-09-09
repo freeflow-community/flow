@@ -8,6 +8,8 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
 
+import { originAllowed } from '../lib/browserPolicy.js';
+
 const routers = new WeakMap<HttpServer, Map<string, WebSocketServer>>();
 
 export function routeUpgrade(server: HttpServer, path: string, wss: WebSocketServer): void {
@@ -15,6 +17,12 @@ export function routeUpgrade(server: HttpServer, path: string, wss: WebSocketSer
   if (!routes) {
     routers.set(server, (routes = new Map()));
     server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+      const scheme = 'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http';
+      if (!originAllowed(req.headers.origin, `${scheme}://${req.headers.host}`)) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       const url = req.url ?? '/';
       const qIndex = url.indexOf('?');
       const pathname = qIndex === -1 ? url : url.slice(0, qIndex);

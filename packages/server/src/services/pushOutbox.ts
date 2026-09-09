@@ -20,7 +20,7 @@ import { USER_MENTION_RE, type NotificationKind, type NotificationSubkind } from
 import { db, schema, type Tx } from '../db/index.js';
 import { decryptBody } from '../crypto/index.js';
 import { newId } from '../lib/ids.js';
-import { pushSender, type ApnsHeaders, type ApnsPayload, type PushDevice } from '../push/index.js';
+import { sendPush, pushSender, type ApnsHeaders, type ApnsPayload, type PushDevice } from '../push/index.js';
 import {
   buildMutedBadgePayload,
   buildPushPayload,
@@ -432,7 +432,7 @@ async function send(
   headers: ApnsHeaders,
 ): Promise<{ ok: true } | { ok: false; reason: string; retryable: boolean; disableDevice: boolean }> {
   try {
-    const r = await sender.send(device, payload, headers);
+    const r = await sendPush(sender, device, payload, headers);
     return r.ok ? { ok: true } : { ok: false, reason: r.reason, retryable: r.retryable, disableDevice: r.disableDevice };
   } catch (err) {
     return { ok: false, reason: String(err), retryable: true, disableDevice: false };
