@@ -79,9 +79,19 @@ enum MentionRendering {
             return nil
         }
         var pill = AttributedString(text)
-        pill.foregroundColor = strong ? .white : .accentColor
-        pill.backgroundColor = strong ? Color.accentColor : Color.accentColor.opacity(0.18)
-        pill.font = ZoomedFont.system(.callout, weight: .bold, scale: scale)
+        // A mention marks a name inside a sentence; it is not the sentence
+        // (#531). A filled accent block with bold white text read louder than
+        // the message carrying it, so both weights come down: a tint you
+        // notice rather than a badge that shouts. `strong` (you, or a group
+        // mention) keeps a visible step up — twice the tint and one weight
+        // more — which is enough to find while scanning, without the block.
+        // `MC.accent`, not `.accentColor`: the environment tint only resolves
+        // to the brand purple for some attribute combinations — drop the
+        // filled-block styling and the same `.accentColor` run comes back as
+        // system blue. The palette token is the colour we actually mean.
+        pill.foregroundColor = MC.accent
+        pill.backgroundColor = MC.accent.opacity(strong ? 0.20 : 0.10)
+        pill.font = ZoomedFont.system(.callout, weight: strong ? .medium : .regular, scale: scale)
         return pill
     }
 
