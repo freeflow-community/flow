@@ -17,6 +17,7 @@ import type {
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { applyChannelEmoji, applyHuddle, applyIndicator } from '../lib/channelCache';
 import { api, getToken } from '../lib/api';
+import { apiUrl } from '../lib/apiBase';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useSelection } from '../state';
@@ -91,7 +92,7 @@ export default function Main() {
     const workspaceId = selRef.current.workspaceId;
     if (!workspaceId) return;
     try {
-      const r = await fetch(`/v1/me/notifications?limit=1&workspaceId=${workspaceId}`, {
+      const r = await fetch(apiUrl(`/v1/me/notifications?limit=1&workspaceId=${workspaceId}`), {
         headers: { authorization: `Bearer ${getToken() ?? ''}` },
       });
       const j = (await r.json()) as { unreadCount?: number };

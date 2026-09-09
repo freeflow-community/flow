@@ -10,7 +10,8 @@ const okJson = (body: unknown) => ({
 describe('fileImageUrl', () => {
   beforeEach(() => {
     vi.stubGlobal('localStorage', {
-      getItem: vi.fn(() => 'test-token'),
+      // Key-aware: the store also holds flow.apiBase now, which must read empty.
+      getItem: vi.fn((key: string) => (key === 'flow.token' ? 'test-token' : null)),
       setItem: vi.fn(),
       removeItem: vi.fn(),
     });

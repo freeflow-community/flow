@@ -2,6 +2,7 @@
 // ping→pong, reconnect with backoff. Online-only client: every reconnect is
 // followed by query invalidation (the REST refetch IS the backfill).
 import type { Event, ServerFrame } from '@flow/shared';
+import { wsUrl } from './apiBase';
 
 export type SocketStatus = 'connecting' | 'connected' | 'reconnecting';
 
@@ -65,8 +66,7 @@ export class SocketClient {
   private connect(): void {
     if (this.stopped) return;
     this.handlers.onStatus(this.backoff === 500 ? 'connecting' : 'reconnecting');
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/v1/ws`);
+    const ws = new WebSocket(wsUrl('/v1/ws'));
     this.ws = ws;
 
     // Arm the watchdog from the attempt, not from `hello`: a socket that opens

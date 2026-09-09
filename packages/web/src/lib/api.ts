@@ -1,6 +1,9 @@
-// REST client: same-origin (Vite proxy in dev, Fastify static in prod).
+// REST client: same-origin by default (Vite proxy in dev, Fastify static in
+// prod); a packaged client points it at its server through apiBase.
 import type { AppTokenDTO, FileDTO, PresignedUploadDTO, WorkspaceDTO } from '@flow/shared';
+import { apiUrl } from './apiBase';
 import { prepareImageForUpload } from './imagePrep';
+import { store } from './storage';
 
 export class ApiError extends Error {
   constructor(
@@ -14,12 +17,13 @@ export class ApiError extends Error {
 
 const TOKEN_KEY = 'flow.token';
 
+// Through the client store (storage.ts) so a native shell can keep the token
+// in secure storage; on web the store *is* localStorage.
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return store().get(TOKEN_KEY);
 }
 export function setToken(token: string | null): void {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  store().set(TOKEN_KEY, token || null);
 }
 
 export async function api<T>(
@@ -28,7 +32,7 @@ export async function api<T>(
   body?: unknown,
 ): Promise<T> {
   const token = getToken();
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     method,
     headers: {
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
@@ -94,7 +98,7 @@ export async function uploadFile(workspaceId: string, original: File): Promise<F
     sizeBytes: file.size,
   });
   const relative = pres.upload.url.startsWith('/'); // fallback URL needs our auth; R2 must NOT see it
-  const put = await fetch(pres.upload.url, {
+  const put = await fetch(relative ? apiUrl(pres.upload.url) : pres.upload.url, {
     method: pres.upload.method,
     headers: {
       ...pres.upload.headers,
@@ -112,7 +116,7 @@ export async function uploadFile(workspaceId: string, original: File): Promise<F
 async function uploadMultipart<T>(path: string, file: File): Promise<T> {
   const form = new FormData();
   form.append('file', file, file.name);
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     method: 'POST',
     headers: { authorization: `Bearer ${getToken() ?? ''}` },
     body: form,
@@ -167,7 +171,7 @@ export function blobUrl(path: string): Promise<string> {
   let cached = blobCache.get(path);
   if (!cached) {
     cached = (async () => {
-      const res = await fetch(path, {
+      const res = await fetch(apiUrl(path), {
         headers: { authorization: `Bearer ${getToken() ?? ''}` },
       });
       if (!res.ok) throw new ApiError(res.status, 'blob_failed', `HTTP ${res.status}`);

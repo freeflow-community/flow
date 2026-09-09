@@ -116,6 +116,21 @@ export const config = {
       .filter(Boolean);
   },
   /**
+   * Origins allowed to call the API cross-origin (docs/design/ANDROID.md,
+   * phase 0). The web client is served by this process and is same-origin, so
+   * it never needs this; a packaged client served from its own origin
+   * (`capacitor://localhost`, `https://localhost`) does. Exact-match list,
+   * comma-separated; empty (the default) registers no CORS layer at all, so a
+   * pure-web deployment is untouched. Auth is a Bearer header, not a cookie,
+   * so credentialed CORS is never enabled.
+   */
+  get corsOrigins(): readonly string[] {
+    return (process.env.FLOW_CORS_ORIGINS ?? '')
+      .split(',')
+      .map((o) => o.trim().toLowerCase())
+      .filter(Boolean);
+  },
+  /**
    * Phase 11 §3: consult robots.txt before unfurling?
    *
    * DEFAULT OFF, by operator ruling 2026-07-22 (see decision_log.md). The spec

@@ -67,6 +67,13 @@ projects outside it, built by their own toolchains.
 deploy.** `pnpm -r build` writes `packages/web/dist`, and the running server
 serves it.
 
+That build is same-origin by design: the client assumes the API is wherever
+its page came from. A client served from its own origin — the packaged Android
+app (`docs/design/ANDROID.md`) — bakes the server in at build time instead,
+`VITE_API_BASE=https://app.freeflow.im pnpm --filter @flow/web build`, and the
+server it targets lists that client's origin in `FLOW_CORS_ORIGINS`. Leave both
+unset for the normal web build; nothing changes.
+
 Production is Railway, connected to `freeflow-community/flow`, so pushing to `main`
 builds and ships. The contract is in [`railway.json`](railway.json): Railpack,
 build `pnpm -r build`, start `node packages/server/dist/index.js`, gated on

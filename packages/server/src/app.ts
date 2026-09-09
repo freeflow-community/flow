@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
@@ -26,6 +27,25 @@ export function buildApp(): FastifyInstance {
   const rawBody = { parseAs: 'buffer', bodyLimit: config.maxFileBytes } as const;
   app.addContentTypeParser('*', rawBody, (_req, body, done) => done(null, body));
   app.addContentTypeParser('text/plain', rawBody, (_req, body, done) => done(null, body));
+
+  // Cross-origin access for packaged clients (docs/design/ANDROID.md phase 0).
+  // Off unless FLOW_CORS_ORIGINS names their origins: the web client is served
+  // by this process and stays same-origin, so a web-only deployment gets no
+  // CORS layer at all — not even a preflight handler. Exact-match allowlist,
+  // no credentials (auth is a Bearer header). The WebSocket upgrade is not
+  // subject to CORS and needs nothing here. Methods are listed because the
+  // plugin's default is only the CORS-safelisted trio (GET/HEAD/POST) and the
+  // client PATCHes and DELETEs; request headers are reflected, so a new one
+  // needs no change here.
+  const corsOrigins = config.corsOrigins;
+  if (corsOrigins.length) {
+    void app.register(cors, {
+      origin: [...corsOrigins],
+      methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+      maxAge: 86400,
+    });
+    app.log.info({ origins: corsOrigins }, 'CORS enabled for packaged-client origins');
+  }
 
   // Retired-hostname redirect (phase17 §13). Both the old and new hostnames
   // resolve to this one service, so the redirect has to key off the Host

@@ -1324,3 +1324,21 @@ one-recipient MCP correction).
   calls the existing leave route. LiveKit Agents recording is disabled. A
   missing `OPENAI_API_KEY` or disabled voice config declines immediately with
   an actionable DM message rather than allowing a fake or unanswered call.
+
+## 2026-09-07 — Android ships the web client in a Capacitor shell first
+
+- **Route ruling (#228).** Android is the one platform where the existing
+  assets point away from the iOS recipe: iOS compiles the macOS Swift stack
+  verbatim, Kotlin would inherit none of it and become a third hand-written
+  sync engine. So Android ships `packages/web` in a Capacitor shell — the OS
+  WebView plus thin native plugins for push, deep links, share target, IME and
+  the huddle microphone — and native Kotlin stays on the roadmap as the exit
+  ramp, not a competitor. Consistent with the no-Electron stance: no bundled
+  browser. This diverges from the fully-native ethos of macOS and iOS on
+  purpose, and it is revisitable if real usage hits the WebView's limits.
+- **What it costs the server and web client: two seams, both off by default.**
+  An `apiBase` the client consults for every API and WebSocket URL (same-origin
+  unless `VITE_API_BASE` or a runtime picker says otherwise), and a
+  `FLOW_CORS_ORIGINS` allowlist that registers no CORS layer at all when
+  unset. The web build is byte-for-byte unaffected; a web-only deployment sees
+  no new behaviour.
