@@ -591,16 +591,22 @@ export async function markNotificationsRead(
 }
 
 /**
- * Visiting a channel reads its notifications (issue #63). Scoped to top-level
- * messages at or before the read cursor — thread replies live behind a click,
- * so they clear via markThreadNotificationsRead instead.
+ * Visiting a channel reads its notifications (issue #63): top-level messages at
+ * or before the read cursor, **and every thread reply in the channel** (#533).
  *
- * The one exception is a thread hanging off a system message (#270). No client
- * draws a thread affordance on a join/leave line, so that thread cannot be
- * opened and its rows could never clear — a permanent badge. Replies to system
- * roots are refused now, but rows written before that fix still exist, so a
- * visit reads them too, scoped by the *root's* position against the cursor:
- * scrolling past the join line is as much as anyone can ever see of it.
+ * Thread rows used to be excluded here — they live behind a click, so they were
+ * left to markThreadNotificationsRead. But the sidebar badge counts *all* of a
+ * channel's unread rows, so that split made the number structurally unclearable
+ * from the channel view: N unread threads needed N thread openings, and the
+ * auto-open mitigation (#327/#441) only jumps to one of them, only on the way
+ * into a different channel. A badge you cannot clear by looking at the thing it
+ * points at is worse than a reply marked read a beat early, so the visit sweeps
+ * them. The reply chip's own unread dot (#270) still distinguishes threads that
+ * wanted you, right up until the visit.
+ *
+ * That also subsumes the #270 exception it replaces — a thread hanging off a
+ * system message has no affordance to open it, so before this its rows could
+ * never clear at all; now they clear with every other thread row.
  */
 export async function markChannelNotificationsRead(
   userId: string,
@@ -615,14 +621,10 @@ export async function markChannelNotificationsRead(
       sql`${notifications.messageId} IN (
         SELECT ${messages.id} FROM ${messages}
          WHERE ${messages.channelId} = ${channelId}
-           AND ${messages.threadRootId} IS NULL
-           AND ${messages.id} <= ${lastReadMsgId}
-        UNION ALL
-        SELECT m.id FROM ${messages} m
-          JOIN ${messages} root ON root.id = m.thread_root_id
-         WHERE m.channel_id = ${channelId}
-           AND root.system_kind IS NOT NULL
-           AND root.id <= ${lastReadMsgId}
+           AND (
+             ${messages.threadRootId} IS NOT NULL
+             OR ${messages.id} <= ${lastReadMsgId}
+           )
       )`,
     ),
     chan.workspaceId,

@@ -199,7 +199,7 @@ describe('threads on system messages', () => {
     expect(after?.unreadThreadRootIds).toEqual([]);
   });
 
-  it('an ordinary thread reply still waits for the thread to be opened', async () => {
+  it('opening the thread still clears an ordinary reply', async () => {
     const root = await msg.sendMessage(channelId, bobId, randomUUID(), 'a real root');
     await msg.sendMessage(channelId, aliceId, randomUUID(), 'a real reply', root.id);
 
@@ -207,14 +207,90 @@ describe('threads on system messages', () => {
     expect(before?.unreadNotifications).toBe(1);
     expect(before?.unreadThreadRootIds).toEqual([root.id]);
 
-    await ch.markRead(channelId, bobId, root.id); // visiting the channel is not enough
-    const mid = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
-    expect(mid?.unreadNotifications).toBe(1);
-
-    await ch.markRead(channelId, bobId, root.id, root.id); // opening the thread is
+    await ch.markRead(channelId, bobId, root.id, root.id);
     const after = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
     expect(after?.unreadNotifications).toBe(0);
     expect(after?.unreadThreadRootIds).toEqual([]);
+  });
+});
+
+// #533: the sidebar badge counts every unread row a channel has, thread replies
+// included, but a visit used to clear only top-level ones — so the number was
+// structurally unclearable from the channel view. A visit now sweeps the
+// channel's thread rows too.
+describe('a channel visit clears thread-reply notifications', () => {
+  let chanId = '';
+
+  beforeEach(async () => {
+    const c = await ch.createChannel(workspaceId, aliceId, `t533-${randomUUID().slice(0, 8)}`);
+    chanId = c.id;
+    await ch.addMember(chanId, aliceId, bobId);
+    await db.delete(notifications).where(eq(notifications.userId, bobId));
+  });
+
+  async function forBob() {
+    return (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === chanId);
+  }
+
+  it('clears replies across several threads in one visit', async () => {
+    const first = await msg.sendMessage(chanId, bobId, randomUUID(), 'first root');
+    const second = await msg.sendMessage(chanId, bobId, randomUUID(), 'second root');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply one', first.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply two', first.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply three', second.id);
+
+    const before = await forBob();
+    expect(before?.unreadNotifications).toBe(3);
+    expect(before?.unreadThreadRootIds).toEqual(expect.arrayContaining([first.id, second.id]));
+
+    await ch.markRead(chanId, bobId, second.id); // the visit, no threadRootId
+
+    const after = await forBob();
+    expect(after?.unreadNotifications).toBe(0);
+    expect(after?.unreadThreadRootIds).toEqual([]);
+    expect(after?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('clears a reply whose root sits past the read cursor', async () => {
+    // The cursor a client sends is the newest message it has cached, which on a
+    // partially loaded transcript can be older than the thread's root. The
+    // sweep must not depend on where the cursor landed, or the badge is stuck
+    // again for exactly the user who scrolled least.
+    const older = await msg.sendMessage(chanId, aliceId, randomUUID(), 'older top-level');
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'newer root');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'a reply', root.id);
+
+    expect((await forBob())?.unreadNotifications).toBe(1);
+    await ch.markRead(chanId, bobId, older.id);
+    expect((await forBob())?.unreadNotifications).toBe(0);
+  });
+
+  it('leaves another channel alone', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'root here');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply here', root.id);
+    const otherRoot = await msg.sendMessage(channelId, bobId, randomUUID(), 'root over there');
+    await msg.sendMessage(channelId, aliceId, randomUUID(), 'reply over there', otherRoot.id);
+
+    await ch.markRead(chanId, bobId, root.id);
+
+    expect((await forBob())?.unreadNotifications).toBe(0);
+    const other = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(other?.unreadNotifications).toBe(1);
+  });
+
+  it('the cleared state survives a reload of the channel list', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'bobs root');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'a reply', root.id);
+    await ch.markRead(chanId, bobId, root.id);
+
+    // Rows are flipped server-side, not just zeroed on a client: any fresh read
+    // of the list — a relaunched app, another device — sees the same zero.
+    const rows = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(and(eq(notifications.userId, bobId), eq(notifications.channelId, chanId), isNull(notifications.readAt)));
+    expect(rows).toEqual([]);
+    expect((await forBob())?.unreadNotifications).toBe(0);
   });
 });
 

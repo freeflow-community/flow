@@ -4,10 +4,11 @@ import XCTest
 @testable import Flow
 
 /// Auto-opening the thread that holds a channel's oldest unread (#441 — the
-/// macOS/iOS half of #327). The server decides *whether* there is a jump:
+/// macOS/iOS half of #327). The server decides whether there is a jump:
 /// `oldestUnreadThreadReply` arrives only when the oldest unread is a reply,
-/// so the client's own rule is the one thing web also owns — jump on the way
-/// into a different channel, never anywhere else.
+/// and since #533 a tap acts on it wherever the user already is — including the
+/// channel already on screen, which is the gesture people reach for when a
+/// badge won't clear.
 final class SidebarThreadJumpTests: XCTestCase {
     private func channel(jump: ThreadReplyRef?) -> Channel {
         Channel(
@@ -20,8 +21,7 @@ final class SidebarThreadJumpTests: XCTestCase {
     }
 
     func testJumpsIntoTheThreadHoldingTheOldestUnread() {
-        let jump = channel(jump: ThreadReplyRef(rootId: "root1", replyId: "reply1"))
-            .sidebarThreadJump(currentChannelId: "c2")
+        let jump = channel(jump: ThreadReplyRef(rootId: "root1", replyId: "reply1")).sidebarThreadJump
         XCTAssertEqual(jump?.rootId, "root1")
         XCTAssertEqual(jump?.replyId, "reply1")
     }
@@ -29,20 +29,16 @@ final class SidebarThreadJumpTests: XCTestCase {
     /// Oldest unread is a top-level message, or there are no unreads: the
     /// server sends no target and the tap is an ordinary channel select.
     func testNoTargetIsAPlainSelect() {
-        XCTAssertNil(channel(jump: nil).sidebarThreadJump(currentChannelId: "c2"))
+        XCTAssertNil(channel(jump: nil).sidebarThreadJump)
     }
 
-    /// The regression this guard exists for: the field stays set while the
-    /// reply is unread, so re-tapping the channel already on screen (or any
-    /// re-render that re-reads the row) must not yank the user into a thread.
-    func testReTappingTheOpenChannelDoesNotJump() {
+    /// #533: re-tapping the channel already on screen jumps too. The server
+    /// stops sending the target once the visit has read the channel's thread
+    /// rows, so this can't loop — and while it is still set, the user tapping a
+    /// badged row is asking to be taken to what the badge counts.
+    func testReTappingTheOpenChannelStillJumps() {
         let ch = channel(jump: ThreadReplyRef(rootId: "root1", replyId: "reply1"))
-        XCTAssertNil(ch.sidebarThreadJump(currentChannelId: "c1"))
-    }
-
-    func testJumpsWithNoChannelSelectedYet() {
-        let ch = channel(jump: ThreadReplyRef(rootId: "root1", replyId: "reply1"))
-        XCTAssertNotNil(ch.sidebarThreadJump(currentChannelId: nil))
+        XCTAssertEqual(ch.sidebarThreadJump?.replyId, "reply1")
     }
 
     /// The cached row survives a relaunch, so the target has to decode from the

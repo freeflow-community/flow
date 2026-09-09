@@ -135,10 +135,11 @@ final class WindowState: ObservableObject {
     /// thread reply, enter the channel *and* that thread, scrolled to the
     /// reply — otherwise the badge points at a timeline showing nothing new and
     /// the user has to hunt for the thread by hand. Same jump a tapped
-    /// notification performs, and the same rule web applies: on the way into a
-    /// different channel only. Anything else is a plain select.
+    /// notification performs, and the same rule web applies. Anything else is a
+    /// plain select — which, on the channel already showing, is now a read pass
+    /// rather than nothing at all (#533).
     func openChannelFromSidebar(_ channel: Channel) {
-        guard let jump = channel.sidebarThreadJump(currentChannelId: selectedChannelId) else {
+        guard let jump = channel.sidebarThreadJump else {
             selectChannel(channel.id)
             return
         }
@@ -181,7 +182,15 @@ final class WindowState: ObservableObject {
             showActivity = false
             showScheduled = false
             showDirectory = false
-            guard id != selectedChannelId else { return }
+            guard id != selectedChannelId else {
+                // Picking the channel already on screen used to stop here, which
+                // made the gesture people reach for when a badge won't clear the
+                // one gesture that couldn't clear it (#533). The transcript is
+                // already right, so only the read pass re-runs.
+                let engine = self.engine
+                Task { await engine.revisitChannel(id) }
+                return
+            }
             switchChannel(to: id)
         }
     }

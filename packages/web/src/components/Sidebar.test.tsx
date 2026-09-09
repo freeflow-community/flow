@@ -353,7 +353,8 @@ describe('openChannelFromSidebar', () => {
       selectChannel: (id: string | null) => calls.push(`select:${id}`),
       jumpToMessage: (c: string, m: string, root?: string | null) => calls.push(`jump:${c}:${m}:${root}`),
     } as unknown as Selection;
-    return { sel, calls };
+    const revisit = (c: ChannelDTO) => calls.push(`revisit:${c.id}`);
+    return { sel, calls, revisit };
   };
   const withUnreadThread = (id: string): ChannelDTO => ({
     ...chan(id),
@@ -380,11 +381,25 @@ describe('openChannelFromSidebar', () => {
     expect(calls).toEqual(['select:alpha']);
   });
 
-  it('does not yank a thread open in the channel you are already in', () => {
-    // Replies landing while you sit in a channel keep it as the auto-open
-    // target; re-clicking its row must not throw the panel open under you.
-    const { sel, calls } = selection('alpha');
-    openChannelFromSidebar(sel, withUnreadThread('alpha'));
-    expect(calls).toEqual(['select:alpha']);
+  // #533: clicking the row of the channel you are already in used to do
+  // nothing, which is exactly the gesture someone makes when a badge won't go
+  // away. It re-runs the read pass now — and follows the auto-open target,
+  // since a badge you just clicked should take you to what it counts.
+  it('re-runs the read pass when you click the channel you are already in', () => {
+    const { sel, calls, revisit } = selection('alpha');
+    openChannelFromSidebar(sel, chan('alpha'), revisit);
+    expect(calls).toEqual(['revisit:alpha', 'select:alpha']);
+  });
+
+  it('re-reads and opens the waiting thread on a re-click', () => {
+    const { sel, calls, revisit } = selection('alpha');
+    openChannelFromSidebar(sel, withUnreadThread('alpha'), revisit);
+    expect(calls).toEqual(['revisit:alpha', 'jump:alpha:reply1:root1']);
+  });
+
+  it('does not re-read a channel you are switching into', () => {
+    const { sel, calls, revisit } = selection('other');
+    openChannelFromSidebar(sel, chan('alpha'), revisit);
+    expect(calls).toEqual(['select:alpha']); // entering it marks it read already
   });
 });

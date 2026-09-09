@@ -345,16 +345,26 @@ describe('losing access retires the unread signal (read, never deleted)', () => 
 });
 
 describe('implicit read: visiting the channel or thread', () => {
-  it('reading a channel reads its top-level notifications, not its threads', async () => {
+  // #533: thread rows go with the visit. They used to wait for the thread to
+  // be opened, which left the sidebar badge — which counts them — impossible to
+  // clear from the channel itself.
+  it('reading a channel reads its thread rows as well as its top-level ones', async () => {
     const root = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> root`, undefined, undefined, [bobId]);
     const reply = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> reply`, root.id, undefined, [bobId]);
 
     await ch.markRead(channelId, bobId, root.id);
     expect((await notificationFor(bobId, root.id))?.readAt).not.toBeNull();
-    expect((await notificationFor(bobId, reply.id))?.readAt).toBeNull(); // still behind a click
-
-    await ch.markRead(channelId, bobId, root.id, root.id); // opened the thread
     expect((await notificationFor(bobId, reply.id))?.readAt).not.toBeNull();
+  });
+
+  it('opening a thread still reads only that thread', async () => {
+    const root = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> another root`, undefined, undefined, [bobId]);
+    const reply = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> another reply`, root.id, undefined, [bobId]);
+    const elsewhere = await msg.sendMessage(channelId, aliceId, randomUUID(), `<@${bobId}> top-level`, undefined, undefined, [bobId]);
+
+    await ch.markRead(channelId, bobId, elsewhere.id, root.id);
+    expect((await notificationFor(bobId, reply.id))?.readAt).not.toBeNull();
+    expect((await notificationFor(bobId, elsewhere.id))?.readAt).toBeNull();
   });
 
   it('leaves notifications newer than the read cursor unread', async () => {
