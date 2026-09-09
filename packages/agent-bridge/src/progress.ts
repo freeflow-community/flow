@@ -40,6 +40,15 @@ const NARRATION_MIN_INTERVAL_MS = 1500;
 const INDICATOR_TTL_SECONDS = 90;
 const INDICATOR_REFRESH_MS = 30_000;
 
+/**
+ * The clear at the end of a turn is the one indicator write that has to land:
+ * a server restart or a 502 in that instant leaves the sidebar spinning until
+ * the TTL sweep, long after the reply is visible. Ask again a couple of times
+ * before giving up on it.
+ */
+const INDICATOR_CLEAR_RETRIES = 2;
+const INDICATOR_CLEAR_RETRY_MS = 250;
+
 export class ProgressReporter {
   private typingTimer: NodeJS.Timeout | null = null;
   private indicatorTimer: NodeJS.Timeout | null = null;
@@ -91,18 +100,34 @@ export class ProgressReporter {
    * Serialized through one chain so the final clear can't overtake a set that
    * is still in flight — a turn short enough for that to happen is exactly the
    * one where a stuck spinner would be most obviously wrong.
+   *
+   * Resolves false when the write failed, which is what lets the clear retry.
    */
-  private setIndicator(state: 'busy' | 'none'): Promise<void> {
-    this.indicatorChain = this.indicatorChain.then(async () => {
+  private setIndicator(state: 'busy' | 'none'): Promise<boolean> {
+    const next = this.indicatorChain.then(async () => {
       try {
         await this.api.setChannelIndicator(this.channelId, state, INDICATOR_TTL_SECONDS);
+        return true;
       } catch (err) {
         // Never let the chain reject: a rejected link would skip every later
         // set — including the clear that stops the spinner.
         this.log(`channel indicator (${state}) failed: ${(err as Error).message}`);
+        return false;
       }
     });
-    return this.indicatorChain;
+    this.indicatorChain = next.then(() => {});
+    return next;
+  }
+
+  /** The end-of-turn clear, with a short retry — see INDICATOR_CLEAR_RETRIES. */
+  private async clearIndicator(): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      if (await this.setIndicator('none')) return;
+      if (attempt >= INDICATOR_CLEAR_RETRIES) return;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, INDICATOR_CLEAR_RETRY_MS * (attempt + 1)).unref();
+      });
+    }
   }
 
   /** Latest step wins; edits are serialized (a step landing mid-edit is applied after). */
@@ -252,7 +277,7 @@ export class ProgressReporter {
     if (this.typingTimer) clearInterval(this.typingTimer);
     if (this.indicatorTimer) clearInterval(this.indicatorTimer);
     // Only if start() actually turned it on; 'silent' never does.
-    if (this.mode !== 'silent') await this.setIndicator('none');
+    if (this.mode !== 'silent') await this.clearIndicator();
     // wait out an in-flight post/edit so the delete can't race message creation
     this.wake(); // don't sit out a narration throttle we're about to flush anyway
     while (this.inFlight) await new Promise((r) => setTimeout(r, 25));

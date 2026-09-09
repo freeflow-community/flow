@@ -31,6 +31,15 @@ export function filenameFromDisposition(header: string | null): string | undefin
   return /filename="?([^";]+)"?/i.exec(header)?.[1]?.trim() || undefined;
 }
 
+/**
+ * JSON calls get a deadline (#534). Without one a hung request — a server that
+ * accepted the connection and went away — never settles, and the caller waiting
+ * on it never settles either: an end-of-turn indicator PUT stalls `finish()`,
+ * which holds a concurrency-semaphore slot open for as long as the process
+ * lives. Every /v1 JSON call here is small; 30s is a stall, not slowness.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 export class FlowApiError extends Error {
   constructor(
     public readonly status: number,
@@ -64,14 +73,25 @@ export class FlowApi {
   ) {}
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.serverUrl}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.serverUrl}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // Callers all handle FlowApiError; a bare TimeoutError would read as an
+      // unrelated crash in the logs.
+      if ((err as Error).name === 'TimeoutError') {
+        throw new FlowApiError(504, 'timeout', `${method} ${path} timed out after ${REQUEST_TIMEOUT_MS}ms`);
+      }
+      throw err;
+    }
     if (!res.ok) await parseError(res);
     return (await res.json()) as T;
   }
