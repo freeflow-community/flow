@@ -111,10 +111,34 @@ function expectNarrationOnlyGrew(ops: Op[]): void {
   }
 }
 
+/**
+ * (4) A rollover must not strand what the agent already said above the live
+ * status row (#528). Ids are time-ordered, so a narration message opened after
+ * the row renders below it; once that has happened the row belongs below them
+ * all, or the turn's earlier commentary is cut off above a row that keeps
+ * growing text underneath it.
+ */
+function expectRolloverDidNotStrandNarration(ops: Op[], preFinish: number): void {
+  const kind = kinds(ops);
+  const alive: string[] = [];
+  for (const op of ops.slice(0, preFinish)) {
+    if (op.op === 'create') alive.push(op.id);
+    if (op.op === 'delete') {
+      const at = alive.indexOf(op.id);
+      if (at >= 0) alive.splice(at, 1);
+    }
+  }
+  const narration = alive.filter((id) => kind.get(id) === 'narration');
+  const status = alive.filter((id) => kind.get(id) === 'status');
+  if (narration.length < 2 || status.length === 0) return; // nothing rolled over, or no row to strand it above
+  expect({ rows: status.length, newest: alive[alive.length - 1] }).toEqual({ rows: 1, newest: status[0] });
+}
+
 function expectAllInvariants(ops: Op[], preFinish: number): void {
   expectSealedNarrationUntouched(ops);
   expectNoCrossKindWrites(ops);
   expectNarrationOnlyGrew(ops.slice(0, preFinish));
+  expectRolloverDidNotStrandNarration(ops, preFinish);
 }
 
 describe('narration invariants (#528)', () => {
@@ -219,5 +243,74 @@ describe('narration invariants (#528)', () => {
     expect(logs.some((l) => l.includes('relayed text failed'))).toBe(true);
     expect(narrationIds(ops)).toHaveLength(1);
     expectAllInvariants(ops, preFinish);
+  });
+  it('re-posts the status row below a narration message opened by rollover', async () => {
+    // The bug (#528): ids are time-ordered, so the successor lands *below* the
+    // live row and the first message is stranded above it — which in a
+    // transcript that follows the bottom reads as the text disappearing while
+    // the thinking line carries on updating.
+    const { reporter, ops } = makeRecorder(undefined);
+    vi.useFakeTimers();
+    try {
+      reporter.start();
+      reporter.onStep('Read: progress.ts');
+      await vi.advanceTimersByTimeAsync(0);
+      reporter.onText('a'.repeat(1600));
+      await expireThrottle();
+      reporter.onText('b'.repeat(1600)); // rolls over
+      await expireThrottle();
+      reporter.onStep('Grep: writeNarration');
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    const preFinish = ops.length;
+    await reporter.finish();
+
+    // The property first: nothing the agent said is left above the live row.
+    expectAllInvariants(ops, preFinish);
+
+    const [first, second] = narrationIds(ops);
+    const rows = ops.filter((o) => o.op === 'create' && isStatus(o.body!)).map((o) => o.id);
+    // One row was carried across the rollover: the original is gone, and the
+    // one still standing is newer than both narration messages.
+    expect(rows).toHaveLength(2);
+    expect(ops.some((o) => o.op === 'delete' && o.id === rows[0])).toBe(true);
+    const order = ops.filter((o) => o.op === 'create').map((o) => o.id);
+    expect(order).toEqual([rows[0], first, second, rows[1]]);
+    // …and it is still the row being edited, so the live indicator survived the move.
+    expect(ops.some((o) => o.op === 'edit' && o.id === rows[1] && isStatus(o.body!))).toBe(true);
+  });
+
+  it('leaves the row alone on a turn that never rolls over', async () => {
+    // The common case pays nothing: one status row, posted once, edited in place.
+    const { reporter, ops } = makeRecorder(undefined);
+    reporter.start();
+    reporter.onStep('Bash: pnpm test');
+    await tick();
+    reporter.onText('Tests are green.');
+    const preFinish = ops.length;
+    await reporter.finish();
+
+    expect(ops.filter((o) => o.op === 'create' && isStatus(o.body!))).toHaveLength(1);
+    expect(ops.filter((o) => o.op === 'delete')).toHaveLength(1); // the row, at the end
+    expectAllInvariants(ops, preFinish);
+  });
+
+  it('does not move the row during the final flush', async () => {
+    // A rollover inside finish() must not re-post a row that is about to be
+    // hard-deleted — that would leave a thinking… line below the real reply.
+    const { reporter, ops } = makeRecorder(undefined);
+    reporter.start();
+    reporter.onStep('Bash: pnpm test');
+    await tick();
+    reporter.onText('c'.repeat(1600));
+    reporter.onText('d'.repeat(1600)); // still queued when finish() flushes
+    await reporter.finish();
+
+    expect(narrationIds(ops).length).toBeGreaterThan(1);
+    expect(ops.filter((o) => o.op === 'create' && isStatus(o.body!))).toHaveLength(1);
+    const deletes = ops.filter((o) => o.op === 'delete').map((o) => kinds(ops).get(o.id));
+    expect(deletes).toEqual(['status']);
   });
 });
