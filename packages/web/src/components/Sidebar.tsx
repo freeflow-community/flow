@@ -13,6 +13,7 @@ import {
   useArtifacts,
   useChannels,
   useDisplayNameMap,
+  useMarkRead,
   useMemberMap,
   useMembers,
   useNameMap,
@@ -1064,13 +1065,42 @@ export function ActivitySpinner({ active }: { active: boolean }) {
  * open the channel *and* that thread, landing on the first unread reply.
  * Everything else is the plain channel switch it has always been.
  *
- * Deliberately tied to the click and not to render: re-entering a channel you
- * are already in, and replies arriving while you sit in it, must not yank the
- * thread panel open under you.
+ * Deliberately tied to the click and not to render: replies arriving while you
+ * sit in a channel must not yank the thread panel open under you.
+ *
+ * Clicking the row of the channel already on screen used to do nothing at all,
+ * which made the gesture people reach for when a badge won't clear the one
+ * gesture that couldn't clear it (#533). `revisit` re-runs the read pass —
+ * ChannelView's own effect fires on the newest message changing, so sitting
+ * still in the channel never triggers it again.
  */
-export function openChannelFromSidebar(sel: Selection, channel: ChannelDTO): void {
+/**
+ * The read pass for the channel already on screen (#533): re-send its cursor,
+ * which is what makes the server sweep the channel's notification rows —
+ * thread replies included. Nothing else re-runs it, because ChannelView marks
+ * read off the newest *message* changing and sitting still changes nothing.
+ *
+ * The cursor comes from the channel row itself, so this can only ever repeat a
+ * read the server already recorded; the server refuses to move a cursor
+ * backwards, so a stale row cannot un-read the timeline.
+ */
+export function useChannelRevisit(): (channel: ChannelDTO) => void {
+  const markRead = useMarkRead();
+  return (channel) => {
+    if (channel.lastReadMsgId) {
+      markRead.mutate({ channelId: channel.id, lastReadMsgId: channel.lastReadMsgId });
+    }
+  };
+}
+
+export function openChannelFromSidebar(
+  sel: Selection,
+  channel: ChannelDTO,
+  revisit?: (channel: ChannelDTO) => void,
+): void {
+  if (sel.channelId === channel.id) revisit?.(channel);
   const jump = channel.oldestUnreadThreadReply;
-  if (jump && sel.channelId !== channel.id) sel.jumpToMessage(channel.id, jump.replyId, jump.rootId);
+  if (jump) sel.jumpToMessage(channel.id, jump.replyId, jump.rootId);
   else sel.selectChannel(channel.id);
 }
 
@@ -1123,6 +1153,7 @@ function ChannelRow({
   // handlers; DMs never have one, so they're inert here.
   const topicTip = useHoverTooltip(channel.topic, `channel-topic-tooltip-${channel.name ?? channel.id}`);
   const { ref: tipRef, ...tipHandlers } = topicTip.anchorProps;
+  const revisit = useChannelRevisit();
   return (
     <div
       ref={(el) => {
@@ -1140,7 +1171,7 @@ function ChannelRow({
         data-unread={channel.unreadCount}
         data-notifications={notifications}
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
-        onClick={() => openChannelFromSidebar(sel, channel)}
+        onClick={() => openChannelFromSidebar(sel, channel, revisit)}
       >
         {leading ?? (
           <span className={active ? 'opacity-60' : 'text-white/60'}>{channel.isPrivate ? '🔒' : '#'}</span>

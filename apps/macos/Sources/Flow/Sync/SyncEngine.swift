@@ -878,6 +878,20 @@ actor SyncEngine {
         await markRead(channelId: channelId, lastReadMsgId: newest)
     }
 
+    /// The channel already on screen was picked again (#533). The transcript is
+    /// already loaded, so this is only the read pass: zero the local Activity
+    /// rows, then tell the server, which now sweeps the channel's thread rows
+    /// too. Deliberately not `selectChannel`, which would refetch a history
+    /// page nothing has invalidated.
+    ///
+    /// Re-clicking the selected channel is what a user does when a badge won't
+    /// go away, so it has to be the gesture that clears it rather than the one
+    /// that can't.
+    func revisitChannel(_ channelId: String) async {
+        await clearNotificationsLocally(channelId: channelId)
+        await catchUpRead(channelId: channelId)
+    }
+
     /// "I'm looking at this thread" — reads the thread's notifications without
     /// touching the channel cursor (which only tracks top-level messages).
     private func markThreadRead(channelId: String, rootId: String) async {

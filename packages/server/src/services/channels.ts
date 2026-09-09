@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { HUDDLE_SYSTEM_KINDS } from '@flow/shared';
 import type { ChannelDTO, ChannelIndicatorState, ChannelKind, HuddleParticipantDTO, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
@@ -636,9 +636,18 @@ export async function markRead(
     await markThreadNotificationsRead(userId, chan, threadRootId);
     return;
   }
+  // Forward only. A revisit (#533) re-sends the cursor the client already has,
+  // which on a stale channel row can be older than the one the server holds —
+  // and rewinding it would un-read messages the user has demonstrably seen.
   await db
     .update(channelMembers)
     .set({ lastReadMsgId })
-    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
+    .where(
+      and(
+        eq(channelMembers.channelId, channelId),
+        eq(channelMembers.userId, userId),
+        or(isNull(channelMembers.lastReadMsgId), lt(channelMembers.lastReadMsgId, lastReadMsgId)),
+      ),
+    );
   await markChannelNotificationsRead(userId, chan, lastReadMsgId);
 }

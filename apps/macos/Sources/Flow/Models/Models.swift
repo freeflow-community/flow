@@ -499,14 +499,17 @@ extension Channel {
     /// the reply to land on when this channel's oldest unread lives inside a
     /// thread. Nil means an ordinary channel select.
     ///
-    /// Only on the way *into* a different channel. The server keeps sending the
-    /// field for as long as that reply is unread, so without this test a
-    /// re-render or a re-tap of the channel already on screen would yank the
-    /// user back into the thread they just left.
-    func sidebarThreadJump(currentChannelId: String?) -> ThreadReplyRef? {
-        guard id != currentChannelId else { return nil }
-        return oldestUnreadThreadReply
-    }
+    /// This used to fire only on the way *into* a different channel, so that a
+    /// re-tap of the channel already on screen couldn't yank the user back into
+    /// the thread they had just left. It applies to the selected channel too
+    /// now (#533): entering a channel reads its thread rows, so the field is
+    /// already nil by the time a second tap could act on it, and the one case
+    /// where it isn't — a reply that landed while the user sat in the channel —
+    /// is a badge they just clicked and would want taking them somewhere.
+    ///
+    /// Only ever called from a tap handler, never from render, so no re-render
+    /// can reopen a thread on its own.
+    var sidebarThreadJump: ThreadReplyRef? { oldestUnreadThreadReply }
 }
 
 extension Channel {
