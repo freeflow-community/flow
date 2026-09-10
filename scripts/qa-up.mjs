@@ -9,6 +9,11 @@
 //
 // Usage:
 //   pnpm qa:up                 # start (or print the running stack)
+//   pnpm qa:up --name=b        # a *second*, independent backend alongside it
+//   pnpm qa:up --collide       # …seeded with ids that collide with every other
+//                              #   --collide stack (the multi-server matrix)
+//   pnpm qa:up --allow-origin=http://127.0.0.1:5051
+//                              # let a web client hosted on that origin connect
 //   pnpm qa:up --fresh         # tear the current stack down first
 //   pnpm qa:up --sim           # also boot an iOS simulator
 //   pnpm qa:up --sim="iPhone 17 Pro"
@@ -19,7 +24,9 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   ADMIN_DB_URL,
+  DEFAULT_STACK,
   NATS_URL,
+  claimedPorts,
   freePort,
   isFlowServer,
   postgresClient,
@@ -29,6 +36,7 @@ import {
   serverDir,
   sleep,
   stackDir,
+  stackName,
   tcpOpen,
   writeState,
 } from './lib/qa-stack.mjs';
@@ -38,6 +46,10 @@ const has = (name) => args.some((a) => a === `--${name}` || a.startsWith(`--${na
 const value = (name) => args.find((a) => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
 
 const opts = {
+  name: stackName(value('name')),
+  collide: has('collide'),
+  allowOrigin: args.filter((a) => a.startsWith('--allow-origin='))
+    .map((a) => a.slice('--allow-origin='.length)).join(','),
   fresh: has('fresh'),
   sim: has('sim'),
   simDevice: value('sim') || 'iPhone 17 Pro',
@@ -52,21 +64,25 @@ const fail = (msg) => {
 };
 
 // ---- an already-running stack ------------------------------------------
-const existing = readState();
+const label = opts.name === DEFAULT_STACK ? '' : ` "${opts.name}"`;
+const down = opts.name === DEFAULT_STACK ? 'pnpm qa:down' : `pnpm qa:down --name=${opts.name}`;
+const existing = readState(opts.name);
 if (existing && processAlive(existing.pid) && !opts.fresh) {
   if (await isFlowServer(existing.api)) {
-    log(`qa:up: a stack is already running on port ${existing.port} — reusing it.`);
-    log('       `pnpm qa:up --fresh` replaces it, `pnpm qa:down` removes it.\n');
+    log(`qa:up: stack${label} is already running on port ${existing.port} — reusing it.`);
+    log(`       \`${down.replace('down', 'up')} --fresh\` replaces it, \`${down}\` removes it.\n`);
     print(existing);
     process.exit(0);
   }
 }
 if (existing) {
   log('qa:up: removing the previous stack first…');
-  const down = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'qa-down.mjs')], {
-    stdio: opts.json ? 'ignore' : 'inherit',
-  });
-  if (down.status !== 0) fail('could not tear down the previous stack — run `pnpm qa:down`');
+  const removed = spawnSync(
+    process.execPath,
+    [path.join(repoRoot, 'scripts', 'qa-down.mjs'), `--name=${opts.name}`],
+    { stdio: opts.json ? 'ignore' : 'inherit' },
+  );
+  if (removed.status !== 0) fail(`could not tear down the previous stack — run \`${down}\``);
 }
 
 // ---- preflight: borrowed infrastructure --------------------------------
@@ -102,7 +118,9 @@ if (opts.web || !fs.existsSync(sharedDist) || !fs.existsSync(webDist)) {
 }
 
 // ---- the stack ---------------------------------------------------------
-const port = await freePort();
+// Only the *listening* ports are visible to the kernel; a sibling stack that
+// is still starting has claimed its number without binding it yet.
+const port = await freePort(claimedPorts(opts.name));
 const api = `http://127.0.0.1:${port}`;
 const runDir = path.join(stackDir, `run-${port}`);
 const dbName = `flow_qa_${port}`;
@@ -135,6 +153,17 @@ const env = {
   FLOW_EMAIL_OUTBOX: path.join(runDir, 'emails'),
   FLOW_PUSH_OUTBOX: path.join(runDir, 'push'),
   FLOW_FILE_DIR: path.join(runDir, 'files'),
+  // Its own NATS subject namespace. The bus routes on `ws.{workspaceId}…`,
+  // and a `--collide` stack shares those ids with every other one by design —
+  // on the shared dev NATS that means each stack's events surface in the
+  // other's clients, which looks exactly like the cross-server leak the
+  // acceptance matrix is hunting for. One prefix per stack removes the
+  // harness from the experiment.
+  FLOW_BUS_PREFIX: `qa${port}`,
+  // Browser connections from another backend's page origin (the multi-server
+  // shape: one web deployment, several backends). Same-origin needs no entry,
+  // so bring the *page's* stack up first and pass its origin here.
+  ...(opts.allowOrigin ? { FLOW_ALLOWED_WEB_ORIGINS: opts.allowOrigin } : {}),
 };
 
 const logPath = path.join(runDir, 'server.log');
@@ -173,7 +202,36 @@ if (seeded.status !== 0) {
   console.error(seeded.stderr);
   fail('seeding failed');
 }
-const seed = JSON.parse(seeded.stdout);
+let seed = JSON.parse(seeded.stdout);
+
+// ---- deliberate id collisions (multi-server acceptance) ----------------
+// Every `--collide` stack derives its user/workspace/channel/file ids from the
+// row's natural key, so two independently seeded backends end up sharing them.
+// That is the point: the spec's acceptance matrix runs against "two independent
+// backends with deliberately overlapping identifiers", and nothing else on this
+// machine produces that.
+if (opts.collide) {
+  log('qa:up: rewriting ids so they collide with every other --collide stack…');
+  const collided = spawnSync(
+    process.execPath,
+    [path.join(serverDir, 'scripts', 'qa-collide.mjs'), `--database-url=${dbUrl.href}`],
+    { cwd: serverDir, encoding: 'utf8' },
+  );
+  if (collided.status !== 0) {
+    console.error(collided.stderr);
+    fail('id collision rewrite failed');
+  }
+  // The tokens the seed printed still identify their sessions, but the ids in
+  // its JSON are the pre-rewrite ones. Re-read them through the API.
+  const reread = spawnSync(process.execPath, [path.join(serverDir, 'scripts', 'qa-seed.mjs')], {
+    cwd: serverDir, env: { ...process.env, API: api }, encoding: 'utf8',
+  });
+  if (reread.status !== 0) {
+    console.error(reread.stderr);
+    fail('re-seeding after the collision rewrite failed');
+  }
+  seed = JSON.parse(reread.stdout);
+}
 fs.writeFileSync(path.join(runDir, 'seed.json'), JSON.stringify(seed, null, 2) + '\n');
 
 // ---- pre-auth ----------------------------------------------------------
@@ -254,6 +312,9 @@ function simList() {
 // ---- record and report -------------------------------------------------
 const state = {
   startedAt: new Date().toISOString(),
+  name: opts.name,
+  collided: opts.collide,
+  allowedWebOrigins: opts.allowOrigin ? opts.allowOrigin.split(',') : [],
   port,
   api,
   ws: `ws://127.0.0.1:${port}/v1/ws`,
@@ -288,7 +349,7 @@ const state = {
   },
   sim,
 };
-writeState(state);
+writeState(state, opts.name);
 
 if (opts.json) {
   console.log(JSON.stringify(state, null, 2));
@@ -298,7 +359,8 @@ if (opts.json) {
 
 function print(s) {
   const line = (k, v) => console.log(`  ${k.padEnd(18)} ${v}`);
-  console.log('\n── QA stack up ──────────────────────────────────────────────');
+  const title = s.name && s.name !== DEFAULT_STACK ? `QA stack "${s.name}" up` : 'QA stack up';
+  console.log(`\n── ${title} ${'─'.repeat(Math.max(1, 58 - title.length))}`);
   line('API / web', s.api);
   line('WebSocket', s.ws);
   line('database', s.dbName);
@@ -318,6 +380,9 @@ function print(s) {
   line('swift test', `FLOW_TEST_SERVER_URL=${s.api} swift test`);
   line('scripts', `API=${s.api} node packages/server/scripts/qa-bot.mjs`);
   if (s.sim) line('simulator', `${s.sim.name} (${s.sim.udid})`);
-  console.log('\n  pnpm qa:down removes exactly this stack.');
+  if (s.collided) console.log('\n  ids collide with every other --collide stack (multi-server matrix)');
+  if (s.allowedWebOrigins?.length) console.log(`  browser origins allowed: ${s.allowedWebOrigins.join(', ')}`);
+  const remove = s.name && s.name !== DEFAULT_STACK ? `pnpm qa:down --name=${s.name}` : 'pnpm qa:down';
+  console.log(`\n  ${remove} removes exactly this stack.`);
   console.log('──────────────────────────────────────────────────────────────\n');
 }

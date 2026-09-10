@@ -22,7 +22,7 @@ struct FlowApp: App {
                 .preferredColorScheme(.light)
                 // Backgrounded (or on the app switcher) is not "seen": the
                 // selected channel must not mark its mail read (issue #63).
-                .onChange(of: scenePhase) { _, phase in app.setAppActive(phase == .active) }
+                .onChange(of: scenePhase) { _, phase in app.connections.setAppActive(phase == .active) }
                 // Hand the app state to the push delegate, which replays a
                 // token or a tap that arrived before the UI was ready (a cold
                 // launch from a banner is exactly that).

@@ -54,6 +54,14 @@ struct PushPayload: Equatable, Sendable {
         notificationId = (userInfo["notificationId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    /// The opaque routing identifier from *any* push shape, badge-sync
+    /// included — those carry no routing keys, so `init?` refuses them, but
+    /// which connection a silent push belongs to still has to be answerable
+    /// (#542). Empty reads as absent: an empty key can address nothing.
+    static func routingId(from userInfo: [AnyHashable: Any]) -> String? {
+        (userInfo["routingId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// The server-authoritative unread total an alert or badge-sync push
     /// carries in `aps.badge`. Read from either shape: an alert push's badge is
     /// as fresh as a silent one's, so applying it keeps the icon honest even

@@ -10,31 +10,51 @@
 //
 // Usage:
 //   pnpm qa:down              # stop the server, drop its database, clean up
+//   pnpm qa:down --name=b     # …the named stack instead
+//   pnpm qa:down --all        # every recorded stack
 //   pnpm qa:down --keep-logs  # leave .qa/run-<port>/ on disk
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import {
+  DEFAULT_STACK,
   RESERVED_PORTS,
   clearState,
+  listStacks,
   postgresClient,
   processAlive,
   readState,
   serverDir,
   sleep,
-  statePath,
+  stackName,
+  statePathFor,
 } from './lib/qa-stack.mjs';
 
-const keepLogs = process.argv.includes('--keep-logs');
-const state = readState();
+const argv = process.argv.slice(2);
+const keepLogs = argv.includes('--keep-logs');
+const named = argv.find((a) => a.startsWith('--name='))?.slice('--name='.length);
+const targets = argv.includes('--all') ? listStacks() : [stackName(named)];
 
-if (!state) {
+if (!targets.length) {
   console.log('qa:down: no QA stack recorded — nothing to do.');
   process.exit(0);
 }
 
+for (const name of targets) await teardown(name);
+
+async function teardown(name) {
+const label = name === DEFAULT_STACK ? '' : ` "${name}"`;
+const statePath = statePathFor(name);
+const state = readState(name);
+
+if (!state) {
+  console.log(`qa:down: no QA stack${label} recorded — nothing to do.`);
+  return;
+}
+
 if (RESERVED_PORTS.has(state.port)) {
   console.error(`qa:down: refusing to touch port ${state.port} — it is not ours.`);
-  process.exit(1);
+  process.exitCode = 1;
+  return;
 }
 
 // ---- the server --------------------------------------------------------
@@ -47,7 +67,7 @@ if (processAlive(state.pid)) {
     console.error(`qa:down: pid ${state.pid} is not our server any more — leaving it alone.`);
     console.error(`         ${cmd.trim()}`);
   } else {
-    console.log(`qa:down: stopping the server on port ${state.port} (pid ${state.pid})…`);
+    console.log(`qa:down: stopping the server${label} on port ${state.port} (pid ${state.pid})…`);
     // qa:up spawned it detached, so the pid heads its own process group.
     try {
       process.kill(-state.pid, 'SIGTERM');
@@ -64,7 +84,7 @@ if (processAlive(state.pid)) {
     }
   }
 } else {
-  console.log('qa:down: the server is already stopped.');
+  console.log(`qa:down: the server${label} is already stopped.`);
 }
 
 // ---- the database ------------------------------------------------------
@@ -99,5 +119,6 @@ if (!keepLogs && state.runDir?.includes('/.qa/run-')) {
   console.log(`qa:down: keeping ${state.runDir}`);
 }
 
-clearState();
-console.log(`qa:down: done. (${statePath} removed)`);
+clearState(name);
+console.log(`qa:down: done${label}. (${statePath} removed)`);
+}

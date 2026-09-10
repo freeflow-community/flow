@@ -40,7 +40,16 @@ struct ServerConnectionsView: View {
                 }
                 ForEach(manager.registry.connections, id: \.connectionId) { connection in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(connection.canonicalOrigin?.label ?? connection.origin).font(.headline)
+                        HStack {
+                            Text(connection.canonicalOrigin?.label ?? connection.origin).font(.headline)
+                            // Aggregated from this connection's own live session
+                            // — no server can total the others (#542).
+                            let total = manager.unreadByConnection[connection.connectionId] ?? 0
+                            if total > 0 {
+                                Text("\(total)").font(.caption)
+                                    .accessibilityLabel("\(total) unread on this server")
+                            }
+                        }
                         let session = manager.registry.session(connection.connectionId)
                         Text(actionLabel(connection.connectionId)).font(.caption).foregroundStyle(.secondary)
                         if session?.status != .authenticated { Text("Sign in required").font(.caption) }
@@ -52,7 +61,10 @@ struct ServerConnectionsView: View {
                                         select(app, binding.workspaceId); dismiss()
                                     }
                                 }
-                                if let count = memberships[connection.connectionId]?.first(where: { $0.id == binding.workspaceId })?.unreadCount, count > 0 {
+                                // The running session's number when there is
+                                // one, this sheet's own fetch otherwise.
+                                let live = manager.unreadByWorkspace[connection.connectionId]?[binding.workspaceId]
+                                if let count = live ?? memberships[connection.connectionId]?.first(where: { $0.id == binding.workspaceId })?.unreadCount, count > 0 {
                                     Text("\(count)").font(.caption).accessibilityLabel("\(count) unread notifications")
                                 }
                                 Spacer()

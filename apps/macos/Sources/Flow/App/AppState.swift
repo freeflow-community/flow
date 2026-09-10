@@ -177,6 +177,16 @@ final class AppState: ObservableObject {
     /// Is the app frontmost? See `isViewing(channelId:)` — a selection in a
     /// backgrounded window must not count as "the user has seen this".
     @Published private(set) var isAppActive: Bool = true
+    /// Is *this connection* the one some window is actually showing (#542)?
+    ///
+    /// Separate from `isAppActive`, which is about the whole app. A window that
+    /// switches to another server leaves this session's `WindowState` behind
+    /// until SwiftUI gets round to releasing it, and until then the connection
+    /// went on believing its channel was on screen: it suppressed its own
+    /// banners and marked arriving mentions read, on a server nobody was
+    /// looking at. Owned by `ConnectionManager`, which is the only thing that
+    /// knows what every window is pointed at.
+    @Published private(set) var isOnScreen: Bool = true
     /// userId -> avatar path (/v1/avatars/<key>), for message rows & popovers.
     @Published private(set) var avatarPaths: [String: String] = [:]
     /// Set of agent user ids — the typing indicator says an agent "thinks"
@@ -322,11 +332,23 @@ final class AppState: ObservableObject {
         self.engine = runtime.engine
         let api = runtime.api
         connections.register(self)
-        Task {
+        let engine = self.engine
+        let images = self.images
+        bootstrapTask = Task { [weak self] in
             await images.configure(api: api)
+            guard let self else { return }
             await engine.attach(self)
             await engine.bootstrap()
         }
+    }
+
+    /// The first `/v1/me` round trip, so a caller bringing several connections
+    /// up can bound how many are in flight at once (#542). Held rather than
+    /// fired and forgotten; awaiting it twice is free.
+    private var bootstrapTask: Task<Void, Never>?
+
+    func awaitBootstrap() async {
+        await bootstrapTask?.value
     }
 
     /// The runtime's connection id — what identity and navigation records are
@@ -610,7 +632,7 @@ final class AppState: ObservableObject {
     /// sits behind a browser (the web client's equivalent test is
     /// `document.hidden`).
     func isViewing(channelId: String) -> Bool {
-        isAppActive && windows.contains {
+        isAppActive && isOnScreen && windows.contains {
             $0.selectedChannelId == channelId && !$0.showActivity
         }
     }
@@ -620,7 +642,7 @@ final class AppState: ObservableObject {
     /// thread reply the thread must also be open *in a window that is viewing
     /// the channel* — a reply behind a closed thread is not "seen".
     func isViewingMessage(channelId: String, threadRootId: String?) -> Bool {
-        guard isAppActive else { return false }
+        guard isAppActive, isOnScreen else { return false }
         return windows.contains { w in
             guard w.selectedChannelId == channelId, !w.showActivity else { return false }
             guard let threadRootId else { return true }
@@ -631,6 +653,16 @@ final class AppState: ObservableObject {
     /// Frontmost-and-visible, driven by SwiftUI's `scenePhase` in both app
     /// entry points. Starts true so a launch before the first phase callback
     /// behaves as it always did.
+    /// Told by `ConnectionManager` when a window starts or stops showing this
+    /// connection. Coming back on screen catches up the read state the way
+    /// returning to the app does — the channel really is being looked at now.
+    func setOnScreen(_ onScreen: Bool) {
+        guard isOnScreen != onScreen else { return }
+        isOnScreen = onScreen
+        guard onScreen, isAppActive else { return }
+        catchUpOpenChannels()
+    }
+
     func setAppActive(_ active: Bool) {
         guard isAppActive != active else { return }
         isAppActive = active
@@ -651,16 +683,23 @@ final class AppState: ObservableObject {
             flashHuddleNotice("Your camera turned off while Flow was in the background")
         }
         guard active else { return }
-        // Coming back to channels that collected mail while we were away is
-        // the moment to read them — the arrival path deliberately didn't.
-        for channelId in openChannelIds {
-            Task { await engine.catchUpRead(channelId: channelId) }
-        }
+        catchUpOpenChannels()
         // A suspended app's socket is regularly dead with no error on either
         // side, so returning to the front also has to re-check the connection.
         // That is `SyncEngine.observeWake` (#271), on the foreground/wake
         // notification rather than here: it checks liveness first, so a flick
         // to another app and straight back costs nothing.
+    }
+
+    /// Coming back to channels that collected mail while we were away is the
+    /// moment to read them — the arrival path deliberately didn't. Only for a
+    /// connection a window is actually showing: a server sitting in the
+    /// switcher has no channel on screen to have been read (#542).
+    private func catchUpOpenChannels() {
+        guard isOnScreen else { return }
+        for channelId in openChannelIds {
+            Task { await engine.catchUpRead(channelId: channelId) }
+        }
     }
 
     /// A channel was archived or left — every window showing it drops the

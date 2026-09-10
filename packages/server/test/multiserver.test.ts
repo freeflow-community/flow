@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { randomBytes, createHash } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
@@ -23,6 +23,7 @@ const auth = await import('../src/services/auth.js');
 const { resolveOAuthUser } = await import('../src/services/oauthAccounts.js');
 const { routeUpgrade } = await import('../src/gateway/upgrade.js');
 const { sendPush, pushSender, _setPushSenderForTests } = await import('../src/push/index.js');
+const bus = await import('../src/bus.js');
 const app = buildApp();
 let token: string;
 const origin = 'https://client.example';
@@ -191,5 +192,45 @@ describe('connection push contract', () => {
     await post('/v1/me/devices', base, true);
     expect((await db.select().from(schema.deviceTokens))[0]?.routingId).toBeNull();
     await remove(); expect(await db.select().from(schema.deviceTokens)).toHaveLength(0);
+  });
+});
+
+describe('bus subject namespacing (#542)', () => {
+  const original = process.env.FLOW_BUS_PREFIX;
+  afterEach(() => {
+    if (original === undefined) delete process.env.FLOW_BUS_PREFIX;
+    else process.env.FLOW_BUS_PREFIX = original;
+  });
+
+  it('leaves every subject alone when no prefix is configured', () => {
+    delete process.env.FLOW_BUS_PREFIX;
+    expect(bus.subjectMsg('w', 'c')).toBe('ws.w.chan.c.msg');
+    expect(bus.subjectWorkspaceAll('w')).toBe('ws.w.>');
+    expect(bus.subjectUserNotify('u')).toBe('user.u.notify');
+  });
+
+  it('namespaces publish and subscribe subjects alike, wildcards included', () => {
+    // Two deployments on one NATS route on the same `ws.{workspaceId}` subjects.
+    // With independently generated ids that never matters; with a *cloned*
+    // database it always does, and each one's events land in the other's
+    // clients. The prefix is what keeps them apart.
+    process.env.FLOW_BUS_PREFIX = 'staging';
+    expect(bus.subjectMsg('w', 'c')).toBe('staging.ws.w.chan.c.msg');
+    expect(bus.subjectWorkspaceAll('w')).toBe('staging.ws.w.>');
+    expect(bus.subjectHuddleAll()).toBe('staging.ws.*.chan.*.huddle');
+    expect(bus.subjectPresenceSyncAll()).toBe('staging.presence.sync.*');
+    expect(bus.subjectUserMeta('u')).toBe('staging.user.u.meta');
+    expect(bus.subjectAppSocketMode('a')).toBe('staging.app.a.socketmode');
+  });
+
+  it('refuses characters that would inject a wildcard or another subject token', () => {
+    process.env.FLOW_BUS_PREFIX = 'ev il.>.*';
+    expect(bus.subjectMsg('w', 'c')).toBe('evil.ws.w.chan.c.msg');
+  });
+
+  it('keeps the gateway able to recognise a meta subject under a prefix', () => {
+    process.env.FLOW_BUS_PREFIX = 'staging';
+    // gateway/index.ts routes membership bookkeeping on `endsWith('.meta')`.
+    expect(bus.subjectMeta('w').endsWith('.meta')).toBe(true);
   });
 });

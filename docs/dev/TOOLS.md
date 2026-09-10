@@ -26,7 +26,10 @@ pnpm qa:up                      # start (or print the stack that's already up)
 pnpm qa:up --fresh              # replace the current stack
 pnpm qa:up --sim                # …and boot an iOS simulator
 pnpm qa:up --json               # machine-readable summary on stdout
+pnpm qa:up --name=b --collide   # a second backend, ids colliding with the first
 pnpm qa:down                    # remove exactly what qa:up created
+pnpm qa:down --name=b           # …the named stack
+pnpm qa:down --all              # …every stack recorded
 ```
 
 `qa:up` picks a free port, creates its own Postgres database
@@ -61,6 +64,29 @@ itself.
 Per-stack scratch state — the sealed data key, the email outbox, the push
 outbox, uploaded files — lives under `.qa/run-<port>/`, so a QA run never
 writes into the shared dev directories.
+
+**Two backends at once (`--name`, `--collide`).** Multi-server work is not
+testable against one server: the interesting bugs are the ones where a cache
+key, a query key or a push route identifies a row by its id and forgets which
+server it came from. `--name=<label>` gives a stack its own
+`.qa/stack-<label>.json`, port, database and server process — the unnamed stack
+keeps `.qa/stack.json`, so everything that already reads it still works.
+
+`--collide` is the other half. Two separately seeded databases never share an
+id, so a client that mixed them up would look fine. This rewrites the seeded
+`users`, `workspaces`, `channels` and `files` ids to values derived from the
+row's *natural key* (email, slug, `workspace/name`), which is deterministic and
+needs no coordination: run it on each stack and they collide.
+
+```sh
+pnpm qa:up --name=a --collide
+pnpm qa:up --name=b --collide   # same alice/workspace/#general ids, other server
+pnpm qa:down --all
+```
+
+The rewrite is `packages/server/scripts/qa-collide.mjs` — it walks the foreign
+keys pointing at each primary key, drops them, updates parent and children, and
+puts them back. It refuses any database not named `flow_qa_<port>`.
 
 ## `scripts/check-clients.sh`
 

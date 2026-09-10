@@ -1,5 +1,6 @@
 // TanStack Query hooks over the REST API (phase2.md §7: online-only —
 // queries are the state; WS events invalidate them).
+import { useEffect } from 'react';
 import {
   useInfiniteQuery,
   useMutation,
@@ -34,16 +35,27 @@ import {
   removePendingMessage,
   type LocalMessage,
 } from './lib/messageCache';
+import { backgroundSync } from './lib/backgroundSync';
 import { useAuth, useRuntime } from './state';
 
 export function useWorkspaces() {
   const runtime = useRuntime();
   const api = runtime.api.bind(runtime);
-  return useQuery({
+  const query = useQuery({
     queryKey: ['workspaces'],
     queryFn: () => api<{ workspaces: WorkspaceDTO[] }>('GET', '/v1/me/workspaces'),
     select: (d) => d.workspaces,
   });
+  // The foreground connection has no background socket — this session is it —
+  // so hand its unread numbers to the supervisor. Without this, switching away
+  // from a server would blank its switcher badge until the background socket
+  // came up and refreshed (docs/specs/multi-server-workspaces.md: "switcher
+  // unread state aggregated from per-connection values").
+  const workspaces = query.data;
+  useEffect(() => {
+    if (workspaces) backgroundSync().reportForeground(runtime.connectionId, workspaces);
+  }, [runtime.connectionId, workspaces]);
+  return query;
 }
 
 /**

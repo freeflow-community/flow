@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { browserSignIn } from '../lib/authHandoff';
 import type { AuthResponse, UserDTO, WorkspaceDTO } from '@flow/shared';
+import { useConnectionSync } from '../lib/backgroundSync';
 import { connectionManager, type ConnectionRuntime } from '../lib/connectionRuntime';
 import { discoverServer } from '../lib/connectServer';
 import { originLabel } from '../lib/serverOrigin';
@@ -14,6 +15,10 @@ export default function ServerConnections({ onSelect, onClose }: {
   onClose(): void;
 }) {
   const manager = connectionManager();
+  // Live per-connection unread from the background supervisor — every
+  // connected server, not just the one on screen, and no extra request here.
+  const syncStates = useConnectionSync();
+  const syncFor = (connectionId: string) => syncStates.find(s => s.connectionId === connectionId);
   const operation = useRef<AbortController | null>(null);
   useEffect(() => () => operation.current?.abort(), []);
   const [revision, refresh] = useState(0);
@@ -126,15 +131,21 @@ export default function ServerConnections({ onSelect, onClose }: {
     <div className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl bg-white p-6 text-ink shadow-xl">
       <div className="mb-4 flex justify-between"><h2 className="text-lg font-semibold">Workspaces and servers</h2><button onClick={onClose} disabled={busy}>Close</button></div>
       {manager.connections.map(connection => {
+        // The live number when the supervisor has one, the sheet's own fetch
+        // as the fallback for a connection it has not reached yet.
+        const unreadFor = (connectionId: string, workspaceId: string) =>
+          syncFor(connectionId)?.unreadByWorkspace[workspaceId]
+            ?? accounts[connectionId]?.workspaces?.find(w => w.id === workspaceId)?.unreadCount
+            ?? 0;
         const session = manager.state.sessions.find(s => s.connectionId === connection.connectionId);
         const account = accounts[connection.connectionId];
         const bindings = manager.state.bindings.filter(b => b.connectionId === connection.connectionId && !b.hidden);
         const needsSignIn = !manager.runtime(connection.connectionId)?.getToken() || session?.status === 'unauthorized';
         return <section key={connection.connectionId} className="mb-4 rounded border border-hairline2 p-3">
-          <h3 className="font-semibold">{originLabel(connection.origin)}</h3>
-          <p className="text-sm text-faint">{account?.user?.email ?? session?.userId ?? 'Not signed in'}{needsSignIn ? ' · Sign in required' : account?.offline ? ' · Offline' : ''}</p>
+          <h3 className="font-semibold">{originLabel(connection.origin)}{(syncFor(connection.connectionId)?.unread ?? 0) > 0 && <span className="ml-2 rounded bg-violet-100 px-2 text-xs font-normal" aria-label={`${syncFor(connection.connectionId)!.unread} unread on this server`}>{syncFor(connection.connectionId)!.unread}</span>}</h3>
+          <p className="text-sm text-faint">{account?.user?.email ?? session?.userId ?? 'Not signed in'}{needsSignIn ? ' · Sign in required' : syncFor(connection.connectionId)?.status === 'offline' || account?.offline ? ' · Offline' : ''}</p>
           {bindings.map(binding => <div className="mt-2 flex items-center justify-between" key={binding.workspaceId}>
-            <button disabled={busy || needsSignIn} onClick={() => { onSelect(connection.connectionId, binding.workspaceId); onClose(); }}>{binding.name}{(account?.workspaces?.find(w => w.id === binding.workspaceId)?.unreadCount ?? 0) > 0 && <span className="ml-2 rounded bg-violet-100 px-2 text-xs" aria-label="Unread notifications">{account?.workspaces?.find(w => w.id === binding.workspaceId)?.unreadCount}</span>}</button>
+            <button disabled={busy || needsSignIn} onClick={() => { onSelect(connection.connectionId, binding.workspaceId); onClose(); }}>{binding.name}{unreadFor(connection.connectionId, binding.workspaceId) > 0 && <span className="ml-2 rounded bg-violet-100 px-2 text-xs" aria-label="Unread notifications">{unreadFor(connection.connectionId, binding.workspaceId)}</span>}</button>
             <button disabled={busy} className="text-xs text-faint" onClick={() => { manager.setBinding({ ...binding, hidden: true }); refresh(n => n + 1); }}>Hide workspace</button>
           </div>)}
           <div className="mt-3 flex flex-wrap gap-3 text-sm">
