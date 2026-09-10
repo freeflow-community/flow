@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  CodexJsonParser,
   DEMO_REPLY,
   StreamJsonParser,
   buildClaudeArgs,
@@ -14,6 +15,14 @@ import {
 } from '../src/runtime.js';
 import type { RuntimeConfig } from '../src/config.js';
 import { expandHome, loadConfig } from '../src/config.js';
+
+/**
+ * Idle window for the tests that spawn a real script and wait to be reaped.
+ * Wide enough to cover process spawn on a loaded box — at 0.4s these went red
+ * whenever the rest of the suite was competing for cores, and a test that
+ * measures the machine instead of the code is worse than a slower one.
+ */
+const IDLE = 1.5;
 
 describe('StreamJsonParser', () => {
   it('collects tool steps and the final result across chunk boundaries', () => {
@@ -33,7 +42,7 @@ describe('StreamJsonParser', () => {
     p.feed(raw.slice(0, 20));
     p.feed(raw.slice(20, 21));
     p.feed(raw.slice(21));
-    expect(steps).toEqual(['Bash: pnpm test', 'Read: c.ts']);
+    expect(steps).toEqual(['Bash(pnpm)', 'Read']);
     expect(p.sawResult).toBe(true);
     expect(p.isError).toBe(false);
     expect(p.finalText).toBe('all done');
@@ -104,7 +113,7 @@ describe('StreamJsonParser', () => {
         },
       })}\n`,
     );
-    expect(events).toEqual(['text:let me check the tests', 'step:Bash: pnpm test']);
+    expect(events).toEqual(['text:let me check the tests', 'step:Bash(pnpm)']);
   });
 
   it('swallows a block identical to the one before it', () => {
@@ -144,14 +153,70 @@ describe('describeResultError', () => {
   });
 });
 
+// #550/#552: the status row names the *kind* of step, never its arguments —
+// a full path wraps over four lines on a phone and says nothing extra.
 describe('formatToolStep', () => {
-  it('formats common tools one-line', () => {
-    expect(formatToolStep('Bash', { command: 'ls   -la' })).toBe('Bash: ls -la');
-    expect(formatToolStep('Grep', { pattern: 'foo.*bar' })).toBe('Grep: foo.*bar');
-    expect(formatToolStep('mcp__flow__send_message', {})).toBe('Flow: send_message');
-    expect(formatToolStep('SomethingNew', {})).toBe('SomethingNew');
-    const long = 'x'.repeat(200);
-    expect(formatToolStep('Bash', { command: long }).length).toBeLessThanOrEqual('Bash: '.length + 80);
+  it('reduces a tool call to its bare name', () => {
+    expect(formatToolStep('Read', { file_path: '/tmp/deep/nested/runtime.ts' })).toBe('Read');
+    expect(formatToolStep('Edit', { file_path: '/tmp/a.ts' })).toBe('Edit');
+    expect(formatToolStep('Grep', { pattern: 'foo.*bar' })).toBe('Grep');
+    expect(formatToolStep('WebFetch', { url: 'https://example.com/x' })).toBe('WebFetch');
+    expect(formatToolStep('SomethingNew', { whatever: 1 })).toBe('SomethingNew');
+    expect(formatToolStep('Read', undefined)).toBe('Read');
+  });
+
+  it('names the sub-command for Bash', () => {
+    expect(formatToolStep('Bash', { command: 'ls   -la' })).toBe('Bash(ls)');
+    expect(formatToolStep('Bash', { command: 'sed -n 240,300p /tmp/wt/packages/agent-bridge/src/runtime.ts' })).toBe('Bash(sed)');
+    expect(formatToolStep('Bash', { command: '/usr/bin/git status' })).toBe('Bash(git)');
+  });
+
+  it('skips env-var prefixes ahead of the command', () => {
+    expect(formatToolStep('Bash', { command: 'FOO=1 BAR=baz pnpm test' })).toBe('Bash(pnpm)');
+    expect(formatToolStep('Bash', { command: 'env NODE_ENV=test npx vitest run' })).toBe('Bash(npx)');
+  });
+
+  it('takes the head of a compound or piped command', () => {
+    expect(formatToolStep('Bash', { command: 'cd x && pnpm test' })).toBe('Bash(cd)');
+    expect(formatToolStep('Bash', { command: 'cat big.log | grep -i error | head -20' })).toBe('Bash(cat)');
+    expect(formatToolStep('Bash', { command: 'make build; make test' })).toBe('Bash(make)');
+  });
+
+  it('unwraps a shell -c wrapper to the command inside it', () => {
+    expect(formatToolStep('Bash', { command: "/bin/zsh -lc 'echo hello-from-codex'" })).toBe('Bash(echo)');
+    expect(formatToolStep('Bash', { command: '/bin/bash -c "pnpm -r build"' })).toBe('Bash(pnpm)');
+  });
+
+  it('falls back to a bare Bash when there is no command word', () => {
+    expect(formatToolStep('Bash', {})).toBe('Bash');
+    expect(formatToolStep('Bash', { command: '   ' })).toBe('Bash');
+  });
+
+  it('shortens MCP tool ids to server: tool', () => {
+    expect(formatToolStep('mcp__flow__send_message', {})).toBe('flow: send_message');
+    expect(formatToolStep('mcp__github__create_pull_request', {})).toBe('github: create_pull_request');
+  });
+
+  it('names the skill or subagent for wrapper tools', () => {
+    expect(formatToolStep('Skill', { skill: 'commit-helper', args: '--all' })).toBe('Skill(commit-helper)');
+    expect(formatToolStep('Task', { subagent_type: 'Explore', prompt: 'find the thing' })).toBe('Agent(Explore)');
+    expect(formatToolStep('Agent', { subagent_type: 'Explore' })).toBe('Agent(Explore)');
+    // No usable sub-name (or one that is really an argument) → still just the name.
+    expect(formatToolStep('Skill', { skill: '/tmp/some/path' })).toBe('Skill');
+    expect(formatToolStep('Task', { prompt: 'do a thing' })).toBe('Agent');
+  });
+
+  it('never leaks arguments or paths into the row', () => {
+    const rows = [
+      formatToolStep('Bash', { command: 'sed -n 240,300p /tmp/flow-wt/packages/agent-bridge/src/runtime.ts' }),
+      formatToolStep('Read', { file_path: '/tmp/flow-wt/packages/agent-bridge/src/runtime.ts' }),
+      formatToolStep('Grep', { pattern: '/tmp/secret' }),
+      formatToolStep('WebFetch', { url: 'https://example.com/a/b' }),
+    ];
+    for (const row of rows) {
+      expect(row).not.toContain('/');
+      expect(row.length).toBeLessThanOrEqual(24);
+    }
   });
 });
 
@@ -206,6 +271,7 @@ describe('buildCodexArgs', () => {
 
     expect(args).toEqual([
       'exec',
+      '--json',
       '--skip-git-repo-check',
       'You are the same Flow agent in a live Huddle.\n\nMahad: fix the PR',
     ]);
@@ -228,6 +294,7 @@ describe('buildCodexArgs', () => {
     expect(args).toEqual([
       'exec',
       'resume',
+      '--json',
       '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox',
       '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000',
@@ -249,12 +316,14 @@ describe('buildCodexArgs', () => {
       log: () => {},
     });
     expect(args).toEqual([
-      'exec', 'resume', '--skip-git-repo-check', '--image=/tmp/shot.png', '--',
+      'exec', 'resume', '--json', '--skip-git-repo-check', '--image=/tmp/shot.png', '--',
       '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000', '-',
     ]);
   });
 });
 
+// The `session id:` header is the fallback now — `--json` reports the id as
+// `thread.started.thread_id` and prints no header at all (#552).
 describe('parseCodexSessionId', () => {
   const header = [
     'model: gpt-6-astra',
@@ -298,7 +367,7 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
   function cfg(command: string, over: Partial<RuntimeConfig> = {}): RuntimeConfig {
     return {
       kind: 'claude', command, extraArgs: [], cwd: dir, permissionMode: undefined,
-      allowedTools: [], maxTurns: 10, timeoutSec: 30, idleTimeoutSec: 0.4, sessionIdleSec: 600, sessionHardCapSec: 3600,
+      allowedTools: [], maxTurns: 10, timeoutSec: 30, idleTimeoutSec: IDLE, sessionIdleSec: 600, sessionHardCapSec: 3600,
       mcp: false, systemPromptExtra: undefined, ...over,
     };
   }
@@ -331,7 +400,7 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
   it('kills a run that goes silent', async () => {
     const res = await run(cfg(script('silent', 'sleep 30')));
     expect(res.ok).toBe(false);
-    expect(res.error).toBe('no output for 0.4s');
+    expect(res.error).toBe(`no output for ${IDLE}s`);
   });
 
   it('lets a chatty run outlive the idle window — output rearms it', async () => {
@@ -352,7 +421,7 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
     const p = script('salvage', `echo '${say}'\nsleep 30`);
     return run(cfg(p)).then((res) => {
       expect(res.ok).toBe(false);
-      expect(res.error).toBe('no output for 0.4s');
+      expect(res.error).toBe(`no output for ${IDLE}s`);
       expect(res.text).toBe('Found the leak in the WS reconnect path.');
       expect(res.sawSession).toBe(true); // → the bridge keeps the session id
     });
@@ -388,8 +457,87 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
   });
 });
 
-// Real spawns against a fake `codex`: the header (stderr, like the real CLI in
-// non-tty runs) carries the session id, stdout stays the reply contract.
+// #552: codex speaks its own JSONL dialect — a turn is a sequence of items.
+// Sample events below are copied from a live codex-cli 0.153.4 run.
+describe('CodexJsonParser', () => {
+  const make = (): { p: CodexJsonParser; steps: string[]; texts: string[] } => {
+    const steps: string[] = [];
+    const texts: string[] = [];
+    return { p: new CodexJsonParser((s) => steps.push(s), (t) => texts.push(t)), steps, texts };
+  };
+  const ID = '01a08d6d-2df6-7ba1-935c-2718689dbaa5';
+
+  it('reads a whole turn: thread id, tool steps, and the reply', () => {
+    const { p, steps, texts } = make();
+    p.feed([
+      JSON.stringify({ type: 'thread.started', thread_id: ID }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 'I’ll run the command.' } }),
+      JSON.stringify({ type: 'item.started', item: { id: 'item_1', type: 'command_execution', command: "/bin/zsh -lc 'echo hello-from-codex'", status: 'in_progress' } }),
+      JSON.stringify({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: "/bin/zsh -lc 'echo hello-from-codex'", exit_code: 0, aggregated_output: 'hello-from-codex\n' } }),
+      JSON.stringify({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: 'It printed: hello-from-codex' } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 32071 } }),
+      '',
+    ].join('\n'));
+
+    expect(p.threadId).toBe(ID);
+    // Announced once, when the command starts — not again on completion.
+    expect(steps).toEqual(['Bash(echo)']);
+    expect(texts).toEqual(['I’ll run the command.', 'It printed: hello-from-codex']);
+    // Latest agent_message wins: the reply, and the salvage on a killed run.
+    expect(p.lastText).toBe('It printed: hello-from-codex');
+    expect(p.sawEvent).toBe(true);
+  });
+
+  it('names the command inside the shell wrapper, not the wrapper', () => {
+    const { p, steps } = make();
+    p.feed(`${JSON.stringify({ type: 'item.started', item: { type: 'command_execution', command: '/bin/zsh -lc \'sed -n 1,80p /tmp/wt/src/runtime.ts\'' } })}\n`);
+    expect(steps).toEqual(['Bash(sed)']);
+  });
+
+  it('ignores unknown item types and non-JSON noise instead of failing', () => {
+    const { p, steps, texts } = make();
+    p.feed([
+      'codex: warning: something plain-text',
+      '{ not json at all',
+      JSON.stringify({ type: 'item.started', item: { type: 'reasoning', text: 'thinking' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'some_future_thing', payload: 42 } }),
+      JSON.stringify({ type: 'turn.failed', error: { message: 'nope' } }),
+      '',
+    ].join('\n'));
+    expect(steps).toEqual([]);
+    expect(texts).toEqual([]);
+    expect(p.lastText).toBe('');
+  });
+
+  it('survives events split across chunk boundaries', () => {
+    const { p, steps } = make();
+    const line = JSON.stringify({ type: 'item.started', item: { type: 'command_execution', command: 'pnpm test' } });
+    p.feed(line.slice(0, 20));
+    p.feed(`${line.slice(20)}\n`);
+    expect(steps).toEqual(['Bash(pnpm)']);
+    // An unterminated trailing line stays buffered until its newline arrives.
+    p.feed(JSON.stringify({ type: 'thread.started', thread_id: ID }));
+    expect(p.threadId).toBeUndefined();
+    p.feed('\n');
+    expect(p.threadId).toBe(ID);
+  });
+
+  it('labels the item types it knows and skips the rest', () => {
+    const { p, steps } = make();
+    p.feed([
+      JSON.stringify({ type: 'item.started', item: { type: 'file_change', changes: [{ path: '/tmp/a.ts' }] } }),
+      JSON.stringify({ type: 'item.started', item: { type: 'web_search', query: 'flow bridge' } }),
+      '',
+    ].join('\n'));
+    expect(steps).toEqual(['Edit', 'WebSearch']);
+    for (const s of steps) expect(s).not.toContain('/');
+  });
+});
+
+// Real spawns against a fake `codex`. The JSONL stream on stdout is the live
+// contract; the `session id:` header tests below pin the fallback path, which
+// is what a codex build that ignored `--json` would leave us with.
 describe.skipIf(process.platform === 'win32')('codex session capture (POSIX)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-codex-'));
   const ID = '01a0881d-f3ff-76d2-958e-071dbc29616a';
@@ -406,8 +554,8 @@ describe.skipIf(process.platform === 'win32')('codex session capture (POSIX)', (
       mcp: false, systemPromptExtra: undefined,
     };
   }
-  const run = (c: RuntimeConfig, codexSessionId?: string): ReturnType<typeof runRuntime> =>
-    runRuntime(c, { sessionId: 's', resume: false, codexSessionId, prompt: 'p', systemPrompt: 'sys', onToolStep: () => {}, log: () => {} });
+  const run = (c: RuntimeConfig, codexSessionId?: string, onToolStep: (s: string) => void = () => {}): ReturnType<typeof runRuntime> =>
+    runRuntime(c, { sessionId: 's', resume: false, codexSessionId, prompt: 'p', systemPrompt: 'sys', onToolStep, log: () => {} });
 
   afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -435,7 +583,7 @@ describe.skipIf(process.platform === 'win32')('codex session capture (POSIX)', (
 
   it('an expired run still salvages the id it printed', async () => {
     const p = script('hang', `echo "session id: ${ID}" >&2; echo "partial"; sleep 60`);
-    const c = { ...cfg(p), idleTimeoutSec: 0.4 };
+    const c = { ...cfg(p), idleTimeoutSec: IDLE };
     const res = await run(c);
     expect(res.ok).toBe(false);
     expect(res.codexSessionId).toBe(ID);
@@ -447,6 +595,43 @@ describe.skipIf(process.platform === 'win32')('codex session capture (POSIX)', (
     const res = await run(cfg(p), ID);
     expect(res.ok).toBe(true);
     expect(res.text).toBe('resumed');
+  });
+
+  // The live path: `--json`, so the id is structural and the steps are real.
+  const jsonl = (lines: object[]): string =>
+    lines.map((l) => `echo '${JSON.stringify(l).replace(/'/g, "'\\''")}'`).join('\n');
+
+  it('takes the session id from thread.started and the reply from the last agent_message', async () => {
+    const steps: string[] = [];
+    const p = script('json-ok', jsonl([
+      { type: 'thread.started', thread_id: ID },
+      { type: 'item.completed', item: { type: 'agent_message', text: 'working on it' } },
+      { type: 'item.started', item: { type: 'command_execution', command: "/bin/zsh -lc 'pnpm -r build'" } },
+      { type: 'item.completed', item: { type: 'command_execution', exit_code: 0 } },
+      { type: 'item.completed', item: { type: 'agent_message', text: 'the build is green' } },
+      { type: 'turn.completed', usage: {} },
+    ]));
+    const res = await run(cfg(p), undefined, (s) => steps.push(s));
+    expect(res).toMatchObject({ ok: true, text: 'the build is green', sawSession: true, codexSessionId: ID });
+    expect(steps).toEqual(['Bash(pnpm)']);
+  });
+
+  it('passes --json to the CLI', async () => {
+    const p = script('json-argv', `echo "$@" > "${'$'}{0%/*}/argv.txt"`);
+    await run(cfg(p));
+    expect(fs.readFileSync(path.join(dir, 'argv.txt'), 'utf8')).toContain('--json');
+  });
+
+  it('an expired json run salvages the last agent_message and the thread id', async () => {
+    const p = script('json-hang', `${jsonl([
+      { type: 'thread.started', thread_id: ID },
+      { type: 'item.completed', item: { type: 'agent_message', text: 'got this far' } },
+    ])}\nsleep 60`);
+    const res = await run({ ...cfg(p), idleTimeoutSec: IDLE });
+    expect(res.ok).toBe(false);
+    expect(res.text).toBe('got this far');
+    expect(res.codexSessionId).toBe(ID);
+    expect(res.sawSession).toBe(true);
   });
 });
 
