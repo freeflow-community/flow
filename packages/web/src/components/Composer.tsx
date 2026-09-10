@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO } from '@flow/shared';
 import { emojiMatches } from '@flow/shared';
@@ -29,6 +30,8 @@ export default function Composer({
    * body loads here, Enter saves via PATCH, Esc/Cancel restores the draft. */
   editingMessage?: MessageDTO | undefined;
 }) {
+  const { api, uploadFile, scopedStorageKey } = useBoundApi();
+  const draftKey = scopedStorageKey(`draft:${channelId}:${threadRootId ?? ''}`);
   const sel = useSelection();
   const live = useLive();
   const qc = useQueryClient();
@@ -42,7 +45,7 @@ export default function Composer({
   /** The "schedule this instead of sending it" dialog (#420). */
   const [scheduling, setScheduling] = useState(false);
   const [addedNotice, setAddedNotice] = useState<string | null>(null);
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const [attachments, setAttachments] = useState<FileDTO[]>([]);
   const [uploading, setUploading] = useState(0);
   const [showEmoji, setShowEmoji] = useState(false);
@@ -51,6 +54,17 @@ export default function Composer({
   // for the draft; `text` mirrors it (normalized to "\n" newlines) for the
   // autocomplete/send/disable logic below.
   const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const saved = localStorage.getItem(draftKey) ?? '';
+    setText(saved);
+    if (editorRef.current) rebuild(editorRef.current, saved);
+  }, [draftKey]);
+  useEffect(() => {
+    if (!editingMessage) {
+      if (text) localStorage.setItem(draftKey, text);
+      else localStorage.removeItem(draftKey);
+    }
+  }, [draftKey, text, editingMessage]);
   const fileRef = useRef<HTMLInputElement>(null);
   const testPrefix = threadRootId ? 'thread-composer' : 'composer';
 

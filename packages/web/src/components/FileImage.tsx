@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useCallback, useEffect, useState } from 'react';
 import { fileImageUrl, type FileImageVariant } from '../lib/api';
 
@@ -19,6 +20,7 @@ export function useFileImageSource(
   variant: FileImageVariant,
   enabled = true,
 ): FileImageSource {
+  const { fileImageUrl } = useBoundApi();
   const [attempt, setAttempt] = useState(0);
   const [src, setSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<FileImageLoadStatus>(enabled ? 'loading' : 'idle');

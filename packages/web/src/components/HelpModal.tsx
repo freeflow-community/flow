@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useState } from 'react';
 import type { HelpPageDTO, HelpTopicDTO } from '@flow/shared';
 import { useQuery } from '@tanstack/react-query';
@@ -9,6 +10,7 @@ import { unwrap } from './FeaturesModal';
 const HOME = 'home';
 
 export function useHelpTopics() {
+  const { api } = useBoundApi();
   return useQuery({
     queryKey: ['help', 'topics'],
     queryFn: () => api<{ topics: HelpTopicDTO[] }>('GET', '/v1/help/topics').then((r) => r.topics),
@@ -17,6 +19,7 @@ export function useHelpTopics() {
 }
 
 export function useHelpPage(slug: string) {
+  const { api } = useBoundApi();
   return useQuery({
     queryKey: ['help', 'page', slug],
     queryFn: () => api<HelpPageDTO>('GET', `/v1/help/pages/${slug}`),

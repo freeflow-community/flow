@@ -191,7 +191,7 @@ struct ChannelView: View {
                 onOpenProfile: { userId in
                     profileUserId = userId
                 },
-                scrollKey: channelId,
+                scrollKey: app.sessionScope.key("scroll:\(channelId)"),
                 // Jump-to-message (phase 12): the main list owns the target
                 // unless it's a thread reply (ThreadPanelView handles those).
                 focusMessageId: win.openThreadRootId == nil ? win.focusMessageId : nil,

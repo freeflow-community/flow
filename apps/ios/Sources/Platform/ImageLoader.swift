@@ -11,10 +11,18 @@ actor ImageLoader {
     static let shared = ImageLoader()
 
     private var api: APIClient?
+    private var generation = 0
     // NSCache is internally thread-safe; `nonisolated(unsafe)` lets
     // `cachedImage(path:)` peek it synchronously from outside the actor.
     nonisolated(unsafe) private let cache = NSCache<NSString, UIImage>()
     private var inflight: [String: Task<UIImage?, Never>] = [:]
+
+    func clear() {
+        generation += 1
+        for task in inflight.values { task.cancel() }
+        inflight.removeAll()
+        cache.removeAllObjects()
+    }
 
     func configure(api: APIClient) {
         self.api = api
@@ -36,8 +44,10 @@ actor ImageLoader {
             guard let data = try? await api.getData(path), let img = UIImage(data: data) else { return nil }
             return img
         }
+        let startedGeneration = generation
         inflight[path] = task
         let img = await task.value
+        guard startedGeneration == generation else { return nil }
         inflight[path] = nil
         if let img { cache.setObject(img, forKey: path as NSString) }
         return img
@@ -52,6 +62,7 @@ actor ImageLoader {
 
 /// SwiftUI wrapper: renders an authenticated remote image with a placeholder.
 struct AuthImage<Placeholder: View>: View {
+    @EnvironmentObject private var app: AppState
     let path: String
     @ViewBuilder let placeholder: () -> Placeholder
     @State private var image: UIImage?
@@ -59,7 +70,7 @@ struct AuthImage<Placeholder: View>: View {
     init(path: String, @ViewBuilder placeholder: @escaping () -> Placeholder) {
         self.path = path
         self.placeholder = placeholder
-        _image = State(initialValue: ImageLoader.shared.cachedImage(path: path))
+        _image = State(initialValue: nil)
     }
 
     var body: some View {
@@ -71,11 +82,11 @@ struct AuthImage<Placeholder: View>: View {
             }
         }
         .task(id: path) {
-            if let cached = ImageLoader.shared.cachedImage(path: path) {
+            if let cached = app.images.cachedImage(path: path) {
                 image = cached
                 return
             }
-            image = await ImageLoader.shared.image(path: path)
+            image = await app.images.image(path: path)
         }
     }
 }
@@ -84,6 +95,7 @@ struct AuthImage<Placeholder: View>: View {
 /// UIImageView.animationImages (ImageIO decode). iOS counterpart of the
 /// macOS AnimatedAuthImage (NSImageView-based).
 struct AnimatedAuthImage: View {
+    @EnvironmentObject private var app: AppState
     let path: String
     @State private var image: UIImage?
 
@@ -98,7 +110,7 @@ struct AnimatedAuthImage: View {
             }
         }
         .task(id: path) {
-            guard let data = await ImageLoader.shared.data(path: path) else { return }
+            guard let data = await app.images.data(path: path) else { return }
             image = UIImage.animatedGIF(data) ?? UIImage(data: data)
         }
     }

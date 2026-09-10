@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -55,6 +56,7 @@ export function Modal({
 }
 
 export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const sel = useSelection();
   const [name, setName] = useState('');
@@ -106,6 +108,7 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
  * can be neither renamed nor deleted.
  */
 export function ChannelOptionsModal({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const sel = useSelection();
   const [name, setName] = useState(channel.name ?? '');
@@ -182,6 +185,7 @@ export function ChannelOptionsModal({ channel, onClose }: { channel: ChannelDTO;
  * non-consumer domain; the server re-checks all of that.
  */
 function SelfRegisterToggle({ workspaceId }: { workspaceId: string }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
   const domain = useSelfRegisterDomain();
@@ -226,6 +230,7 @@ function SelfRegisterToggle({ workspaceId }: { workspaceId: string }) {
  * Regenerate replaces it (which kills the old URL) and Revoke removes it.
  */
 function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
+  const { api } = useBoundApi();
   const [url, setUrl] = useState<string | null>(null);
   // null = still asking; false = the server said no (not an owner/admin), which
   // is the same permission that gates emailed invites, so we hide the section.
@@ -303,6 +308,7 @@ function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
 }
 
 export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const [email, setEmail] = useState('');
   const [invite, setInvite] = useState<InviteDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -354,6 +360,7 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
 }
 
 export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
@@ -412,6 +419,7 @@ export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onCl
 
 /** Channel actions: notify level, invite members, leave, archive. */
 export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
+  const { api } = useBoundApi();
   const sel = useSelection();
   const qc = useQueryClient();
   const auth = useAuth();
@@ -546,6 +554,8 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
  * that opens it is disabled for them.
  */
 export function LeaveWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api, serverOrigin } = useBoundApi();
+  const account = useAuth();
   const qc = useQueryClient();
   const sel = useSelection();
   const workspaces = useWorkspaces();
@@ -573,6 +583,7 @@ export function LeaveWorkspaceModal({ workspaceId, onClose }: { workspaceId: str
   return (
     <Modal onClose={onClose} testid="leave-workspace-modal">
       <h3 className="mb-2 font-bold">Leave {ws?.name ?? 'workspace'}?</h3>
+      <p className="mb-2 text-sm">{account.user?.email} · {serverOrigin}</p>
       <p className="mb-4 text-sm text-ink-soft">
         You&rsquo;ll lose access to all its channels. Your past messages will remain.
       </p>
@@ -604,6 +615,7 @@ export function LeaveWorkspaceModal({ workspaceId, onClose }: { workspaceId: str
  * type-the-name gesture. The blast radius here is one person's own workspace.
  */
 export function DeleteWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const sel = useSelection();
   const workspaces = useWorkspaces();
@@ -655,6 +667,7 @@ export function DeleteWorkspaceModal({ workspaceId, onClose }: { workspaceId: st
 /** Owner/admin workspace branding: the sidebar color preset, and the optional
  * avatar image (#336) that replaces the color/initial mark when set. */
 export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api, uploadWorkspaceAvatar } = useBoundApi();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
   const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
@@ -787,6 +800,7 @@ function PrefToggle({
 }
 
 export function ProfileModal({ onClose }: { onClose: () => void }) {
+  const { serverOrigin, api, uploadAvatar } = useBoundApi();
   const auth = useAuth();
   const qc = useQueryClient();
   const [displayName, setDisplayName] = useState(auth.user.displayName);
@@ -971,7 +985,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         {confirmingDelete ? (
           <div data-testid="profile-delete-confirm">
             <p className="mb-2 text-sm text-red-600">
-              Permanently delete your account? You leave every workspace, your email is freed for future
+              Permanently delete {auth.user.email} on {serverOrigin}? You leave every workspace on this server, your email is freed for future
               use, and this cannot be undone. Past messages remain, attributed to your name.
             </p>
             <div className="flex gap-2">
@@ -1012,6 +1026,7 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
  * in", so it never offers a move that can only fail.
  */
 function InviteToWorkspace({ user, onDone }: { user: UserDTO; onDone: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [targets, setTargets] = useState<WorkspaceDTO[] | null>(null);
@@ -1130,6 +1145,7 @@ export function inviteErrorText(err: unknown, user: UserDTO, ws: WorkspaceDTO): 
 
 /** Member profile card: avatar, email, local time, Message button. */
 export function UserCard({ userId, onClose }: { userId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();

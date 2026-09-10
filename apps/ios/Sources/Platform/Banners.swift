@@ -62,7 +62,7 @@ enum Banners {
     /// key when the pref is off. Taking the argument anyway keeps one shared
     /// call site in `SyncEngine` — the drift that broke this build was the
     /// signature diverging, not the behaviour.
-    static func show(_ n: NotificationItem, title: String, body: String, sound: Bool = true) {}
+    static func show(_ n: NotificationItem, title: String, body: String, sound: Bool = true, routingId: String? = nil) {}
 
     /// App-icon badge with the unread notification count.
     @MainActor
@@ -73,7 +73,11 @@ enum Banners {
     /// Sign-out: pushes in Notification Center belong to the session that just
     /// ended, and tapping one afterwards would route into a wiped cache.
     @MainActor
-    static func clearDelivered() {
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    static func clearDelivered(routingId: String) async {
+        let center = UNUserNotificationCenter.current()
+        let delivered = await center.deliveredNotifications()
+        center.removeDeliveredNotifications(withIdentifiers: delivered.filter {
+            $0.request.content.userInfo["routingId"] as? String == routingId
+        }.map { $0.request.identifier })
     }
 }

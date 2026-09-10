@@ -31,7 +31,7 @@ enum Banners {
     /// appears, it just doesn't make a noise. The content carries no sound at
     /// all rather than a silent one, which is also what the delegate reads to
     /// decide whether to ask for `.sound` when the app is frontmost.
-    static func show(_ n: NotificationItem, title: String, body: String, sound: Bool = true) {
+    static func show(_ n: NotificationItem, title: String, body: String, sound: Bool = true, routingId: String? = nil) {
         guard available else { return }
         // Log instead of silently dropping: "banner didn't appear" has too many
         // OS-level causes (denied permission, Focus, alert style None) to stay
@@ -52,9 +52,10 @@ enum Banners {
                 "channelId": n.channelId,
                 "messageId": n.messageId,
             ]
+            if let routingId { userInfo["routingId"] = routingId }
             if let root = n.message.threadRootId { userInfo["threadRootId"] = root }
             let content = makeContent(title: title, body: body, userInfo: userInfo, sound: sound)
-            let request = UNNotificationRequest(identifier: n.id, content: content, trigger: nil)
+            let request = UNNotificationRequest(identifier: "\(routingId ?? "legacy"):\(n.id)", content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request) { error in
                 if let error { NSLog("Flow banners: add failed: %@", error.localizedDescription) }
             }

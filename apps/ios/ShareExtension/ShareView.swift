@@ -56,6 +56,12 @@ struct ShareView: View {
                     AttachmentRow(url: fileURL, isVideo: isVideo, size: store.fileSize)
                 }
             }
+            Picker("Server", selection: Binding(get: { store.connectionId ?? "" }, set: { id in Task { await store.selectConnection(id) } })) {
+                ForEach(store.connections, id: \.connectionId) { connection in
+                    Text(connection.canonicalOrigin?.label ?? connection.origin).tag(connection.connectionId)
+                }
+            }
+            Text(store.serverLabel).font(.caption).foregroundStyle(.secondary)
             if store.workspaces.count > 1 {
                 Section("Workspace") {
                     Picker("Workspace", selection: workspaceBinding) {

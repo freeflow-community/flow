@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Channel Files panel (#347): every file shared in a channel, as one vertical
 // list in the existing side panel — the same surface threads and artifacts
 // use, so chat stays visible next to it.
@@ -183,6 +184,7 @@ export function FilesList({
 
 /** Fetch + download the original bytes under its real filename. */
 function useDownload(file: ChannelFileDTO): () => Promise<void> {
+  const { blobUrl } = useBoundApi();
   return async () => {
     const url = await blobUrl(`/v1/files/${file.id}`);
     const a = document.createElement('a');
@@ -226,6 +228,7 @@ function FileRow({ file, onOpen }: { file: ChannelFileDTO; onOpen: () => void })
 
 /** Image thumbnail, video first-frame (+ duration badge), or a type block. */
 function RowThumb({ file }: { file: ChannelFileDTO }) {
+  const { fileStreamUrl } = useBoundApi();
   const [src, setSrc] = useState<string | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const image = isImageFile(file) && file.hasThumb;
@@ -303,6 +306,7 @@ function RowThumb({ file }: { file: ChannelFileDTO }) {
  * anything else has no in-app renderer, so opening it downloads it.
  */
 function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => void }) {
+  const { blobUrl, fileStreamUrl } = useBoundApi();
   const download = useDownload(file);
   const [url, setUrl] = useState<string | null>(null);
   const image = isImageFile(file);

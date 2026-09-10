@@ -1,7 +1,7 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { api, blobUrl, fileStreamUrl, fileText, scopedStorageKey } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
@@ -59,7 +59,7 @@ export default function MessageList({
   onLoadOlder,
   showThreadAffordances,
   unreadThreadRootIds = [],
-  scrollKey,
+  scrollKey: unscopedScrollKey,
   focusMessageId = null,
   onFocused,
 }: {
@@ -80,6 +80,8 @@ export default function MessageList({
   focusMessageId?: string | null;
   onFocused?: () => void;
 }) {
+  const { scopedStorageKey } = useBoundApi();
+  const scrollKey = unscopedScrollKey ? scopedStorageKey(`scroll:${unscopedScrollKey}`) : undefined;
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -372,6 +374,7 @@ function MessageRow({
   /** This thread holds an unread notification for me (#270). */
   threadUnread?: boolean;
 }) {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
@@ -803,36 +806,38 @@ function MessageRow({
 // Collapsed-image state (phase 5 ruling): persisted per device, capped list.
 // The file ids are one server's, so the key is per connection+identity — the
 // same id on another backend is a different file.
-const collapseKey = (): string => scopedStorageKey('collapsedImages');
 const COLLAPSE_CAP = 500;
-function collapsedIds(): string[] {
+function collapsedIds(key: string): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(collapseKey()) ?? '[]');
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]');
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
   } catch {
     return [];
   }
 }
-function persistCollapsed(fileId: string, collapsed: boolean): void {
-  const ids = collapsedIds().filter((id) => id !== fileId);
+function persistCollapsed(key: string, fileId: string, collapsed: boolean): void {
+  const ids = collapsedIds(key).filter((id) => id !== fileId);
   if (collapsed) ids.push(fileId);
-  localStorage.setItem(collapseKey(), JSON.stringify(ids.slice(-COLLAPSE_CAP)));
+  localStorage.setItem(key, JSON.stringify(ids.slice(-COLLAPSE_CAP)));
 }
 
 const TEXT_PREVIEW_LINES = 10;
 const TEXT_EXPAND_MAX = 100_000; // chars shown when expanded (phase 6 ruling)
 
 function useCollapsed(fileId: string): [boolean, () => void] {
-  const [collapsed, setCollapsed] = useState(() => collapsedIds().includes(fileId));
+  const { scopedStorageKey } = useBoundApi();
+  const key = scopedStorageKey('collapsedImages');
+  const [collapsed, setCollapsed] = useState(() => collapsedIds(key).includes(fileId));
   const toggle = () =>
     setCollapsed((c) => {
-      persistCollapsed(fileId, !c);
+      persistCollapsed(key, fileId, !c);
       return !c;
     });
   return [collapsed, toggle];
 }
 
 function useDownload(file: FileDTO): () => Promise<void> {
+  const { blobUrl } = useBoundApi();
   return async () => {
     const url = await blobUrl(`/v1/files/${file.id}`);
     const a = document.createElement('a');
@@ -1007,6 +1012,7 @@ export function AttachmentImagePreview({
  * legacy rows). On error with a streamed URL we re-mint once — the TTL may
  * simply have expired in a long-open tab. */
 function VideoAttachment({ file }: { file: FileDTO }) {
+  const { blobUrl, fileStreamUrl } = useBoundApi();
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [url, setUrl] = useState<string | null>(null);
   const [streamed, setStreamed] = useState(false);
@@ -1114,6 +1120,7 @@ function VideoLightbox({
 /** Inline monospace preview for text-ish files (phase 6): first lines +
  * Expand, expanded output capped with a visible truncation notice. */
 function TextAttachment({ file }: { file: FileDTO }) {
+  const { fileText } = useBoundApi();
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState<string | null>(null);
@@ -1171,6 +1178,7 @@ function TextAttachment({ file }: { file: FileDTO }) {
 /** Mid-size PDF preview via the browser's native renderer (phase 6 ruling:
  * no pdf.js dependency); click opens the in-app full reader. */
 function PdfAttachment({ file }: { file: FileDTO }) {
+  const { blobUrl } = useBoundApi();
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [url, setUrl] = useState<string | null>(null);
   const [reader, setReader] = useState(false);

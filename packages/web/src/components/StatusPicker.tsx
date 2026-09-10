@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Profile footer + status picker (design 3a's core interaction): pinned to the
 // sidebar bottom; clicking it opens a popover of canned emoji+label statuses.
 import { useState } from 'react';
@@ -21,6 +22,7 @@ export const STATUS_OPTIONS: { emoji: string; text: string; suppresses?: boolean
 ];
 
 export default function StatusFooter() {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const live = useLive();
   const qc = useQueryClient();

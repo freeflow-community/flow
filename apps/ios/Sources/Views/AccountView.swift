@@ -340,7 +340,7 @@ struct MyProfileView: View {
             Button("Delete Account", role: .destructive) { deleteAccount() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently deletes your account. It cannot be undone.")
+            Text("Permanently delete \(app.currentUser?.email ?? "this account") on \(app.serverOrigin), removing it from every workspace on this server. It cannot be undone.")
         }
         .navigationTitle("My Profile")
         .navigationBarTitleDisplayMode(.inline)

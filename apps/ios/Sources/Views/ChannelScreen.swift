@@ -313,6 +313,7 @@ struct ChannelScreen: View {
                     // in a separate pushed screen — see CHANGELOG Parity).
                     focusMessageId: app.focusMessageId,
                     onFocused: { app.focusMessageId = nil },
+                    scrollKey: app.sessionScope.key("scroll:\(channelId)"),
                     onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
                 )
                 TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })

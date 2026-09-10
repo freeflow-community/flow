@@ -32,7 +32,7 @@ struct FlowApp: App {
                 // several beats after the first view appears (#458).
                 .onChange(of: app.phase) { _, _ in pushDelegate.attach(app) }
                 // Web-to-app handoff: flow://signin?code=… (and flow://invite/…)
-                .onOpenURL { app.handleDeepLink($0) }
+
         }
     }
 }

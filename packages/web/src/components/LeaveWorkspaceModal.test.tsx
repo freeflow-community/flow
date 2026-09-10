@@ -1,3 +1,6 @@
+// Static rendering tests stub the view-bound transport; no browser registry is needed.
+vi.mock('../lib/useBoundApi', async () => ({ useBoundApi: () => ({ ...apiModule, serverOrigin: "https://qa.example.test" }) }));
+import * as apiModule from '../lib/api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +12,7 @@ vi.mock('../hooks', () => ({
 }));
 vi.mock('../state', () => ({
   useSelection: () => ({ selectWorkspace: () => {} }),
-  useAuth: () => ({ user: { id: 'u1' } }),
+  useAuth: () => ({ user: { id: 'u1', email: 'alice@qa.example.test' } }),
 }));
 vi.mock('../lib/api', () => ({ api: () => Promise.resolve({}), uploadAvatar: () => {}, uploadWorkspaceAvatar: () => {} }));
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: () => Promise.resolve() }) }));
@@ -26,6 +29,11 @@ describe('LeaveWorkspaceModal', () => {
   it('says what is lost and what survives', () => {
     expect(html).toContain('lose access to all its channels');
     expect(html).toContain('past messages will remain');
+  });
+
+  it('identifies the affected server and account', () => {
+    expect(html).toContain('https://qa.example.test');
+    expect(html).toContain('alice@qa.example.test');
   });
 
   it('offers both a destructive confirm and a way out', () => {

@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
@@ -39,6 +40,7 @@ import { AuthImg } from './Avatar';
 import { RailUnreadBadge } from './RailUnreadBadge';
 
 export default function Main() {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   // Every request and the socket below belong to this connection, not to the

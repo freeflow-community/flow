@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useRef, useState } from 'react';
 import type {
   AuthResponse,
@@ -38,6 +39,7 @@ export function GoogleButton({
   onSignedIn: (r: GoogleAuthResponse) => void;
   showDivider: boolean;
 }) {
+  const { api } = useBoundApi();
   const slot = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<PublicConfigDTO | null>(null);
@@ -122,6 +124,7 @@ export default function AuthScreen({
    * the card says what the visitor is signing in *for* (issue #85). */
   joinWorkspace?: string | null;
 }) {
+  const { api, scopedStorageKey } = useBoundApi();
   // A pending workspace invite means the visitor most likely has no account
   // yet — default them to Register (email-first) rather than Sign In. Explicit
   // email-link tokens still win (they target a specific existing flow).

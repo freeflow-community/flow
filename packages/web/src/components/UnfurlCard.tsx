@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, UnfurlDTO } from '@flow/shared';
@@ -26,6 +27,7 @@ export function UnfurlCard({
   workspaceId: string | null;
   canRemove: boolean;
 }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const sel = useSelection();
   const target = unfurl.canonicalUrl ?? unfurl.url;

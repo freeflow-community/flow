@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Community email (#481): the admin's broadcast composer, launched from the
 // Directory header.
 //
@@ -82,6 +83,7 @@ export function EmailEveryoneModal({
   onClose: () => void;
   onSent: (res: WorkspaceEmailResultDTO) => void;
 }) {
+  const { api, uploadFile } = useBoundApi();
   const [subject, setSubject] = useState('');
   const [markdown, setMarkdown] = useState('');
   const [tab, setTab] = useState<'write' | 'preview'>('write');

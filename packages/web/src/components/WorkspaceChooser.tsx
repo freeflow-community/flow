@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { PendingWorkspaceInviteDTO, WorkspaceDTO } from '@flow/shared';
@@ -9,6 +10,7 @@ import { OpenInAppButton } from './OpenInApp';
 import { AuthImg } from './Avatar';
 
 export default function WorkspaceChooser() {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();

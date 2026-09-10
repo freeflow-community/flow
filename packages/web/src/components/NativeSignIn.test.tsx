@@ -1,5 +1,8 @@
+// Static rendering tests stub the view-bound transport; no browser registry is needed.
+vi.mock('../lib/useBoundApi', async () => ({ useBoundApi: () => apiModule }));
+import * as apiModule from '../lib/api';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { UserDTO } from '@flow/shared';
 
 import NativeSignIn from './NativeSignIn';

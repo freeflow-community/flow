@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Artifact body (phase 13): the artifact tab's content inside the tabbed side
 // panel (see SidePanel). A compact toolbar (rename + size + download) sits above
 // the viewer, which renders images, video, text, PDF, and HTML (sandboxed
@@ -70,6 +71,7 @@ export default function ArtifactBody({ artifactId }: { artifactId: string }) {
  * another origin can't be observed, so only URL-bar edits broadcast.
  */
 function LinkPane({ artifact }: { artifact: ArtifactDTO }) {
+  const { api, mintAppToken } = useBoundApi();
   const url = artifact.url ?? '';
   const [draft, setDraft] = useState(url);
   const [loaded, setLoaded] = useState(false);
@@ -380,6 +382,7 @@ function normalizeUrl(raw: string): string | null {
 }
 
 function ArtifactToolbar({ artifact, onRenamed }: { artifact: ArtifactDTO; onRenamed: () => void }) {
+  const { api, blobUrl } = useBoundApi();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(artifact.name);
   // keep the field in sync when the artifact is renamed elsewhere
@@ -473,6 +476,7 @@ function ImagePane({ file }: { file: FileDTO }) {
 /** Streamed when the server can presign (R2 serves Range); whole-blob fallback
  * otherwise — mirrors the chat card's strategy. */
 function VideoPane({ file }: { file: FileDTO }) {
+  const { blobUrl, fileStreamUrl } = useBoundApi();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -502,6 +506,7 @@ function VideoPane({ file }: { file: FileDTO }) {
 }
 
 function PdfPane({ file }: { file: FileDTO }) {
+  const { blobUrl } = useBoundApi();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -524,6 +529,7 @@ function PdfPane({ file }: { file: FileDTO }) {
 /** Sandboxed HTML render: scripts may run, but no same-origin access — the
  * document can never reach our token/localStorage or call the API as the user. */
 function HtmlPane({ file }: { file: FileDTO }) {
+  const { fileText } = useBoundApi();
   const [html, setHtml] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -547,6 +553,7 @@ function HtmlPane({ file }: { file: FileDTO }) {
 const TEXT_MAX = 1_000_000; // chars — full-pane viewer, roomier than the chat preview
 
 function TextPane({ file }: { file: FileDTO }) {
+  const { fileText } = useBoundApi();
   const [text, setText] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -572,6 +579,7 @@ function TextPane({ file }: { file: FileDTO }) {
 }
 
 function DownloadPane({ file }: { file: FileDTO }) {
+  const { blobUrl } = useBoundApi();
   const download = async () => {
     const url = await blobUrl(`/v1/files/${file.id}`);
     const a = document.createElement('a');

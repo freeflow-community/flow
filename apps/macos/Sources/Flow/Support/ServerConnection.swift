@@ -133,6 +133,8 @@ struct ConnectionRegistry: Codable, Equatable, Sendable {
             }
             return nil
         }
+        bindings.removeAll { $0.connectionId == id }
+        navigation.removeAll { $0.connectionId == id }
         let abandoned = StorageScope(storageKey: session.storageKey)
         let scope = StorageScope.fresh()
         updateSession(id) {

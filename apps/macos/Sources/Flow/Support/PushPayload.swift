@@ -18,6 +18,7 @@ import Foundation
 /// is a wire contract with the server, testable without a device, and macOS
 /// will want exactly the same reader when it grows APNs of its own.
 struct PushPayload: Equatable, Sendable {
+    let routingId: String?
     let workspaceId: String
     let channelId: String
     let messageId: String
@@ -41,6 +42,8 @@ struct PushPayload: Equatable, Sendable {
               let channelId = userInfo["channelId"] as? String, !channelId.isEmpty,
               let messageId = userInfo["messageId"] as? String, !messageId.isEmpty
         else { return nil }
+        routingId = userInfo["routingId"] as? String
+        if userInfo["routingId"] != nil && (routingId == nil || routingId?.isEmpty == true) { return nil }
         self.workspaceId = workspaceId
         self.channelId = channelId
         self.messageId = messageId

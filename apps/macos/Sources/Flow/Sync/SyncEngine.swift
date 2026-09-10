@@ -42,7 +42,7 @@ actor SyncEngine {
     /// each use: an operation that started under one identity must not pick up
     /// a scope that rotated under it.
     private let connectionId: String
-    private let scope: StorageScope
+    private var scope: StorageScope
 
     private var currentUserIdKey: String { scope.key("currentUserId") }
     private var keychainAccount: String { scope.keychainAccount }
@@ -215,15 +215,20 @@ actor SyncEngine {
         )
     }
 
-    func logout() async {
-        // Push registration goes first, because the next line revokes the very
-        // session it authenticates with. Doing it after leaves the row behind —
-        // the next owner of this phone gets someone else's pushes until APNs
-        // 410s the token — and the 401 it earns also trips the unauthorized
-        // handler, so a deliberate sign-out ends on "Your session expired".
-        await unregisterPushDevice()
-        let _: OkResponse? = try? await api.post("/v1/auth/logout")
+    @discardableResult
+    func logout() async -> Bool {
+        let revocation = await api.revocationClient()
+        let device = UserDefaults.standard.string(forKey: deviceTokenKey)
+        let route = pushRoutingId
+        // Local cleanup must finish even when this backend cannot be reached.
         await tearDownSession()
+        if let device {
+            let _: OkResponse? = try? await revocation.delete("/v1/me/devices/\(device)?routingId=\(route)")
+        }
+        do {
+            let _: OkResponse = try await revocation.post("/v1/auth/logout")
+            return true
+        } catch { return false }
     }
 
     /// Account deletion (App Store 5.1.1(v)): DELETE /v1/me, then the same
@@ -245,7 +250,7 @@ actor SyncEngine {
         // that just ended — tapping one after sign-out would route into a
         // wiped cache. (macOS posts its banners locally and only while it is
         // running, so it has nothing of the sort to clean up.)
-        await Banners.clearDelivered()
+        await Banners.clearDelivered(routingId: pushRoutingId)
         #endif
         Keychain.deleteToken(account: keychainAccount)
         UserDefaults.standard.removeObject(forKey: currentUserIdKey)
@@ -258,6 +263,8 @@ actor SyncEngine {
         sessionToken = nil
         historyLoaded.removeAll() // the cache goes with the session (#269)
         try? await db.writer.write { db in try AppDatabase.wipe(db) }
+        await appState?.images.clear()
+        ConnectionStore.clear(scope: scope, in: .standard)
         await appState?.didSignOut()
     }
 
@@ -265,6 +272,12 @@ actor SyncEngine {
     /// (bootstrap): re-saving would be a second Keychain ACL prompt after every
     /// rebuild (SecItemDelete on an item the new binary isn't trusted for yet).
     private func didSignIn(user: User, token: String, persistToken: Bool = true) async {
+        if let previous = currentUser, previous.id != user.id {
+            await appState?.images.clear()
+            try? await db.writer.write { db in try AppDatabase.wipe(db) }
+        }
+        await appState?.bindConnectionIdentity(connectionId: connectionId, userId: user.id)
+        if let updated = await appState?.sessionScope { scope = updated }
         currentUser = user
         if persistToken { Keychain.saveToken(token, account: keychainAccount) }
         UserDefaults.standard.set(user.id, forKey: currentUserIdKey)
@@ -273,7 +286,6 @@ actor SyncEngine {
         // it to the registry. A *different* identity on this connection rotates
         // the session scope, so the previous one's credential and defaults are
         // discarded rather than inherited (#540).
-        await appState?.bindConnectionIdentity(connectionId: connectionId, userId: user.id)
         await appState?.setPhase(.signedIn(user))
         await Banners.requestPermissionIfNeeded()
         startSocket(token: token)
@@ -287,6 +299,13 @@ actor SyncEngine {
     /// right row. Not the Keychain: it is not a secret, and it must survive a
     /// launch in which APNs hasn't answered yet.
     private var deviceTokenKey: String { scope.key("pushDeviceToken") }
+    private var pushRoutingId: String {
+        let key = scope.key("pushRoutingId")
+        if let saved = UserDefaults.standard.string(forKey: key) { return saved }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }
 
     /// Register (or re-register) this device — called from the iOS app delegate
     /// every time APNs hands over a token, which is every cold start. Silent on
@@ -298,6 +317,7 @@ actor SyncEngine {
         let _: OkResponse? = try? await api.post(
             "/v1/me/devices",
             body: RegisterDeviceBody(
+                routingId: pushRoutingId, badgeMode: "omit",
                 token: token, platform: "ios", environment: environment, bundleId: bundleId
             )
         )
@@ -309,7 +329,7 @@ actor SyncEngine {
     private func unregisterPushDevice() async {
         guard let token = UserDefaults.standard.string(forKey: deviceTokenKey) else { return }
         forgetPushDevice()
-        let _: OkResponse? = try? await api.delete("/v1/me/devices/\(token)")
+        let _: OkResponse? = try? await api.delete("/v1/me/devices/\(token)?routingId=\(pushRoutingId)")
     }
 
     /// Local half only: forget the token so the next session doesn't try to
@@ -682,7 +702,9 @@ actor SyncEngine {
         // Warm the image cache with our own avatar so the very first message
         // we send this session doesn't flash the placeholder.
         if let uid = currentUser?.id, let path = rows.first(where: { $0.0 == uid })?.1 {
-            Task.detached(priority: .utility) { _ = await ImageLoader.shared.image(path: path) }
+            if let images = await appState?.images {
+                Task.detached(priority: .utility) { _ = await images.image(path: path) }
+            }
         }
     }
 
@@ -1496,6 +1518,7 @@ actor SyncEngine {
     /// either way. Returns the workspace to land on (nil = the chooser).
     @discardableResult
     func purgeLeftWorkspace(_ workspaceId: String) async -> String? {
+        await appState?.connections.forgetWorkspace(connectionId: connectionId, workspaceId: workspaceId)
         let channelIds = (try? await db.reader.read { db in
             try String.fetchAll(db, sql: "SELECT id FROM channel WHERE workspaceId = ?", arguments: [workspaceId])
         }) ?? []
@@ -2201,7 +2224,7 @@ actor SyncEngine {
                     // #464: the one pref the server can't enforce for a local
                     // banner — routing is already decided by `n.alerts`, this
                     // is only whether it makes a noise. Absent = on.
-                    sound: currentUser?.prefs.sound != false
+                    sound: currentUser?.prefs.sound != false, routingId: pushRoutingId
                 )
             }
 

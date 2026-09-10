@@ -146,6 +146,7 @@ struct ComposerView: View {
             }
             return true
         }
+        .modifier(ConnectionDraft(app: app, channelId: channelId, threadRootId: threadRootId, text: $text, attachments: $attachments))
         .onChange(of: autocomplete?.token) { _, _ in suggestionIndex = 0 }
         .padding([.horizontal, .bottom], 22)
         .padding(.top, 4)
