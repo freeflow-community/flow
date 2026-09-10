@@ -13,8 +13,13 @@ This file keeps two things:
 ## Parity
 
 - Multi-server huddles (#541): web leaves the room when switching server; native keeps it running with a return control. Both limit the client to one joined room.
+- Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
+- **The aggregate switcher badge has no bridge equivalent** (#542). The agent
+  bridge speaks to one backend per process, so "how much is waiting on your
+  other servers" has no meaning there yet. Closing it needs a bridge-side
+  connection registry, which no ticket asks for.
 - **A mid-session 401 signs you out on macOS + iOS, but not on web** (#540, which
   built the mechanism on all three). Both native clients tear the session down
   and drop to the sign-in screen; web now records the connection as

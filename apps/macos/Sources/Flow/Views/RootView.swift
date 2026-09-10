@@ -8,17 +8,36 @@ struct RootView: View {
     @State private var incomingAddress = ""
     @State private var workspace: String?
     @State private var notificationTarget: NavigationTarget?
+    /// This window's identity, so the manager can tell which connection each
+    /// window is showing — and which one a window stopped showing (#542).
+    @State private var windowId = UUID()
     init(app: AppState) { initial = app }
     private var active: AppState { selected ?? initial }
+
+    /// Tell the manager this window is now showing `app`'s connection.
+    private func showing(_ app: AppState) {
+        app.connections.noteShowing(app.connectionId, window: windowId)
+    }
     var body: some View {
         SessionRootView(app: active, workspaceId: workspace, notification: notificationTarget)
             .environmentObject(active)
             .id("\(active.connectionId):\(workspace ?? ""):\(notificationTarget?.messageId ?? "")")
+            // Every connected server syncs while the app runs, not just the one
+            // this window shows (#542). Bounded and idempotent, so a second
+            // window calling it again costs nothing.
+            .task { active.connections.startBackgroundSync() }
+            // Which server this window is looking at. A connection nobody is
+            // showing must not suppress its own banners or mark its channel
+            // read — its `WindowState` outlives the switch (#542). Recorded on
+            // appearance *and* at every site that changes `selected`, because
+            // the two have to agree before the first event arrives.
+            .onAppear { showing(active) }
             .background(WindowKeyObserver {
                 active.connections.presentNotification = { app, target in
                     selected = app
                     workspace = target.workspaceId
                     notificationTarget = target
+                    showing(app)
                 }
             })
             .overlay(alignment: .topTrailing) {
@@ -26,6 +45,7 @@ struct RootView: View {
                     Button("Return to huddle on \(URL(string: owner.serverOrigin)?.host ?? "server")") {
                         selected = owner
                         workspace = owner.activeHuddleWorkspaceId
+                        showing(owner)
                     }.padding(8)
                 }
             }
@@ -44,6 +64,7 @@ struct RootView: View {
                     notificationTarget = nil
                     workspace = workspaceId
                     selected = app
+                    showing(app)
                 }
             }
     }

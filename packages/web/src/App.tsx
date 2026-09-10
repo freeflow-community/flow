@@ -4,6 +4,7 @@ import ServerConnections from './components/ServerConnections';
 import { REGISTRY_KEY } from './lib/connections';
 import { consumeHandoffCallback, pendingHandoff } from './lib/authHandoff';
 import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
+import { backgroundSync } from './lib/backgroundSync';
 import {
   activeRuntime,
   connectionManager,
@@ -97,6 +98,19 @@ export default function App() {
   const [epoch, reset] = useState(0);
   const [clients] = useState(() => new Map<string, QueryClient>());
   const [clientOwners] = useState(() => new Map<string, string>());
+  // Every *other* connected server keeps syncing while this tab runs — a
+  // socket and its unread numbers, nothing more (see lib/backgroundSync.ts).
+  // The connection on screen is excluded: `Main` already owns a full session
+  // for it, and a second socket would double every event it handles.
+  const sync = backgroundSync();
+  useEffect(() => {
+    sync.start();
+    return () => sync.stop();
+  }, [sync]);
+  useEffect(() => {
+    sync.setForeground(runtime.connectionId);
+  }, [sync, runtime.connectionId]);
+
   useEffect(() => {
     const show = () => setShowConnections(true);
     const reload = (event: Event) => {
@@ -106,6 +120,7 @@ export default function App() {
       if (id !== runtime.connectionId) return;
       selectRuntime(manager.active());
       reset(n => n + 1);
+      sync.reconcile();
     };
     const storageChanged = (event: StorageEvent) => {
       if (event.key !== REGISTRY_KEY && event.key !== null) return;
@@ -118,6 +133,9 @@ export default function App() {
         selectRuntime(manager.active());
         reset(n => n + 1);
       }
+      // Another tab signed a connection in or out; bring our background set in
+      // line with what the registry now says.
+      sync.reconcile();
     };
     window.addEventListener('storage', storageChanged);
     window.addEventListener('flow:connections', show);
@@ -127,7 +145,7 @@ export default function App() {
       window.removeEventListener('flow:connections', show);
       window.removeEventListener('flow:registry', reload);
     };
-  }, [manager, runtime, clients]);
+  }, [manager, runtime, clients, sync]);
   const owner = runtime.key('queryCache');
   if (clientOwners.get(runtime.connectionId) !== owner || runtime.isDisposed) {
     clients.get(runtime.connectionId)?.clear();

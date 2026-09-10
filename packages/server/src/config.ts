@@ -20,6 +20,13 @@ export const config = {
   get registrationEnabled(): boolean { return process.env.FLOW_REGISTRATION_ENABLED !== '0'; },
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://flow:flow_dev@localhost:5442/flow',
   natsUrl: process.env.NATS_URL ?? 'nats://127.0.0.1:4222',
+  /** Subject namespace for this deployment on a shared NATS (see bus.ts).
+   * Empty by default: every subject stays exactly as it has always been.
+   * One NATS token — letters, digits, `-` and `_`; anything else is dropped
+   * rather than allowed to inject a wildcard or a subject separator. */
+  get busPrefix(): string {
+    return (process.env.FLOW_BUS_PREFIX ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '');
+  },
   port: Number(process.env.PORT ?? 8787),
   host: process.env.HOST ?? '127.0.0.1', // local server only in phase 1
   /** Sealed data-key file for local dev (KMS stand-in). Auto-created on first boot, chmod 600. */

@@ -52,6 +52,22 @@ configured. `pushRouting` means registration/payload support; `push` additionall
 requires the APNs driver and key/key ID/team ID configuration. It is a configuration
 signal, not a connectivity guarantee. Dev push files are not background delivery.
 
+## Shared message bus
+
+Flow routes realtime events over NATS subjects keyed by workspace and channel
+id (`ws.{workspaceId}.chan.{channelId}.msg`). Two deployments on the same NATS
+therefore share a namespace, and the spec's warning applies directly: never
+assume UUIDs are globally unique across independent or **cloned** databases.
+Independently generated ids never collide; a staging database restored from
+production collides on every row, and each deployment's events then surface in
+the other's clients.
+
+Set `FLOW_BUS_PREFIX` to one token (letters, digits, `-`, `_`) per deployment —
+`FLOW_BUS_PREFIX=staging` — or give each deployment its own NATS. Empty is the
+default and keeps every subject unchanged, which is correct for a single
+deployment. `pnpm qa:up` sets a per-stack prefix automatically, which is what
+lets two `--collide` stacks run against one dev NATS.
+
 ## Allowed browser origins
 
 Set `FLOW_ALLOWED_WEB_ORIGINS` to a comma-separated list of exact serialized

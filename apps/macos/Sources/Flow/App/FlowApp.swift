@@ -24,7 +24,7 @@ struct FlowApp: App {
                 // "Is the user actually looking at us?" — the native answer to
                 // the web client's `document.hidden`. A selected channel in a
                 // hidden window must not mark its mail read (issue #63).
-                .onChange(of: scenePhase) { _, phase in app.setAppActive(phase == .active) }
+                .onChange(of: scenePhase) { _, phase in app.connections.setAppActive(phase == .active) }
                 // Hand the app state to the notification-center delegate so a
                 // tapped banner can jump to its message (and flush any tap that
                 // arrived before the UI was ready, e.g. a cold launch).

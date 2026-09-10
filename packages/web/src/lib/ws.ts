@@ -27,6 +27,20 @@ export function isSocketDead(lastInboundAt: number, now: number, deadline = SOCK
   return now - lastInboundAt >= deadline;
 }
 
+/** Spread a reconnect over a window instead of firing it on the tick.
+ *
+ * Bare exponential backoff synchronises: a server restart drops every client
+ * at once and they all come back at the same millisecond, which is the second
+ * outage. It matters more now that one client holds a socket per connected
+ * server (docs/specs/multi-server-workspaces.md, "Runtime architecture") — a
+ * laptop waking up would otherwise reconnect all of them simultaneously.
+ *
+ * 0.75x–1.25x of the backoff, matching the native clients exactly
+ * (apps/macos/Sources/Flow/Networking/SocketClient.swift). */
+export function jittered(backoff: number, random: () => number = Math.random): number {
+  return Math.round(backoff * (0.75 + random() * 0.5));
+}
+
 export class SocketClient {
   private ws: WebSocket | null = null;
   private stopped = false;
@@ -44,6 +58,8 @@ export class SocketClient {
     private readonly token: string,
     private readonly handlers: SocketHandlers,
     private readonly url: string = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/v1/ws`,
+    /** Test seam for the reconnect jitter. */
+    private readonly random: () => number = Math.random,
   ) {}
 
   start(): void {
@@ -108,7 +124,7 @@ export class SocketClient {
   private scheduleReconnect(): void {
     if (this.stopped) return;
     this.handlers.onStatus('reconnecting');
-    const delay = this.backoff;
+    const delay = jittered(this.backoff, this.random);
     this.backoff = Math.min(this.backoff * 2, 15_000);
     setTimeout(() => this.connect(), delay);
   }

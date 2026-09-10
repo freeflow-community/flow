@@ -106,18 +106,32 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
 
     // MARK: - Silent badge-sync pushes (#248)
 
-    /// `content-available: 1` with just a count. iOS applies `aps.badge`
-    /// itself; this exists so the *in-app* counters (the Activity badge, the
-    /// sidebar) converge too — reading a mention on the laptop should settle
-    /// the phone completely, not only its icon.
+    /// `content-available: 1` with just a count. This exists so the *in-app*
+    /// counters (the Activity badge, the sidebar) converge too — reading a
+    /// mention on the laptop should settle the phone completely, not only its
+    /// icon.
+    ///
+    /// Which connection it belongs to is decided first (#542). An identifier we
+    /// did not issue, or one belonging to a connection that has been removed,
+    /// is ignored outright: a stale push must not move a number, and it must
+    /// certainly not settle a *different* server's counters.
+    ///
+    /// The absolute `aps.badge` is applied only for a **legacy** registration —
+    /// the one with no routing id, which is still the sole owner of the icon.
+    /// A multi-server backend is never sent one (`sendPush` strips it), because
+    /// no backend can see the others; that badge is the client's own sum, and
+    /// `refreshAggregateBadge` writes it.
     func application(
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         guard let badge = PushPayload.badge(from: userInfo) else { return .noData }
-        Banners.setBadge(badge)
-        guard let appState else { return .newData }
-        await appState.engine.refreshNotificationBadge()
+        let routingId = PushPayload.routingId(from: userInfo)
+        guard let appState, let owner = appState.connections.notificationApp(routingId: routingId)
+        else { return .noData }
+        if routingId == nil { Banners.setBadge(badge) }
+        await owner.engine.refreshNotificationBadge()
+        owner.connections.refreshAggregateBadge()
         return .newData
     }
 
@@ -157,8 +171,13 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         let payload = PushPayload(userInfo: info)
         let reply = MainActorHandoff(completionHandler)
         Task { @MainActor in
-            if let badge { Banners.setBadge(badge) }
             guard let payload, let owner = self.appState?.connections.notificationApp(routingId: payload.routingId) else { return reply.value([]) }
+            // Badge after routing, never before: a push for a connection that
+            // has been removed — or one whose identifier we never issued — is
+            // not allowed to move the icon (#542). And only a legacy
+            // registration carries an authoritative one at all; multi-server
+            // badges are the client's own aggregate.
+            if let badge, payload.routingId == nil { Banners.setBadge(badge) }
             let present = PushPayload.shouldPresentBanner(
                 payload: payload,
                 appActive: owner === self.appState && owner.isAppActive,

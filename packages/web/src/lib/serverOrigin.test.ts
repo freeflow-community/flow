@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ServerOriginError,
   canonicalizeOrigin,
+  isPlaintextLoopbackPage,
   isSameOrigin,
   originLabel,
   socketUrlFor,
@@ -106,5 +107,42 @@ describe('socketUrlFor / originLabel', () => {
   it('labels an origin without its scheme', () => {
     expect(originLabel('https://flow.example.com')).toBe('flow.example.com');
     expect(originLabel('http://127.0.0.1:8787')).toBe('127.0.0.1:8787');
+  });
+});
+
+describe('insecure loopback (#542)', () => {
+  const at = (href: string) => {
+    const url = new URL(href);
+    return isPlaintextLoopbackPage(url.protocol, url.hostname);
+  };
+
+  it('lets a page served over plaintext loopback connect to another one', () => {
+    // `pnpm dev` and `pnpm qa:up` both serve a *built* bundle, so the Vite dev
+    // flag is false there. Without this clause the multi-server flow was the
+    // one feature nobody could try locally in a browser at all.
+    expect(at('http://127.0.0.1:8787/')).toBe(true);
+    expect(at('http://localhost:5173/')).toBe(true);
+    expect(at('http://[::1]:8787/')).toBe(true);
+    expect(canonicalizeOrigin('http://127.0.0.1:54610', { allowInsecureLoopback: true }).origin)
+      .toBe('http://127.0.0.1:54610');
+  });
+
+  it('refuses plaintext from a deployed page, loopback address included', () => {
+    expect(at('https://app.freeflow.im/')).toBe(false);
+    // https page, so the loopback carve-out is off — and a plaintext backend
+    // is refused whatever its host.
+    expect(() => canonicalizeOrigin('http://127.0.0.1:8787', { allowInsecureLoopback: false }))
+      .toThrow(ServerOriginError);
+    expect(() => canonicalizeOrigin('http://flow.example.com', { allowInsecureLoopback: false }))
+      .toThrow(ServerOriginError);
+  });
+
+  it('refuses a non-loopback host even when the carve-out is on', () => {
+    expect(at('http://192.168.1.10:8787/')).toBe(false);
+    expect(at('http://flow.example.com/')).toBe(false);
+    expect(() => canonicalizeOrigin('http://flow.example.com', { allowInsecureLoopback: true }))
+      .toThrow(ServerOriginError);
+    expect(() => canonicalizeOrigin('http://192.168.1.10:8787', { allowInsecureLoopback: true }))
+      .toThrow(ServerOriginError);
   });
 });

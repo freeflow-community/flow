@@ -6,16 +6,29 @@ struct RootView: View {
     @State private var showConnections = false
     @State private var incomingAddress = ""
     @State private var workspace: String?
+    /// The phone's single window, named so the manager can tell which
+    /// connection is on screen — see `ConnectionManager.noteShowing` (#542).
+    @State private var windowId = UUID()
     private var active: AppState { selected ?? initial }
+
+    /// Tell the manager this window is now showing `app`'s connection.
+    private func showing(_ app: AppState) {
+        app.connections.noteShowing(app.connectionId, window: windowId)
+    }
     var body: some View {
         SessionRootView()
             .environmentObject(active)
             .id("\(active.connectionId):\(workspace ?? "")")
+            // A connection nobody is showing must not suppress its own
+            // notifications or mark its channel read: its `WindowState`
+            // outlives the switch to another server (#542).
+            .onAppear { showing(active) }
             .overlay(alignment: .topTrailing) {
                 if let owner = AppState.joinedHuddleOwner, owner !== active {
                     Button("Return to huddle on \(URL(string: owner.serverOrigin)?.host ?? "server")") {
                         selected = owner
                         workspace = owner.activeHuddleWorkspaceId
+                        showing(owner)
                     }.padding(8)
                 }
             }
@@ -24,7 +37,7 @@ struct RootView: View {
                     .font(.caption).padding(8).background(.regularMaterial, in: Capsule()).padding(8)
             }
             .onReceive(NotificationCenter.default.publisher(for: .init("flow.selectConnection"))) { event in
-                if let app = event.object as? AppState { selected = app; workspace = nil }
+                if let app = event.object as? AppState { selected = app; workspace = nil; showing(app) }
             }
             .onOpenURL { url in
                 if url.scheme == "https" || url.scheme == "http" {
@@ -37,6 +50,7 @@ struct RootView: View {
                     if let workspaceId { app.selectWorkspace(workspaceId) }
                     workspace = workspaceId
                     selected = app
+                    showing(app)
                 }
             }
     }

@@ -45,17 +45,46 @@ export interface CanonicalOrigin {
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
-/** Loopback is the one place HTTP is allowed, and only in a development build.
- * A private-network HTTPS deployment is fine; plaintext to anywhere else is
- * not, and we never disable certificate validation to make one work. */
+/** Loopback is the one place HTTP is allowed, and only from a development
+ * build or a page that is itself on plaintext loopback (see
+ * `insecureLoopbackAllowed`). A private-network HTTPS deployment is fine;
+ * plaintext to anywhere else is not, and we never disable certificate
+ * validation to make one work. */
 export function isLoopbackHost(host: string): boolean {
   return LOOPBACK.has(host.toLowerCase());
 }
 
 export interface CanonicalizeOptions {
-  /** Permit `http://` on loopback. Defaults to the Vite dev flag so a release
-   * bundle cannot be talked into plaintext by a crafted address. */
+  /** Permit `http://` on loopback. Defaults to `insecureLoopbackAllowed()`. */
   allowInsecureLoopback?: boolean;
+}
+
+/** May this page connect to an `http://` loopback backend?
+ *
+ * Yes when it is a Vite dev bundle, and yes when **the page itself** is served
+ * over http from loopback. The second clause is the one that matters in
+ * practice: `pnpm dev` and `pnpm qa:up` both serve a *built* bundle out of the
+ * server, so `import.meta.env.DEV` is false there and the web client refused
+ * every local backend — which made the multi-server flow the one thing nobody
+ * could try locally.
+ *
+ * It gives nothing away. A page already loaded over plaintext loopback cannot
+ * be downgraded by talking to another plaintext loopback origin, and browsers
+ * classify `http://localhost` and `http://127.0.0.1` as potentially
+ * trustworthy for exactly that reason — no mixed-content rule applies. A page
+ * on `https://app.freeflow.im` still refuses `http://` anywhere, including
+ * loopback, which is the rule that protects anybody. */
+export function insecureLoopbackAllowed(): boolean {
+  if (import.meta.env.DEV) return true;
+  if (typeof location === 'undefined') return false;
+  return isPlaintextLoopbackPage(location.protocol, location.hostname);
+}
+
+/** The page-origin half of `insecureLoopbackAllowed`, as a pure function —
+ * the Vite dev flag is true under the test runner, so this is the only part
+ * that can actually be asserted. */
+export function isPlaintextLoopbackPage(protocol: string, hostname: string): boolean {
+  return protocol === 'http:' && isLoopbackHost(hostname);
 }
 
 /** Normalize a typed/stored server address into its canonical origin.
@@ -64,7 +93,7 @@ export function canonicalizeOrigin(
   input: string,
   opts: CanonicalizeOptions = {},
 ): CanonicalOrigin {
-  const allowInsecureLoopback = opts.allowInsecureLoopback ?? import.meta.env.DEV;
+  const allowInsecureLoopback = opts.allowInsecureLoopback ?? insecureLoopbackAllowed();
   const raw = input.trim();
   if (!raw) throw new ServerOriginError('empty', 'Enter a server address.');
 
