@@ -155,7 +155,7 @@ describe.skipIf(!posix)('persistent session', () => {
     expect(h.session.reapReason(now, 600_000, 3_600_000)).toBeNull();
     expect(h.session.reapReason(now + 600_000, 600_000, 3_600_000)).toMatch(/idle for/);
 
-    await h.session.runTurn('bg 60_000 forever\ndone STARTED');
+    await h.session.runTurn('bg 60000 forever\ndone STARTED');
     const then = Date.now();
     expect(h.session.pendingTasks).toBe(1);
     // Ten minutes idle, but there is work outstanding — leave it alone.

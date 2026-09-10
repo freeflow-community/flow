@@ -20,6 +20,13 @@ export interface RunOpts {
   sessionId: string;
   /** false → --session-id (new session); true → --resume. */
   resume: boolean;
+  /**
+   * Codex only: resume this recorded session (`codex exec resume <id>`)
+   * instead of starting fresh. Comes from a previous RunResult's
+   * codexSessionId — codex names its own sessions, unlike claude where the
+   * bridge chooses the id up front.
+   */
+  codexSessionId?: string | undefined;
   prompt: string;
   systemPrompt: string;
   /** Path to an MCP config JSON to pass via --mcp-config (claude only). */
@@ -56,6 +63,12 @@ export interface RunResult {
    * error or a timeout. The caller says so instead of apologising.
    */
   interrupted?: boolean;
+  /**
+   * Codex only: the session id this run recorded itself under (parsed from
+   * the run header). Present on failures too — a run that got far enough to
+   * print its header left a resumable session behind, whatever ended it.
+   */
+  codexSessionId?: string | undefined;
 }
 
 /** One line per tool call, latest step shown: "Bash: pnpm test". */
@@ -320,12 +333,30 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: ClaudeArgsOpts): strin
 }
 
 export function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
-  // Baseline contract only (stdout = reply). No session resume, so callers
-  // that need continuity include the transcript in opts.prompt.
-  const prompt = `${opts.systemPrompt}\n\n${opts.prompt}`;
+  // Baseline contract: stdout = reply. Continuity comes from `codexSessionId`
+  // — the id codex printed on an earlier run — which turns the invocation into
+  // `codex exec resume <id>`, reloading that session's full context from
+  // ~/.codex. Only then does the prompt carry just the new turn; a fresh run
+  // still fronts the system prompt itself. Callers without an id fall back to
+  // whatever continuity they packed into opts.prompt (e.g. voice transcripts).
+  const resume = opts.codexSessionId !== undefined;
+  const prompt = resume ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`;
   const images = (opts.imagePaths ?? []).map((image) => `--image=${image}`);
-  return ['exec', '--skip-git-repo-check', ...images, ...cfg.extraArgs,
-    ...(images.length || opts.stdinPrompt ? ['--'] : []), opts.stdinPrompt ? '-' : prompt];
+  return ['exec', ...(resume ? ['resume'] : []), '--skip-git-repo-check', ...images, ...cfg.extraArgs,
+    ...(images.length || opts.stdinPrompt ? ['--'] : []),
+    ...(resume ? [opts.codexSessionId as string] : []),
+    opts.stdinPrompt ? '-' : prompt];
+}
+
+/**
+ * The id under which codex recorded this run, from the header it prints
+ * (`session id: <uuid>` — stderr in non-tty runs). Passing it back as
+ * `codexSessionId` resumes the session with its context intact.
+ */
+const CODEX_SESSION_ID_RE = /^session id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/im;
+
+export function parseCodexSessionId(stderr: string, stdout: string): string | undefined {
+  return (CODEX_SESSION_ID_RE.exec(stderr) ?? CODEX_SESSION_ID_RE.exec(stdout))?.[1];
 }
 
 /** Demo mode: static canned reply, no CLI spawn. */
@@ -420,7 +451,10 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
     if (child.pid) liveGroups.add(child.pid);
     if (opts.stdinPrompt && child.stdin) {
       child.stdin.on('error', () => { /* Spawn/exit handlers report a failed CLI. */ });
-      child.stdin.end(cfg.kind === 'codex' ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt);
+      // A resumed codex session already holds its system prompt; only a fresh
+      // run needs it fronted (mirrors the argv form in buildCodexArgs).
+      const freshCodex = cfg.kind === 'codex' && opts.codexSessionId === undefined;
+      child.stdin.end(freshCodex ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt);
     }
     const parser = new StreamJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
     let stdout = '';
@@ -448,12 +482,14 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       if (child.pid) killGroup(child.pid, 5000);
       // The terminal result event will never arrive, so salvage the last thing
       // the agent said (codex has no events — its raw stdout is the contract).
+      const codexSessionId = cfg.kind === 'codex' ? parseCodexSessionId(stderr, stdout) : undefined;
       resolve({
         ok: false,
         text: cfg.kind === 'claude' ? parser.lastText : stdout.trim(),
         error,
-        sawSession: parser.sawEvent,
+        sawSession: cfg.kind === 'codex' ? codexSessionId !== undefined : parser.sawEvent,
         interrupted,
+        codexSessionId,
       });
     };
     function onAbort(): void {
@@ -510,8 +546,16 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
         });
       }
       // baseline contract: stdout is the reply
-      if (code === 0) return resolve({ ok: true, text: stdout.trim() });
-      return resolve({ ok: false, text: '', error: `runtime exited ${code}${stderr ? `: ${stderr.slice(-300)}` : ''}` });
+      const codexSessionId = parseCodexSessionId(stderr, stdout);
+      const sawSession = codexSessionId !== undefined;
+      if (code === 0) return resolve({ ok: true, text: stdout.trim(), sawSession, codexSessionId });
+      return resolve({
+        ok: false,
+        text: '',
+        error: `runtime exited ${code}${stderr ? `: ${stderr.slice(-300)}` : ''}`,
+        sawSession,
+        codexSessionId,
+      });
     });
   });
 }

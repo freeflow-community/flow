@@ -9,6 +9,7 @@ import {
   buildCodexArgs,
   describeResultError,
   formatToolStep,
+  parseCodexSessionId,
   runRuntime,
 } from '../src/runtime.js';
 import type { RuntimeConfig } from '../src/config.js';
@@ -209,6 +210,73 @@ describe('buildCodexArgs', () => {
       'You are the same Flow agent in a live Huddle.\n\nMahad: fix the PR',
     ]);
   });
+
+  // A stored session id flips the invocation to `exec resume <id>`: codex
+  // reloads the session's context itself, so the prompt carries only the new
+  // turn and the system prompt (already in the session) is not re-sent.
+  it('resumes a recorded session with only the new turn as the prompt', () => {
+    const args = buildCodexArgs({ ...config, extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] }, {
+      sessionId: 'unused',
+      resume: true,
+      codexSessionId: '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000',
+      prompt: 'Mahad: now fix the tests',
+      systemPrompt: 'You are the same Flow agent in a live Huddle.',
+      onToolStep: () => {},
+      log: () => {},
+    });
+
+    expect(args).toEqual([
+      'exec',
+      'resume',
+      '--skip-git-repo-check',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000',
+      'Mahad: now fix the tests',
+    ]);
+    expect(args.join(' ')).not.toContain('You are the same Flow agent');
+  });
+
+  it('keeps images and the stdin sentinel after the session id', () => {
+    const args = buildCodexArgs(config, {
+      sessionId: 'unused',
+      resume: true,
+      codexSessionId: '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000',
+      imagePaths: ['/tmp/shot.png'],
+      stdinPrompt: true,
+      prompt: 'look at this',
+      systemPrompt: 'sys',
+      onToolStep: () => {},
+      log: () => {},
+    });
+    expect(args).toEqual([
+      'exec', 'resume', '--skip-git-repo-check', '--image=/tmp/shot.png', '--',
+      '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000', '-',
+    ]);
+  });
+});
+
+describe('parseCodexSessionId', () => {
+  const header = [
+    'model: gpt-6-astra',
+    'provider: openai',
+    'session id: 01a0881d-f3ff-76d2-958e-071dbc29616a',
+    '--------',
+  ].join('\n');
+
+  it('reads the id from the run header (stderr in non-tty runs)', () => {
+    expect(parseCodexSessionId(header, 'the reply')).toBe('01a0881d-f3ff-76d2-958e-071dbc29616a');
+  });
+
+  it('falls back to stdout, and stderr wins when both carry one', () => {
+    expect(parseCodexSessionId('', header)).toBe('01a0881d-f3ff-76d2-958e-071dbc29616a');
+    const other = 'session id: 99999999-0000-7000-8000-000000000000';
+    expect(parseCodexSessionId(header, other)).toBe('01a0881d-f3ff-76d2-958e-071dbc29616a');
+  });
+
+  it('never matches prose that mentions a session id without the header shape', () => {
+    expect(parseCodexSessionId('I lost the session id: sorry', '')).toBeUndefined();
+    expect(parseCodexSessionId('', 'session id: not-a-uuid')).toBeUndefined();
+  });
 });
 
 // A run ends when it goes quiet, not when it gets long: these drive real
@@ -317,6 +385,68 @@ describe.skipIf(process.platform === 'win32')('run expiry (POSIX)', () => {
     // SIGTERM: waiting only 2s made this fail whenever the box was busy.
     for (let i = 0; i < 130 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50));
     expect(alive(pid)).toBe(false);
+  });
+});
+
+// Real spawns against a fake `codex`: the header (stderr, like the real CLI in
+// non-tty runs) carries the session id, stdout stays the reply contract.
+describe.skipIf(process.platform === 'win32')('codex session capture (POSIX)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-codex-'));
+  const ID = '01a0881d-f3ff-76d2-958e-071dbc29616a';
+
+  function script(name: string, body: string): string {
+    const p = path.join(dir, `${name}.sh`);
+    fs.writeFileSync(p, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    return p;
+  }
+  function cfg(command: string): RuntimeConfig {
+    return {
+      kind: 'codex', command, extraArgs: [], cwd: dir, permissionMode: undefined,
+      allowedTools: [], maxTurns: 10, timeoutSec: 30, idleTimeoutSec: 5, sessionIdleSec: 600, sessionHardCapSec: 3600,
+      mcp: false, systemPromptExtra: undefined,
+    };
+  }
+  const run = (c: RuntimeConfig, codexSessionId?: string): ReturnType<typeof runRuntime> =>
+    runRuntime(c, { sessionId: 's', resume: false, codexSessionId, prompt: 'p', systemPrompt: 'sys', onToolStep: () => {}, log: () => {} });
+
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('hands the header id back beside the stdout reply', async () => {
+    const p = script('ok', `echo "session id: ${ID}" >&2; echo "the reply"`);
+    const res = await run(cfg(p));
+    expect(res).toMatchObject({ ok: true, text: 'the reply', sawSession: true, codexSessionId: ID });
+  });
+
+  it('a failed run that recorded itself is still marked resumable', async () => {
+    const p = script('fail', `echo "session id: ${ID}" >&2; echo "credit limit" >&2; exit 1`);
+    const res = await run(cfg(p));
+    expect(res.ok).toBe(false);
+    expect(res.codexSessionId).toBe(ID);
+    expect(res.sawSession).toBe(true);
+  });
+
+  it('a run that died before the header proves no session', async () => {
+    const p = script('early', `echo "spawn error" >&2; exit 1`);
+    const res = await run(cfg(p));
+    expect(res.ok).toBe(false);
+    expect(res.codexSessionId).toBeUndefined();
+    expect(res.sawSession).toBe(false);
+  });
+
+  it('an expired run still salvages the id it printed', async () => {
+    const p = script('hang', `echo "session id: ${ID}" >&2; echo "partial"; sleep 60`);
+    const c = { ...cfg(p), idleTimeoutSec: 0.4 };
+    const res = await run(c);
+    expect(res.ok).toBe(false);
+    expect(res.codexSessionId).toBe(ID);
+    expect(res.text).toBe('partial');
+  });
+
+  it('resume passes the id through to the CLI argv', async () => {
+    const p = script('argv', `echo "$@" >&2; echo "resumed"`);
+    const res = await run(cfg(p), ID);
+    expect(res.ok).toBe(true);
+    expect(res.text).toBe('resumed');
   });
 });
 
