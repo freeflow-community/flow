@@ -131,6 +131,14 @@ interface Conversation {
    * to open the conversation.
    */
   lastMsg: MessageDTO;
+  /**
+   * Codex runtime only: the session the last run recorded itself under, so
+   * the next turn is `codex exec resume <id>` and keeps the conversation's
+   * context (claude gets the same via --resume on `sessionId`). Cleared when
+   * a run fails without proving a session, so a dead id can't wedge the
+   * conversation; /reset discards it with the rest of the entry.
+   */
+  codexSessionId?: string | undefined;
 }
 
 class Semaphore {
@@ -899,6 +907,7 @@ export class AgentBridge {
         result = await runRuntime(this.cfg.runtime, {
           sessionId: conv.sessionId,
           resume: conv.started,
+          codexSessionId: conv.codexSessionId,
           prompt,
           systemPrompt: this.buildSystemPrompt(msg, mcpConfigPath !== undefined),
           mcpConfigPath,
@@ -907,6 +916,13 @@ export class AgentBridge {
           onText: (text) => progress.onText(text),
           log: (m) => this.log(m),
         });
+      }
+      // Codex names its own sessions: whatever run just happened — success,
+      // interrupt, even a failure that got as far as recording itself — the
+      // newest id it printed is the one that holds this conversation's
+      // context, and the one the next turn resumes.
+      if (this.cfg.runtime.kind === 'codex' && result.codexSessionId) {
+        conv.codexSessionId = result.codexSessionId;
       }
       // The reply we're about to post is (for claude) the last text block we
       // already relayed — hand it over so the narration doesn't end on it.
@@ -942,6 +958,14 @@ export class AgentBridge {
             // message spawns under the new one.
             this.sessions.dispose(key, 'retrying on a fresh session id');
           }
+        }
+        // A codex run that died before recording itself proves nothing about
+        // the stored id — but a *resume* that failed that way is the one case
+        // where the id itself is suspect (deleted rollout, pruned ~/.codex),
+        // and retrying it would fail the same way forever. Fresh next turn.
+        if (this.cfg.runtime.kind === 'codex' && !result.codexSessionId && conv.codexSessionId) {
+          this.log(`codex resume of ${conv.codexSessionId} failed — next turn starts a fresh session`);
+          conv.codexSessionId = undefined;
         }
         await this.api.sendMessage(msg.channelId, failureReply(result), replyRoot).catch(() => {});
       }
