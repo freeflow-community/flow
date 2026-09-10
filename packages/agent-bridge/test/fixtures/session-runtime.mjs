@@ -61,6 +61,11 @@ function endTurn(text, subtype = 'success') {
 }
 
 function background(ms, desc) {
+  // Number('60_000') is NaN (numeric separators are a source-literal feature),
+  // and setTimeout(fn, NaN) fires immediately — which once turned a "60s" task
+  // into an instant completion whose empty snapshot raced the test's
+  // pendingTasks read. A bad duration must fail the run, not shorten it.
+  if (!Number.isFinite(ms)) throw new Error(`bg: unparseable duration ${ms}`);
   const id = `t${++seq}`;
   const toolUseId = `toolu_${id}`;
   out({
