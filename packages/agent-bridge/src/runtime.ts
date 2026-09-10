@@ -6,10 +6,10 @@
 // bookkeeping. `runRuntime` below is the one-shot path, still used by the codex
 // and demo runtimes and by voice calls (whose lifetime is the call, not the
 // conversation).
-// Codex runtime: baseline "prompt in, stdout out" contract, no session resume
-// or thinking steps yet. The system prompt is folded into each invocation.
+// Codex runtime: `codex exec --json`, whose JSONL events give the status row
+// its tool steps and the session its resumable thread id (see CodexJsonParser).
+// The system prompt is folded into the first invocation of a session.
 import { spawn } from 'node:child_process';
-import path from 'node:path';
 import type { RuntimeConfig } from './config.js';
 
 export interface RunOpts {
@@ -71,38 +71,100 @@ export interface RunResult {
   codexSessionId?: string | undefined;
 }
 
-/** One line per tool call, latest step shown: "Bash: pnpm test". */
+/**
+ * Shell wrappers a CLI puts around the command it actually ran
+ * (`/bin/zsh -lc 'pnpm test'`). The interesting word is inside the quotes, so
+ * peel the wrapper before looking for it.
+ */
+const SHELL_WRAPPER_RE = /^\s*(?:\S*\/)?(?:sh|bash|zsh|dash|ksh|fish)\s+-[a-z]*c\s+(['"])([\s\S]*)\1\s*$/;
+
+/** `FOO=bar`, `PATH=/x:$PATH` — a prefix, never the command being run. */
+const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The first *command word* of a shell invocation — what the status row calls
+ * the step. Peels shell wrappers, stops at the first separator (a pipeline's
+ * head is what the step is "about"), skips env-var prefixes, and reduces a
+ * path to its basename so `/usr/bin/sed` reads as `sed`. Returns '' when there
+ * is nothing recognisable, which the caller renders as a bare `Bash`.
+ */
+export function bashCommandWord(command: unknown): string {
+  let cmd = String(command ?? '').trim();
+  // Nested wrappers are real: `zsh -lc "bash -c 'pnpm test'"`. Bounded, so a
+  // pathological string can't spin here.
+  for (let i = 0; i < 3; i++) {
+    const m = SHELL_WRAPPER_RE.exec(cmd);
+    if (!m) break;
+    cmd = m[2]!.trim();
+  }
+  // First segment only — `cd x && pnpm test` is a `cd` step (#552 says the
+  // first command is acceptable; it is also the one that has already started).
+  const head = cmd.split(/\||&&|\|\||;|\n/)[0] ?? '';
+  for (const raw of head.trim().split(/\s+/)) {
+    let word = raw.replace(/^["']|["']$/g, '');
+    if (!word) continue;
+    if (ENV_ASSIGN_RE.test(word)) continue; // FOO=1 cmd …
+    if (word === 'env' || word === 'command' || word === 'exec') continue;
+    if (word.startsWith('(') || word.startsWith('{')) word = word.replace(/^[({]+/, '');
+    if (!word) continue;
+    const base = word.split('/').filter(Boolean).pop() ?? word;
+    // A label, not an argument: cap it so a rogue command can't stretch the row.
+    return base.length > 24 ? `${base.slice(0, 23)}…` : base;
+  }
+  return '';
+}
+
+/**
+ * Tools that wrap something else and are worth naming: the status row says
+ * which skill or which subagent, because "Skill" alone says nothing. Values
+ * are the input keys to try, in order — the first non-empty one wins.
+ */
+const PRIMARY_ARG_KEYS: Record<string, readonly string[]> = {
+  Skill: ['skill', 'name', 'command'],
+  Task: ['subagent_type', 'agent_type'],
+  Agent: ['subagent_type', 'agent_type'],
+};
+
+/** A sub-name is a label, not an argument: one short token, no paths, no spaces. */
+function subName(v: unknown): string {
+  const s = String(v ?? '').trim();
+  if (!s || /[\s/\\]/.test(s)) return '';
+  return s.length > 32 ? `${s.slice(0, 31)}…` : s;
+}
+
+/**
+ * The compact label for one tool call, as shown in the `🤖 thinking…` status
+ * row: the *kind* of step, never its arguments (#550, #552). A full path or a
+ * command tail wraps over four lines on a phone and adds no scanning value —
+ * transcripts and task channels still log the whole invocation.
+ *
+ *   Bash: sed -n 240,300p /tmp/…/runtime.ts   →  Bash(sed)
+ *   mcp__flow__send_message                   →  flow: send_message
+ *   Read / Edit / Grep / Write                →  Read / Edit / Grep / Write
+ */
 export function formatToolStep(name: string, input: unknown): string {
   const i = (input ?? {}) as Record<string, unknown>;
-  const short = (v: unknown, max = 80): string => {
-    const s = String(v ?? '').replace(/\s+/g, ' ').trim();
-    return s.length > max ? `${s.slice(0, max - 1)}…` : s;
-  };
-  if (name.startsWith('mcp__flow__')) return `Flow: ${name.slice('mcp__flow__'.length)}`;
-  if (name.startsWith('mcp__')) return name.replace(/^mcp__/, '').replace('__', ': ');
-  switch (name) {
-    case 'Bash':
-      return `Bash: ${short(i.command)}`;
-    case 'Read':
-    case 'Write':
-    case 'Edit':
-    case 'NotebookEdit':
-      return `${name}: ${short(path.basename(String(i.file_path ?? i.notebook_path ?? '')))}`;
-    case 'Glob':
-    case 'Grep':
-      return `${name}: ${short(i.pattern)}`;
-    case 'WebSearch':
-      return `WebSearch: ${short(i.query)}`;
-    case 'WebFetch':
-      return `WebFetch: ${short(i.url)}`;
-    case 'Task':
-    case 'Agent':
-      return `Agent: ${short(i.description ?? i.prompt)}`;
-    case 'TodoWrite':
-      return 'updating plan';
-    default:
-      return name;
+  if (name.startsWith('mcp__')) {
+    const [server, ...rest] = name.slice('mcp__'.length).split('__');
+    const tool = rest.join('__');
+    return server && tool ? `${server}: ${tool}` : (server ?? name);
   }
+  if (name === 'Bash' || name === 'BashOutput') {
+    const word = name === 'Bash' ? bashCommandWord(i.command) : '';
+    return word ? `Bash(${word})` : name;
+  }
+  if (name === 'TodoWrite') return 'updating plan';
+  // `Task` is what the CLI calls it; `Agent` is what a reader watching the row
+  // calls it, and #552 spells it that way.
+  const label = name === 'Task' ? 'Agent' : name;
+  const keys = PRIMARY_ARG_KEYS[name];
+  if (keys) {
+    for (const key of keys) {
+      const sub = subName(i[key]);
+      if (sub) return `${label}(${sub})`;
+    }
+  }
+  return label;
 }
 
 interface StreamEvent {
@@ -291,6 +353,106 @@ export class StreamJsonParser {
   }
 }
 
+/**
+ * One `codex exec --json` event. Codex names its own vocabulary — a turn is a
+ * sequence of *items* (a shell command, a message, a file edit) each announced
+ * by `item.started` and closed by `item.completed`.
+ */
+interface CodexEvent {
+  type?: string;
+  /** thread.started: the session id, which `codex exec resume <id>` takes. */
+  thread_id?: string;
+  item?: {
+    id?: string;
+    type?: string;
+    /** command_execution: the full invocation, shell wrapper and all. */
+    command?: string;
+    /** agent_message: what the agent said. */
+    text?: string;
+  };
+}
+
+/**
+ * Item types worth a status row of their own. Codex will grow more of them;
+ * anything not named here is ignored rather than guessed at, so a new item
+ * type is a silent no-op instead of a bad label or a crash.
+ */
+const CODEX_ITEM_LABELS: Record<string, string> = {
+  file_change: 'Edit',
+  web_search: 'WebSearch',
+  todo_list: 'updating plan',
+};
+
+/**
+ * The codex-side sibling of `StreamJsonParser`: same job, different dialect.
+ * Feed it `codex exec --json` stdout and it emits terse tool steps, relays the
+ * agent's narration, and picks up the thread id that makes the next turn
+ * resumable (#552). Tolerant of non-JSON noise, exactly like its sibling —
+ * codex prints the odd plain-text warning alongside the stream.
+ */
+export class CodexJsonParser {
+  private buf = '';
+  /** From `thread.started` — this run's resumable session id. */
+  threadId: string | undefined;
+  /**
+   * The last `agent_message`. Codex narrates mid-turn with the same item type
+   * it uses for the final answer, so latest-wins is both "the reply" and, on a
+   * run that gets killed, the salvage — the mirror of `StreamJsonParser.lastText`.
+   */
+  lastText = '';
+  /** Any well-formed event — proof the session exists. See RunResult.sawSession. */
+  sawEvent = false;
+
+  constructor(
+    private readonly onToolStep: (step: string) => void,
+    private readonly onText: (text: string) => void = () => {},
+  ) {}
+
+  feed(chunk: string): void {
+    this.buf += chunk;
+    let idx: number;
+    while ((idx = this.buf.indexOf('\n')) >= 0) {
+      const line = this.buf.slice(0, idx).trim();
+      this.buf = this.buf.slice(idx + 1);
+      if (line) this.handleLine(line);
+    }
+  }
+
+  private handleLine(line: string): void {
+    let ev: CodexEvent;
+    try {
+      ev = JSON.parse(line) as CodexEvent;
+    } catch {
+      return; // non-JSON noise
+    }
+    if (!ev || typeof ev !== 'object' || typeof ev.type !== 'string') return;
+    this.sawEvent = true;
+    if (ev.type === 'thread.started') {
+      if (typeof ev.thread_id === 'string' && ev.thread_id) this.threadId = ev.thread_id;
+      return;
+    }
+    const item = ev.item;
+    if (!item || typeof item.type !== 'string') return;
+    if (item.type === 'agent_message') {
+      const text = String(item.text ?? '').trim();
+      if (!text) return;
+      if (text !== this.lastText) this.onText(text);
+      this.lastText = text;
+      return;
+    }
+    // Steps are announced once, when the item starts — `item.completed` for the
+    // same id would print the row a second time after the work is already done.
+    if (ev.type !== 'item.started') return;
+    if (item.type === 'command_execution') {
+      const word = bashCommandWord(item.command);
+      this.onToolStep(word ? `Bash(${word})` : 'Bash');
+      return;
+    }
+    const label = CODEX_ITEM_LABELS[item.type];
+    if (label) this.onToolStep(label);
+  }
+}
+
 /** Just the fields the argv depends on — `RunOpts` satisfies it structurally. */
 export interface ClaudeArgsOpts {
   sessionId: string;
@@ -333,7 +495,8 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: ClaudeArgsOpts): strin
 }
 
 export function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
-  // Baseline contract: stdout = reply. Continuity comes from `codexSessionId`
+  // stdout is a JSONL event stream (--json); the reply is its last agent_message.
+  // Continuity comes from `codexSessionId`
   // — the id codex printed on an earlier run — which turns the invocation into
   // `codex exec resume <id>`, reloading that session's full context from
   // ~/.codex. Only then does the prompt carry just the new turn; a fresh run
@@ -342,16 +505,20 @@ export function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   const resume = opts.codexSessionId !== undefined;
   const prompt = resume ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`;
   const images = (opts.imagePaths ?? []).map((image) => `--image=${image}`);
-  return ['exec', ...(resume ? ['resume'] : []), '--skip-git-repo-check', ...images, ...cfg.extraArgs,
+  // --json turns stdout into the JSONL event stream CodexJsonParser reads: tool
+  // steps for the status row, and the thread id that resumes the session (#552).
+  return ['exec', ...(resume ? ['resume'] : []), '--json', '--skip-git-repo-check', ...images, ...cfg.extraArgs,
     ...(images.length || opts.stdinPrompt ? ['--'] : []),
     ...(resume ? [opts.codexSessionId as string] : []),
     opts.stdinPrompt ? '-' : prompt];
 }
 
 /**
- * The id under which codex recorded this run, from the header it prints
- * (`session id: <uuid>` — stderr in non-tty runs). Passing it back as
- * `codexSessionId` resumes the session with its context intact.
+ * Fallback session-id source: the header codex prints (`session id: <uuid>` —
+ * stderr in non-tty runs). Under `--json` the id arrives structurally, as
+ * `thread.started.thread_id`, and this header is not printed at all; the regex
+ * stays because it costs two lines and is the only thing that would keep
+ * resume working if a codex build ever refused the flag.
  */
 const CODEX_SESSION_ID_RE = /^session id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/im;
 
@@ -457,8 +624,18 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       child.stdin.end(freshCodex ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt);
     }
     const parser = new StreamJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
+    const codex = new CodexJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
     let stdout = '';
     let stderr = '';
+    /** The id to resume this codex session by, structural source first. */
+    const codexId = (): string | undefined =>
+      cfg.kind === 'codex' ? (codex.threadId ?? parseCodexSessionId(stderr, stdout)) : undefined;
+    /**
+     * What codex has said so far. `--json` gives us the agent's own messages;
+     * raw stdout is the fallback for a build that ignored the flag and printed
+     * plain text instead.
+     */
+    const codexText = (): string => codex.lastText || stdout.trim();
     let settled = false;
     let idleTimer: NodeJS.Timeout | null = null;
     let capTimer: NodeJS.Timeout | null = null;
@@ -482,10 +659,10 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       if (child.pid) killGroup(child.pid, 5000);
       // The terminal result event will never arrive, so salvage the last thing
       // the agent said (codex has no events — its raw stdout is the contract).
-      const codexSessionId = cfg.kind === 'codex' ? parseCodexSessionId(stderr, stdout) : undefined;
+      const codexSessionId = codexId();
       resolve({
         ok: false,
-        text: cfg.kind === 'claude' ? parser.lastText : stdout.trim(),
+        text: cfg.kind === 'claude' ? parser.lastText : codexText(),
         error,
         sawSession: cfg.kind === 'codex' ? codexSessionId !== undefined : parser.sawEvent,
         interrupted,
@@ -514,6 +691,7 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       const s = d.toString('utf8');
       stdout += s;
       if (cfg.kind === 'claude') parser.feed(s);
+      else if (cfg.kind === 'codex') codex.feed(s);
     });
     child.stderr!.on('data', (d: Buffer) => {
       bumpIdle();
@@ -530,6 +708,7 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       settled = true;
       cleanup();
       parser.feed('\n'); // flush a trailing unterminated line
+      codex.feed('\n');
       if (cfg.kind === 'claude') {
         if (parser.sawResult && !parser.isError) return resolve({ ok: true, text: parser.finalText, sawSession: true });
         // Error text stays short: the runtime's own words ride along as
@@ -545,10 +724,10 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
           sawSession: parser.sawEvent,
         });
       }
-      // baseline contract: stdout is the reply
-      const codexSessionId = parseCodexSessionId(stderr, stdout);
+      // the reply is the turn's last agent_message (raw stdout if there were none)
+      const codexSessionId = codexId();
       const sawSession = codexSessionId !== undefined;
-      if (code === 0) return resolve({ ok: true, text: stdout.trim(), sawSession, codexSessionId });
+      if (code === 0) return resolve({ ok: true, text: codexText(), sawSession, codexSessionId });
       return resolve({
         ok: false,
         text: '',
