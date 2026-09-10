@@ -23,6 +23,9 @@ enum ConnectionStore {
     static func save(_ registry: ConnectionRegistry, to defaults: UserDefaults) {
         guard let data = try? JSONEncoder().encode(registry) else { return }
         defaults.set(data, forKey: defaultsKey)
+        #if os(iOS)
+        UserDefaults(suiteName: "group.im.freeflow.app")?.set(data, forKey: defaultsKey)
+        #endif
     }
 
     /// The registry for this profile, migrating the pre-multi-server install on
@@ -91,9 +94,16 @@ enum ConnectionStore {
         "activeWorkspaceId",
         "lastChannelId",
         "collapsedImages",
+        "pushRoutingId",
     ]
 
     static func clear(scope: StorageScope, in defaults: UserDefaults) {
         for name in scopedDefaultsNames { defaults.removeObject(forKey: scope.key(name)) }
+        let suffix = scope.key("")
+        for key in defaults.dictionaryRepresentation().keys {
+            if (key.hasPrefix("navigation:") || key.hasPrefix("draft:") || key.hasPrefix("scroll:")) && key.hasSuffix(suffix) && (!scope.isLegacy || !key.contains("#")) {
+                defaults.removeObject(forKey: key)
+            }
+        }
     }
 }

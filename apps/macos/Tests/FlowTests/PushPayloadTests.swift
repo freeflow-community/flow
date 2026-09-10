@@ -25,6 +25,16 @@ final class PushPayloadTests: XCTestCase {
         return info
     }
 
+    func testConnectionRouteSurvivesParsing() throws {
+        var info = alertUserInfo()
+        info["routingId"] = "local-identity-route"
+        XCTAssertEqual(try XCTUnwrap(PushPayload(userInfo: info)).routingId, "local-identity-route")
+        info["routingId"] = ""
+        XCTAssertNil(PushPayload(userInfo: info))
+        info["routingId"] = 42
+        XCTAssertNil(PushPayload(userInfo: info))
+    }
+
     // MARK: - Parsing
 
     func testParsesTheServersAlertKeys() throws {

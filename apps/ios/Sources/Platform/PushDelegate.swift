@@ -97,9 +97,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         let environment = Banners.apnsEnvironment
         let bundleId = Banners.apnsTopic
         Task {
-            await state.engine.registerPushDevice(
-                token: token, environment: environment, bundleId: bundleId
-            )
+            for connection in state.connections.registry.connections {
+                guard let target = state.connections.appState(connection.connectionId) else { continue }
+                await target.engine.registerPushDevice(token: token, environment: environment, bundleId: bundleId)
+            }
         }
     }
 
@@ -157,12 +158,12 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         let reply = MainActorHandoff(completionHandler)
         Task { @MainActor in
             if let badge { Banners.setBadge(badge) }
-            guard let payload else { return reply.value([]) }
+            guard let payload, let owner = self.appState?.connections.notificationApp(routingId: payload.routingId) else { return reply.value([]) }
             let present = PushPayload.shouldPresentBanner(
                 payload: payload,
-                appActive: self.appState?.isAppActive ?? false,
-                visibleChannelId: self.appState?.selectedChannelId,
-                openThreadRootId: self.appState?.openThreadRootId
+                appActive: owner === self.appState && owner.isAppActive,
+                visibleChannelId: owner.selectedChannelId,
+                openThreadRootId: owner.openThreadRootId
             )
             // #251: the `sound` pref applies to a foreground banner too. The
             // push the server sent while backgrounded already had `aps.sound`
@@ -203,7 +204,16 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         }
     }
 
-    private func route(_ payload: PushPayload, with state: AppState) {
+    private func route(_ payload: PushPayload, with initial: AppState) {
+        guard let state = initial.connections.notificationApp(routingId: payload.routingId) else { return }
+        guard Self.canRoute(phase: state.phase) else {
+            Task {
+                await state.engine.bootstrap()
+                if Self.canRoute(phase: state.phase) { self.route(payload, with: state) }
+            }
+            return
+        }
+        NotificationCenter.default.post(name: .init("flow.selectConnection"), object: state)
         // The push has carried `threadRootId` since #248; it is passed on now
         // (#476), so a tap on a thread reply opens the thread and scrolls to
         // the reply instead of dropping the reader in the channel to hunt for

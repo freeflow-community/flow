@@ -17,6 +17,11 @@ import UIKit
 /// directly by views.
 @MainActor
 final class AppState: ObservableObject {
+    private static weak var huddleOwner: AppState?
+    static var joinedHuddleOwner: AppState? {
+        guard let owner = huddleOwner, owner.activeHuddleChannelId != nil else { return nil }
+        return owner
+    }
     enum Phase: Equatable {
         case loading
         case signedOut
@@ -305,18 +310,20 @@ final class AppState: ObservableObject {
     /// created by the first-upgrade migration — but everything below now goes
     /// through its runtime rather than through a global `Server.baseURL`, so
     /// phase 3's switcher has something to switch (#540).
+    let images = ImageLoader()
     let connections: ConnectionManager
     private let runtime: ConnectionRuntime
 
-    init(connections: ConnectionManager = .shared) {
+    init(connections: ConnectionManager = .shared, connectionId: String? = nil) {
         self.connections = connections
-        let runtime = connections.active()
+        let runtime = connectionId.flatMap { connections.runtime($0) } ?? connections.active()
         self.runtime = runtime
         self.db = runtime.db
         self.engine = runtime.engine
         let api = runtime.api
+        connections.register(self)
         Task {
-            await ImageLoader.shared.configure(api: api)
+            await images.configure(api: api)
             await engine.attach(self)
             await engine.bootstrap()
         }
@@ -325,6 +332,8 @@ final class AppState: ObservableObject {
     /// The runtime's connection id — what identity and navigation records are
     /// keyed by.
     var connectionId: String { runtime.connection.connectionId }
+    var serverOrigin: String { runtime.connection.origin }
+    var sessionScope: StorageScope { runtime.sessionScope }
 
     /// Commit a validated identity for this connection (called by the engine
     /// after `/v1/me` or a successful sign-in).
@@ -382,7 +391,7 @@ final class AppState: ObservableObject {
         notificationUnreadByWorkspace = [:]
         notificationUnreadTotal = 0
         catchUpCount = 0
-        Banners.setBadge(0)
+        connections.refreshAggregateBadge()
     }
 
     func setConnection(_ c: Connection) {
@@ -555,7 +564,7 @@ final class AppState: ObservableObject {
     func setNotificationUnread(_ n: Int, workspaceId: String?, total: Int? = nil) {
         if let workspaceId { notificationUnreadByWorkspace[workspaceId] = n }
         notificationUnreadTotal = total ?? n
-        Banners.setBadge(notificationUnreadTotal)
+        connections.refreshAggregateBadge()
     }
 
     /// A row counts on the dock always, and in the sidebar badge of whichever
@@ -707,6 +716,15 @@ final class AppState: ObservableObject {
 
     func handleDeepLink(_ url: URL) {
         guard url.scheme == "flow" else { return }
+        // PKCE callbacks belong exclusively to their pending browser operation.
+        // Never exchange an unsolicited code against the currently selected server.
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if items.contains(where: { $0.name == "operationId" || $0.name == "state" }) { return }
+        guard connections.registry.connections.count == 1,
+              connections.registry.connections.first?.connectionId == connectionId else {
+            errorMessage = "This legacy link does not identify its server. Use Workspaces and servers with the issuing server’s HTTPS invite URL, or start sign-in there."
+            return
+        }
         switch url.host {
         case "invite":
             acceptInvite(url.lastPathComponent)
@@ -774,6 +792,8 @@ final class AppState: ObservableObject {
     /// The shared body of joining and of answering a ring — accepting a call
     /// *is* joining, and the only difference is which endpoint mints the token.
     private func joinHuddleAsync(channelId: String, workspaceId: String, accepting inviteId: String?) async {
+        if let owner = Self.huddleOwner, owner !== self { await owner.leaveHuddleAndWait() }
+        Self.huddleOwner = self
         if activeHuddleChannelId != nil { await leaveHuddleAsync() }
         huddleConnecting = true
         huddleAccepted = []

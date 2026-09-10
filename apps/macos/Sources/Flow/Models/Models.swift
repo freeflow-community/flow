@@ -1211,6 +1211,8 @@ struct MarkNotificationsReadBody: Encodable, Sendable {
 /// start, not only when the token changes: APNs rotates tokens silently on
 /// restore-from-backup and reinstall, and the endpoint upserts.
 struct RegisterDeviceBody: Encodable, Sendable {
+    var routingId: String? = nil
+    var badgeMode: String? = nil
     let token: String
     /// `ios` today; macOS joins the server's enum when it registers for push.
     let platform: String

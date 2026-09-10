@@ -200,7 +200,7 @@ struct SidebarDrawer: View {
             Button("Cancel", role: .cancel) {}
             Button("Leave Workspace", role: .destructive) { leaveWorkspace() }
         } message: {
-            Text("You'll lose access to all its channels. Your past messages will remain.")
+            Text("Leave as \(app.currentUser?.email ?? "this account") on \(app.serverOrigin). You'll lose access to all its channels. Your past messages will remain.")
         }
         .alert(
             "Delete \(currentWorkspace?.name ?? "workspace")?",

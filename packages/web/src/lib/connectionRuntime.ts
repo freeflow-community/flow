@@ -16,6 +16,7 @@ import {
   credentialRefFor,
   clearNamespace,
   loadOrMigrateRegistry,
+  loadRegistry,
   removeConnection as removeFromRegistry,
   navigationTargetFor,
   saveRegistry,
@@ -24,6 +25,8 @@ import {
   sessionFor,
   updateSession,
   addFlowConnection,
+  setWorkspaceBinding,
+  type WorkspaceBinding,
   type ConnectionRegistry,
   type NavigationTarget,
   type ServerConnection,
@@ -120,6 +123,7 @@ export class ConnectionRuntime {
   }
 
   write(name: string, value: string | null): void {
+    if (this.disposed) return;
     if (value === null) localStorage.removeItem(this.key(name));
     else localStorage.setItem(this.key(name), value);
   }
@@ -133,6 +137,7 @@ export class ConnectionRuntime {
   /** Replace this connection's bearer. Bumps the auth generation, so any 401
    * still in flight from the previous one is ignored. */
   setToken(token: string | null): number {
+    if (this.disposed) return this.generation;
     this.token = token;
     this.generation += 1;
     const ref = credentialRefFor(this.storageKey);
@@ -188,6 +193,7 @@ export class ConnectionRuntime {
   // -- REST ----------------------------------------------------------------
 
   async api<T>(method: string, path: string, body?: unknown): Promise<T> {
+    if (this.disposed) throw new ApiError(0, 'disposed', 'connection closed');
     const url = this.url(path);
     const generation = this.generation;
     const res = await fetch(url, {
@@ -195,6 +201,7 @@ export class ConnectionRuntime {
       // Bearer auth only; a cross-origin backend must never see ambient
       // cookies (docs/dev/MULTISERVER.md, "Allowed browser origins").
       credentials: 'omit',
+      redirect: 'error',
       headers: {
         ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         ...this.authHeaders(),
@@ -212,6 +219,7 @@ export class ConnectionRuntime {
         json.error?.message ?? `HTTP ${res.status}`,
       );
     }
+    if (this.disposed || generation !== this.generation) throw new ApiError(0, 'disposed', 'session changed');
     return json as T;
   }
 
@@ -251,6 +259,7 @@ export class ConnectionRuntime {
     const put = await fetch(relative ? this.url(target) : target, {
       method: pres.upload.method,
       credentials: 'omit',
+      redirect: 'error',
       headers: {
         ...pres.upload.headers,
         ...(relative ? this.authHeaders() : {}),
@@ -271,6 +280,7 @@ export class ConnectionRuntime {
     const res = await fetch(this.url(path), {
       method: 'POST',
       credentials: 'omit',
+      redirect: 'error',
       headers: this.authHeaders(),
       body: form,
     });
@@ -285,6 +295,7 @@ export class ConnectionRuntime {
         json.error?.message ?? 'upload failed',
       );
     }
+    if (this.disposed || generation !== this.generation) throw new ApiError(0, 'disposed', 'session changed');
     return json as T;
   }
 
@@ -314,6 +325,7 @@ export class ConnectionRuntime {
       cached = (async () => {
         const res = await fetch(this.url(path), {
           credentials: 'omit',
+      redirect: 'error',
           headers: this.authHeaders(),
         });
         if (!res.ok) {
@@ -378,9 +390,12 @@ export class ConnectionRuntime {
 export class ConnectionManager {
   private registry: ConnectionRegistry;
   private runtimes = new Map<string, ConnectionRuntime>();
+  private selected: string | null;
 
   constructor(origin: string = location.origin) {
     this.registry = loadOrMigrateRegistry(origin);
+    this.selected = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem('flow.selectedConnection');
+    if (!this.selected || !connectionById(this.registry, this.selected)) this.selected = this.registry.activeConnectionId;
   }
 
   get state(): ConnectionRegistry {
@@ -392,12 +407,34 @@ export class ConnectionManager {
   }
 
   get activeConnectionId(): string | null {
-    return this.registry.activeConnectionId;
+    return this.selected;
   }
 
   private commit(registry: ConnectionRegistry): void {
     this.registry = registry;
     saveRegistry(registry);
+  }
+
+  /** Reconcile another tab's credential changes without adopting its selection. */
+  reloadFromStorage(): string[] {
+    const next = loadRegistry();
+    const invalidated: string[] = [];
+    for (const [id, runtime] of this.runtimes) {
+      const old = sessionFor(this.registry, id);
+      const session = sessionFor(next, id);
+      if (!session || session.storageKey !== old?.storageKey ||
+          session.authGeneration !== old?.authGeneration || session.status !== old?.status ||
+          localStorage.getItem(session.credentialRef) !== runtime.getToken()) {
+        runtime.dispose();
+        this.runtimes.delete(id);
+        invalidated.push(id);
+      }
+    }
+    this.registry = next;
+    if (this.selected && !connectionById(next, this.selected)) {
+      this.selected = next.connections[0]?.connectionId ?? null;
+    }
+    return invalidated;
   }
 
   /** The runtime for a connection, created on first use. */
@@ -418,19 +455,21 @@ export class ConnectionManager {
 
   /** The runtime the UI is currently pointed at. */
   active(): ConnectionRuntime {
-    const id = this.registry.activeConnectionId;
+    const id = this.selected;
     const runtime = id ? this.runtime(id) : null;
     if (runtime) return runtime;
     // Only reachable if the registry was emptied under us; rebuilding the
     // default connection is better than throwing on every render.
     const { registry, connection } = addFlowConnection(this.registry, { origin: location.origin });
     this.commit({ ...registry, activeConnectionId: connection.connectionId });
+    this.selected = connection.connectionId;
     return this.runtime(connection.connectionId)!;
   }
 
   setActive(connectionId: string): void {
     if (!connectionById(this.registry, connectionId)) return;
-    this.commit({ ...this.registry, activeConnectionId: connectionId });
+    this.selected = connectionId;
+    if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('flow.selectedConnection', connectionId);
   }
 
   add(origin: string, label?: string): ConnectionRuntime {
@@ -469,6 +508,23 @@ export class ConnectionManager {
     return navigationTargetFor(this.registry, connectionId, userId);
   }
 
+  setBinding(binding: WorkspaceBinding): void {
+    this.commit(setWorkspaceBinding(this.registry, binding));
+  }
+
+  forgetWorkspace(connectionId: string, workspaceId: string): void {
+    this.commit({ ...this.registry, bindings: this.registry.bindings.filter(b => b.connectionId !== connectionId || b.workspaceId !== workspaceId) });
+  }
+
+  signOut(connectionId: string, remove = false): void {
+    const session = sessionFor(this.registry, connectionId);
+    this.runtimes.get(connectionId)?.dispose();
+    this.runtimes.delete(connectionId);
+    if (session) clearNamespace(session.storageKey);
+    if (remove) this.remove(connectionId);
+    else this.markSignedOut(connectionId);
+  }
+
   markSignedOut(connectionId: string): void {
     this.commit(updateSession(this.registry, connectionId, { status: 'signed-out' }));
   }
@@ -487,6 +543,13 @@ export class ConnectionManager {
     this.runtimes.get(connectionId)?.dispose();
     this.runtimes.delete(connectionId);
     this.commit(removeFromRegistry(this.registry, connectionId));
+    if (this.selected === connectionId) {
+      this.selected = this.registry.connections[0]?.connectionId ?? null;
+      if (typeof sessionStorage !== 'undefined') {
+        if (this.selected) sessionStorage.setItem('flow.selectedConnection', this.selected);
+        else sessionStorage.removeItem('flow.selectedConnection');
+      }
+    }
     if (session) clearNamespace(session.storageKey);
   }
 }

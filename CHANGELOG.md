@@ -12,6 +12,8 @@ This file keeps two things:
 
 ## Parity
 
+- Multi-server huddles (#541): web leaves the room when switching server; native keeps it running with a return control. Both limit the client to one joined room.
+
 ### Gaps to close
 - **A mid-session 401 signs you out on macOS + iOS, but not on web** (#540, which
   built the mechanism on all three). Both native clients tear the session down
@@ -228,15 +230,6 @@ This file keeps two things:
   "Sponsored by" row). Needs a new `MemberProfileSheet` on iOS plus avatar taps
   wired through `MessageListView`. `UserDTO.sponsorId` (shared) already carries
   the data.
-- macOS + iOS: no per-channel scroll-position memory across channel switches —
-  web only. macOS shipped a `.scrollPosition(id:)` implementation 2026-07-22
-  that never actually tracked anything (the modifier only reports a position
-  when the lazy stack is marked `.scrollTargetLayout()`, which it wasn't), so
-  the memory was always empty and every channel switch landed at the bottom;
-  the dead modifier was removed 2026-07-27 because it was blanking the
-  transcript. Re-doing it on either client means marking the target layout and
-  reconciling it with `.defaultScrollAnchor(.bottom)`, which owns the scroll
-  position today. The shared `MessageScrollMemory` store is still there.
 - iOS: the new channel drawer (2026-07-23) omits several sidebar affordances the
   web + macOS sidebars carry — the workspace color picker and the Manage Users /
   Manage Apps workspace-menu items. Channel context actions

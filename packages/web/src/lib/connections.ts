@@ -253,7 +253,11 @@ export function bindIdentity(
   }
   const storageKey = newId();
   return {
-    registry: updateSession(registry, connectionId, {
+    registry: updateSession({
+      ...registry,
+      bindings: registry.bindings.filter(b => b.connectionId !== connectionId),
+      navigation: registry.navigation.filter(n => n.connectionId !== connectionId),
+    }, connectionId, {
       userId,
       storageKey,
       credentialRef: credentialRefFor(storageKey),
@@ -328,12 +332,18 @@ const NAMESPACED_NAMES = [
   'activeWorkspace',
   'adminPanelOpen',
   'collapsedImages',
+  'cachedUser',
   'pendingInvite',
   'pendingJoinLink',
 ];
 
 export function clearNamespace(storageKey: string): void {
   for (const name of NAMESPACED_NAMES) localStorage.removeItem(scopedKey(storageKey, name));
+  const prefixes = ['draft:', 'navigation:', 'scroll:'].map(name => scopedKey(storageKey, name));
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (key && prefixes.some(prefix => key.startsWith(prefix))) localStorage.removeItem(key);
+  }
 }
 
 /** Create the default connection from this page's own origin on first upgrade,

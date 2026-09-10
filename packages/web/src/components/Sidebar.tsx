@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
@@ -175,6 +176,7 @@ export function splitAgents(
 }
 
 export default function Sidebar() {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const live = useLive();
@@ -958,6 +960,7 @@ function AppRow({
 }
 
 function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
+  const { api } = useBoundApi();
   const sel = useSelection();
   const qc = useQueryClient();
   const active = sel.artifactId === artifact.id;

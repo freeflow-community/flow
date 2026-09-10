@@ -27,7 +27,39 @@ final class ShareStore: ObservableObject {
     /// and used for the pre-flight limit check.
     private(set) var fileSize: Int64 = 0
     private(set) var maxFileBytes: Int64 = ShareStore.fallbackMaxFileBytes
-    private let api = APIClient(baseURL: Server.baseURL)
+    private var api: APIClient!
+    @Published private(set) var connections: [ServerConnection] = []
+    @Published private(set) var connectionId: String?
+    private var registry: ConnectionRegistry?
+    var serverLabel: String { connections.first { $0.connectionId == connectionId }?.canonicalOrigin?.label ?? "" }
+
+    func selectConnection(_ id: String) async {
+        guard case .ready = phase else { return }
+        guard id != connectionId else { return }
+        phase = .loading
+        guard await configureConnection(id) else { return }
+        maxFileBytes = await uploadLimit()
+        do {
+            let response: WorkspacesResponse = try await api.get("/v1/me/workspaces")
+            workspaces = response.workspaces
+            workspaceId = workspaces.first?.id
+            await loadChannels(preselect: nil)
+        } catch { phase = .failed(message(for: error)) }
+    }
+
+    private func configureConnection(_ id: String) async -> Bool {
+        guard let connection = registry?.connection(id), let session = registry?.session(id),
+              session.status == .authenticated, let origin = connection.canonicalOrigin,
+              let token = Keychain.loadToken(account: session.credentialRef) else {
+            phase = .failed(ShareError.notSignedIn.localizedDescription); return false
+        }
+        connectionId = id
+        api = APIClient(baseURL: origin.url)
+        let selectedAPI = api!
+        await selectedAPI.setToken(token)
+        channelId = nil; workspaceId = nil; channels = []; workspaces = []; memberNames = [:]
+        return true
+    }
     /// Display names for DM titles — DMs carry member ids, not a name.
     private var memberNames: [String: String] = [:]
 
@@ -58,11 +90,16 @@ final class ShareStore: ObservableObject {
     }
 
     func start(items: [NSExtensionItem]) async {
-        guard let token = Keychain.loadToken() else {
+        guard let defaults = UserDefaults(suiteName: SharedDefaults.appGroup),
+              let registry = ConnectionStore.load(from: defaults) else {
+            phase = .failed(ShareError.notSignedIn.localizedDescription); return
+        }
+        self.registry = registry
+        connections = registry.connections.filter { registry.session($0.connectionId)?.status == .authenticated }
+        guard let first = connections.first(where: { $0.connectionId == SharedDefaults.lastConnectionId }) ?? connections.first, await configureConnection(first.connectionId) else {
             phase = .failed(ShareError.notSignedIn.localizedDescription)
             return
         }
-        await api.setToken(token)
 
         guard let payload = await ShareItemLoader.load(from: items) else {
             phase = .failed(ShareError.nothingToShare.localizedDescription)
@@ -94,9 +131,9 @@ final class ShareStore: ObservableObject {
 
         // Preselect what was shared into last; fall back to the first
         // workspace so a first run is still one tap from sending.
-        let remembered = SharedDefaults.lastWorkspaceId
+        let remembered = SharedDefaults.lastConnectionId == connectionId ? SharedDefaults.lastWorkspaceId : nil
         workspaceId = workspaces.first(where: { $0.id == remembered })?.id ?? workspaces.first?.id
-        await loadChannels(preselect: SharedDefaults.lastChannelId)
+        await loadChannels(preselect: SharedDefaults.lastConnectionId == connectionId ? SharedDefaults.lastChannelId : nil)
     }
 
     func selectWorkspace(_ id: String) async {
@@ -152,6 +189,7 @@ final class ShareStore: ObservableObject {
                     fileIds: fileIds.isEmpty ? nil : fileIds
                 )
             )
+            SharedDefaults.lastConnectionId = connectionId
             SharedDefaults.lastChannelId = channelId
             SharedDefaults.lastWorkspaceId = workspaceId
             phase = .sent

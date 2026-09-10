@@ -598,7 +598,7 @@ struct MyProfileSheet: View {
             Button("Delete Account", role: .destructive) { deleteAccount() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Permanently deletes your account, removes you from every workspace, and frees your email address. It cannot be undone.")
+            Text("Permanently delete \(app.currentUser?.email ?? "this account") on \(app.serverOrigin), removing it from every workspace on this server. It cannot be undone.")
         }
         .onAppear {
             displayName = app.currentUser?.displayName ?? ""

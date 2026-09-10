@@ -195,6 +195,20 @@ describe('storage isolation', () => {
 });
 
 describe('disposal', () => {
+  it('late view cleanup cannot restore credentials or drafts after sign-out', () => {
+    const { manager, a, b } = twoConnections();
+    a.setToken('token-a');
+    b.setToken('token-b');
+    const tokenKey = a.key('token');
+    const draftKey = a.key('draft:workspace:channel');
+    manager.signOut(a.connectionId);
+    a.write('draft:workspace:channel', 'late draft');
+    a.setToken('late-token');
+    expect(store.get(draftKey)).toBeUndefined();
+    expect(store.get(tokenKey)).toBeUndefined();
+    expect(b.getToken()).toBe('token-b');
+  });
+
   it('revokes only its own object URLs and stops believing late responses', async () => {
     const revoked: string[] = [];
     vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:${Math.random()}`);
@@ -245,5 +259,35 @@ describe('disposal', () => {
     expect(b.getToken()).toBe('token-b');
     expect(manager.connections.map((c) => c.origin)).toEqual([B]);
     expect(manager.activeConnectionId).toBe(b.connectionId);
+  });
+});
+
+describe('cross-tab session cleanup', () => {
+  it('disposes only the signed-out server and keeps this tab’s selection', () => {
+    const { manager, a, b } = twoConnections();
+    manager.noteTokenReplaced(a.connectionId, a.setToken('token-a'));
+    manager.noteTokenReplaced(b.connectionId, b.setToken('token-b'));
+    manager.setActive(b.connectionId);
+    const otherTab = new ConnectionManager(A);
+    otherTab.signOut(a.connectionId);
+    expect(manager.reloadFromStorage()).toEqual([a.connectionId]);
+    expect(a.isDisposed).toBe(true);
+    expect(b.isDisposed).toBe(false);
+    expect(b.getToken()).toBe('token-b');
+    expect(manager.activeConnectionId).toBe(b.connectionId);
+  });
+
+  it('invalidates authenticated content when another tab changes identity', () => {
+    const { manager, a, b } = twoConnections();
+    manager.bindIdentity(a.connectionId, 'first-user');
+    manager.noteTokenReplaced(a.connectionId, a.setToken('first-token'));
+    const otherTab = new ConnectionManager(A);
+    otherTab.bindIdentity(a.connectionId, 'second-user');
+    const replacement = otherTab.runtime(a.connectionId)!;
+    otherTab.noteTokenReplaced(a.connectionId, replacement.setToken('second-token'));
+    expect(manager.reloadFromStorage()).toEqual([a.connectionId]);
+    expect(manager.runtime(a.connectionId)?.userId).toBe('second-user');
+    expect(a.isDisposed).toBe(true);
+    expect(b.isDisposed).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Phase 4 §1: app management (admin-only, web client per ruling 1).
 // Register Slack-compat apps, show the bot token, configure the outgoing
 // Events API subscription, and disable/enable apps. Tokens stay viewable in
@@ -11,6 +12,7 @@ import { useApps } from '../hooks';
 import { Modal } from './modals';
 
 export function AppsModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const apps = useApps(workspaceId);
   const [name, setName] = useState('');
@@ -212,6 +214,7 @@ function AppRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const [eventUrl, setEventUrl] = useState(app.eventUrl ?? '');
   const [types, setTypes] = useState<Set<string>>(() => new Set(app.eventTypes));

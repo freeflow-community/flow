@@ -1,6 +1,48 @@
 import SwiftUI
 
 struct RootView: View {
+    @EnvironmentObject private var initial: AppState
+    @State private var selected: AppState?
+    @State private var showConnections = false
+    @State private var incomingAddress = ""
+    @State private var workspace: String?
+    private var active: AppState { selected ?? initial }
+    var body: some View {
+        SessionRootView()
+            .environmentObject(active)
+            .id("\(active.connectionId):\(workspace ?? "")")
+            .overlay(alignment: .topTrailing) {
+                if let owner = AppState.joinedHuddleOwner, owner !== active {
+                    Button("Return to huddle on \(URL(string: owner.serverOrigin)?.host ?? "server")") {
+                        selected = owner
+                        workspace = owner.activeHuddleWorkspaceId
+                    }.padding(8)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Button("Workspaces and servers") { showConnections = true }
+                    .font(.caption).padding(8).background(.regularMaterial, in: Capsule()).padding(8)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .init("flow.selectConnection"))) { event in
+                if let app = event.object as? AppState { selected = app; workspace = nil }
+            }
+            .onOpenURL { url in
+                if url.scheme == "https" || url.scheme == "http" {
+                    incomingAddress = url.absoluteString
+                    showConnections = true
+                } else { active.handleDeepLink(url) }
+            }
+            .sheet(isPresented: $showConnections) {
+                ServerConnectionsView(current: active, initialAddress: incomingAddress) { app, workspaceId in
+                    if let workspaceId { app.selectWorkspace(workspaceId) }
+                    workspace = workspaceId
+                    selected = app
+                }
+            }
+    }
+}
+
+private struct SessionRootView: View {
     @EnvironmentObject var app: AppState
 
     var body: some View {

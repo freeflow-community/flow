@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Custom emoji (#175) rendering. A reaction is just a string, so anywhere one
 // is shown it may be either a unicode emoji or a workspace `:shortcode:`.
 import { useEffect, useState } from 'react';
@@ -16,6 +17,7 @@ export function CustomEmojiImage({
   size?: number;
   className?: string;
 }) {
+  const { blobUrl } = useBoundApi();
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;

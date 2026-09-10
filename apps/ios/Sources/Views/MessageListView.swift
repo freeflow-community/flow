@@ -38,6 +38,8 @@ struct MessageListView: View {
     /// it's in the list, then call onFocused. Nil in the normal case.
     var focusMessageId: String? = nil
     var onFocused: () -> Void = {}
+    var scrollKey: String? = nil
+    @State private var restoredScroll = false
     /// Passed straight to each row: tapping a sender opens their card (#223).
     var onOpenProfile: (String) -> Void = { _ in }
 
@@ -192,6 +194,11 @@ struct MessageListView: View {
                         // so keying on id remounts the row (and its avatar
                         // image) the moment the echo lands.
                         .id(row.message.clientMsgId)
+                        .background(GeometryReader { geometry in
+                            let frame = geometry.frame(in: .named(Self.scrollSpace))
+                            Color.clear.preference(key: SavedTopMessage.self,
+                                value: frame.minY <= 8 && frame.maxY > 8 ? row.message.id : nil)
+                        })
                     }
                 }
                 .padding(.vertical, 8)
@@ -267,8 +274,14 @@ struct MessageListView: View {
                     showPill = false
                 }
             }
+            .onPreferenceChange(SavedTopMessage.self) { id in
+                guard restoredScroll, let scrollKey, focusMessageId == nil else { return }
+                if followBox.model.showJump, let id { UserDefaults.standard.set(id, forKey: scrollKey) }
+                else if !followBox.model.showJump { UserDefaults.standard.removeObject(forKey: scrollKey) }
+            }
             .onChange(of: messages.last?.id) { _, newId in
                 guard newId != nil else { return }
+                if restoreScroll(proxy) { return }
                 // My own message always re-pins — I just pressed send, so I
                 // mean to see it land; everyone else's messages leave a
                 // back-scrolled reader in place (#111).
@@ -315,6 +328,7 @@ struct MessageListView: View {
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
             .onAppear {
                 followBox.model.focusActive = focusMessageId != nil
+                _ = restoreScroll(proxy)
                 tryFocus(proxy)
             }
             // Belt to the glue's braces (#280). The glue can only correct a bad
@@ -393,6 +407,18 @@ struct MessageListView: View {
     /// of the transcript (#111) — debounced through `showPill`, so it only
     /// appears once the model has wanted it for a beat. Tapping it returns to
     /// the newest message.
+    private func restoreScroll(_ proxy: ScrollViewProxy) -> Bool {
+        guard !restoredScroll, !messages.isEmpty else { return false }
+        restoredScroll = true
+        guard focusMessageId == nil, let scrollKey,
+              let saved = UserDefaults.standard.string(forKey: scrollKey),
+              let row = messages.rowKey(forMessageId: saved) else { return false }
+        followBox.model.positionRestored(atBottom: false)
+        followBox.model.landingIssued()
+        proxy.scrollTo(row, anchor: .top)
+        return true
+    }
+
     @ViewBuilder
     private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
         if showPill, !messages.isEmpty {
@@ -1203,4 +1229,10 @@ struct EditMessageSheet: View {
         }
         .presentationDetents([.medium])
     }
+}
+
+
+private struct SavedTopMessage: PreferenceKey {
+    static let defaultValue: String? = nil
+    static func reduce(value: inout String?, nextValue: () -> String?) { value = value ?? nextValue() }
 }

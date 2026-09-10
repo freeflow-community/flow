@@ -59,11 +59,12 @@ final class WindowState: ObservableObject {
     /// Navigation entries belong to the signed-in connection+identity (#540).
     /// The migrated default connection resolves these to the exact keys an
     /// existing install already has.
-    private static var activeWorkspaceKey: String {
-        ConnectionManager.shared.activeSessionScope.key("activeWorkspaceId")
+    private var activeWorkspaceKey: String {
+        app.sessionScope.key("activeWorkspaceId")
     }
 
     func selectWorkspace(_ id: String?) {
+        rememberNavigationTarget()
         selectedWorkspaceId = id
         selectedChannelId = nil
         openThreadRootId = nil
@@ -77,14 +78,21 @@ final class WindowState: ObservableObject {
         // Active workspace survives relaunch (phase 3.5 fixes). Shared across
         // windows on purpose: the *last* pick is what a fresh window starts on.
         if let id {
-            UserDefaults.standard.set(id, forKey: Self.activeWorkspaceKey)
+            UserDefaults.standard.set(id, forKey: activeWorkspaceKey)
         } else {
-            UserDefaults.standard.removeObject(forKey: Self.activeWorkspaceKey)
+            UserDefaults.standard.removeObject(forKey: activeWorkspaceKey)
         }
+        restoreWorkspaceNavigation()
         rememberNavigationTarget()
         if let id {
             let engine = self.engine
-            Task { await engine.selectWorkspace(id) }
+            let channel = selectedChannelId
+            let thread = openThreadRootId
+            Task {
+                await engine.selectWorkspace(id)
+                if let channel { await engine.selectChannel(channel) }
+                if let thread { await engine.openThread(rootId: thread) }
+            }
         }
     }
 
@@ -96,30 +104,45 @@ final class WindowState: ObservableObject {
         guard let workspaceId = selectedWorkspaceId,
               let userId = app.currentUser?.id
         else { return }
-        ConnectionManager.shared.rememberNavigation(NavigationTarget(
+        let target = NavigationTarget(
             connectionId: app.connectionId,
             userId: userId,
             workspaceId: workspaceId,
             channelId: selectedChannelId,
-            threadRootId: openThreadRootId
-        ))
+            threadRootId: openThreadRootId,
+            artifactId: selectedArtifactId
+        )
+        if let data = try? JSONEncoder().encode(target) {
+            UserDefaults.standard.set(data, forKey: app.sessionScope.key("navigation:\(workspaceId)"))
+        }
+        app.connections.rememberNavigation(target)
+    }
+
+    private func restoreWorkspaceNavigation() {
+        guard let workspaceId = selectedWorkspaceId,
+              let data = UserDefaults.standard.data(forKey: app.sessionScope.key("navigation:\(workspaceId)")),
+              let saved = try? JSONDecoder().decode(NavigationTarget.self, from: data),
+              saved.connectionId == app.connectionId, saved.userId == app.currentUser?.id
+        else { return }
+        selectedChannelId = saved.channelId
+        openThreadRootId = saved.threadRootId
+        selectedArtifactId = saved.artifactId
+        if let channel = saved.channelId { openThreadByChannel[channel] = saved.threadRootId }
     }
 
     /// Restore the last active workspace when the window opens (validated by
     /// the caller against the workspace list once it loads).
     func restoreActiveWorkspace() {
         guard selectedWorkspaceId == nil,
-              let saved = UserDefaults.standard.string(forKey: Self.activeWorkspaceKey)
+              let saved = UserDefaults.standard.string(forKey: activeWorkspaceKey)
         else { return }
-        selectedWorkspaceId = saved
-        let engine = self.engine
-        Task { await engine.selectWorkspace(saved) }
+        selectWorkspace(saved)
     }
 
     // MARK: - Channel
 
-    private static var lastChannelKey: String {
-        ConnectionManager.shared.activeSessionScope.key("lastChannelId")
+    private var lastChannelKey: String {
+        app.sessionScope.key("lastChannelId")
     }
 
     /// The channel to reopen on the next launch, or nil if there isn't one.
@@ -127,7 +150,7 @@ final class WindowState: ObservableObject {
     /// and cleared when the selection goes away — leaving, archiving, or
     /// signing out. Same storage shape as `activeWorkspaceKey` above, and
     /// shared across windows for the same reason: the *last* pick wins.
-    static var lastChannelId: String? {
+    var lastChannelId: String? {
         get { UserDefaults.standard.string(forKey: lastChannelKey) }
         set {
             if let newValue {
@@ -242,10 +265,10 @@ final class WindowState: ObservableObject {
     private func switchChannel(to id: String?) {
         rememberOpenThread()
         selectedChannelId = id
-        Self.lastChannelId = id
-        rememberNavigationTarget()
+        lastChannelId = id
         refreshKeepAlive() // a held frame belongs to the channel we just left
         openThreadRootId = id.flatMap { openThreadByChannel[$0] }
+        rememberNavigationTarget()
         let restored = openThreadRootId
         // Local capture: the task must not retain the window (a closed one
         // should deallocate immediately, falling out of AppState's registry).
@@ -275,7 +298,7 @@ final class WindowState: ObservableObject {
     func channelBecameUnavailable(_ channelId: String) {
         openThreadByChannel.removeValue(forKey: channelId) // nothing to come back to
         nav.forget(.channel(channelId)) // and back must not walk into it either
-        if Self.lastChannelId == channelId { Self.lastChannelId = nil } // don't reopen it next launch
+        if lastChannelId == channelId { lastChannelId = nil } // don't reopen it next launch
         if selectedChannelId == channelId {
             selectedChannelId = nil
             openThreadRootId = nil
@@ -292,7 +315,7 @@ final class WindowState: ObservableObject {
     /// query, so restoring costs nothing beyond a lookup.
     func restorableLastChannel(from channels: [Channel]) -> String? {
         guard selectedChannelId == nil, !showActivity, !showScheduled, !showDirectory,
-              let saved = Self.lastChannelId,
+              let saved = lastChannelId,
               let channel = channels.first(where: { $0.id == saved }),
               channel.isMember, channel.archivedAt == nil,
               channel.workspaceId == selectedWorkspaceId
@@ -308,6 +331,7 @@ final class WindowState: ObservableObject {
             filesOpen = false
         }
         openThreadRootId = rootId
+        rememberNavigationTarget()
         rememberOpenThread() // so leaving this channel and coming back restores it
         let engine = self.engine
         Task { await engine.openThread(rootId: rootId) }
@@ -528,7 +552,7 @@ final class WindowState: ObservableObject {
     func clearForSignOut() {
         // The next person to sign in on this device gets their own landing
         // channel, not the last one this account was reading.
-        Self.lastChannelId = nil
+        lastChannelId = nil
         selectedWorkspaceId = nil
         selectedChannelId = nil
         openThreadRootId = nil

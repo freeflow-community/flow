@@ -17,6 +17,11 @@ enum SharedDefaults {
     private static var channelKey: String { "share.lastChannelId" + Profile.suffix }
     private static var workspaceKey: String { "share.lastWorkspaceId" + Profile.suffix }
 
+    static var lastConnectionId: String? {
+        get { store?.string(forKey: "share.lastConnectionId" + Profile.suffix) }
+        set { store?.set(newValue, forKey: "share.lastConnectionId" + Profile.suffix) }
+    }
+
     static var lastChannelId: String? {
         get { store?.string(forKey: channelKey) }
         set { store?.set(newValue, forKey: channelKey) }

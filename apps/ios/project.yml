@@ -166,8 +166,10 @@ targets:
       - path: ../macos/Sources/Flow/Support/Keychain.swift
       # APIClient decides what may carry the bearer by canonical origin (#540).
       # BuildInfo comes with it for the HTTP-loopback development allowance.
-      # The connection registry itself stays out: this process reads the
-      # default connection's Keychain account and nothing else.
+      # The share extension resolves the selected connection from the app group.
+      - path: ../macos/Sources/Flow/Support/ServerConnection.swift
+      - path: ../macos/Sources/Flow/Support/ConnectionStore.swift
+      - path: ../macos/Sources/Flow/Support/StorageScope.swift
       - path: ../macos/Sources/Flow/Support/CanonicalOrigin.swift
       - path: ../macos/Sources/Flow/Support/BuildInfo.swift
       - path: ../macos/Sources/Flow/Support/ImagePrep.swift

@@ -125,6 +125,7 @@ struct ComposerView: View {
             maxSelectionCount: 10,
             matching: .any(of: [.images, .videos])
         )
+        .modifier(ConnectionDraft(app: app, channelId: channelId, threadRootId: threadRootId, text: $text, attachments: $attachments))
         .onChange(of: photoSelection) { _, items in
             guard !items.isEmpty else { return }
             photoSelection = []

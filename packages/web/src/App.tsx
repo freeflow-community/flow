@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import ServerConnections from './components/ServerConnections';
+import { REGISTRY_KEY } from './lib/connections';
+import { consumeHandoffCallback, pendingHandoff } from './lib/authHandoff';
 import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
 import {
   activeRuntime,
@@ -75,12 +78,93 @@ function consumeEmailLinkParams(runtime: ConnectionRuntime): {
 }
 
 export default function App() {
+  const [callback] = useState(consumeHandoffCallback);
+  const manager = connectionManager();
+  const [runtime, selectRuntime] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    const ownsAuthLink = ['handoff', 'native', 'signup', 'reset', 'signin'].some(key => params.has(key)) ||
+      /^\/(invite|join)\//.test(location.pathname);
+    // Auth and invite links are issued by the page's origin, regardless of
+    // which remote workspace this browser tab previously selected.
+    if (ownsAuthLink) {
+      const issuing = manager.add(location.origin);
+      manager.setActive(issuing.connectionId);
+      return issuing;
+    }
+    return activeRuntime();
+  });
+  const [showConnections, setShowConnections] = useState(false);
+  const [epoch, reset] = useState(0);
+  const [clients] = useState(() => new Map<string, QueryClient>());
+  const [clientOwners] = useState(() => new Map<string, string>());
+  useEffect(() => {
+    const show = () => setShowConnections(true);
+    const reload = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail || runtime.connectionId;
+      clients.get(id)?.clear();
+      clients.delete(id);
+      if (id !== runtime.connectionId) return;
+      selectRuntime(manager.active());
+      reset(n => n + 1);
+    };
+    const storageChanged = (event: StorageEvent) => {
+      if (event.key !== REGISTRY_KEY && event.key !== null) return;
+      const invalidated = manager.reloadFromStorage();
+      for (const id of invalidated) {
+        clients.get(id)?.clear();
+        clients.delete(id);
+      }
+      if (invalidated.includes(runtime.connectionId)) {
+        selectRuntime(manager.active());
+        reset(n => n + 1);
+      }
+    };
+    window.addEventListener('storage', storageChanged);
+    window.addEventListener('flow:connections', show);
+    window.addEventListener('flow:registry', reload);
+    return () => {
+      window.removeEventListener('storage', storageChanged);
+      window.removeEventListener('flow:connections', show);
+      window.removeEventListener('flow:registry', reload);
+    };
+  }, [manager, runtime, clients]);
+  const owner = runtime.key('queryCache');
+  if (clientOwners.get(runtime.connectionId) !== owner || runtime.isDisposed) {
+    clients.get(runtime.connectionId)?.clear();
+    clients.delete(runtime.connectionId);
+    clientOwners.set(runtime.connectionId, owner);
+  }
+  let client = clients.get(runtime.connectionId);
+  if (!client) {
+    client = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 5000, refetchOnWindowFocus: false } } });
+    clients.set(runtime.connectionId, client);
+  }
+  if (callback) return <p>Returning sign-in to the requesting window…</p>;
+  return <>
+    <ConnectionContext.Provider value={runtime}>
+      <QueryClientProvider client={client}>
+        <SessionApp key={`${runtime.connectionId}:${epoch}`} runtime={runtime} />
+      </QueryClientProvider>
+    </ConnectionContext.Provider>
+    <button className="fixed right-3 bottom-3 z-30 rounded bg-white px-3 py-2 text-xs text-ink shadow" onClick={() => setShowConnections(true)}>Workspaces and servers</button>
+    {showConnections && <ServerConnections onClose={() => setShowConnections(false)} onSelect={(connectionId, workspaceId) => {
+      manager.setActive(connectionId);
+      const target = manager.active();
+      target.write(ACTIVE_WS, workspaceId);
+      selectRuntime(target);
+      reset(n => n + 1);
+    }} />}
+  </>;
+}
+
+function SessionApp({ runtime }: { runtime: ConnectionRuntime }) {
+  const [handoff] = useState(pendingHandoff);
   const qc = useQueryClient();
   // The connection this window is pointed at. One today (the migrated default);
   // the manager is what phase 3's switcher will drive.
-  const [runtime] = useState(activeRuntime);
   const [user, setUser] = useState<UserDTO | null>(null);
   const [booting, setBooting] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [{ signupToken, resetToken, signinToken, nativeHandoff }] = useState(() =>
     consumeEmailLinkParams(runtime),
   );
@@ -100,10 +184,17 @@ export default function App() {
 
   // Transient one-line banner (currently only the Google domain auto-join).
   const [notice, setNotice] = useState<string | null>(null);
-  const [channelId, setChannelId] = useState<string | null>(null);
-  const [artifactId, setArtifactId] = useState<string | null>(null);
+  const readNavigation = (id: string | null) => {
+    if (!id) return null;
+    try { return JSON.parse(runtime.read(`navigation:${id}`) ?? 'null') as {
+      channelId?: string; artifactId?: string; threadRootId?: string;
+    } | null; } catch { return null; }
+  };
+  const [initialNavigation] = useState(() => readNavigation(workspaceId));
+  const [channelId, setChannelId] = useState<string | null>(initialNavigation?.channelId ?? null);
+  const [artifactId, setArtifactId] = useState<string | null>(initialNavigation?.artifactId ?? null);
   const [filesOpen, setFilesOpen] = useState(false);
-  const [threadRootId, setThreadRootId] = useState<string | null>(null);
+  const [threadRootId, setThreadRootId] = useState<string | null>(initialNavigation?.threadRootId ?? null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
   // Which thread each channel had open, so switching away and back restores it
@@ -123,7 +214,11 @@ export default function App() {
   // single-connection experience is unchanged by this ticket, and phase 3's
   // connection list is what surfaces it.
   useEffect(() => {
-    runtime.setUnauthorizedHandler(() => connectionManager().markUnauthorized(runtime.connectionId));
+    runtime.setUnauthorizedHandler(() => {
+      connectionManager().markUnauthorized(runtime.connectionId);
+      setUser(null);
+      qc.clear();
+    });
     return () => runtime.setUnauthorizedHandler(null);
   }, [runtime]);
 
@@ -141,12 +236,22 @@ export default function App() {
         const me = await runtime.api<UserDTO>('GET', '/v1/me');
         connectionManager().bindIdentity(runtime.connectionId, me.id);
         setUser(me);
+        runtime.write("cachedUser", JSON.stringify(me));
       } catch (err) {
         // Only a *rejected* token is dropped. An unreachable server leaves the
         // session alone: an upgraded client that boots offline must not lose it.
         if ((err as ApiError).status === 401) {
           replaceToken(null);
           connectionManager().markSignedOut(runtime.connectionId);
+        } else {
+          setOffline(true);
+          const session = connectionManager().state.sessions.find(s => s.connectionId === runtime.connectionId);
+          if (session?.status === 'authenticated') {
+            try {
+              const cached = JSON.parse(runtime.read('cachedUser') ?? 'null') as UserDTO | null;
+              if (cached?.id === session.userId) setUser(cached);
+            } catch { /* No validated cached identity. */ }
+          }
         }
       } finally {
         setBooting(false);
@@ -199,12 +304,27 @@ export default function App() {
   // create-workspace screen, and say what happened — nobody expects to arrive
   // already a member. A pending invite still wins: its effect runs after this.
   const signIn = useCallback((resp: AuthResponse & { autoJoined?: WorkspaceDTO[] }) => {
-    replaceToken(resp.token);
     // The server issued this session, so the identity is verified: commit it.
     // A different user on this connection rotates the namespace, so the
     // previous one's cached state is dropped rather than inherited.
+    if (runtime.userId !== resp.user.id) {
+      qc.clear();
+      setWorkspaceId(null);
+      setChannelId(null);
+      setArtifactId(null);
+      setThreadRootId(null);
+      setFilesOpen(false);
+      setEditingMessageId(null);
+      setFocusMessageId(null);
+      setAdminPanelOpen(false);
+      setNav(emptyNavHistory);
+      threadMemory.clear();
+    }
     connectionManager().bindIdentity(runtime.connectionId, resp.user.id);
+    replaceToken(resp.token);
     setUser(resp.user);
+    runtime.write("cachedUser", JSON.stringify(resp.user));
+    setOffline(false);
     const joined = resp.autoJoined ?? [];
     if (joined.length > 0) {
       const first = joined[0]!;
@@ -216,12 +336,13 @@ export default function App() {
           : `You've joined ${joined.length} workspaces on your email domain.`,
       );
     }
-  }, [replaceToken, runtime]);
+  }, [replaceToken, runtime, qc, threadMemory]);
 
   // Where this connection+identity is parked, so a NavigationTarget survives
   // restart per session rather than as one global "last channel".
   useEffect(() => {
     if (!user || !workspaceId) return;
+    runtime.write(`navigation:${workspaceId}`, JSON.stringify({ channelId, artifactId, threadRootId }));
     connectionManager().rememberNavigation({
       connectionId: runtime.connectionId,
       userId: user.id,
@@ -243,20 +364,11 @@ export default function App() {
   // untouched, and a late response on this one cannot recreate what went.
   const signOut = useCallback(() => {
     void runtime.api('POST', '/v1/auth/logout').catch(() => {});
-    replaceToken(null);
-    connectionManager().markSignedOut(runtime.connectionId);
-    setUser(null);
-    setWorkspaceId(null);
-    setChannelId(null);
-    setArtifactId(null);
-    setThreadRootId(null);
-    threadMemory.clear();
-    setNav(emptyNavHistory);
-    setAdminPanelOpen(false);
-    runtime.write(ADMIN_PANEL, null);
-    runtime.write(ACTIVE_WS, null);
+    connectionManager().signOut(runtime.connectionId);
     qc.clear();
-  }, [qc, replaceToken, runtime, threadMemory]);
+    setUser(null);
+    window.dispatchEvent(new Event('flow:registry'));
+  }, [qc, runtime]);
 
   // Switch the main pane to a view, with all the usual channel-switch
   // side-effects (park/restore the open thread, close the side panel, drop the
@@ -285,6 +397,18 @@ export default function App() {
 
   if (booting) {
     return <div className="flex h-full items-center justify-center text-faint">Loading…</div>;
+  }
+
+  if (handoff && user) {
+    return <div className="mx-auto max-w-md p-8">
+      <h1 className="text-lg font-semibold">Continue sign-in</h1>
+      <p className="my-3">Use {user.email} on {new URL(runtime.origin).host} to sign in to {handoff.clientOrigin ?? 'the Flow app'}?</p>
+      <button onClick={() => void runtime.api<{ callbackUrl: string }>('POST', '/v1/auth/handoff/approve', handoff).then(result => {
+        sessionStorage.removeItem('flow.pendingHandoff');
+        location.assign(result.callbackUrl);
+      }).catch(error => setNotice(error.message))}>Continue</button>
+      {notice && <p role="alert">{notice}</p>}
+    </div>;
   }
 
   // The native apps' Google button lands here (phase16 §9): sign in, mint a
@@ -331,6 +455,7 @@ export default function App() {
   return (
     <ConnectionContext.Provider value={runtime}>
     <AuthContext.Provider value={{ user, setUser, signOut }}>
+      {offline && <div role="status" className="fixed top-0 left-0 right-0 z-40 bg-amber-100 p-2 text-center text-sm">{new URL(runtime.origin).host} · Offline — showing cached workspace</div>}
       <SelectionContext.Provider
         value={{
           workspaceId,
@@ -351,10 +476,11 @@ export default function App() {
             threadMemory.clear();
             // The other workspace's channels aren't reachable from here.
             setNav(emptyNavHistory);
-            setChannelId(null);
-            setArtifactId(null);
+            const saved = readNavigation(id);
+            setChannelId(saved?.channelId ?? null);
+            setArtifactId(saved?.artifactId ?? null);
             setFilesOpen(false);
-            setThreadRootId(null);
+            setThreadRootId(saved?.threadRootId ?? null);
             setEditingMessageId(null);
             setFocusMessageId(null);
           },

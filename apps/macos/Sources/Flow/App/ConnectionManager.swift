@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// Owns one session runtime per connection (docs/specs/multi-server-workspaces.md,
 /// "Runtime architecture"). A runtime is everything that belongs to one backend
@@ -43,11 +44,13 @@ final class ConnectionRuntime {
 }
 
 @MainActor
-final class ConnectionManager {
+final class ConnectionManager: ObservableObject {
     static let shared = ConnectionManager()
 
-    private(set) var registry: ConnectionRegistry
+    @Published private(set) var registry: ConnectionRegistry
     private var runtimes: [String: ConnectionRuntime] = [:]
+    private var appStates: [String: AppState] = [:]
+    var presentNotification: ((AppState, NavigationTarget) -> Void)?
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -59,6 +62,44 @@ final class ConnectionManager {
             server: Server.baseURL,
             hasLegacyCredential: Keychain.hasToken(account: StorageScope.legacy.keychainAccount)
         )
+    }
+
+    func refreshAggregateBadge() {
+        Banners.setBadge(appStates.values.reduce(0) { total, app in
+            total + (registry.session(app.connectionId)?.status == .authenticated ? app.notificationUnreadTotal : 0)
+        })
+    }
+
+    func register(_ app: AppState) { appStates[app.connectionId] = app }
+
+    func appState(_ connectionId: String) -> AppState? {
+        if let existing = appStates[connectionId] { return existing }
+        guard runtime(connectionId) != nil else { return nil }
+        let app = AppState(connections: self, connectionId: connectionId)
+        appStates[connectionId] = app
+        return app
+    }
+
+    /// Resolve only locally issued routing identifiers; unknown or expired routes
+    /// cannot choose a server or inherit a replacement identity.
+    func notificationApp(routingId: String?) -> AppState? {
+        let sessions = registry.sessions.filter { $0.status == .authenticated }
+        if let routingId {
+            guard let session = sessions.first(where: {
+                defaults.string(forKey: StorageScope(storageKey: $0.storageKey).key("pushRoutingId")) == routingId
+            }) else { return nil }
+            return appState(session.connectionId)
+        }
+        guard registry.connections.count == 1, let session = sessions.first,
+              session.storageKey == StorageScope.legacy.storageKey else { return nil }
+        return appState(session.connectionId)
+    }
+
+    func add(origin: CanonicalOrigin) -> ServerConnection {
+        var next = registry
+        let connection = next.addFlowConnection(origin: origin)
+        commit(next)
+        return connection
     }
 
     private func commit(_ registry: ConnectionRegistry) {
@@ -166,6 +207,12 @@ final class ConnectionManager {
         registry.navigationTarget(connectionId: connectionId, userId: userId)
     }
 
+    func forgetWorkspace(connectionId: String, workspaceId: String) {
+        var next = registry
+        next.bindings.removeAll { $0.connectionId == connectionId && $0.workspaceId == workspaceId }
+        commit(next)
+    }
+
     func setBinding(_ binding: WorkspaceBinding) {
         var next = registry
         next.setBinding(binding)
@@ -177,6 +224,7 @@ final class ConnectionManager {
     func remove(connectionId: String) {
         guard let connection = registry.connection(connectionId) else { return }
         let session = registry.session(connectionId)
+        appStates.removeValue(forKey: connectionId)
         runtimes.removeValue(forKey: connectionId)
         var next = registry
         next.removeConnection(connectionId)

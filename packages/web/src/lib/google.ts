@@ -2,7 +2,7 @@
 // token; we post it to /v1/auth/google and the server verifies it. Nothing
 // secret lives here — an OAuth *web* client id is public by design.
 import type { PublicConfigDTO } from '@flow/shared';
-import { api } from './api';
+import { activeRuntime, type ConnectionRuntime } from './connectionRuntime';
 
 const GSI_SRC = 'https://accounts.google.com/gsi/client';
 
@@ -22,14 +22,17 @@ declare global {
   }
 }
 
-let configPromise: Promise<PublicConfigDTO> | null = null;
+const configPromises = new Map<string, Promise<PublicConfigDTO>>();
 
 /** Which auth options this deployment offers. Fetched once per page load;
  * a failure degrades to "no Google" rather than blocking the auth screen. */
-export function publicConfig(): Promise<PublicConfigDTO> {
-  configPromise ??= api<PublicConfigDTO>('GET', '/v1/config').catch(
+export function publicConfig(runtime: ConnectionRuntime = activeRuntime()): Promise<PublicConfigDTO> {
+  const existing = configPromises.get(runtime.origin);
+  if (existing) return existing;
+  const configPromise = runtime.api<PublicConfigDTO>('GET', '/v1/config').catch(
     () => ({ google: false, googleClientId: null }) as PublicConfigDTO,
   );
+  configPromises.set(runtime.origin, configPromise);
   return configPromise;
 }
 

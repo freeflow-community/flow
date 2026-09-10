@@ -103,12 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         appState = state
         if let tap = pendingTap {
             pendingTap = nil
-            state.openNotification(
-                workspaceId: tap.workspaceId,
-                channelId: tap.channelId,
-                messageId: tap.messageId,
-                threadRootId: tap.threadRootId
-            )
+            route(tap)
         }
     }
 
@@ -140,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let workspaceId, let channelId, let messageId {
             let tap = NotificationTap(
                 workspaceId: workspaceId, channelId: channelId,
-                messageId: messageId, threadRootId: threadRootId
+                messageId: messageId, threadRootId: threadRootId, routingId: info["routingId"] as? String
             )
             Task { @MainActor in self.route(tap) }
         }
@@ -154,7 +149,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             pendingTap = tap
             return
         }
-        appState.openNotification(
+        guard let owner = appState.connections.notificationApp(routingId: tap.routingId) else { return }
+        if let show = appState.connections.presentNotification, let userId = owner.currentUser?.id {
+            show(owner, NavigationTarget(connectionId: owner.connectionId, userId: userId,
+                workspaceId: tap.workspaceId, channelId: tap.channelId, messageId: tap.messageId,
+                threadRootId: tap.threadRootId))
+            return
+        }
+        owner.openNotification(
             workspaceId: tap.workspaceId,
             channelId: tap.channelId,
             messageId: tap.messageId,
@@ -170,4 +172,5 @@ private struct NotificationTap: Sendable {
     let channelId: String
     let messageId: String
     let threadRootId: String?
+    let routingId: String?
 }

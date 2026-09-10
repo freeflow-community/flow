@@ -1,3 +1,4 @@
+import { useBoundApi } from './lib/useBoundApi';
 // Huddle client controller: owns the LiveKit `Room` connection, the local
 // publish state (mic / camera / screen share) and the DM ring, at the app
 // level — so a huddle survives navigating between channels (decision log
@@ -129,6 +130,7 @@ function newRoom(): Room {
 const NOTICE_MS = 4000;
 
 export function HuddleProvider({ children }: { children: React.ReactNode }) {
+  const { api } = useBoundApi();
   const roomRef = useRef<Room | null>(null);
   const audioContainerRef = useRef<HTMLDivElement | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -458,6 +460,12 @@ export function HuddleProvider({ children }: { children: React.ReactNode }) {
   useEffect(
     () => () => {
       if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+      // Session views unmount on a server switch. Release media immediately
+      // so an invisible room cannot retain the microphone or overlap a join.
+      const room = roomRef.current;
+      roomRef.current = null;
+      room?.removeAllListeners();
+      if (room) void room.disconnect();
     },
     [],
   );

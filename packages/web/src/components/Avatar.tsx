@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Initials-on-color avatar chips (design 3a) with real-image fallback, and the
 // bearer-auth <img> helper shared by attachments and profile views.
 import { useEffect, useState } from 'react';
@@ -73,6 +74,7 @@ export function AuthImg({
   className?: string;
   style?: React.CSSProperties;
 }) {
+  const { blobUrl, cachedBlobUrl } = useBoundApi();
   const [url, setUrl] = useState<string | null>(() => cachedBlobUrl(path) ?? null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {

@@ -313,7 +313,13 @@ import Testing
         let other = StorageScope.fresh()
         d.set("keep", forKey: other.key("currentUserId"))
 
+        d.set("private draft", forKey: scope.key("draft:channel:main"))
+        d.set("private navigation", forKey: scope.key("navigation:workspace"))
+        d.set("other draft", forKey: other.key("draft:channel:main"))
         ConnectionStore.clear(scope: scope, in: d)
+        #expect(d.string(forKey: scope.key("draft:channel:main")) == nil)
+        #expect(d.string(forKey: scope.key("navigation:workspace")) == nil)
+        #expect(d.string(forKey: other.key("draft:channel:main")) == "other draft")
         for name in ConnectionStore.scopedDefaultsNames {
             #expect(d.string(forKey: scope.key(name)) == nil)
         }

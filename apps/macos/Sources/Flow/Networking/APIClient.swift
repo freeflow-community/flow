@@ -55,6 +55,12 @@ private final class RedirectSanitizer: NSObject, URLSessionTaskDelegate {
     ) {
         var req = request
         if let url = req.url, origin?.owns(url) != true {
+            // A redirect must never forward a password or mutation body to a
+            // different backend. Only credential-free download redirects pass.
+            guard ["GET", "HEAD"].contains(task.originalRequest?.httpMethod ?? "GET") else {
+                completionHandler(nil)
+                return
+            }
             req.setValue(nil, forHTTPHeaderField: "Authorization")
         }
         completionHandler(req)
@@ -95,6 +101,13 @@ actor APIClient {
     /// request from before a refresh cannot sign out the session that replaced
     /// it (#540).
     private var generation = 0
+
+    /// Capture this session before local logout clears the live transport.
+    func revocationClient() async -> APIClient {
+        let client = APIClient(baseURL: baseURL)
+        await client.setToken(token)
+        return client
+    }
 
     /// `protocolClasses` is a test seam: the auth-generation guard and the
     /// "bearer only to this exact origin" rule are transport behaviour, and the

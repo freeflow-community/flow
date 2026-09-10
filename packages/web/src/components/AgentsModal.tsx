@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // First-class AI agents (AGENT_MEMBERS.md): roster of the workspace's agents
 // with sponsor attribution and removal. Onboarding is via a one-time invite
 // code (sidebar → "Invite your Agent") that the agent redeems to join, so the
@@ -10,6 +11,7 @@ import { useAuth } from '../state';
 import { Modal } from './modals';
 
 export function AgentsModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const auth = useAuth();
   const members = useMembers(workspaceId);

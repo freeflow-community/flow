@@ -2,14 +2,68 @@ import AppKit
 import SwiftUI
 
 struct RootView: View {
+    let initial: AppState
+    @State private var selected: AppState?
+    @State private var showConnections = false
+    @State private var incomingAddress = ""
+    @State private var workspace: String?
+    @State private var notificationTarget: NavigationTarget?
+    init(app: AppState) { initial = app }
+    private var active: AppState { selected ?? initial }
+    var body: some View {
+        SessionRootView(app: active, workspaceId: workspace, notification: notificationTarget)
+            .environmentObject(active)
+            .id("\(active.connectionId):\(workspace ?? ""):\(notificationTarget?.messageId ?? "")")
+            .background(WindowKeyObserver {
+                active.connections.presentNotification = { app, target in
+                    selected = app
+                    workspace = target.workspaceId
+                    notificationTarget = target
+                }
+            })
+            .overlay(alignment: .topTrailing) {
+                if let owner = AppState.joinedHuddleOwner, owner !== active {
+                    Button("Return to huddle on \(URL(string: owner.serverOrigin)?.host ?? "server")") {
+                        selected = owner
+                        workspace = owner.activeHuddleWorkspaceId
+                    }.padding(8)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Button("Workspaces and servers") { showConnections = true }.padding(8)
+            }
+            .onOpenURL { url in
+                if url.scheme == "https" || url.scheme == "http" {
+                    incomingAddress = url.absoluteString
+                    showConnections = true
+                } else { active.handleDeepLink(url) }
+            }
+            .sheet(isPresented: $showConnections) {
+                ServerConnectionsView(current: active, initialAddress: incomingAddress) { app, workspaceId in
+                    if let workspaceId { UserDefaults.standard.set(workspaceId, forKey: app.sessionScope.key("activeWorkspaceId")) }
+                    notificationTarget = nil
+                    workspace = workspaceId
+                    selected = app
+                }
+            }
+    }
+}
+
+private struct SessionRootView: View {
     @EnvironmentObject private var app: AppState
     /// This window's own selection state (workspace/channel/thread/…) — a
     /// `@StateObject` here is per window, unlike one on the `App` struct,
     /// which is what used to make every window mirror the same selection.
     @StateObject private var win: WindowState
 
-    init(app: AppState) {
-        _win = StateObject(wrappedValue: WindowState(app: app))
+    init(app: AppState, workspaceId: String?, notification: NavigationTarget?) {
+        let window = WindowState(app: app)
+        if let workspaceId { window.selectWorkspace(workspaceId) }
+        if let notification, let channel = notification.channelId, let message = notification.messageId {
+            window.openNotification(workspaceId: notification.workspaceId, channelId: channel,
+                                    messageId: message, threadRootId: notification.threadRootId)
+        }
+        _win = StateObject(wrappedValue: window)
     }
 
     var body: some View {
@@ -37,9 +91,7 @@ struct RootView: View {
         // Banner taps and accepted invites navigate the key window — tell the
         // shared state which one that is.
         .background(WindowKeyObserver { app.noteKeyWindow(win) })
-        .onOpenURL { url in
-            app.handleDeepLink(url)
-        }
+
         .alert(
             "Error",
             isPresented: Binding(

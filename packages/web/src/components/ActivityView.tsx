@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Activity feed (phase 12) — a virtual, always-present per-user "channel" that
 // replaces the old notifications bell. It surfaces this user's notification
 // rows (mentions, DMs, thread replies, notify-all activity) as a message-like
@@ -29,6 +30,7 @@ export const kindLabel = (kind: number, sender: string, emoji: string | null, ch
 };
 
 export default function ActivityView() {
+  const { api } = useBoundApi();
   const sel = useSelection();
   const live = useLive();
   const qc = useQueryClient();
