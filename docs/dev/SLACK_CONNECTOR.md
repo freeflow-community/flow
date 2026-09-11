@@ -1,9 +1,9 @@
 # Slack OAuth connector PoC (#543)
 
-Status: two live workspace authorizations verified on 2026-09-11. Disconnecting
-one of two clients sharing a grant preserved the other client. Live rotation,
-revocation and sent-message authorship validation remain rollout gates; see the
-QA report for the full acceptance matrix.
+Status: on 2026-09-11, live Slack verified two workspaces, per-client disconnect,
+grant removal, concurrent token rotation and user authorship of a sent message.
+Consent error paths and revocation/uninstall/deactivation events remain rollout
+gates; see the QA report for the full acceptance matrix.
 
 ## What runs
 
@@ -83,10 +83,12 @@ Only `chat:write` is requested. Workspace display names come from the OAuth
 response, and user names from `auth.test`; no directory/history scopes are
 requested. Partial grants can connect for identity; sending requires the granted
 scope. Send uses only the verified user token, never a bot token, username
-impersonation, or the legacy `as_user` argument. The returned message author must
-match the user, otherwise the operation reports `authorship_mismatch` (the message
-may already have been sent; do not blindly retry). Live user authorship still
-needs to be checked in the official Slack client.
+impersonation, or the legacy `as_user` argument. The returned `message.user` must
+be the user and the message must not be a `bot_message`; otherwise the operation
+reports `authorship_mismatch` (HTTP 409; the message may already have been sent,
+so do not blindly retry). Slack also stamps the app's `bot_id`, `app_id` and
+`bot_profile` on user-token posts, so those fields do not mean a bot wrote it.
+Verified live on 2026-09-11: the official Slack client showed the user as author.
 
 ## Connector API
 

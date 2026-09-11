@@ -195,7 +195,10 @@ export class Connector {
       if ((this.rateLimits.get(budget) ?? 0) > this.now()) throw new Fault('rate_limited', 429);
       try {
         const result = await this.slack('chat.postMessage', { channel, text, unfurl_links: 'false', unfurl_media: 'false' }, grant.accessToken);
-        if (result.message?.user !== grant.identity.userId || result.message?.bot_id) throw new Fault('authorship_mismatch', 502);
+        // Slack stamps the app's bot_id/app_id/bot_profile on user-token posts
+        // too, so authorship is message.user; a bot_message is never the user's.
+        // 409, not 5xx: a proxy may replace a 5xx body and hide this code.
+        if (result.message?.user !== grant.identity.userId || result.message?.subtype === 'bot_message') throw new Fault('authorship_mismatch', 409);
         return { channel: result.channel, ts: result.ts, userId: result.message.user };
       } catch (error) {
         if (error.retryAfter) this.rateLimits.set(budget, this.now() + error.retryAfter * 1000);

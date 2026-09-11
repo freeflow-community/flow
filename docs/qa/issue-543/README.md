@@ -46,8 +46,24 @@ Read-only `auth.test` verified both distinct Slack team/user identities. The sto
 contains two active grants for two immutable team IDs, each with `chat:write`,
 a refresh token, and one active client session. The live two-workspace connection
 test passed alongside the isolated Flow test server. Workspace names and tokens
-are omitted from this report. Automatic refresh and revocation remain untested
-against live Slack; user authorship of a sent message has not been tested.
+are omitted from this report. Refresh and sent-message authorship were tested
+later the same day (below).
+
+### Live results, 2026-09-11 afternoon
+
+The QA harness added two connector sessions per grant directly in the store, in
+place of extra browser profiles. It forced refresh by moving the grant's expiry
+into the 60-second window. It printed no tokens, names or message text.
+
+| Step | Result |
+| --- | --- |
+| 1–2 Two teams | **Pass.** `GET /v1/connection` returned 200 for both teams, with distinct identities. |
+| 3 Consent errors | Not run; deferred by the operator. |
+| 4 Concurrent refresh | **Failed, fixed, pass.** Slack refused the first live refresh with `bad_client_secret`. Slack's PKCE guide says refresh needs no secret, but live Slack requires one. Only one refresh was attempted, and the grant failed closed with its refresh token unused. After the fix (secret sent on refresh), two concurrent calls both returned 200, the refresh token rotated once, and the new expiry was 12 hours. |
+| 5 Authorship | **Failed, fixed.** The message reached the user's self-DM, and the official Slack client showed the user as author. But the connector answered `authorship_mismatch`, because Slack's reply carries the app's `bot_id`, `app_id` and `bot_profile` next to `user`. Through the Cloudflare tunnel the client got an HTML error page instead of the 502 JSON. Authorship now uses `message.user`, refuses `bot_message`, and returns 409. A second diagnostic send confirmed the reply shape. The fix has unit coverage; no third live send was made. |
+| 6 Disconnect / grant removal | **Pass.** Per-client disconnect passed earlier. `DELETE /v1/grant` on team B returned 200. Another session for that grant then got 401, and the grant and all its sessions were gone. Team A was unaffected. The connector makes no Slack revoke or uninstall call; the app installation was not rechecked live. |
+| 7 Revoke / uninstall / deactivate | Not run; needs Slack admin actions. A forged event sent through the tunnel was refused with `invalid_signature`. |
+| 8 Operations | App `A0C12J3BQ4B`, hosted on the operator's Mac behind Cloudflare quick tunnels (default log level, no request URLs logged). Data directory `0700`, files `0600`. **Finding:** this run keeps `CONNECTOR_KEY` in the env file next to the database, against the key-custody rule. That is acceptable for QA, not for deployment. Distribution status and per-team approval policies were not reviewed. |
 
 Both profiles reported a false cancellation on their first attempt. A regression
 test reproduces `popup.closed` becoming true after browser isolation; verifier-bound

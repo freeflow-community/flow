@@ -34,7 +34,8 @@ function fixture(t, options = {}) {
       result = { ok: true, app_id: 'A1', team: { id: team, name: `Team ${team}` }, authed_user: { id: 'U1', token_type: 'user', access_token: `secret-${team}`, refresh_token: `refresh-${team}`, expires_in: 43200, scope: (options.scopes ?? requestedScopes).join(',') } };
     } else if (method === 'auth.test') {
       result = { ok: true, user_id: 'U1', user: 'alice', team_id: request.headers.authorization.split('-').pop() };
-    } else if (method === 'chat.postMessage') result = { ok: true, channel: params.channel, ts: '1700000000.000001', message: { user: 'U1' } };
+    // Live shape: a user-token post still carries the app's bot fields.
+    } else if (method === 'chat.postMessage') result = { ok: true, channel: params.channel, ts: '1700000000.000001', message: { user: 'U1', bot_id: 'B9', app_id: 'A1', bot_profile: { id: 'B9' } } };
     else throw new Error(`Unexpected method ${method}`);
     return new Response(JSON.stringify(result));
   };
@@ -259,6 +260,8 @@ test('refuses bot authorship response and user tokens without rotation', async t
   const f = fixture(t, { fetcher: method => method === 'chat.postMessage' ? { ok: true, message: { user: 'B1', bot_id: 'B1' } } : null });
   const a = await f.connect();
   await assert.rejects(f.connector.send(a.credential, { channel: 'C1', text: 'test' }), /authorship_mismatch/);
+  const s = fixture(t, { fetcher: method => method === 'chat.postMessage' ? { ok: true, message: { user: 'U1', subtype: 'bot_message', bot_id: 'B1' } } : null });
+  await assert.rejects(s.connector.send((await s.connect()).credential, { channel: 'C1', text: 'test' }), /authorship_mismatch/);
   const g = fixture(t, { fetcher: method => method === 'oauth.v2.access' ? { ok: true, app_id: 'A1', team: { id: 'T1' }, authed_user: { id: 'U1', token_type: 'user', access_token: 'secret-T1' } } : null });
   assert.equal((await g.connect()).status, 'rotation_required');
 });
