@@ -41,6 +41,14 @@ and successfully ran **Check authorization** in the private window. A read-only
 store check confirmed one active grant and exactly one remaining client session.
 The live per-client disconnect isolation test passed. No live messages were sent.
 
+The operator subsequently added a second live workspace in the same client.
+Read-only `auth.test` verified both distinct Slack team/user identities. The store
+contains two active grants for two immutable team IDs, each with `chat:write`,
+a refresh token, and one active client session. The live two-workspace connection
+test passed alongside the isolated Flow test server. Workspace names and tokens
+are omitted from this report. Automatic refresh and revocation remain untested
+against live Slack; user authorship of a sent message has not been tested.
+
 Both profiles reported a false cancellation on their first attempt. A regression
 test reproduces `popup.closed` becoming true after browser isolation; verifier-bound
 polling now completes without an opener. The headless browser fixture exercises

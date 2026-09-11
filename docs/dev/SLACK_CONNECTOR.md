@@ -1,8 +1,9 @@
 # Slack OAuth connector PoC (#543)
 
-Status: first live workspace authorization verified on 2026-09-11, with two
-client sessions sharing one user grant. The two-team live acceptance scenario
-and app-distribution approval remain rollout gates.
+Status: two live workspace authorizations verified on 2026-09-11. Disconnecting
+one of two clients sharing a grant preserved the other client. Live rotation,
+revocation and sent-message authorship validation remain rollout gates; see the
+QA report for the full acceptance matrix.
 
 ## What runs
 
