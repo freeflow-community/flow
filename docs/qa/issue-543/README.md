@@ -36,7 +36,10 @@ PLAYWRIGHT_HOME=/path/to/playwright-install node docs/qa/issue-543/acceptance-we
 On 2026-09-11, the operator configured a Slack app and completed authorization
 for one live team in two separate browser profiles. Read-only `auth.test` verified
 the exact user/team; the encrypted store contains one active rotating user grant
-and two client sessions. No live messages were sent.
+and two client sessions. The operator then disconnected the original client
+and successfully ran **Check authorization** in the private window. A read-only
+store check confirmed one active grant and exactly one remaining client session.
+The live per-client disconnect isolation test passed. No live messages were sent.
 
 Both profiles reported a false cancellation on their first attempt. A regression
 test reproduces `popup.closed` becoming true after browser isolation; verifier-bound
