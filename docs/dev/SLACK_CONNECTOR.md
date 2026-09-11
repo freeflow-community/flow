@@ -33,12 +33,13 @@ These steps are performed once by the Flow operator, not by each user.
    with the dedicated connector hostname in both URLs.
 2. Confirm **PKCE enabled** and **token rotation enabled** in OAuth & Permissions.
    Slack makes PKCE enablement a one-way app setting; use a dedicated test app.
-3. Supply the app's client ID and signing secret through the host's secret store,
+3. Supply the app's client ID, client secret and signing secret through the host's secret store,
    plus `CONNECTOR_ORIGIN`, `CONNECTOR_CLIENT_ORIGINS` (comma-separated exact HTTPS
    origins), `CONNECTOR_DB`, and `CONNECTOR_KEY`. See `.env.example` in the package.
    Generate the encryption key from 32 cryptographically random bytes, base64
-   encoded. Keep it separate from the database and backups. No client secret is
-   used by the selected public-client PKCE flow.
+   encoded. Keep it separate from the database and backups. Sign-in is PKCE and
+   sends no secret. Token refresh sends the client secret: Slack's PKCE guide
+   says refresh needs none, but live Slack answers `bad_client_secret` without it.
 4. Set `VITE_SLACK_CONNECTOR_ORIGIN=https://<connector>` in the web build
    environment, then rebuild/deploy the web client. Start `pnpm --filter @flow/slack-connector start` with those environment
    variables injected. The package does not load `.env` implicitly. Configure

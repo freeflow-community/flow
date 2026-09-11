@@ -11,7 +11,7 @@ const origin = value => {
   return value;
 };
 const config = {
-  clientId: required('SLACK_CLIENT_ID'), signingSecret: required('SLACK_SIGNING_SECRET'),
+  clientId: required('SLACK_CLIENT_ID'), clientSecret: required('SLACK_CLIENT_SECRET'), signingSecret: required('SLACK_SIGNING_SECRET'),
   publicOrigin: origin(required('CONNECTOR_ORIGIN')),
   clientOrigins: required('CONNECTOR_CLIENT_ORIGINS').split(',').map(origin),
 };

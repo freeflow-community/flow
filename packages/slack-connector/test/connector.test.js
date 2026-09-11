@@ -25,6 +25,8 @@ function fixture(t, options = {}) {
     }
     let result;
     if (method === 'oauth.v2.access' && params.grant_type) {
+      // Mirrors live Slack: refresh without the client secret is refused.
+      if (params.client_secret !== 'client-secret') return new Response(JSON.stringify({ ok: false, error: 'bad_client_secret' }));
       rotation++;
       result = { ok: true, token_type: 'user', access_token: 'rotated-T1', refresh_token: `refresh-${rotation}`, expires_in: 43200 };
     } else if (method === 'oauth.v2.access') {
@@ -36,7 +38,7 @@ function fixture(t, options = {}) {
     else throw new Error(`Unexpected method ${method}`);
     return new Response(JSON.stringify(result));
   };
-  const connector = new Connector({ store, clientId: '123.456', publicOrigin: 'https://connector.test', clientOrigins: ['https://flow.test'], signingSecret: 'signing-secret', fetcher, now: () => now });
+  const connector = new Connector({ store, clientId: '123.456', clientSecret: options.clientSecret ?? 'client-secret', publicOrigin: 'https://connector.test', clientOrigins: ['https://flow.test'], signingSecret: 'signing-secret', fetcher, now: () => now });
   async function begin(team = 'T1', expectedTeamId) {
     const verifier = opaque();
     const start = connector.start({ challenge: hash(verifier), clientOrigin: 'https://flow.test', expectedTeamId });
@@ -120,6 +122,7 @@ test('shared grant rotates once under concurrent clients; disconnect isolates se
   f.advance(43200_000);
   await Promise.all([f.connector.info(a.credential), f.connector.info(b.credential)]);
   assert.equal(f.rotations(), 1);
+  assert.equal(f.calls.find(c => c.params.grant_type).params.client_secret, 'client-secret');
   f.connector.disconnect(a.credential);
   await assert.rejects(f.connector.info(a.credential), /unauthorized/);
   assert.equal((await f.connector.info(b.credential)).grantStatus, 'active');
@@ -208,6 +211,15 @@ test('uncertain refresh fails closed and does not retry a consumed refresh token
   f.advance(43200_000);
   await assert.rejects(f.connector.info(a.credential), /connection lost/);
   await assert.rejects(f.connector.info(a.credential), /reauthorization_required/);
+  assert.equal(f.calls.filter(c => c.params.grant_type).length, 1);
+});
+
+test('a wrong client secret fails refresh closed as a connector misconfiguration', async t => {
+  const f = fixture(t, { clientSecret: 'stale-secret' });
+  const a = await f.connect();
+  f.advance(43200_000);
+  await assert.rejects(f.connector.info(a.credential), /connector_misconfigured/);
+  assert.equal(f.store.get('grant', a.grantId).status, 'reauthorization_required');
   assert.equal(f.calls.filter(c => c.params.grant_type).length, 1);
 });
 

@@ -12,8 +12,8 @@ const idPattern = /^[A-Z][A-Z0-9]+$/;
 const terminal = new Map([['token_revoked', 'revoked'], ['invalid_auth', 'reauthorization_required'], ['account_inactive', 'account_deactivated'], ['token_expired', 'reauthorization_required']]);
 
 export class Connector {
-  constructor({ store, clientId, publicOrigin, clientOrigins, signingSecret, fetcher = fetch, now = Date.now }) {
-    Object.assign(this, { store, clientId, publicOrigin, clientOrigins, signingSecret, fetcher, now });
+  constructor({ store, clientId, clientSecret, publicOrigin, clientOrigins, signingSecret, fetcher = fetch, now = Date.now }) {
+    Object.assign(this, { store, clientId, clientSecret, publicOrigin, clientOrigins, signingSecret, fetcher, now });
     this.locks = new Map();
     this.rateLimits = new Map();
   }
@@ -56,7 +56,7 @@ export class Connector {
     }
     if (!response.ok) throw new Fault('slack_unavailable', 502);
     const result = await response.json();
-    if (!result.ok) throw new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required' }[result.error]) ?? 'slack_request_failed', 400);
+    if (!result.ok) throw new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required', bad_client_secret: 'connector_misconfigured', invalid_client_id: 'connector_misconfigured' }[result.error]) ?? 'slack_request_failed', 400);
     return result;
   }
   async callback({ state, code, error }) {
@@ -164,7 +164,9 @@ export class Connector {
           // Persist a fail-closed marker BEFORE consuming the one-use refresh
           // token. An uncertain network failure/crash requires reauthorization.
           this.store.put('grant', session.grantId, { ...grant, status: 'reauthorization_required' });
-          const rotated = await this.slack('oauth.v2.access', { client_id: this.clientId, grant_type: 'refresh_token', refresh_token: grant.refreshToken });
+          // Slack's PKCE guide says refresh needs no secret, but live Slack answers
+          // bad_client_secret without one. Sign-in itself stays secret-free PKCE.
+          const rotated = await this.slack('oauth.v2.access', { client_id: this.clientId, client_secret: this.clientSecret, grant_type: 'refresh_token', refresh_token: grant.refreshToken });
           if (rotated.token_type !== 'user' || !rotated.access_token || !rotated.refresh_token || !(rotated.expires_in > 0)) throw new Fault('reauthorization_required', 401);
           const current = this.store.get('grant', session.grantId);
           if (!current || current.status !== 'reauthorization_required') throw new Fault(current?.status ?? 'reauthorization_required', 401);
