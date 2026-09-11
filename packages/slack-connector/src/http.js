@@ -49,6 +49,10 @@ export function createConnectorServer(connector) {
         if (origin !== body.clientOrigin) throw new Fault('origin_mismatch', 403);
         respond(200, connector.start(body)); return;
       }
+      if (path === '/v1/oauth/poll' && req.method === 'POST') {
+        if (origin !== body.clientOrigin) throw new Fault('origin_mismatch', 403);
+        respond(200, connector.poll(body)); return;
+      }
       if (path === '/v1/oauth/exchange' && req.method === 'POST') {
         if (origin !== body.clientOrigin) throw new Fault('origin_mismatch', 403);
         respond(200, connector.exchange(body)); return;

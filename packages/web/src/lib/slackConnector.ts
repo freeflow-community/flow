@@ -8,6 +8,7 @@ export interface SlackConnection {
 export interface SlackHandoff extends SlackConnection { credential: string; status: string }
 export const slackIdentityKey = (i: SlackIdentity) => JSON.stringify([i.environment, i.enterpriseId ?? null, i.teamId, i.userId]);
 export const slackStatusMessage = (status: string) => ({
+  authorization_expired: 'Slack sign-in timed out. Try Connect Slack again.',
   canceled: 'Slack sign-in was canceled.', consent_denied: 'Slack consent was denied.',
   approval_required: 'Your Slack administrator must approve this app.', approval_denied: 'Slack workspace app approval was denied.',
   wrong_team: 'A different Slack team was authorized. Retry with the intended team.',
@@ -41,22 +42,27 @@ export async function connectSlack(address: string, popup: Window, signal: Abort
     const authorization = new URL(start.authorizationUrl);
     if (authorization.origin !== 'https://slack.com' || authorization.pathname !== '/oauth/v2/authorize') throw new Error('Invalid Slack authorization destination.');
     if (signal.aborted) throw new Error(slackStatusMessage('canceled'));
-    const handoff = await new Promise<string>((resolve, reject) => {
-      const cleanup = () => { window.removeEventListener('message', receive); signal.removeEventListener('abort', abort); clearInterval(timer); };
-      const abort = () => { cleanup(); reject(new Error(slackStatusMessage('canceled'))); };
-      const receive = (event: MessageEvent) => {
-        if (event.origin !== origin || event.source !== popup || event.data?.type !== 'flow-slack-handoff' || event.data.operationId !== start.operationId || typeof event.data.handoff !== 'string') return;
-        cleanup(); resolve(event.data.handoff);
-      };
-      const deadline = Date.now() + 600_000;
-      const timer = setInterval(() => { if (popup.closed || Date.now() > deadline) abort(); }, 500);
-      window.addEventListener('message', receive);
-      signal.addEventListener('abort', abort, { once: true });
-      popup.location.href = authorization.href;
-    });
-    const connection = await slackRequest<SlackHandoff>(origin, '/v1/oauth/exchange', 'POST', { handoff, verifier, operationId: start.operationId, clientOrigin: location.origin }, undefined, signal);
+    // Login pages can sever the popup/opener relationship via COOP. In that
+    // case popup.closed is true even while consent continues. Redeem directly
+    // from the connector using the private verifier; never infer cancellation
+    // from the popup handle or depend on postMessage delivery.
+    popup.location.href = authorization.href;
+    const deadline = Date.now() + 600_000;
+    let connection: SlackHandoff;
+    while (true) {
+      if (signal.aborted) throw new Error(slackStatusMessage('canceled'));
+      if (Date.now() >= deadline) throw new Error(slackStatusMessage('authorization_expired'));
+      connection = await slackRequest<SlackHandoff>(origin, '/v1/oauth/poll', 'POST', { verifier, operationId: start.operationId, clientOrigin: location.origin }, undefined, signal);
+      if (connection.status !== 'pending') break;
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(new Error(slackStatusMessage('canceled'))); };
+        const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 1000);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+      });
+    }
     if (!connection.credential || !['connected', 'missing_scopes'].includes(connection.status)) throw new Error(slackStatusMessage(connection.status));
     if (connection.identity?.environment !== 'slack' || !/^[A-Z][A-Z0-9]+$/.test(connection.identity.teamId) || !/^[A-Z][A-Z0-9]+$/.test(connection.identity.userId)) throw new Error('Invalid Slack identity.');
     return { origin, connection };
-  } finally { popup.close(); }
+  } finally { try { popup.close(); } catch { /* A COOP-isolated window cannot be closed by its former opener. */ } }
 }

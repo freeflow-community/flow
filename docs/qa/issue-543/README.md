@@ -5,7 +5,7 @@ Implementation base: Flow `main` at `d81af9a` (includes #539–#542).
 ## Automated evidence
 
 - `pnpm -r build`: all workspace packages build.
-- `pnpm --filter @flow/web test`: 512 tests pass, including separate Slack
+- `pnpm --filter @flow/web test`: 513 tests pass, including separate Slack
   identities/credential namespaces and exclusion from Flow background sync.
 - `pnpm --filter @flow/slack-connector test`: connector tests cover independent
   PKCE verifiers, one-use/expiring callbacks and handoffs, wrong teams, partial
@@ -31,9 +31,17 @@ VITE_SLACK_CONNECTOR_ORIGIN=https://connector.test pnpm --filter @flow/web exec 
 PLAYWRIGHT_HOME=/path/to/playwright-install node docs/qa/issue-543/acceptance-web.mjs
 ```
 
-## Live acceptance — not yet run
+## Live acceptance — in progress
 
-The operator confirmed no Slack app or two test workspaces were available.
+On 2026-09-11, the operator configured a Slack app and completed authorization
+for one live team in two separate browser profiles. Read-only `auth.test` verified
+the exact user/team; the encrypted store contains one active rotating user grant
+and two client sessions. No live messages were sent.
+
+Both profiles reported a false cancellation on their first attempt. A regression
+test reproduces `popup.closed` becoming true after browser isolation; verifier-bound
+polling now completes without an opener. The headless browser fixture exercises
+a callback with `Cross-Origin-Opener-Policy: same-origin`. Live retest is pending.
 Follow `docs/dev/SLACK_CONNECTOR.md` to provision the dedicated app/connector,
 then run this matrix before declaring #543's live acceptance complete:
 

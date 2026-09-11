@@ -263,3 +263,37 @@ test('reauthorization does not replay an old revoked state to surviving clients'
   f.connector.event(e.raw, e.timestamp, e.signature);
   assert.equal((await f.connector.info(a.credential)).grantStatus, 'active');
 });
+
+test('verifier-bound polling completes without an opener and remains one-use', async t => {
+  const f = fixture(t);
+  const verifier = opaque();
+  const start = f.connector.start({ challenge: hash(verifier), clientOrigin: 'https://flow.test' });
+  const request = { verifier, operationId: start.operationId, clientOrigin: 'https://flow.test' };
+  assert.throws(() => f.connector.poll({ ...request, verifier: opaque() }), /invalid_handoff/);
+  assert.throws(() => f.connector.poll({ ...request, clientOrigin: 'https://other.test' }), /invalid_handoff/);
+  assert.deepEqual(f.connector.poll(request), { status: 'pending' });
+  const callback = await f.connector.callback({ state: new URL(start.authorizationUrl).searchParams.get('state'), code: 'T1' });
+  assert.throws(() => f.connector.poll({ ...request, verifier: opaque() }), /invalid_handoff/);
+  const result = f.connector.poll(request);
+  assert.equal(result.status, 'connected');
+  assert.equal(f.connector.session(result.credential).grant.identity.teamId, 'T1');
+  assert.throws(() => f.connector.poll(request), /authorization_expired/);
+  assert.throws(() => f.connector.exchange({ ...callback, verifier }), /invalid_handoff/);
+});
+
+test('polling remains pending during code exchange and cannot replay callback state', async t => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const f = fixture(t, { fetcher: async method => { if (method === 'oauth.v2.access') { entered(); await gate; } } });
+  const verifier = opaque();
+  const start = f.connector.start({ challenge: hash(verifier), clientOrigin: 'https://flow.test' });
+  const state = new URL(start.authorizationUrl).searchParams.get('state');
+  const callback = f.connector.callback({ state, code: 'T1' });
+  await started;
+  const request = { verifier, operationId: start.operationId, clientOrigin: 'https://flow.test' };
+  assert.equal(f.connector.poll(request).status, 'pending');
+  await assert.rejects(f.connector.callback({ state, code: 'T1' }), /callback/);
+  release(); await callback;
+  assert.equal(f.connector.poll(request).status, 'connected');
+});

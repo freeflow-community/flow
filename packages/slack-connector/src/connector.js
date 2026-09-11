@@ -63,8 +63,8 @@ export class Connector {
     if (typeof state !== 'string') throw new Fault('unsolicited_callback');
     const pending = this.store.transaction(() => {
       const value = this.store.get('oauth', hash(state));
-      if (!value || value.expiresAt <= this.now()) throw new Fault('unsolicited_or_expired_callback');
-      this.store.remove('oauth', hash(state));
+      if (!value || value.consumed || value.expiresAt <= this.now()) throw new Fault('unsolicited_or_expired_callback');
+      this.store.put('oauth', hash(state), { ...value, consumed: true });
       return value;
     });
     let outcome;
@@ -99,15 +99,28 @@ export class Connector {
     }
     const handoff = opaque();
     this.store.put('handoff', hash(handoff), { ...outcome, challenge: pending.challenge, clientOrigin: pending.clientOrigin, operationId: pending.operationId, expiresAt: this.now() + 60_000 });
+    this.store.remove('oauth', hash(state));
     // Sent only in an HTTPS response body/postMessage, never query or fragment.
     return { clientOrigin: pending.clientOrigin, operationId: pending.operationId, handoff };
   }
   exchange({ handoff, verifier, operationId, clientOrigin }) {
     if (typeof handoff !== 'string' || !/^[A-Za-z0-9_-]{43,128}$/.test(verifier ?? '')) throw new Fault('invalid_handoff');
+    return this.redeem(hash(handoff), { verifier, operationId, clientOrigin });
+  }
+  poll({ verifier, operationId, clientOrigin }) {
+    if (!/^[A-Za-z0-9_-]{43,128}$/.test(verifier ?? '') || typeof operationId !== 'string') throw new Fault('invalid_handoff');
+    const completed = this.store.all('handoff').find(row => row.value.operationId === operationId);
+    if (completed) return this.redeem(completed.id, { verifier, operationId, clientOrigin });
+    const pending = this.store.all('oauth').find(row => row.value.operationId === operationId)?.value;
+    if (!pending || pending.expiresAt <= this.now()) throw new Fault('authorization_expired');
+    if (pending.clientOrigin !== clientOrigin || !same(pending.challenge, hash(verifier))) throw new Fault('invalid_handoff');
+    return { status: 'pending' };
+  }
+  redeem(key, { verifier, operationId, clientOrigin }) {
     return this.store.transaction(() => {
-      const pending = this.store.get('handoff', hash(handoff));
+      const pending = this.store.get('handoff', key);
       if (!pending || pending.expiresAt <= this.now() || pending.clientOrigin !== clientOrigin || pending.operationId !== operationId || !same(pending.challenge, hash(verifier))) throw new Fault('invalid_handoff');
-      this.store.remove('handoff', hash(handoff));
+      this.store.remove('handoff', key);
       if (!pending.grantId) return { status: pending.status };
       const grant = this.store.get('grant', pending.grantId);
       if (!grant || grant.status !== 'active') throw new Fault('reauthorization_required', 401);

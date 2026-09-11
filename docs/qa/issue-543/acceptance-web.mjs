@@ -17,7 +17,7 @@ try {
   page.on('pageerror', error => { errors.push(error.message); console.error(error.message); });
   page.on('console', message => { if (message.type() === 'error') console.error(message.text()); });
   page.setDefaultTimeout(10_000);
-  let team = 1, operationId;
+  let team = 1, operationId, callbackReady = false;
   const sessions = [];
   const deleted = [];
   await context.route('https://connector.test/**', async route => {
@@ -26,11 +26,16 @@ try {
     const json = body => route.fulfill({ json: body, headers });
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
     if (path === '/v1/oauth/start') {
+      callbackReady = false;
       operationId = `operation-${team}`;
       return json({ operationId, authorizationUrl: `https://slack.com/oauth/v2/authorize?state=test-${team}` });
     }
-    if (path === '/oauth/callback') return route.fulfill({ contentType: 'text/html', body: `<script>window.opener.postMessage({type:'flow-slack-handoff',operationId:${JSON.stringify(operationId)},handoff:'test-handoff'},${JSON.stringify(origin)})</script>` });
-    if (path === '/v1/oauth/exchange') {
+    if (path === '/oauth/callback') {
+      callbackReady = true;
+      return route.fulfill({ contentType: 'text/html', headers: { 'cross-origin-opener-policy': 'same-origin' }, body: '<p>Authorization returned. You can close this window.</p>' });
+    }
+    if (path === '/v1/oauth/poll') {
+      if (!callbackReady) return json({ status: 'pending' });
       const body = request.postDataJSON();
       assert.equal(body.operationId, operationId);
       assert.match(body.verifier, /^[A-Za-z0-9_-]{43}$/);

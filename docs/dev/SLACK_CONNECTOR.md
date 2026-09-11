@@ -1,8 +1,8 @@
 # Slack OAuth connector PoC (#543)
 
-Status: implemented with simulated Slack contract tests. **Not live-validated.**
-No Slack app or test workspaces were available during implementation. The two-team
-live acceptance scenario and app-distribution approval remain rollout gates.
+Status: first live workspace authorization verified on 2026-09-11, with two
+client sessions sharing one user grant. The two-team live acceptance scenario
+and app-distribution approval remain rollout gates.
 
 ## What runs
 
@@ -60,9 +60,11 @@ leg and the connector-to-client handoff. The Slack verifier never leaves the
 connector except in the token exchange POST. Slack OAuth codes arrive in Slack's
 standard callback query; they are not access tokens. The connector never places
 Slack tokens, connector credentials, or handoff codes in a URL. Callback HTML
-clears the query and delivers an expiring handoff via origin-bound `postMessage`.
-The client verifies popup source, connector origin, and operation ID before a
-verifier-bound POST exchange.
+clears the query. The web client polls the connector with its operation ID and
+private verifier to redeem the expiring, one-use handoff. It does not depend on
+`window.opener` or `popup.closed`, which browser isolation can sever during login.
+The original origin-bound `postMessage` exchange remains available for clients
+that retain their opener relationship.
 
 ## Executable scope manifest
 
@@ -95,6 +97,7 @@ credential>`, never cookies. No endpoint accepts a Flow token as its identity.
 | `POST /v1/oauth/start` | `{challenge, clientOrigin, expectedTeamId?}` → Slack URL and operation ID |
 | `GET /oauth/callback` | Slack-only browser return; consumes one-use state |
 | `POST /v1/oauth/exchange` | `{handoff, verifier, operationId, clientOrigin}` → scoped credential + verified identity or distinct status |
+| `POST /v1/oauth/poll` | `{verifier, operationId, clientOrigin}` → pending or one-use handoff redemption, independent of popup isolation |
 | `GET /v1/connection` | Validate session/upstream grant and return identity, scopes, capabilities |
 | `DELETE /v1/session` | Disconnect just this client |
 | `DELETE /v1/grant` | Delete stored grant and all its connector sessions; does not uninstall/revoke a shared Slack app |
