@@ -2,9 +2,11 @@
 
 Status: on 2026-09-11, live Slack verified two workspaces, per-client disconnect,
 grant removal, concurrent token rotation and user authorship of a sent message.
-Cancelled and denied consent were checked too. Wrong-team reauthorization,
-admin-approval workspaces and revocation/uninstall/deactivation events remain
-rollout gates; see the QA report for the full acceptance matrix.
+Cancelled and denied consent were checked too, and a live app removal delivered
+signed `app_uninstalled` and `tokens_revoked` events that hit only that
+workspace. Wrong-team reauthorization, admin-approval workspaces, account
+deactivation and reauthorization after revocation remain rollout gates; see the
+QA report for the full acceptance matrix.
 
 ## What runs
 
