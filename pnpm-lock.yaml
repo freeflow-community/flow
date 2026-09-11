@@ -158,6 +158,8 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  packages/slack-connector: {}
+
   packages/web:
     dependencies:
       '@flow/shared':

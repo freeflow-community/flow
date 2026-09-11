@@ -291,3 +291,21 @@ describe('reconnect jitter', () => {
     expect(jittered(1000, () => 0.999)).toBe(1250);
   });
 });
+
+it('never starts Flow API or WebSocket sync for a Slack connector', async () => {
+  const { manager, sync } = build([A]);
+  const slack = manager.addSlack('https://slack-connector.example.com', {
+    identity: { environment: 'slack', enterpriseId: null, teamId: 'T1', userId: 'U1' },
+    grantId: 'grant1', teamName: 'Slack test', userName: 'alice', scopes: [], capabilities: {}, grantStatus: 'active',
+  });
+  slack.setToken('connector-credential');
+  manager.bindIdentity(slack.connectionId, 'U1');
+  const flowId = manager.activeConnectionId;
+  manager.setActive(slack.connectionId);
+  expect(manager.activeConnectionId).toBe(flowId);
+  sync.start();
+  await Promise.resolve(); await Promise.resolve();
+  expect(apiCalls.every(call => call.origin !== slack.origin)).toBe(true);
+  expect(FakeSocket.all.every(socket => !socket.url.includes('slack-connector'))).toBe(true);
+  sync.stop();
+});

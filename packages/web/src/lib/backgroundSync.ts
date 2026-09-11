@@ -214,6 +214,7 @@ export class BackgroundSync {
     if (!this.running) return;
     const wanted = new Set<string>();
     for (const connection of this.manager.connections) {
+      if (connection.provider !== 'flow') continue;
       const id = connection.connectionId;
       const session = this.manager.state.sessions.find((s) => s.connectionId === id);
       if (session?.status !== 'authenticated') {

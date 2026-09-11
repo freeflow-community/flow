@@ -1324,3 +1324,15 @@ one-recipient MCP correction).
   calls the existing leave route. LiveKit Agents recording is disabled. A
   missing `OPENAI_API_KEY` or disabled voice config declines immediately with
   an actionable DM message rather than allowing a fake or unanswered call.
+
+## 2026-09-11 — Slack connector sends its client secret on token refresh (#543)
+
+- **Operator ruling: sign-in stays secret-free PKCE, refresh sends
+  `SLACK_CLIENT_SECRET`.** Slack's PKCE guide says a public client refreshes
+  with only `client_id`, but live Slack answered `bad_client_secret`, so every
+  connection would have died ~12h after sign-in. The connector is a server, so
+  holding the secret costs little; turning off token rotation (one-way per
+  Slack app, and weaker) was rejected.
+- **Trust live Slack over its docs, and make the fakes match.** The unit fakes
+  followed the docs, which is why both live bugs (refresh secret, and the app's
+  `bot_id` on user-token posts) passed CI. The fake Slack now reproduces both.
