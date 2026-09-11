@@ -12,6 +12,8 @@ This file keeps two things:
 
 ## Parity
 
+- Slack authorization connector PoC (#543) is web-only by design; native authorization and Slack chat remain later provider milestones.
+
 - Multi-server huddles (#541): web leaves the room when switching server; native keeps it running with a return control. Both limit the client to one joined room.
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 

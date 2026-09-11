@@ -25,12 +25,14 @@ import {
   sessionFor,
   updateSession,
   addFlowConnection,
+  addSlackConnection,
   setWorkspaceBinding,
   type WorkspaceBinding,
   type ConnectionRegistry,
   type NavigationTarget,
   type ServerConnection,
 } from './connections';
+import type { SlackConnection } from './slackConnector';
 import { isSameOrigin, socketUrlFor } from './serverOrigin';
 
 export class ApiError extends Error {
@@ -395,7 +397,10 @@ export class ConnectionManager {
   constructor(origin: string = location.origin) {
     this.registry = loadOrMigrateRegistry(origin);
     this.selected = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem('flow.selectedConnection');
-    if (!this.selected || !connectionById(this.registry, this.selected)) this.selected = this.registry.activeConnectionId;
+    if (!this.selected || connectionById(this.registry, this.selected)?.provider !== 'flow') {
+      const saved = this.registry.activeConnectionId;
+      this.selected = saved && connectionById(this.registry, saved)?.provider === 'flow' ? saved : this.registry.connections.find(c => c.provider === 'flow')?.connectionId ?? null;
+    }
   }
 
   get state(): ConnectionRegistry {
@@ -432,7 +437,7 @@ export class ConnectionManager {
     }
     this.registry = next;
     if (this.selected && !connectionById(next, this.selected)) {
-      this.selected = next.connections[0]?.connectionId ?? null;
+      this.selected = next.connections.find(c => c.provider === 'flow')?.connectionId ?? null;
     }
     return invalidated;
   }
@@ -467,13 +472,19 @@ export class ConnectionManager {
   }
 
   setActive(connectionId: string): void {
-    if (!connectionById(this.registry, connectionId)) return;
+    if (connectionById(this.registry, connectionId)?.provider !== 'flow') return;
     this.selected = connectionId;
     if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('flow.selectedConnection', connectionId);
   }
 
   add(origin: string, label?: string): ConnectionRuntime {
     const { registry, connection } = addFlowConnection(this.registry, { origin, label });
+    this.commit(registry);
+    return this.runtime(connection.connectionId)!;
+  }
+
+  addSlack(origin: string, slack: SlackConnection): ConnectionRuntime {
+    const { registry, connection } = addSlackConnection(this.registry, origin, slack);
     this.commit(registry);
     return this.runtime(connection.connectionId)!;
   }
@@ -544,7 +555,7 @@ export class ConnectionManager {
     this.runtimes.delete(connectionId);
     this.commit(removeFromRegistry(this.registry, connectionId));
     if (this.selected === connectionId) {
-      this.selected = this.registry.connections[0]?.connectionId ?? null;
+      this.selected = this.registry.connections.find(c => c.provider === 'flow')?.connectionId ?? null;
       if (typeof sessionStorage !== 'undefined') {
         if (this.selected) sessionStorage.setItem('flow.selectedConnection', this.selected);
         else sessionStorage.removeItem('flow.selectedConnection');

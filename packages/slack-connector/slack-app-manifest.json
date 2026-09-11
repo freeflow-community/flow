@@ -1,0 +1,14 @@
+{
+  "display_information": { "name": "Flow Slack connector", "description": "Connect your Slack identity to Flow", "background_color": "#4338ca" },
+  "oauth_config": {
+    "redirect_urls": ["https://CONNECTOR_HOST/oauth/callback"],
+    "scopes": { "user": ["chat:write"] },
+    "pkce_enabled": true
+  },
+  "settings": {
+    "event_subscriptions": { "request_url": "https://CONNECTOR_HOST/slack/events", "user_events": ["tokens_revoked", "app_uninstalled"] },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": true
+  }
+}

@@ -1,0 +1,40 @@
+import { mkdirSync, openSync, closeSync, unlinkSync, chmodSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { Store } from './store.js';
+import { Connector } from './connector.js';
+import { createConnectorServer } from './http.js';
+
+const required = name => { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; };
+const origin = value => {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.origin !== value || url.username || url.password) throw new Error('Connector and client origins must be exact HTTPS origins');
+  return value;
+};
+const config = {
+  clientId: required('SLACK_CLIENT_ID'), signingSecret: required('SLACK_SIGNING_SECRET'),
+  publicOrigin: origin(required('CONNECTOR_ORIGIN')),
+  clientOrigins: required('CONNECTOR_CLIENT_ORIGINS').split(',').map(origin),
+};
+const key = required('CONNECTOR_KEY');
+const path = resolve(required('CONNECTOR_DB'));
+mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+// One writer owns refresh serialization. No horizontal replicas with this store.
+// A stale lock after a crash requires explicit operator recovery.
+const lockPath = `${path}.lock`;
+const lock = openSync(lockPath, 'wx', 0o600);
+process.umask(0o077);
+const store = new Store(path, key);
+chmodSync(path, 0o600);
+const connector = new Connector({ ...config, store });
+const server = createConnectorServer(connector);
+server.requestTimeout = 20_000;
+server.headersTimeout = 10_000;
+const sweep = setInterval(() => connector.sweep(), 60_000).unref();
+server.listen(Number(process.env.PORT ?? 8790), '127.0.0.1', () => console.log('Slack connector listening'));
+let stopping = false;
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+  if (stopping) return;
+  stopping = true;
+  clearInterval(sweep);
+  server.close(() => { store.close(); closeSync(lock); unlinkSync(lockPath); });
+});
