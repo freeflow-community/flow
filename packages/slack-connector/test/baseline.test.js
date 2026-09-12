@@ -56,7 +56,7 @@ function fixture(t, options = {}) {
     }
     return new Response(JSON.stringify(result));
   };
-  const connector = new Connector({ store, clientId: '123.456', clientSecret: 'client-secret', publicOrigin: 'https://connector.test', clientOrigins: ['https://flow.test'], signingSecret: 'signing-secret', fetcher, now: () => now });
+  const connector = new Connector({ store, clientId: '123.456', clientSecret: 'client-secret', publicOrigin: 'https://connector.test', clientOrigins: ['https://flow.test', ...(options.clientOrigins ?? [])], signingSecret: 'signing-secret', fetcher, now: () => now });
   async function connect() {
     const verifier = opaque();
     const start = connector.start({ challenge: hash(verifier), clientOrigin: 'https://flow.test' });
@@ -225,6 +225,62 @@ test('Events API chat events reach only the authorized grant, in order, with bou
   assert.ok(late.seq > seq);
 });
 
+test('a malformed event is acknowledged and dropped; the next good one still streams', async t => {
+  const f = fixture(t);
+  const a = await f.connect();
+  assert.deepEqual(f.event({ type: 'message', channel: 'C1', user: 'U1', ts: 1789171841.148649, text: 'ts as a number' }), { ok: true }, 'acknowledged so Slack does not retry');
+  assert.deepEqual(f.event({ type: 'message', subtype: 'message_changed', channel: 'C1', message: { ts: 'not-a-ts', text: 'edited' } }), { ok: true }, 'a payload the normalizer rejects is dropped, not retried');
+  assert.deepEqual(f.event({ type: 'message', channel: 'C1', user: 'U1', ts: TS1, text: 'fine', blocks: [{ type: 'unknown_block_kind', weird: true }], extra_field_from_the_future: 1 }), { ok: true });
+  const stream = f.connector.stream(a.credential, 0);
+  assert.deepEqual(stream.events.map(e => [e.type, e.message?.provenance.degraded]), [['message.created', true]], 'unknown blocks degrade the message; unknown fields are ignored');
+  assert.equal(f.connector.driftCount, 1);
+});
+
+test('sends are idempotent per client id; an unknown outcome is reconciled on retry, never posted twice', async t => {
+  let mode = 'ok';
+  const posted = [];
+  const f = fixture(t, { fetcher: async (method, params) => {
+    if (method === 'chat.postMessage') {
+      if (mode === 'timeout') { const error = new Error('timed out'); error.name = 'TimeoutError'; throw error; }
+      if (mode === 'down') return new Response('bad gateway', { status: 502 });
+      posted.push(params);
+      return { ok: true, channel: params.channel, ts: `1700000000.00000${posted.length}`, message: { user: 'U1', type: 'message', text: params.text, ts: `1700000000.00000${posted.length}`, bot_id: 'B9' } };
+    }
+    if (method === 'conversations.history' && mode === 'found') return { ok: true, messages: [{ type: 'message', user: 'U1', ts: '1800000000.000009', text: 'hello *there*' }], has_more: false };
+    return null;
+  } });
+  const { credential } = await f.connect();
+  const first = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0001' });
+  const again = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0001' });
+  assert.equal(again.ts, first.ts);
+  assert.equal(posted.length, 1, 'a repeated send with the same id posts once');
+  assert.equal(posted[0].text, 'hello *there*', 'markdown goes out as mrkdwn');
+  // Unknown outcome: Slack never answered. The client gets 504 and keeps its id.
+  mode = 'timeout';
+  await assert.rejects(f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0002' }), error => error.code === 'send_unknown' && error.status === 504);
+  // The retry reconciles first: Slack already has the message, so it is returned, not re-posted.
+  mode = 'found';
+  const reconciled = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0002' });
+  assert.equal(reconciled.ts, '1800000000.000009');
+  assert.equal(reconciled.reconciled, true);
+  assert.equal(reconciled.message.body, 'hello **there**');
+  assert.equal(posted.length, 1, 'nothing was posted again');
+  assert.equal(f.calls.filter(c => c.method === 'conversations.history').length, 1, 'one reconciliation read');
+  // A retry whose reconciliation finds nothing posts once.
+  mode = 'down';
+  await assert.rejects(f.connector.send(credential, { channel: 'C1', text: 'new text', client_msg_id: 'client-msg-0003' }), /send_unknown/);
+  mode = 'ok';
+  const third = await f.connector.send(credential, { channel: 'C1', text: 'new text', client_msg_id: 'client-msg-0003' });
+  assert.equal(third.reconciled, undefined);
+  assert.equal(posted.length, 2);
+  // A definite Slack refusal is not remembered: the next attempt may post.
+  await assert.rejects(f.connector.send(credential, { channel: 'C1', text: 'x', client_msg_id: 'bad id!' }), /invalid_message/);
+  // The memory expires.
+  f.advance(601_000);
+  const later = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0001' });
+  assert.notEqual(later.ts, first.ts);
+});
+
 test('HTTP: baseline routes are credential-bound, JSON-only, and carry Retry-After on 429', async t => {
   const f = fixture(t);
   const server = createConnectorServer(f.connector);
@@ -250,4 +306,38 @@ test('HTTP: baseline routes are credential-bound, JSON-only, and carry Retry-Aft
   assert.equal(limited.headers.get('retry-after'), '60');
   const preflight = await fetch(`${base}/v1/messages`, { method: 'OPTIONS', headers: { origin: 'https://flow.test' } });
   assert.match(preflight.headers.get('access-control-allow-methods'), /PATCH/);
+});
+
+test('HTTP: a native client signs in without an Origin header and returns to its own URL scheme', async t => {
+  const f = fixture(t, { clientOrigins: ['flow://slack'] });
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const json = { 'content-type': 'application/json' };
+  const post = (path, body, headers = {}) => fetch(`${base}${path}`, { method: 'POST', headers: { ...json, ...headers }, body: JSON.stringify(body) });
+  const verifier = opaque();
+  // No Origin header, native client origin: allowed. Same body from a browser
+  // origin, or a native origin nobody configured: refused.
+  const started = await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://slack' });
+  assert.equal(started.status, 200);
+  const { authorizationUrl, operationId } = await started.json();
+  assert.equal((await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://slack' }, { origin: 'https://evil.test' })).status, 403);
+  assert.equal((await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://other' })).status, 403);
+  // Polling before consent says pending, and the verifier is what binds it.
+  assert.deepEqual(await (await post('/v1/oauth/poll', { verifier, operationId, clientOrigin: 'flow://slack' })).json(), { status: 'pending' });
+  assert.equal((await post('/v1/oauth/poll', { verifier: opaque(), operationId, clientOrigin: 'flow://slack' })).status, 400);
+  // Slack's redirect lands on the connector, which bounces to flow://slack with
+  // only the operation id: no handoff or credential in the URL.
+  const state = new URL(authorizationUrl).searchParams.get('state');
+  const callback = await fetch(`${base}/oauth/callback?state=${state}&code=T1`, { redirect: 'manual' });
+  assert.equal(callback.status, 302);
+  assert.equal(callback.headers.get('location'), `flow://slack/connected?operationId=${encodeURIComponent(operationId)}`);
+  const done = await (await post('/v1/oauth/poll', { verifier, operationId, clientOrigin: 'flow://slack' })).json();
+  assert.equal(done.status, 'connected');
+  assert.equal(done.identity.teamId, 'T1');
+  assert.match(done.credential, /^[A-Za-z0-9_-]+$/);
+  // The credential then works on the read routes with no Origin at all.
+  const me = await fetch(`${base}/v1/workspace`, { headers: { authorization: `Bearer ${done.credential}` } });
+  assert.equal(me.status, 200);
 });

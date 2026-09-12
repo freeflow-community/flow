@@ -78,7 +78,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             .liveUpdates: on("liveUpdates") ? .limited("New messages arrive through the Flow Slack connector with a short delay.") : .unavailable("Live updates need the Slack app to subscribe to message events."),
             .typing: .unavailable("Typing indicators are not available for Slack workspaces."),
             .presence: .unavailable("Presence is not available for Slack workspaces."),
-            .notifications: .unavailable("Slack notifications are not delivered to Flow yet."),
+            .notifications: on("liveUpdates")
+                ? .limited("Mentions and direct messages alert you only while Flow is open. Slack has no push to Flow when it is closed.")
+                : .unavailable("Slack notifications need the Slack app to subscribe to message events."),
         ])
     }
 
@@ -243,7 +245,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
     private struct SendPayload: Decodable { let message: Message }
     func send(_ input: SendMessageInput) async throws -> Message {
         if !input.fileIds.isEmpty { throw BackendError(code: .unsupported, message: caps[.files].reason ?? "Files are not available.") }
-        var body: [String: Any] = ["channel": input.channelId, "text": input.body]
+        // The client id makes the send idempotent at the connector (#546): a
+        // retry after an unknown outcome reconciles there instead of posting twice.
+        var body: [String: Any] = ["channel": input.channelId, "text": input.body, "client_msg_id": input.clientMsgId]
         if let threadRootId = input.threadRootId { body["thread_ts"] = threadRootId }
         var message = try await request("POST", "v1/messages", body: body, as: SendPayload.self).message
         // Slack does not echo a client message id; stamp ours so the pending

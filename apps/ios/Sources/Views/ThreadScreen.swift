@@ -143,7 +143,8 @@ struct ThreadScreen: View {
                                 onDelete: { msg, permanently in
                                     Task { await app.engine.deleteMessage(id: msg.id, permanently: permanently) }
                                 },
-                                onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
+                                onOpenProfile: { profileRoute = ProfileRoute(userId: $0) },
+                                capabilities: app.capabilities
                             )
                             .equatable()
                             // See MessageListView: key on clientMsgId so the

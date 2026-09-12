@@ -10,10 +10,13 @@ const origin = value => {
   if (url.protocol !== 'https:' || url.origin !== value || url.username || url.password) throw new Error('Connector and client origins must be exact HTTPS origins');
   return value;
 };
+// Native clients name themselves with the app's URL scheme (flow://slack) and
+// return there after Slack's consent page (#546); browsers stay exact HTTPS.
+const clientOrigin = value => (/^flow:\/\/[a-z0-9.-]+$/i.test(value) ? value : origin(value));
 const config = {
   clientId: required('SLACK_CLIENT_ID'), clientSecret: required('SLACK_CLIENT_SECRET'), signingSecret: required('SLACK_SIGNING_SECRET'),
   publicOrigin: origin(required('CONNECTOR_ORIGIN')),
-  clientOrigins: required('CONNECTOR_CLIENT_ORIGINS').split(',').map(origin),
+  clientOrigins: required('CONNECTOR_CLIENT_ORIGINS').split(',').map(clientOrigin),
 };
 const key = required('CONNECTOR_KEY');
 const path = resolve(required('CONNECTOR_DB'));

@@ -36,7 +36,9 @@ export function slackCapabilities(granted: Record<string, boolean>): Capabilitie
     liveUpdates: granted.liveUpdates ? limited('New messages arrive through the Flow Slack connector with a short delay.') : unavailable('Live updates need the Slack app to subscribe to message events.'),
     typing: unavailable('Typing indicators are not available for Slack workspaces.'),
     presence: unavailable('Presence is not available for Slack workspaces.'),
-    notifications: unavailable('Slack notifications are not delivered to Flow yet.'),
+    notifications: granted.liveUpdates
+      ? limited('Mentions and direct messages alert you only while Flow is open. Slack has no push to Flow when it is closed.')
+      : unavailable('Slack notifications need the Slack app to subscribe to message events.'),
   });
 }
 
@@ -52,12 +54,15 @@ export class SlackBackend implements WorkspaceBackend {
   private authState: BackendAuthState;
   private teamId: string;
   private handlers = new Set<BackendEventHandler>();
-  private poller: number | null = null;
+  private poller: ReturnType<typeof setInterval> | null = null;
+  /** False in tests, which call `pollOnce()` themselves. */
+  private readonly autoPoll: boolean;
   private seq = 0;
   private members: Map<string, WorkspaceMemberDTO> | null = null;
 
-  constructor(private readonly runtime: ConnectionRuntime, connection: { providerIdentity: string; capabilities: Record<string, boolean>; label: string }) {
+  constructor(private readonly runtime: ConnectionRuntime, connection: { providerIdentity: string; capabilities: Record<string, boolean>; label: string }, options: { autoPoll?: boolean } = {}) {
     this.connectionId = runtime.connectionId;
+    this.autoPoll = options.autoPoll ?? true;
     this.caps = slackCapabilities(connection.capabilities);
     let teamId = '';
     try { teamId = (JSON.parse(connection.providerIdentity) as string[])[2] ?? ''; } catch { /* label only */ }
@@ -93,6 +98,9 @@ export class SlackBackend implements WorkspaceBackend {
       throw new BackendError('unauthorized', slackStatusMessage(code), { providerCode: code });
     }
     if (code === 'missing_scopes') throw new BackendError('unsupported', 'This Slack app has not been granted the permission for that.', { providerCode: code });
+    // The connector could not learn whether Slack took the message: the row
+    // stays failed with Retry, and the retry carries the same client id.
+    if (response.status === 504 || code === 'send_unknown') throw new BackendError('timeout', 'Slack did not confirm the message. Retry sends it once, never twice.', { providerCode: code });
     if (response.status === 404) throw new BackendError('not_found', slackStatusMessage(code), { providerCode: code });
     if (response.status === 403) throw new BackendError('invalid', 'Slack did not allow that action.', { providerCode: code });
     throw new BackendError(response.status >= 500 ? 'provider_error' : 'invalid', slackStatusMessage(code), { providerCode: code });
@@ -171,8 +179,10 @@ export class SlackBackend implements WorkspaceBackend {
 
   async send(input: SendMessageInput): Promise<SendReceipt> {
     if (input.fileIds?.length) throw new BackendError('unsupported', this.caps.files.reason ?? 'Files are not available.');
+    // The client id makes the send idempotent at the connector: a retry after
+    // a timeout reconciles against Slack instead of posting twice (#546).
     const result = await this.request<{ message: BackendMessage }>('POST', '/v1/messages', {
-      channel: input.channelId, text: input.body, ...(input.threadRootId ? { thread_ts: input.threadRootId } : {}),
+      channel: input.channelId, text: input.body, client_msg_id: input.clientMsgId, ...(input.threadRootId ? { thread_ts: input.threadRootId } : {}),
     });
     // Slack does not echo a client message id; the connector's reply carries
     // the real ts, so stamp our idempotency key on it for the optimistic row.
@@ -214,41 +224,72 @@ export class SlackBackend implements WorkspaceBackend {
    * followed by `stream.recovered`, which the caller treats as "refetch". */
   subscribe(handler: BackendEventHandler): () => void {
     this.handlers.add(handler);
-    if (this.poller === null) this.startPolling();
+    if (this.poller === null && this.autoPoll) this.startPolling();
     return () => {
       this.handlers.delete(handler);
-      if (this.handlers.size === 0 && this.poller !== null) { window.clearInterval(this.poller); this.poller = null; }
+      if (this.handlers.size === 0 && this.poller !== null) { clearInterval(this.poller); this.poller = null; }
     };
   }
 
-  private startPolling(): void {
-    let ticks = 0;
-    const tick = async () => {
-      if (this.runtime.isDisposed || !this.runtime.getToken()) return;
+  /** Events the stream delivered in a shape this client could not read;
+   * dropped one by one so a schema change never takes the stream down (#546). */
+  dropped = 0;
+  private ticks = 0;
+
+  /** One poll of the connector stream; the interval calls this, and tests do. */
+  async pollOnce(): Promise<void> {
+    if (this.runtime.isDisposed || !this.runtime.getToken()) return;
+    try {
+      const stream = await this.request<StreamResponse>('GET', `/v1/stream?since=${this.seq}`);
+      if (stream.gap) { this.emit({ type: 'stream.degraded', reason: 'Missed Slack events while away.', resumesAtMs: null }); this.emit({ type: 'stream.recovered' }); }
+      for (const event of stream.events ?? []) {
+        if (isWellFormed(event)) this.emit(event);
+        else this.dropped += 1;
+      }
+      if (typeof stream.seq === 'number') this.seq = stream.seq;
+    } catch (error) {
+      if (error instanceof BackendError && error.code === 'rate_limited') this.emit({ type: 'stream.degraded', reason: error.message, resumesAtMs: Date.now() + (error.retryAfterMs ?? 60_000) });
+    }
+    if (this.ticks++ % Math.round(LIFECYCLE_INTERVAL_MS / STREAM_INTERVAL_MS) === 0) {
       try {
-        const stream = await this.request<StreamResponse>('GET', `/v1/stream?since=${this.seq}`);
-        if (stream.gap) { this.emit({ type: 'stream.degraded', reason: 'Missed Slack events while away.', resumesAtMs: null }); this.emit({ type: 'stream.recovered' }); }
-        for (const event of stream.events) this.emit(event);
-        this.seq = stream.seq;
-      } catch (error) {
-        if (error instanceof BackendError && error.code === 'rate_limited') this.emit({ type: 'stream.degraded', reason: error.message, resumesAtMs: Date.now() + (error.retryAfterMs ?? 60_000) });
-      }
-      if (ticks++ % Math.round(LIFECYCLE_INTERVAL_MS / STREAM_INTERVAL_MS) === 0) {
-        try {
-          const lifecycle = await this.request<{ events: { status: string }[] }>('GET', '/v1/events');
-          const last = lifecycle.events.at(-1)?.status;
-          if (last && last !== 'active') this.setAuth({ ...this.authState, status: 'reauthorization_required', detail: slackStatusMessage(last) });
-        } catch { /* reported on the next request that needs the grant */ }
-      }
-    };
-    void tick();
-    this.poller = window.setInterval(() => { void tick(); }, STREAM_INTERVAL_MS);
+        const lifecycle = await this.request<{ events: { status: string }[] }>('GET', '/v1/events');
+        const last = lifecycle.events.at(-1)?.status;
+        if (last && last !== 'active') this.setAuth({ ...this.authState, status: 'reauthorization_required', detail: slackStatusMessage(last) });
+      } catch { /* reported on the next request that needs the grant */ }
+    }
+  }
+
+  private startPolling(): void {
+    void this.pollOnce();
+    this.poller = setInterval(() => { void this.pollOnce(); }, STREAM_INTERVAL_MS);
   }
 
   openUrl(target: { channelId: string; messageId?: string }): string | null {
     if (!this.teamId) return null;
     const base = `https://app.slack.com/client/${this.teamId}/${target.channelId}`;
     return target.messageId ? `${base}/p${target.messageId.replace('.', '')}` : base;
+  }
+}
+
+const TS_RE = /^\d{9,11}\.\d{6}$/;
+const isMessageShape = (m: unknown): m is BackendMessage => {
+  const x = m as Record<string, unknown> | null;
+  return !!x && typeof x.id === 'string' && TS_RE.test(x.id) && typeof x.channelId === 'string' && typeof x.userId === 'string' && typeof x.body === 'string'
+    && Array.isArray(x.files) && Array.isArray(x.reactions) && Array.isArray(x.replyParticipantUserIds) && (x.threadRootId === null || typeof x.threadRootId === 'string');
+};
+
+/** Validate one stream event before it reaches the cache: known type, and the
+ * fields the views will read. Anything else is protocol drift, dropped here. */
+export function isWellFormed(event: unknown): event is BackendEvent {
+  const e = event as Record<string, unknown> | null;
+  if (!e || typeof e.type !== 'string') return false;
+  switch (e.type) {
+    case 'message.created': case 'message.updated': case 'thread.reply': return isMessageShape(e.message);
+    case 'message.deleted': return typeof e.channelId === 'string' && typeof e.messageId === 'string' && (e.threadRootId === null || typeof e.threadRootId === 'string');
+    case 'reaction.added': case 'reaction.removed': return typeof e.channelId === 'string' && typeof e.messageId === 'string' && typeof e.emoji === 'string' && typeof e.userId === 'string';
+    case 'channel.updated': return !!e.channel && typeof (e.channel as { id?: unknown }).id === 'string';
+    case 'channel.read': case 'typing': case 'presence': case 'auth.changed': case 'capabilities.changed': case 'stream.degraded': case 'stream.recovered': return true;
+    default: return false;
   }
 }
 

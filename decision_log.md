@@ -1380,3 +1380,31 @@ one-recipient MCP correction).
   adapter, the registry record with per-team bindings, and tests; the Connect
   Slack flow and routing the sync engine through the protocol are the next
   native slice and are recorded in the Parity ledger rather than half-wired.
+
+## 2026-09-12 — Slack provider step 4: what is verified, what is honest, what is deferred (#546)
+
+- **No internal-protocol capability ships.** Step 2 established that every
+  internal interface needs a first-party `xoxc` session, which is a recorded
+  blocker on all platforms. The "versioned adapter with capability switches"
+  the spec asks for is therefore the public-API adapter plus the executable
+  scope manifest; a protocol change surfaces as a dropped, counted event and a
+  disabled capability, never as a crash or a silent gap.
+- **A send that times out is unknown, not failed.** The connector keys sends
+  on `client_msg_id`, records the attempt before posting, and on retry looks
+  the message up by author, exact text and `ts` at or after the attempt. It
+  never posts twice and never retries blindly through another transport.
+- **Notifications are `limited`, on purpose.** Slack events reach only the
+  connector; the Flow server pushes only its own notification rows and has no
+  server-to-server route the connector could call. Rather than register a
+  device token with the connector, each client posts local banners for
+  mentions and DMs while it runs, and the capability reason says exactly that.
+  The signed connector→Flow route that would close the gap is written down in
+  `docs/dev/SLACK_CONNECTOR.md` and not built.
+- **Native sign-in uses the app's URL scheme as its client origin.** A native
+  client cannot send an `Origin` header, so the connector accepts a configured
+  `flow://slack` origin on the OAuth routes and bounces the callback to
+  `flow://slack/connected?operationId=…`. Only the operation id travels in the
+  URL; the PKCE verifier stays in the app and redeems the handoff by polling.
+- **The share extension refuses attachments for Slack.** The app is not
+  granted `files:write`; rather than upload somewhere else or drop the file
+  silently, the extension sends text only and says why.

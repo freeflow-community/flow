@@ -42,6 +42,11 @@ struct MessageListView: View {
     @State private var restoredScroll = false
     /// Passed straight to each row: tapping a sender opens their card (#223).
     var onOpenProfile: (String) -> Void = { _ in }
+    /// What this workspace's provider allows (#546). Flow: everything.
+    var capabilities: Capabilities = .allSupported
+    /// The provider limited this channel's history (#546): the load-older
+    /// affordance shows the wait instead of retrying against the budget.
+    var historyLimit: AppState.HistoryLimit? = nil
 
     /// Precomputed rows (grouping, day dividers, parsed markdown) rebuilt only
     /// when the message array actually changes — never per render pass. A
@@ -135,6 +140,12 @@ struct MessageListView: View {
                     // becomes the ordinary "Load earlier messages" affordance.
                     if isLoadingHistory, !messages.isEmpty {
                         loadingRow("Loading earlier messages…")
+                    } else if let limit = historyLimit, limit.limited, hasMore || limit.retryAfter.map({ $0 > Date() }) == true {
+                        HistoryLimitFooter(limit: limit, reason: capabilities[.history].reason) {
+                            loadOlderAnchorId = messages.first?.id
+                            followBox.model.positionRestored(atBottom: false)
+                            onLoadOlder()
+                        }
                     } else if hasMore {
                         HStack {
                             Spacer()
@@ -181,7 +192,8 @@ struct MessageListView: View {
                                     onOpenThread: onOpenThread,
                                     onEdit: onEdit,
                                     onDelete: onDelete,
-                                    onOpenProfile: onOpenProfile
+                                    onOpenProfile: onOpenProfile,
+                                    capabilities: capabilities
                                 )
                                 // Skip the row's body when nothing it renders
                                 // changed — its == ignores the closures, which
@@ -595,6 +607,8 @@ struct MessageRow: View, @preconcurrency Equatable {
     /// The presenting screen owns the sheet — a sheet per row would mean one
     /// presentation per message in the transcript.
     var onOpenProfile: (String) -> Void = { _ in }
+    /// What the provider allows on this message (#546). Flow: everything.
+    var capabilities: Capabilities = .allSupported
 
     /// Everything the row *renders* — and only that. Closures are recreated
     /// on every parent evaluation and deliberately ignored (their behavior is
@@ -613,6 +627,7 @@ struct MessageRow: View, @preconcurrency Equatable {
             && a.userNames == b.userNames
             && a.userStatuses == b.userStatuses
             && a.context == b.context
+            && a.capabilities == b.capabilities
     }
 
     @State private var showReactionPicker = false
@@ -755,7 +770,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                         )
                     }
 
-                    if isThinkingRow {
+                    if isThinkingRow, capabilities.canUse(.agents) {
                         interruptButton
                     }
 
@@ -801,20 +816,24 @@ struct MessageRow: View, @preconcurrency Equatable {
         .contextMenu {
             if (!message.isDeleted || deleteMode == .permanent), !message.pending {
                 if !message.isDeleted {
-                    ControlGroup {
-                        ForEach(Array(EmojiCatalog.quickReactions.prefix(4)), id: \.self) { emoji in
-                            Button(emoji) {
-                                Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                    // Provider gating (#546): an unavailable action is not in
+                    // the menu at all, as on web. Flow keeps every item.
+                    if capabilities.canUse(.reactions) {
+                        ControlGroup {
+                            ForEach(Array(EmojiCatalog.quickReactions.prefix(4)), id: \.self) { emoji in
+                                Button(emoji) {
+                                    Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                                }
                             }
                         }
+                        .controlGroupStyle(.compactMenu)
+                        Button {
+                            showReactionPicker = true
+                        } label: {
+                            Label("Add Reaction…", systemImage: "face.smiling")
+                        }
                     }
-                    .controlGroupStyle(.compactMenu)
-                    Button {
-                        showReactionPicker = true
-                    } label: {
-                        Label("Add Reaction…", systemImage: "face.smiling")
-                    }
-                    if showThreadAffordances {
+                    if showThreadAffordances, capabilities.canUse(.threads) {
                         Button {
                             onOpenThread(message.threadRootId ?? message.id)
                         } label: {
@@ -828,7 +847,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                             Label("Copy", systemImage: "doc.on.doc")
                         }
                     }
-                    if !message.failed {
+                    if !message.failed, capabilities.canUse(.pins) {
                         Button {
                             Task { await context.engine.togglePin(message) }
                         } label: {
@@ -838,7 +857,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                             )
                         }
                     }
-                    if isMine {
+                    if isMine, capabilities.canUse(.edit) {
                         Button {
                             onEdit(message)
                         } label: {
@@ -846,7 +865,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                         }
                     }
                 }
-                if deleteMode != nil {
+                if deleteMode != nil, capabilities.canUse(.delete) {
                     Button(role: .destructive) {
                         showDeleteConfirm = true
                     } label: {
@@ -988,6 +1007,9 @@ struct MessageRow: View, @preconcurrency Equatable {
                     )
                 }
                 .buttonStyle(.plain)
+                // Existing reactions still show without the scope; only the
+                // toggle is off (#546).
+                .disabledUnless(.reactions, in: capabilities)
                 .accessibilityIdentifier("msg.reaction.\(agg.emoji)")
                 .accessibilityValue("\(agg.count)\(mine ? " including you" : "")")
                 // Where a 🎉 burst starts (#524) — the pill, not the row.

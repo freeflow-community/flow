@@ -144,15 +144,19 @@ struct SidebarView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
                 sectionHeader("Channels") {
-                    Button {
-                        showCreateChannel = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .flowFont(.caption)
-                            .foregroundStyle(.white.opacity(0.55))
+                    // Create / new DM / browse / agents / apps are Flow features
+                    // a provider may not offer (#546): absent, as on web.
+                    if app.can(.channelManagement) {
+                        Button {
+                            showCreateChannel = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .flowFont(.caption)
+                                .foregroundStyle(.white.opacity(0.55))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Create a channel")
                     }
-                    .buttonStyle(.plain)
-                    .help("Create a channel")
                 }
                 ForEach(joinedChannels, id: \.channel.id) { row in
                     channelWithArtifacts(row.channel) {
@@ -164,7 +168,7 @@ struct SidebarView: View {
                 // in public channels this user has not joined — clicking joins,
                 // then opens the app. Absent entirely when there is nothing to
                 // list, like Agents and Browse.
-                let apps = appEntries
+                let apps = app.can(.apps) ? appEntries : []
                 if !apps.isEmpty {
                     sectionHeader("Apps", collapsed: appsCollapsed) {
                         appsCollapsed.toggle()
@@ -181,7 +185,7 @@ struct SidebarView: View {
                 // Agents (#361): one row per workspace agent, between Channels
                 // and Direct messages, whether or not a DM exists yet. An agent
                 // with a DM brings it up here, so it is never listed twice.
-                let agents = agentSplit.agents
+                let agents = app.can(.agents) ? agentSplit.agents : []
                 if !agents.isEmpty {
                     sectionHeader("Agents", collapsed: agentsCollapsed) {
                         agentsCollapsed.toggle()
@@ -208,16 +212,18 @@ struct SidebarView: View {
                 }
 
                 sectionHeader("Direct messages") {
-                    Button {
-                        showNewDM = true
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                            .flowFont(.caption)
-                            .foregroundStyle(.white.opacity(0.55))
+                    if app.can(.channelManagement) {
+                        Button {
+                            showNewDM = true
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                                .flowFont(.caption)
+                                .foregroundStyle(.white.opacity(0.55))
+                        }
+                        .buttonStyle(.plain)
+                        .help("New direct message")
+                        .accessibilityIdentifier("sidebar.newDM")
                     }
-                    .buttonStyle(.plain)
-                    .help("New direct message")
-                    .accessibilityIdentifier("sidebar.newDM")
                 }
                 // Directory (#432): a nav entry, not a DM row — it highlights
                 // when active and opens the member grid rather than a
@@ -230,7 +236,7 @@ struct SidebarView: View {
                     }
                 }
 
-                if !browsableChannels.isEmpty {
+                if !browsableChannels.isEmpty, app.can(.channelManagement) {
                     sectionHeader("Browse") {}
                     ForEach(browsableChannels) { channel in
                         browseRow(channel)
@@ -274,7 +280,9 @@ struct SidebarView: View {
                     }
             }
 
-            inviteAgentButton
+            if app.can(.agents) {
+                inviteAgentButton
+            }
 
             StatusFooterView(palette: palette)
         }
@@ -412,8 +420,8 @@ struct SidebarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             navButton(back: true)
             navButton(back: false)
-            scheduledClock
-            activityBell
+            if app.can(.scheduledMessages) { scheduledClock }
+            if app.can(.notifications) { activityBell }
         }
     }
 
@@ -787,7 +795,7 @@ struct SidebarView: View {
             }
         }
         notifyMenu(channel)
-        if channel.kind == "group_dm" {
+        if channel.kind == "group_dm", app.can(.channelManagement) {
             Button("Leave Conversation", role: .destructive) { leave(channel) }
         }
     }
@@ -1020,6 +1028,9 @@ struct SidebarView: View {
                 Circle().strokeBorder(online ? Color.clear : .white.opacity(0.4), lineWidth: 1.5)
             )
             .frame(width: 8, height: 8)
+            // No presence from this provider (#546): the slot keeps its width
+            // so rows line up, but an "offline" ring would be a false claim.
+            .opacity(app.can(.presence) ? 1 : 0)
     }
 
     private func unreadBadge(_ n: Int) -> some View {
@@ -1036,14 +1047,18 @@ struct SidebarView: View {
     @ViewBuilder
     private func channelMenu(_ channel: Channel) -> some View {
         notifyMenu(channel)
-        Divider()
-        Button("Invite to Channel…") { addMemberChannel = channel }
-        if channel.name != "general" {
-            Button("Leave Channel", role: .destructive) { leave(channel) }
-            Button("Archive Channel", role: .destructive) {
-                Task {
-                    do { try await app.engine.archiveChannel(channel.id) }
-                    catch { app.showError(error.localizedDescription) }
+        // Membership changes are channel management (#546): a provider that
+        // has none keeps only the notification levels, which stay local.
+        if app.can(.channelManagement) {
+            Divider()
+            Button("Invite to Channel…") { addMemberChannel = channel }
+            if channel.name != "general" {
+                Button("Leave Channel", role: .destructive) { leave(channel) }
+                Button("Archive Channel", role: .destructive) {
+                    Task {
+                        do { try await app.engine.archiveChannel(channel.id) }
+                        catch { app.showError(error.localizedDescription) }
+                    }
                 }
             }
         }
@@ -1119,18 +1134,24 @@ struct SidebarView: View {
                 }
             }
             Divider()
-            if canEditWorkspace {
+            // Workspace administration is Flow's (#546): on a provider
+            // connection the menu keeps switching, Directory and the build tag.
+            if canEditWorkspace, app.can(.admin) {
                 Button("Workspace Appearance…") { showColorPicker = true }
             }
-            Button("Create Workspace…") { showCreateWorkspace = true }
-            Button("Accept Invite…") { showAcceptInvite = true }
-            Button("Invite People…") { showInvite = true }
+            if app.can(.admin) {
+                Button("Create Workspace…") { showCreateWorkspace = true }
+                Button("Accept Invite…") { showAcceptInvite = true }
+            }
+            if app.can(.channelManagement) {
+                Button("Invite People…") { showInvite = true }
+            }
             Button("Directory") { win.showDirectoryPanel() }
                 .disabled(win.selectedWorkspaceId == nil)
                 .accessibilityIdentifier("sidebar.directoryMenuItem")
             Divider()
             Button("All Workspaces") { win.selectWorkspace(nil) }
-            if currentWorkspace != nil {
+            if currentWorkspace != nil, app.can(.admin) {
                 switch workspaceExit {
                 case .delete:
                     Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }

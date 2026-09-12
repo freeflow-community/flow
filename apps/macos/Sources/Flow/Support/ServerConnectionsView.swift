@@ -29,6 +29,7 @@ struct ServerConnectionsView: View {
     @State private var signout: String?
     @State private var memberships: [String: [Workspace]] = [:]
     @State private var offline: Set<String> = []
+    @State private var slackHandoff: SlackBrowserSignIn.Handoff?
 
     var body: some View {
         ScrollView {
@@ -41,7 +42,7 @@ struct ServerConnectionsView: View {
                 ForEach(manager.registry.connections, id: \.connectionId) { connection in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(connection.canonicalOrigin?.label ?? connection.origin).font(.headline)
+                            Text(connection.provider == .slack ? "Slack · \(connection.label)" : connection.canonicalOrigin?.label ?? connection.origin).font(.headline)
                             // Aggregated from this connection's own live session
                             // — no server can total the others (#542).
                             let total = manager.unreadByConnection[connection.connectionId] ?? 0
@@ -75,11 +76,49 @@ struct ServerConnectionsView: View {
                             }
                         }
                         HStack {
-                            Button("Add workspace / Sign in") { address = connection.origin; discovery = nil; auth = nil }
-                            Button("Sign out") { signout = connection.connectionId }
-                            Button("Remove server", role: .destructive) { removal = connection.connectionId }
+                            if connection.provider == .flow {
+                                Button("Add workspace / Sign in") { address = connection.origin; discovery = nil; auth = nil }
+                            } else if let connector = connection.canonicalOrigin {
+                                Button("Reauthorize") { run {
+                                    let teamId = (try? JSONSerialization.jsonObject(with: Data(connection.providerIdentity.utf8)) as? [Any])?.dropFirst(2).first as? String
+                                    slackHandoff = try await SlackBrowserSignIn().connect(connector: connector.url, expectedTeamId: teamId)
+                                } }
+                            }
+                            Button(connection.provider == .slack ? "Disconnect this client" : "Sign out") { signout = connection.connectionId }
+                            Button(connection.provider == .slack ? "Remove team" : "Remove server", role: .destructive) { removal = connection.connectionId }
                         }.font(.caption)
                     }.disabled(busy).padding().background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                }
+                // Slack teams (#546): one connector for the deployment, one
+                // Slack account per team, verified before it is added — the
+                // same flow the web client runs, in the system web-auth sheet.
+                Text("Slack workspaces").font(.headline)
+                if let connector = Server.slackConnectorOrigin {
+                    Text("Sign in with your Slack account. Flow’s connector stores your authorization and handles Slack content on your behalf.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let pending = slackHandoff {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Slack verified \(pending.teamName ?? "") (\(pending.identity?.teamId ?? "")) as \(pending.userName ?? "") (\(pending.identity?.userId ?? "")).")
+                            if pending.status == "missing_scopes" { Text(SlackBrowserSignIn.statusMessage("missing_scopes")).font(.caption) }
+                            HStack {
+                                Button("Add verified workspace") { run {
+                                    let connection = try manager.addSlack(connector: connector, handoff: pending)
+                                    slackHandoff = nil
+                                    if let app = manager.appState(connection.connectionId) {
+                                        await app.engine.bootstrap()
+                                        select(app, pending.identity?.teamId); dismiss()
+                                    }
+                                } }
+                                Button("Discard") { slackHandoff = nil }
+                            }
+                        }.padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        Button("Connect Slack") { run {
+                            slackHandoff = try await SlackBrowserSignIn().connect(connector: connector.url)
+                        } }.disabled(busy)
+                    }
+                } else {
+                    Text("Slack connection is not configured on this Flow deployment. Ask your Flow administrator to enable it.").font(.caption)
                 }
                 Text("Connect another Flow server").font(.headline)
                 TextField("Server or Flow invite URL", text: $address).textFieldStyle(.roundedBorder).disabled(busy)
@@ -200,7 +239,10 @@ struct ServerConnectionsView: View {
 
     private func loadMemberships() async {
         for connection in manager.registry.connections {
-            guard manager.registry.session(connection.connectionId)?.status == .authenticated,
+            // A Slack team is bound at add time and has no membership list to
+            // reconcile; asking it for Flow workspaces would be a Flow path.
+            guard connection.provider == .flow,
+                  manager.registry.session(connection.connectionId)?.status == .authenticated,
                   let runtime = manager.runtime(connection.connectionId) else { continue }
             do {
                 let response: WorkspacesResponse = try await runtime.api.get("/v1/me/workspaces")
@@ -225,6 +267,7 @@ struct ServerConnectionsView: View {
 
     private func actionLabel(_ id: String?) -> String {
         guard let id, let connection = manager.registry.connection(id) else { return "server" }
+        if connection.provider == .slack { return "Slack · \(connection.label)" }
         let identity: String
         if let app = manager.appState(id), case .signedIn(let user) = app.phase { identity = user.email }
         else { identity = manager.registry.session(id)?.userId ?? "Not signed in" }

@@ -20,7 +20,7 @@ struct ShareView: View {
                 case .ready, .sending:
                     form
                 case .sent:
-                    status(icon: "checkmark.circle.fill", tint: .green, text: "Sent to Flow")
+                    status(icon: "checkmark.circle.fill", tint: .green, text: store.isSlack ? "Sent to Slack" : "Sent to Flow")
                 case .failed(let message):
                     status(icon: "exclamationmark.triangle.fill", tint: .orange, text: message)
                 }
@@ -52,13 +52,19 @@ struct ShareView: View {
     private var form: some View {
         Form {
             if let fileURL = store.payload?.fileURL {
-                Section("Attachment") {
+                Section {
                     AttachmentRow(url: fileURL, isVideo: isVideo, size: store.fileSize)
+                } header: {
+                    Text("Attachment")
+                } footer: {
+                    if let refusal = store.attachmentRefusal {
+                        Text(refusal).foregroundStyle(.orange).accessibilityIdentifier("share.attachment.refused")
+                    }
                 }
             }
             Picker("Server", selection: Binding(get: { store.connectionId ?? "" }, set: { id in Task { await store.selectConnection(id) } })) {
                 ForEach(store.connections, id: \.connectionId) { connection in
-                    Text(connection.canonicalOrigin?.label ?? connection.origin).tag(connection.connectionId)
+                    Text(store.pickerLabel(for: connection)).tag(connection.connectionId)
                 }
             }
             Text(store.serverLabel).font(.caption).foregroundStyle(.secondary)

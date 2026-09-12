@@ -64,6 +64,19 @@ enum Banners {
     /// signature diverging, not the behaviour.
     static func show(_ n: NotificationItem, title: String, body: String, sound: Bool = true, routingId: String? = nil) {}
 
+    /// A provider message with no push behind it (#546): Slack events reach
+    /// the app only through the connector stream, so while the app runs it
+    /// posts the banner itself. Nothing is posted in the background, and no
+    /// APNs token is ever registered with the provider.
+    static func showLocal(identifier: String, title: String, body: String, userInfo: [AnyHashable: Any], sound: Bool = true) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = sound ? .default : nil
+        content.userInfo = userInfo
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil)) { _ in }
+    }
+
     /// App-icon badge with the unread notification count.
     @MainActor
     static func setBadge(_ count: Int) {

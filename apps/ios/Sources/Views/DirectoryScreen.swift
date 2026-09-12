@@ -147,13 +147,14 @@ struct DirectoryScreen: View {
     // MARK: - Card
 
     private func card(_ m: DirectoryRow) -> some View {
-        let online = app.isOnline(m.userId, in: app.selectedWorkspaceId)
+        let presence = app.can(.presence)
+        let online = presence && app.isOnline(m.userId, in: app.selectedWorkspaceId)
         let contact = Directory.contactLine(m, sponsorName: m.sponsorId.flatMap { namesById[$0] })
         return Button {
             profileRoute = ProfileRoute(userId: m.userId)
         } label: {
             HStack(alignment: .top, spacing: 10) {
-                avatar(m, online: online)
+                avatar(m, online: online, showsPresence: presence)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 3) {
                         Text(m.displayName)
@@ -209,7 +210,7 @@ struct DirectoryScreen: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("directory.card.\(m.displayName)")
-        .accessibilityValue(online ? "online" : "offline")
+        .accessibilityValue(!presence ? "" : online ? "online" : "offline")
     }
 
     private func statusLine(_ m: DirectoryRow) -> String? {
@@ -218,7 +219,9 @@ struct DirectoryScreen: View {
         return line.isEmpty ? nil : line
     }
 
-    private func avatar(_ m: DirectoryRow, online: Bool) -> some View {
+    /// `showsPresence` false (#546): the provider has no presence, so no dot
+    /// at all rather than a grey one that would read as "offline".
+    private func avatar(_ m: DirectoryRow, online: Bool, showsPresence: Bool = true) -> some View {
         let shape = RoundedRectangle(cornerRadius: 10)
         // Fall back to the app's cached avatar map, so a face already on screen
         // in a conversation doesn't redraw as a placeholder here.
@@ -243,11 +246,13 @@ struct DirectoryScreen: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            Circle()
-                .fill(online ? MC.online : MC.hairline2)
-                .frame(width: 12, height: 12)
-                .overlay(Circle().strokeBorder(MC.chat, lineWidth: 2))
-                .offset(x: 3, y: 3)
+            if showsPresence {
+                Circle()
+                    .fill(online ? MC.online : MC.hairline2)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().strokeBorder(MC.chat, lineWidth: 2))
+                    .offset(x: 3, y: 3)
+            }
         }
     }
 

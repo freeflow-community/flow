@@ -457,6 +457,63 @@ final class AppState: ObservableObject {
         hasMore[channelId] = value
     }
 
+    // MARK: - Provider capabilities and limits (#546)
+
+    /// What this connection's backend can do. Views gate Flow-only controls
+    /// on it and show the reason on a disabled one; a Flow server supports
+    /// everything, so nothing changes there.
+    @Published private(set) var capabilities: Capabilities = .allSupported
+
+    func setCapabilities(_ caps: Capabilities) {
+        capabilities = caps
+    }
+
+    func can(_ name: CapabilityName) -> Bool { capabilities.canUse(name) }
+
+    /// The provider's own deep link for a conversation or message ("Open in
+    /// Slack"); nil on a Flow connection, which has nowhere else to open.
+    func providerOpenURL(channelId: String, messageId: String? = nil) -> URL? {
+        runtime.backend?.openURL(channelId: channelId, messageId: messageId)
+    }
+
+    /// A provider that limits history says so per channel: the transcript is
+    /// shown as partial, and `retryAfter` is when the next page may load.
+    struct HistoryLimit: Equatable, Sendable {
+        var limited: Bool
+        var retryAfter: Date?
+    }
+    @Published private(set) var historyLimits: [String: HistoryLimit] = [:]
+
+    func setHistoryLimited(channelId: String, _ limited: Bool, retryAfter: TimeInterval?) {
+        historyLimits[channelId] = HistoryLimit(limited: limited, retryAfter: retryAfter.map { Date().addingTimeInterval($0) })
+    }
+
+    /// The provider's event stream fell behind (missed replay) or is paused by
+    /// a rate limit; the transcript may be stale until it recovers.
+    @Published private(set) var streamDegraded = false
+
+    func setStreamDegraded(_ degraded: Bool) {
+        streamDegraded = degraded
+    }
+
+    /// A message from someone else arrived through the provider stream in a
+    /// conversation not on screen. There is no Flow notification row and no
+    /// push for it; the client posts its own local banner while running,
+    /// honoring the user's Flow notification settings (DMs and mentions).
+    func providerMessageArrived(_ message: Message) {
+        guard let me = currentUser, message.userId != me.id else { return }
+        let isDm = (try? db.reader.read { db in try Channel.fetchOne(db, key: message.channelId)?.isDM }) ?? false
+        let mentioned = message.body.contains("<@\(me.id)>")
+        let prefs = me.prefs
+        guard (isDm && prefs.isOn(\.dm)) || (mentioned && prefs.isOn(\.mention)) else { return }
+        let sender = (try? db.reader.read { db in try User.fetchOne(db, key: message.userId)?.displayName }) ?? "Someone"
+        let workspaceId = (try? db.reader.read { db in try Channel.fetchOne(db, key: message.channelId)?.workspaceId }) ?? ""
+        let title = isDm ? "\(sender) (Slack DM)" : "\(sender) mentioned you in Slack"
+        var userInfo: [AnyHashable: Any] = ["workspaceId": workspaceId, "channelId": message.channelId, "messageId": message.id, "connectionId": connectionId]
+        if let root = message.threadRootId { userInfo["threadRootId"] = root }
+        Banners.showLocal(identifier: "\(connectionId):slack:\(message.id)", title: title, body: message.body, userInfo: userInfo, sound: prefs.isOn(\.sound))
+    }
+
     func setLoadingHistory(channelId: String, _ value: Bool) {
         if value {
             loadingHistory.insert(channelId)

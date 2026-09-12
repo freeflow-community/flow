@@ -157,6 +157,40 @@ before removing the stale lock and restarting. A multi-replica deployment needs
 a shared transactional credential store and distributed refresh ownership before
 it can replace this single-process PoC.
 
+## Notifications: what exists, and the push design that does not (#546)
+
+What ships: while a Flow client runs, the connector's `GET /v1/stream` delivers
+message events, and the client itself posts a local banner for a mention or a
+direct message (web: the `Notification` API; macOS and iOS: a local
+`UNNotificationRequest` via `Banners.showLocal`). The `notifications` capability
+therefore reads **limited** ("only while Flow is open"), never supported. No
+client sends its APNs or Web Push token to the connector, and the connector
+never sees a device token. Nothing reaches a closed app.
+
+Why there is no push: Slack delivers events only to the connector. The Flow
+server sends pushes only for its own notification rows, and there is no
+server-to-server route by which the connector could ask it to. The
+`device_tokens` table keys on the APNs token alone, so a second routed row for
+the same device is also blocked by schema, not just by policy.
+
+The smallest honest design, if a later phase wants it:
+
+1. **A signed connector → Flow route.** The connector holds a per-deployment
+   key. On a mention or DM event it POSTs `{routingId, title, body, target}` to
+   a new Flow endpoint that verifies the signature and enqueues a push through
+   the existing `pushOutbox`. The client registers its Flow routing id with the
+   connector once per session (`POST /v1/push-route`), so the connector never
+   holds a device token, only an opaque id the Flow server can resolve. Cost:
+   the Flow server learns which Slack teams a device is subscribed to, and the
+   connector learns which Flow server a device uses.
+2. **Client-relayed** (no new server surface): a running client, on receiving
+   a mention for a teammate's device, cannot help; this only works for the
+   device's own foreground session and is what already ships. Listed to record
+   that it was considered and does not close the gap.
+
+Neither is built. Until one is, the wording in the capability reason is the
+contract: alerts while Flow is open, nothing when it is closed.
+
 ## Distribution / hosting decision
 
 The intended pilot is a dedicated app operated by the connector host, serving
