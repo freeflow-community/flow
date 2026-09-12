@@ -318,19 +318,22 @@ export class Connector {
       return this.describe(id, grant);
     });
   }
-  async send(credential, { channel, text }) {
-    if (!idPattern.test(channel ?? '') || typeof text !== 'string' || !text.trim() || text.length > 4000) throw new Fault('invalid_message');
+  async send(credential, { channel, text, thread_ts: threadTs }) {
+    if (!idPattern.test(channel ?? '') || typeof text !== 'string' || !text.trim() || text.length > 4000 || (threadTs != null && !isTs(threadTs))) throw new Fault('invalid_message');
     return this.withGrant(credential, async grant => {
       if (!grantedCapabilities(grant.scopes).sendAsUser) throw new Fault('missing_scopes', 403);
       const budget = JSON.stringify([grant.identity.teamId, 'chat.postMessage']);
       if ((this.rateLimits.get(budget) ?? 0) > this.now()) throw new Fault('rate_limited', 429);
       try {
-        const result = await this.slack('chat.postMessage', { channel, text, unfurl_links: 'false', unfurl_media: 'false' }, grant.accessToken);
+        // The body arrives as Flow markdown and goes out as mrkdwn; the reply
+        // comes back through the same normalizer every read path uses.
+        const result = await this.slack('chat.postMessage', { channel, text: markdownToMrkdwn(text), unfurl_links: 'false', unfurl_media: 'false', ...(threadTs ? { thread_ts: threadTs } : {}) }, grant.accessToken);
         // Slack stamps the app's bot_id/app_id/bot_profile on user-token posts
         // too, so authorship is message.user; a bot_message is never the user's.
         // 409, not 5xx: a proxy may replace a 5xx body and hide this code.
         if (result.message?.user !== grant.identity.userId || result.message?.subtype === 'bot_message') throw new Fault('authorship_mismatch', 409);
-        return { channel: result.channel, ts: result.ts, userId: result.message.user };
+        const message = normalizeMessage({ ...result.message, ts: result.ts, channel: result.channel, ...(threadTs ? { thread_ts: threadTs } : {}) }, { teamId: grant.identity.teamId, channelId: result.channel ?? channel });
+        return { channel: result.channel, ts: result.ts, userId: result.message.user, message };
       } catch (error) {
         if (error.retryAfter) this.rateLimits.set(budget, this.now() + error.retryAfter * 1000);
         throw error;

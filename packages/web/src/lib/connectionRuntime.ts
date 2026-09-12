@@ -397,9 +397,12 @@ export class ConnectionManager {
   constructor(origin: string = location.origin) {
     this.registry = loadOrMigrateRegistry(origin);
     this.selected = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem('flow.selectedConnection');
-    if (!this.selected || connectionById(this.registry, this.selected)?.provider !== 'flow') {
+    // Any provider can be the foreground connection (#545); a Flow server is
+    // the fallback when nothing valid is selected, because auth links and the
+    // signed-out screens are Flow's.
+    if (!this.selected || !connectionById(this.registry, this.selected)) {
       const saved = this.registry.activeConnectionId;
-      this.selected = saved && connectionById(this.registry, saved)?.provider === 'flow' ? saved : this.registry.connections.find(c => c.provider === 'flow')?.connectionId ?? null;
+      this.selected = saved && connectionById(this.registry, saved) ? saved : this.registry.connections.find(c => c.provider === 'flow')?.connectionId ?? null;
     }
   }
 
@@ -472,7 +475,7 @@ export class ConnectionManager {
   }
 
   setActive(connectionId: string): void {
-    if (connectionById(this.registry, connectionId)?.provider !== 'flow') return;
+    if (!connectionById(this.registry, connectionId)) return;
     this.selected = connectionId;
     if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('flow.selectedConnection', connectionId);
   }

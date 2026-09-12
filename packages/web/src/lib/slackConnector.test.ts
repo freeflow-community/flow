@@ -16,7 +16,9 @@ describe('Slack connection registry', () => {
     expect(b.registry.activeConnectionId).toBe(flow.connection.connectionId);
     expect(a.connection.providerIdentity).not.toBe(b.connection.providerIdentity);
     expect(sessionFor(b.registry, a.connection.connectionId)?.credentialRef).not.toBe(sessionFor(b.registry, b.connection.connectionId)?.credentialRef);
-    expect(b.registry.bindings).toEqual([]); // OAuth PoC never claims Flow chat capability.
+    // Each team is its own single workspace in the switcher (#545), keyed by
+    // the immutable team id and never merged with the other team's binding.
+    expect(b.registry.bindings.map(x => [x.connectionId, x.workspaceId])).toEqual([[a.connection.connectionId, 'T1'], [b.connection.connectionId, 'T2']]);
   });
   it('preserves identity on rename, distinguishes users and rejects silent connector migration', () => {
     const first = addSlackConnection(emptyRegistry(), 'https://connector.example.com', connection('T1'));

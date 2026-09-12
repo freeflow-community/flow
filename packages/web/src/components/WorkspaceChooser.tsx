@@ -5,6 +5,7 @@ import type { PendingWorkspaceInviteDTO, WorkspaceDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useSelfRegisterDomain, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { useIsFlow } from '../lib/backend';
 import { EMPTY_SLUG_FIELD, slugEdited, slugForName } from '../lib/slugify';
 import { OpenInAppButton } from './OpenInApp';
 import { AuthImg } from './Avatar';
@@ -33,6 +34,9 @@ export default function WorkspaceChooser() {
   const [openToDomain, setOpenToDomain] = useState(false);
   const [inviteToken, setInviteToken] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Creating or joining workspaces is a Flow account act; a Slack connection
+  // has exactly the team it was authorized for (#545).
+  const isFlow = useIsFlow();
 
   const create = async () => {
     setError(null);
@@ -147,19 +151,19 @@ export default function WorkspaceChooser() {
         ))}
       </div>
       <div className="flex gap-2">
-        <button
+        {isFlow && <button
           className="rounded border border-hairline2 bg-white px-3 py-1.5 text-sm hover:bg-daypill"
           onClick={() => { setShowCreate((v) => !v); setShowAccept(false); }}
         >
           Create Workspace…
-        </button>
-        <button
+        </button>}
+        {isFlow && <button
           data-testid="accept-invite-toggle"
           className="rounded border border-hairline2 bg-white px-3 py-1.5 text-sm hover:bg-daypill"
           onClick={() => { setShowAccept((v) => !v); setShowCreate(false); }}
         >
           Accept Invite…
-        </button>
+        </button>}
         <button className="px-3 py-1.5 text-sm text-accent-soft hover:underline" onClick={auth.signOut}>
           Sign Out
         </button>

@@ -18,6 +18,7 @@ import type {
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { applyChannelEmoji, applyHuddle, applyIndicator } from '../lib/channelCache';
 import { api } from '../lib/api';
+import { backendFor } from '../lib/backend';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useRuntime, useSelection } from '../state';
@@ -137,6 +138,50 @@ export default function Main() {
   useEffect(() => {
     const token = runtime.getToken();
     if (!token) return;
+    // A non-Flow provider has no Flow socket: its backend's normalized stream
+    // feeds the same message cache (#545). Flow keeps the socket below, whose
+    // non-chat events (artifacts, huddles, notifications) are Flow's own.
+    if (runtime.provider !== 'flow') {
+      setStatus('connected');
+      const backend = backendFor(runtime);
+      const unsubscribe = backend.subscribe((event) => {
+        switch (event.type) {
+          case 'message.created':
+          case 'thread.reply':
+            applyMessageEvent(qc, event.message, true);
+            void qc.invalidateQueries({ queryKey: ['channels'] });
+            break;
+          case 'message.updated':
+            applyMessageEvent(qc, event.message, false);
+            break;
+          case 'message.deleted':
+            removeMessageFromCache(qc, { id: event.messageId, channelId: event.channelId, threadRootId: event.threadRootId } as MessageDTO);
+            break;
+          case 'reaction.added':
+          case 'reaction.removed':
+            void qc.invalidateQueries({ queryKey: ['messages', event.channelId] });
+            void qc.invalidateQueries({ queryKey: ['thread'] });
+            break;
+          case 'channel.updated':
+            void qc.invalidateQueries({ queryKey: ['channels'] });
+            break;
+          case 'stream.degraded':
+            setStatus('reconnecting');
+            break;
+          case 'stream.recovered':
+            setStatus('connected');
+            setCatchUpCount((n) => n + 1);
+            void qc.invalidateQueries().finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
+            break;
+          case 'auth.changed':
+            if (event.auth.status !== 'authenticated') setStatus('reconnecting');
+            break;
+          default:
+            break;
+        }
+      });
+      return unsubscribe;
+    }
     const client = new SocketClient(token, {
       onStatus: (s) => {
         setStatus(s);

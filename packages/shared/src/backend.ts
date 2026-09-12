@@ -12,7 +12,7 @@
 // Identity rules (spec lines 247-261) are enforced by the helpers at the bottom:
 // provider-native ids stay strings; a Slack message is keyed by the exact `ts`
 // string and never converted through a number or given a manufactured UUID.
-import type { ChannelDTO, FileDTO, MessageDTO, MessagePage, WorkspaceDTO, WorkspaceMemberDTO } from './dto.js';
+import type { ChannelDTO, FileDTO, MessageDTO, MessagePage, UserDTO, WorkspaceDTO, WorkspaceMemberDTO } from './dto.js';
 
 export type BackendProvider = 'flow' | 'slack';
 
@@ -116,6 +116,9 @@ export interface SendMessageInput {
   clientMsgId: string;
   threadRootId?: string | null;
   fileIds?: string[];
+  /** Explicit mention targets (Flow); providers that derive mentions from the
+   * body ignore it. */
+  mentions?: string[];
 }
 
 export interface SendReceipt {
@@ -157,6 +160,12 @@ export interface WorkspaceBackend {
 
   auth(): BackendAuthState;
   capabilities(): Capabilities;
+  /** The signed-in identity as the UI's user model. Providers without a Flow
+   * account synthesize it from their own identity (no email, default prefs). */
+  me(): Promise<UserDTO>;
+  /** End this client's session with the provider; the connection record and
+   * any other client's session are untouched. */
+  signOut(): Promise<void>;
 
   listWorkspaces(): Promise<WorkspaceDTO[]>;
   listConversations(workspaceId: string): Promise<BackendChannel[]>;
@@ -168,12 +177,15 @@ export interface WorkspaceBackend {
 
   send(input: SendMessageInput): Promise<SendReceipt>;
   edit(channelId: string, messageId: string, body: string): Promise<BackendMessage>;
-  delete(channelId: string, messageId: string): Promise<void>;
+  /** `purge` asks for a hard delete where the provider distinguishes one (Flow). */
+  delete(channelId: string, messageId: string, options?: { purge?: boolean }): Promise<void>;
   setReaction(channelId: string, messageId: string, emoji: string, on: boolean): Promise<void>;
-  markRead(channelId: string, messageId: string): Promise<void>;
+  /** With `threadRootId` it means "I am looking at this thread" (Flow keeps a
+   * separate cursor for replies); providers without that ignore it. */
+  markRead(channelId: string, messageId: string, options?: { threadRootId?: string }): Promise<void>;
 
   /** `file` is a Blob/File in browsers; typed loosely so this package stays DOM-free. */
-  uploadFile(channelId: string, file: { size: number; type: string }, name: string): Promise<FileDTO>;
+  uploadFile(target: { workspaceId: string; channelId: string }, file: { size: number; type: string; name?: string }): Promise<FileDTO>;
   fileUrl(file: FileDTO): string | null;
 
   search(query: string, options?: { cursor: string | null }): Promise<SearchResult>;

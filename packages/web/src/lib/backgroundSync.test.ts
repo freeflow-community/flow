@@ -300,9 +300,10 @@ it('never starts Flow API or WebSocket sync for a Slack connector', async () => 
   });
   slack.setToken('connector-credential');
   manager.bindIdentity(slack.connectionId, 'U1');
-  const flowId = manager.activeConnectionId;
+  // A Slack team can be the foreground connection (#545); the background
+  // supervisor still speaks only to Flow servers, whichever one is on screen.
   manager.setActive(slack.connectionId);
-  expect(manager.activeConnectionId).toBe(flowId);
+  expect(manager.activeConnectionId).toBe(slack.connectionId);
   sync.start();
   await Promise.resolve(); await Promise.resolve();
   expect(apiCalls.every(call => call.origin !== slack.origin)).toBe(true);

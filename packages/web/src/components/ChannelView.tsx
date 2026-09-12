@@ -15,6 +15,8 @@ import { useHoverTooltip } from './HoverTooltip';
 import { ChannelOptionsModal, Modal, UserCard } from './modals';
 import { renderBody } from '../lib/format';
 import { useSyncBar } from '../lib/syncBar';
+import { useBackend, useCapabilities } from '../lib/backend';
+import { BackendError } from '@flow/shared';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
@@ -28,6 +30,27 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const messagesQ = useMessages(channelId);
   const pins = usePinnedMessages(channelId);
   const markRead = useMarkRead();
+  // Capability gating (#545): the header's Flow-only controls are not
+  // rendered for a backend that cannot do them; history that the provider
+  // limits is shown as limited rather than as the end of the transcript.
+  const caps = useCapabilities();
+  const backend = useBackend();
+  const openUrl = backend.openUrl({ channelId });
+  const limitedHistory = caps.history.state === 'limited';
+  const historyError = messagesQ.error instanceof BackendError ? messagesQ.error : null;
+  const lastPage = messagesQ.data?.pages[messagesQ.data.pages.length - 1];
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (historyError?.code === 'rate_limited') setRetryAt(Date.now() + (historyError.retryAfterMs ?? 60_000));
+    else setRetryAt(null);
+  }, [historyError]);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (retryAt === null) return;
+    const timer = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [retryAt]);
+  const waitSeconds = retryAt === null ? 0 : Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
   const lastReadRef = useRef<string | null>(null);
   const [cardUserId, setCardUserId] = useState<string | null>(null);
   const [editChannel, setEditChannel] = useState(false);
@@ -130,7 +153,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   // DM the same button *rings* the other member(s), so it says so.
   const huddleParticipants = channel?.huddleParticipants ?? [];
   const inThisHuddle = huddle.channelId === channelId;
-  const huddleEligible = !!channel && !channel.archivedAt;
+  const huddleEligible = !!channel && !channel.archivedAt && caps.huddles.state !== 'unavailable';
+  const canEditChannel = channel?.kind === 'standard' && caps.channelManagement.state !== 'unavailable';
   const isDmHuddle = !!channel && channel.kind !== 'standard';
 
   // #392: the header shows the topic on one truncated line — hovering it gives
@@ -153,13 +177,13 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         <div className="min-w-0 flex-1">
           <h2
             data-testid="channel-header"
-            className={`truncate text-[15px] font-bold ${dmOtherId || channel?.kind === 'standard' ? 'cursor-pointer hover:underline' : ''}`}
-            title={channel?.kind === 'standard' ? 'Edit name & topic' : undefined}
+            className={`truncate text-[15px] font-bold ${dmOtherId || canEditChannel ? 'cursor-pointer hover:underline' : ''}`}
+            title={canEditChannel ? 'Edit name & topic' : undefined}
             onClick={
               dmOtherId
                 ? () => setCardUserId(dmOtherId)
                 // Clicking a standard channel's name opens the name/topic editor (ui_nits item 5).
-                : channel?.kind === 'standard'
+                : canEditChannel
                   ? () => setEditChannel(true)
                   : undefined
             }
@@ -234,8 +258,20 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             {/* nothing to stack yet (fetch in flight) — keep a clickable target */}
             {shown.length === 0 && <span className="text-sm text-muted">👥</span>}
           </button>
+          {/* Another provider's conversation opens natively there (#545). */}
+          {openUrl && (
+            <a
+              data-testid="open-in-provider"
+              className="rounded-lg px-2 py-1 text-xs font-semibold text-accent-soft hover:bg-daypill/60"
+              href={openUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open in Slack ↗
+            </a>
+          )}
           {/* #188: pins, artifacts and channel options share one "⋯" menu */}
-          <button
+          {caps.pins.state !== 'unavailable' && <button
             type="button"
             data-testid="channel-menu-trigger"
             data-overflow-trigger
@@ -246,7 +282,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             onClick={() => { setMenuOpen((v) => !v); setMembersOpen(false); }}
           >
             ⋯
-          </button>
+          </button>}
           {membersOpen && (
             <ChannelMembersPopover
               rows={memberRows}
@@ -274,6 +310,28 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           it pushes the list down rather than floating over the newest message. */}
       {find.open && <FindBar find={find} />}
 
+      {/* Provider-limited history (#545): say so, with the wait, instead of a
+          silent end of the transcript or a retry loop against the budget. */}
+      {limitedHistory && (historyError?.code === 'rate_limited' || messagesQ.hasNextPage || lastPage?.partial) && (
+        <div data-testid="history-limited" role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline bg-amber-50 px-[22px] py-1.5 text-xs text-ink-soft">
+          <span>
+            {historyError?.code === 'rate_limited'
+              ? waitSeconds > 0 ? `Slack asked Flow to wait ${waitSeconds}s before loading older messages.` : 'Slack is ready for the next page of history.'
+              : caps.history.reason}
+          </span>
+          {(messagesQ.hasNextPage || historyError) && (
+            <button
+              data-testid="history-load-older"
+              className="shrink-0 font-semibold text-accent-soft hover:underline disabled:opacity-40"
+              disabled={messagesQ.isFetchingNextPage || waitSeconds > 0}
+              onClick={() => void messagesQ.fetchNextPage()}
+            >
+              Load older
+            </button>
+          )}
+        </div>
+      )}
+
       {showSyncBar && (
         <div
           className="mc-sync-bar shrink-0"
@@ -294,8 +352,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         messages={messages}
         names={names}
         membersById={memberMap}
-        hasMore={messagesQ.hasNextPage ?? false}
-        onLoadOlder={() => void messagesQ.fetchNextPage()}
+        hasMore={(messagesQ.hasNextPage ?? false) && !(limitedHistory && waitSeconds > 0)}
+        onLoadOlder={() => { if (!limitedHistory || waitSeconds === 0) void messagesQ.fetchNextPage(); }}
         showThreadAffordances
         unreadThreadRootIds={channel?.unreadThreadRootIds ?? []}
         focusMessageId={focusId}

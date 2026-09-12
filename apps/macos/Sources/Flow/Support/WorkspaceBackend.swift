@@ -145,6 +145,11 @@ protocol WorkspaceBackend: AnyObject, Sendable {
 
     func auth() async -> BackendAuthState
     func capabilities() async -> Capabilities
+    /// The signed-in identity as the UI's user model; providers without a
+    /// Flow account synthesize it from their own identity.
+    func currentUser() async throws -> User
+    /// End this client's session with the provider only.
+    func signOut() async throws
 
     func listWorkspaces() async throws -> [Workspace]
     func listConversations(workspaceId: String) async throws -> [Channel]
@@ -156,11 +161,13 @@ protocol WorkspaceBackend: AnyObject, Sendable {
 
     func send(_ input: SendMessageInput) async throws -> Message
     func edit(channelId: String, messageId: String, body: String) async throws -> Message
-    func delete(channelId: String, messageId: String) async throws
+    /// `purge` asks for a hard delete where the provider distinguishes one (Flow).
+    func delete(channelId: String, messageId: String, purge: Bool) async throws
     func setReaction(channelId: String, messageId: String, emoji: String, on: Bool) async throws
-    func markRead(channelId: String, messageId: String) async throws
+    /// With `threadRootId` it means "I am looking at this thread".
+    func markRead(channelId: String, messageId: String, threadRootId: String?) async throws
 
-    func uploadFile(channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment
+    func uploadFile(workspaceId: String, channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment
     func fileURL(_ file: FileAttachment) -> URL?
 
     /// The normalized live stream. Finishes when the backend is torn down.

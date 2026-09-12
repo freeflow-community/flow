@@ -227,8 +227,12 @@ export function addSlackConnection(registry: ConnectionRegistry, origin: string,
   const connection: ServerConnection = { connectionId: newId(), provider: 'slack', providerIdentity,
     origin: canonical, label: `${slack.teamName} · ${slack.userName}`, apiVersion: 1, capabilities: slack.capabilities, addedAt: new Date().toISOString() };
   const storageKey = newId();
+  // A Slack team is its own single workspace, so the switcher lists it from
+  // the moment it is added; the binding's workspace id is the immutable team id.
+  const binding: WorkspaceBinding = { connectionId: connection.connectionId, userId: slack.identity.userId, workspaceId: slack.identity.teamId, name: slack.teamName, hidden: false };
   return { connection, registry: { ...registry, connections: [...registry.connections, connection], sessions: [...registry.sessions,
-    { connectionId: connection.connectionId, userId: slack.identity.userId, credentialRef: credentialRefFor(storageKey), storageKey, authGeneration: 0, status: 'authenticated' }] } };
+    { connectionId: connection.connectionId, userId: slack.identity.userId, credentialRef: credentialRefFor(storageKey), storageKey, authGeneration: 0, status: 'authenticated' }],
+    bindings: [...registry.bindings.filter(b => b.connectionId !== connection.connectionId), binding] } };
 }
 
 export function updateSession(
