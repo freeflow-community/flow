@@ -1358,3 +1358,25 @@ one-recipient MCP correction).
   Marketplace. The public route to tier-3 history is Marketplace approval; the
   other route is the internal protocol, which is session-blocked. Discovery
   and send remain fine on the public API.
+
+## 2026-09-11 — Slack provider step 3: what "UI consumes the backend" means for this round (#545)
+
+- **The chat core goes through `WorkspaceBackend`; Flow-only surfaces stay on
+  the Flow runtime and are gated.** Channels, members, history, threads, send,
+  edit, delete, reactions, read state and identity are backend calls on all
+  clients. Artifacts, apps, agents, admin, scheduling, notifications, huddles
+  and invites keep their Flow REST calls but are disabled by capability, so a
+  Slack workspace never reaches a Flow mutation. Moving those surfaces behind
+  the interface is not required for a provider that cannot have them.
+- **The connector normalizes once for every client.** Slack payloads become the
+  shared DTO shapes inside the connector (mrkdwn → markdown, `ts` verbatim,
+  provenance with Open in Slack), so web, macOS and iOS decode the same JSON
+  and cannot drift on conversion rules.
+- **A limited provider is never refetched casually.** Slack history costs one
+  page per minute, so a delete or an event patches the cache instead of
+  invalidating the transcript, pages that overlap are deduped by id, and a 429
+  is shown as a wait with the provider's `Retry-After`, never retried.
+- **Native ships the backend, not the sign-in.** macOS and iOS get the
+  adapter, the registry record with per-team bindings, and tests; the Connect
+  Slack flow and routing the sync engine through the protocol are the next
+  native slice and are recorded in the Parity ledger rather than half-wired.

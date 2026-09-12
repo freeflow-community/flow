@@ -271,6 +271,9 @@ targets:
       # One rule, two clients: iOS runs the same suite so a drift shows up on
       # whichever platform is built first.
       - path: ../macos/Tests/FlowTests/DirectoryTests.swift
+      # The Slack backend's decoding, capability wording, rate-limit handling
+      # and registry identity rules (#545) — one adapter, both clients.
+      - path: ../macos/Tests/FlowTests/SlackBackendTests.swift
     dependencies:
       - target: Flow
     settings:

@@ -153,7 +153,8 @@ protocol WorkspaceBackend: AnyObject, Sendable {
 
     func listWorkspaces() async throws -> [Workspace]
     func listConversations(workspaceId: String) async throws -> [Channel]
-    func listMembers(workspaceId: String) async throws -> [Member]
+    /// Member profiles (names, avatars, status) — what the views draw from.
+    func listMembers(workspaceId: String) async throws -> [User]
 
     /// Older messages before `cursor` (nil = latest page). Oldest first.
     func history(channelId: String, cursor: String?, limit: Int) async throws -> HistoryPage
