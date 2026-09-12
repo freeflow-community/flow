@@ -1336,3 +1336,19 @@ one-recipient MCP correction).
 - **Trust live Slack over its docs, and make the fakes match.** The unit fakes
   followed the docs, which is why both live bugs (refresh secret, and the app's
   `bot_id` on user-token posts) passed CI. The fake Slack now reproduces both.
+
+## 2026-09-11 — Slack protocol investigation runs in the operator's test workspace (#544)
+
+- **Operator ruling: the designated Slack test workspace is Coderbots, channel
+  `#testing`, using the operator's own member account.** Synthetic messages
+  labelled "Flow protocol test" only; other channels stay read-only. The
+  2026-09-09 observation used a non-test workspace and is kept only as v1
+  history.
+- **A first-party `xoxc` session is a recorded blocker, not a gap.** Every
+  internal-protocol capability in the matrix is "observed but blocked" on web,
+  macOS and iOS alike until a supported session flow is designed and approved.
+  No OAuth token was tried against internal endpoints and no session material
+  was extracted, per the spec's hard rules.
+- **Raw captures never enter the repo.** Only `tools/sanitize.mjs` output does;
+  the id map stays in the scratch directory, and the sanitizer fails the run if
+  a token or workspace hostname survives.
