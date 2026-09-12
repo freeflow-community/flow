@@ -168,6 +168,8 @@ targets:
       # BuildInfo comes with it for the HTTP-loopback development allowance.
       # The share extension resolves the selected connection from the app group.
       - path: ../macos/Sources/Flow/Support/ServerConnection.swift
+      # The registry's Slack identity rules (#545), model-free on purpose.
+      - path: ../macos/Sources/Flow/Support/SlackIdentity.swift
       - path: ../macos/Sources/Flow/Support/ConnectionStore.swift
       - path: ../macos/Sources/Flow/Support/StorageScope.swift
       - path: ../macos/Sources/Flow/Support/CanonicalOrigin.swift
@@ -271,6 +273,9 @@ targets:
       # One rule, two clients: iOS runs the same suite so a drift shows up on
       # whichever platform is built first.
       - path: ../macos/Tests/FlowTests/DirectoryTests.swift
+      # The Slack backend's decoding, capability wording, rate-limit handling
+      # and registry identity rules (#545) — one adapter, both clients.
+      - path: ../macos/Tests/FlowTests/SlackBackendTests.swift
     dependencies:
       - target: Flow
     settings:

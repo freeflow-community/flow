@@ -16,7 +16,13 @@ vi.mock('../hooks', () => ({
   useSendMessage: () => ({ mutate: () => {} }),
   useTogglePin: () => ({ mutate: () => {} }),
   useToggleReaction: () => ({ mutate: () => {} }),
+  useDeleteMessage: () => ({ mutateAsync: async () => {} }),
   useWorkspaceEmojiMap: () => ({}),
+}));
+// A Flow backend: every capability supported, so the menu renders as before (#545).
+vi.mock('../lib/backend', () => ({
+  useCapabilities: () => new Proxy({}, { get: () => ({ state: 'supported' }) }),
+  useIsFlow: () => true,
 }));
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({

@@ -6,7 +6,8 @@ import { api, uploadFile } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
 import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';
 import { useLive, useSelection } from '../state';
-import { useChannelMembers, useChannels, useMembers, useSendMessage } from '../hooks';
+import { useChannelMembers, useChannels, useEditMessage, useMembers, useSendMessage } from '../hooks';
+import { useCapabilities } from '../lib/backend';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileImage } from './FileImage';
 import EmojiPicker from './EmojiPicker';
@@ -39,6 +40,10 @@ export default function Composer({
   const channels = useChannels(sel.workspaceId);
   const channelMembers = useChannelMembers(channelId);
   const send = useSendMessage(channelId);
+  const edit = useEditMessage();
+  // Capability gating (#545): a control whose capability is unavailable is not
+  // rendered, so it can never fall through to a Flow mutation on a Slack team.
+  const caps = useCapabilities();
   // Mention-of-non-member CTA (Slack semantics): after sending an @mention of
   // someone outside a standard channel, offer to add them.
   const [missingMentions, setMissingMentions] = useState<string[]>([]);
@@ -227,7 +232,7 @@ export default function Composer({
     // token form), then leave edit mode — the effect restores the stashed draft.
     // An emptied edit just cancels (no delete), matching the prior inline editor.
     if (editingId) {
-      if (raw) void api('PATCH', `/v1/messages/${editingId}`, { body: raw });
+      if (raw && editingMessage) edit.mutate({ message: editingMessage, body: raw }, { onError: (err) => setError(err instanceof Error ? err.message : 'edit failed') });
       sel.setEditingMessage(null);
       return;
     }
@@ -399,7 +404,7 @@ export default function Composer({
             {missingMentions.length === 1 ? 'is' : 'are'} not in this channel and won&rsquo;t see your mention.
           </span>
           <span className="flex shrink-0 gap-2">
-            <button
+            {caps.channelManagement.state !== 'unavailable' && <button
               data-testid="mention-cta-add"
               className="rounded bg-accent px-2.5 py-1 text-xs font-semibold text-white"
               onClick={() => {
@@ -417,7 +422,7 @@ export default function Composer({
               }}
             >
               Add to channel
-            </button>
+            </button>}
             <button
               data-testid="mention-cta-dismiss"
               className="rounded px-2 py-1 text-xs text-faint hover:bg-daypill"
@@ -485,14 +490,18 @@ export default function Composer({
           onPaste={onPaste}
         />
         <div className="mt-1.5 flex items-center gap-3 text-[15px] text-faint">
-          <button
-            data-testid={`${testPrefix}-attach`}
-            className="hover:text-ink"
-            title="Attach files"
-            onClick={() => fileRef.current?.click()}
-          >
-            ＋
-          </button>
+          {caps.files.state !== 'unavailable' ? (
+            <button
+              data-testid={`${testPrefix}-attach`}
+              className="hover:text-ink"
+              title="Attach files"
+              onClick={() => fileRef.current?.click()}
+            >
+              ＋
+            </button>
+          ) : (
+            <span data-testid={`${testPrefix}-attach-unavailable`} className="cursor-not-allowed opacity-40" title={caps.files.reason}>＋</span>
+          )}
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => void pickFiles(e.target.files)} />
           <button
             data-testid={`${testPrefix}-emoji`}
@@ -512,7 +521,7 @@ export default function Composer({
           {/* Schedule instead of send (#420): same message, posted later. Only on
               a channel's main composer — a scheduled message is a top-level
               post, not a thread reply. */}
-          {!threadRootId && (
+          {!threadRootId && caps.scheduledMessages.state !== 'unavailable' && (
             <button
               data-testid={`${testPrefix}-schedule`}
               className="hover:text-ink"

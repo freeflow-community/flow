@@ -3,8 +3,9 @@ import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/reac
 import ServerConnections from './components/ServerConnections';
 import { REGISTRY_KEY } from './lib/connections';
 import { consumeHandoffCallback, pendingHandoff } from './lib/authHandoff';
-import type { ArtifactDTO, UserDTO, AuthResponse, WorkspaceDTO } from '@flow/shared';
+import { BackendError, type ArtifactDTO, type UserDTO, type AuthResponse, type WorkspaceDTO } from '@flow/shared';
 import { backgroundSync } from './lib/backgroundSync';
+import { backendFor } from './lib/backend';
 import {
   activeRuntime,
   connectionManager,
@@ -251,14 +252,16 @@ function SessionApp({ runtime }: { runtime: ConnectionRuntime }) {
         return;
       }
       try {
-        const me = await runtime.api<UserDTO>('GET', '/v1/me');
+        // Whichever provider this connection speaks, its backend answers "who
+        // am I" (#545); a Slack team synthesizes the user from its grant.
+        const me = await backendFor(runtime).me();
         connectionManager().bindIdentity(runtime.connectionId, me.id);
         setUser(me);
         runtime.write("cachedUser", JSON.stringify(me));
       } catch (err) {
         // Only a *rejected* token is dropped. An unreachable server leaves the
         // session alone: an upgraded client that boots offline must not lose it.
-        if ((err as ApiError).status === 401) {
+        if ((err as ApiError).status === 401 || (err instanceof BackendError && err.code === 'unauthorized')) {
           replaceToken(null);
           connectionManager().markSignedOut(runtime.connectionId);
         } else {
@@ -381,7 +384,7 @@ function SessionApp({ runtime }: { runtime: ConnectionRuntime }) {
   // its query cache, its stored selection. Any other connection's runtime is
   // untouched, and a late response on this one cannot recreate what went.
   const signOut = useCallback(() => {
-    void runtime.api('POST', '/v1/auth/logout').catch(() => {});
+    void backendFor(runtime).signOut().catch(() => {});
     connectionManager().signOut(runtime.connectionId);
     qc.clear();
     setUser(null);

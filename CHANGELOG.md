@@ -12,7 +12,7 @@ This file keeps two things:
 
 ## Parity
 
-- Slack authorization connector PoC (#543) is web-only by design; native authorization and Slack chat remain later provider milestones.
+- Slack chat over the public-API baseline (#545) is **web-only for now**: the web client opens a connected Slack team (channels, DMs, limited history, threads, send/edit/delete, live updates). macOS and iOS carry the same `SlackBackend`, registry record and tests, but no Connect Slack sign-in and the sync engine still speaks Flow paths — the next native slice (gap to close, not a deliberate divergence). The #543 authorization flow is likewise web-only until that slice.
 - Multi-server huddles (#541): web leaves the room when switching server; native keeps it running with a return control. Both limit the client to one joined room.
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 

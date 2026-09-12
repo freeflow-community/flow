@@ -156,7 +156,7 @@ export default function ServerConnections({ onSelect, onClose }: {
           </div>
         </section>;
       })}
-      <SlackConnections onChange={() => refresh(n => n + 1)} />
+      <SlackConnections onChange={() => refresh(n => n + 1)} onOpen={(connectionId, workspaceId) => { onSelect(connectionId, workspaceId); onClose(); }} />
       <h3 className="mb-2 font-semibold">Connect another Flow server</h3>
       <form onSubmit={e => { e.preventDefault(); void connect(); }} className="flex gap-2">
         <input className="min-w-0 flex-1 rounded border p-2" disabled={busy} aria-label="Server or invite URL" placeholder="https://flow.example.com or invite URL" value={address} onChange={e => { setAddress(e.target.value); setDiscovery(null); setAuth(null); setSelected([]); setWorkspaces([]); }} />

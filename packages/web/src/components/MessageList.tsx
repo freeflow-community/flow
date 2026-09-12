@@ -7,7 +7,9 @@ import { isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { burstConfetti, celebrationsAdded } from '../lib/confetti';
 import { SCHEDULED_VIEW_ID, useAuth, useSelection } from '../state';
-import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
+import { useDeleteMessage, useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
+import { useCapabilities } from '../lib/backend';
+import type { BackendMessage } from '@flow/shared';
 import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
 import { messageDeleteConfirmation, messageDeleteMode } from '../lib/messagePermissions';
 import { Avatar } from './Avatar';
@@ -380,6 +382,11 @@ function MessageRow({
   const qc = useQueryClient();
   const toggle = useToggleReaction();
   const togglePin = useTogglePin();
+  const remove = useDeleteMessage();
+  // Capability gating (#545): every control below renders only when its
+  // capability is usable, so a Slack message never reaches a Flow mutation.
+  const caps = useCapabilities();
+  const provenance = (message as BackendMessage).provenance;
   // Shared query cache, so this is one fetch per workspace however many rows
   // are mounted (#175).
   const customEmoji = useWorkspaceEmojiMap(sel.workspaceId);
@@ -436,10 +443,12 @@ function MessageRow({
     setDeleting(true);
     setDeleteError(null);
     try {
-      await api('DELETE', `/v1/messages/${message.id}${deleteMode === 'permanent' ? '?purge=true' : ''}`);
-      if (deleteMode === 'permanent') {
-        removeMessageFromCache(qc, message);
-        if (message.threadRootId === null && sel.threadRootId === message.id) sel.openThread(null);
+      await remove.mutateAsync({ message, purge: deleteMode === 'permanent' });
+      if (message.threadRootId === null && sel.threadRootId === message.id && (deleteMode === 'permanent' || provenance)) sel.openThread(null);
+      // A hard delete on Flow refetches what the server now says. Another
+      // provider's row was already removed from the cache by the hook, and a
+      // refetch there would spend its history budget for nothing.
+      if (deleteMode === 'permanent' && !provenance) {
         await Promise.all([
           qc.invalidateQueries({ queryKey: ['messages', message.channelId] }),
           qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] }),
@@ -565,8 +574,14 @@ function MessageRow({
               </div>
             )}
             {message.files.map((f) => (
-              <Attachment key={f.id} file={f} />
+              provenance ? <ExternalAttachment key={f.id} file={f} openUrl={provenance.openUrl} provider={provenance.provider} /> : <Attachment key={f.id} file={f} />
             ))}
+            {provenance?.degraded && (
+              <p data-testid={`degraded-${message.id}`} className="mt-1 text-xs text-muted">
+                Some of this message can only be shown in Slack.
+                {provenance.openUrl && <> <a className="text-accent-soft underline" href={provenance.openUrl} target="_blank" rel="noreferrer">Open in Slack</a></>}
+              </p>
+            )}
             {failed && (
               <div
                 data-testid={`send-failed-${(message as LocalMessage).clientMsgId}`}
@@ -675,7 +690,7 @@ function MessageRow({
         <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
           {!message.deletedAt && (
             <>
-              {QUICK_REACTIONS.map((emoji) => {
+              {caps.reactions.state !== 'unavailable' && QUICK_REACTIONS.map((emoji) => {
                 const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
                 return (
                   <button
@@ -690,14 +705,30 @@ function MessageRow({
                 );
               })}
               <div className="mx-0.5 h-6 w-px self-center bg-hairline" />
-              <button
-                data-testid={`add-reaction-${message.id}`}
-                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-                title="Add reaction"
-                onClick={() => setShowPicker(true)}
-              >
-                🙂
-              </button>
+              {caps.reactions.state !== 'unavailable' ? (
+                <button
+                  data-testid={`add-reaction-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Add reaction"
+                  onClick={() => setShowPicker(true)}
+                >
+                  🙂
+                </button>
+              ) : (
+                <span data-testid={`add-reaction-unavailable-${message.id}`} className="cursor-not-allowed px-1.5 py-1 text-lg leading-none opacity-40" title={caps.reactions.reason}>🙂</span>
+              )}
+              {provenance?.openUrl && (
+                <a
+                  data-testid={`open-in-provider-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-xs font-semibold leading-none text-accent-soft hover:bg-daypill"
+                  title="Open in Slack"
+                  href={provenance.openUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Slack ↗
+                </a>
+              )}
               {showThreadAffordances && (
                 <button
                   className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
@@ -717,7 +748,7 @@ function MessageRow({
                   📋
                 </button>
               )}
-              <button
+              {caps.pins.state !== 'unavailable' && <button
                 data-testid={`toggle-pin-${message.id}`}
                 className={`flex items-center rounded-md px-1.5 py-1 leading-none hover:bg-daypill ${
                   message.pinnedAt ? 'text-accent-soft' : 'text-ink'
@@ -726,8 +757,8 @@ function MessageRow({
                 onClick={() => togglePin.mutate(message)}
               >
                 <PinIcon filled={!!message.pinnedAt} />
-              </button>
-              {message.files.length > 0 && (
+              </button>}
+              {message.files.length > 0 && caps.artifacts.state !== 'unavailable' && (
                 <button
                   data-testid={`pin-artifact-${message.id}`}
                   className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
@@ -737,7 +768,7 @@ function MessageRow({
                   <ExternalLinkIcon />
                 </button>
               )}
-              {mine && (
+              {mine && caps.edit.state !== 'unavailable' && (
                 <button
                   data-testid={`edit-message-${message.id}`}
                   className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
@@ -749,7 +780,7 @@ function MessageRow({
               )}
             </>
           )}
-          {deleteMode && (
+          {deleteMode && caps.delete.state !== 'unavailable' && (
               <button
                 data-testid={`delete-message-${message.id}`}
                 className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
@@ -1387,5 +1418,19 @@ function ScheduledBadge({ author }: { author: string }) {
         🕐 Scheduled
       </button>
     </HoverTooltip>
+  );
+}
+
+/** A file that lives with another provider (#545): no bytes flow through Flow,
+ * so the card names the file and opens it where it is. */
+function ExternalAttachment({ file, openUrl, provider }: { file: FileDTO; openUrl: string | null; provider: string }) {
+  const label = provider === 'slack' ? 'Open in Slack' : 'Open';
+  return (
+    <div data-testid={`external-attachment-${file.id}`} className="mt-1.5 inline-flex max-w-full items-center gap-2 rounded-lg border border-hairline bg-white px-3 py-2 text-sm">
+      <span aria-hidden>📎</span>
+      <span className="truncate">{file.name}</span>
+      {file.sizeBytes > 0 && <span className="shrink-0 text-xs text-faint">{Math.max(1, Math.round(file.sizeBytes / 1024))} KB</span>}
+      {openUrl && <a className="shrink-0 text-xs font-semibold text-accent-soft hover:underline" href={openUrl} target="_blank" rel="noreferrer">{label} ↗</a>}
+    </div>
   );
 }

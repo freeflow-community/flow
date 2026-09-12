@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { connectionManager } from '../lib/connectionRuntime';
 import { connectSlack, slackRequest, slackStatusMessage, type SlackConnection, type SlackHandoff } from '../lib/slackConnector';
 
-export default function SlackConnections({ onChange }: { onChange(): void }) {
+export default function SlackConnections({ onChange, onOpen }: { onChange(): void; onOpen?(connectionId: string, workspaceId: string): void }) {
   const manager = connectionManager();
   const configuredOrigin = import.meta.env.VITE_SLACK_CONNECTOR_ORIGIN?.trim() ?? '';
   const [busy, setBusy] = useState(false);
@@ -64,9 +64,9 @@ export default function SlackConnections({ onChange }: { onChange(): void }) {
     {manager.connections.filter(c => c.provider === 'slack').map(connection => <div key={connection.connectionId} className="my-3 rounded border p-3">
       <p className="font-medium">Slack · {connection.label}</p>
       <p className="break-all text-xs text-faint">Connector: {connection.origin}</p>
-      <p className="text-sm">Slack authorization saved. Slack conversations are not available in Flow yet.</p>
       {states[connection.connectionId] && <p className="mt-1 text-sm" role="status">{states[connection.connectionId]}</p>}
       <div className="mt-2 flex gap-3 text-sm">
+        {onOpen && <button disabled={busy} data-testid={`open-slack-${connection.connectionId}`} onClick={() => onOpen(connection.connectionId, JSON.parse(connection.providerIdentity)[2])}>Open workspace</button>}
         <button disabled={busy} onClick={() => void perform(async () => {
           const runtime = manager.runtime(connection.connectionId)!;
           try {

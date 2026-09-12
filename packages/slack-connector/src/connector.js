@@ -1,5 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
+import { markdownToMrkdwn } from '@flow/shared';
 import { requestedScopes, grantedCapabilities } from './manifest.js';
+import { isTs, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace } from './normalize.js';
 
 export const opaque = () => randomBytes(32).toString('base64url');
 export const hash = value => createHash('sha256').update(value).digest('base64url');
@@ -25,7 +27,7 @@ export class Connector {
   }
   sweep() {
     const now = this.now();
-    for (const kind of ['oauth', 'handoff', 'session', 'event']) {
+    for (const kind of ['oauth', 'handoff', 'session', 'event', 'stream']) {
       for (const { id, value } of this.store.all(kind)) if (value.expiresAt <= now) this.store.remove(kind, id);
     }
     for (const [key, expiresAt] of this.rateLimits) if (expiresAt <= now) this.rateLimits.delete(key);
@@ -56,8 +58,144 @@ export class Connector {
     }
     if (!response.ok) throw new Fault('slack_unavailable', 502);
     const result = await response.json();
-    if (!result.ok) throw new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required', bad_client_secret: 'connector_misconfigured', invalid_client_id: 'connector_misconfigured' }[result.error]) ?? 'slack_request_failed', 400);
+    if (!result.ok) {
+      const fault = new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required', bad_client_secret: 'connector_misconfigured', invalid_client_id: 'connector_misconfigured', channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', msg_too_long: 'invalid_message' }[result.error]) ?? 'slack_request_failed', { not_found: 404, forbidden: 403, missing_scopes: 403 }[terminal.get(result.error) ?? ({ channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', missing_scope: 'missing_scopes' }[result.error])] ?? 400);
+      // The Slack error code stays on the fault for callers that treat some
+      // codes as benign (already_reacted); it is never serialized to clients.
+      fault.slackError = result.error;
+      throw fault;
+    }
     return result;
+  }
+  // ---- public-API baseline (#545): read + mutations behind the grant ----------
+  // Rate budgets belong to app + team + method and are shared by every client
+  // session of that team (spec "Public API baseline"). A 429 from Slack parks
+  // the budget until Retry-After; a parked budget answers 429 locally with the
+  // remaining wait, so concurrent sessions do not each burn a call.
+  budgetKey(grant, method) { return JSON.stringify([grant.identity.teamId, method]); }
+  async call(grant, method, parameters) {
+    const budget = this.budgetKey(grant, method);
+    const until = this.rateLimits.get(budget) ?? 0;
+    if (until > this.now()) { const fault = new Fault('rate_limited', 429); fault.retryAfter = Math.max(1, Math.ceil((until - this.now()) / 1000)); throw fault; }
+    try { return await this.slack(method, parameters, grant.accessToken); } catch (error) {
+      if (error.retryAfter) this.rateLimits.set(budget, this.now() + error.retryAfter * 1000);
+      throw error;
+    }
+  }
+  requireCapability(grant, name) { if (!grantedCapabilities(grant.scopes)[name]) throw new Fault('missing_scopes', 403); }
+  async paged(grant, method, parameters, pick, maxPages = 5) {
+    const rows = [];
+    let cursor;
+    for (let page = 0; page < maxPages; page++) {
+      const result = await this.call(grant, method, { ...parameters, ...(cursor ? { cursor } : {}) });
+      rows.push(...(pick(result) ?? []));
+      cursor = result.response_metadata?.next_cursor || '';
+      if (!cursor) break;
+    }
+    return rows;
+  }
+  async workspace(credential) {
+    return this.withGrant(credential, async grant => normalizeWorkspace(grant));
+  }
+  async conversations(credential) {
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'readConversations');
+      const rows = await this.paged(grant, 'users.conversations', { types: 'public_channel,private_channel,mpim,im', exclude_archived: 'true', limit: '200' }, r => r.channels);
+      // A group DM only names its members by handle ("mpdm-alice--bob--carol-1");
+      // resolve handles to ids through the member list so clients can title it.
+      let handles = null;
+      if (rows.some(c => c.is_mpim)) {
+        const members = await this.paged(grant, 'users.list', { limit: '200' }, r => r.members);
+        handles = new Map(members.map(m => [m.name, m.id]));
+      }
+      return rows.map(c => normalizeChannel(c, { teamId: grant.identity.teamId, selfUserId: grant.identity.userId, handles }));
+    });
+  }
+  async members(credential) {
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'readConversations');
+      const rows = await this.paged(grant, 'users.list', { limit: '200' }, r => r.members);
+      return rows.map(normalizeMember).filter(m => !m.deleted).map(({ deleted, ...m }) => m);
+    });
+  }
+  static cursorOk(cursor) { return cursor == null || cursor === '' || (typeof cursor === 'string' && /^[A-Za-z0-9=_-]{1,512}$/.test(cursor)); }
+  async history(credential, { channel, cursor, limit }) {
+    if (!idPattern.test(channel ?? '') || !Connector.cursorOk(cursor)) throw new Fault('invalid_request');
+    const size = Math.min(200, Math.max(1, Number(limit) || 50));
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'readHistory');
+      const result = await this.call(grant, 'conversations.history', { channel, limit: String(size), ...(cursor ? { cursor } : {}) });
+      const messages = (result.messages ?? []).filter(m => isTs(m.ts)).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel })).reverse();
+      const next = result.response_metadata?.next_cursor || null;
+      // Slack may cap the page below what was asked (15 for restricted apps);
+      // a short page with more behind it is visibly partial, not complete.
+      return { messages, cursor: result.has_more ? next : null, partial: Boolean(result.has_more) && messages.length < size };
+    });
+  }
+  async replies(credential, { channel, ts, cursor }) {
+    if (!idPattern.test(channel ?? '') || !isTs(ts) || !Connector.cursorOk(cursor)) throw new Fault('invalid_request');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'readHistory');
+      const result = await this.call(grant, 'conversations.replies', { channel, ts, limit: '200', ...(cursor ? { cursor } : {}) });
+      const all = (result.messages ?? []).filter(m => isTs(m.ts)).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel }));
+      const root = all.find(m => m.id === ts) ?? null;
+      if (!root) throw new Fault('not_found', 404);
+      return { root, replies: all.filter(m => m.id !== ts), cursor: result.has_more ? result.response_metadata?.next_cursor || null : null, partial: Boolean(result.has_more) };
+    });
+  }
+  async update(credential, { channel, ts, text }) {
+    if (!idPattern.test(channel ?? '') || !isTs(ts) || typeof text !== 'string' || !text.trim() || text.length > 4000) throw new Fault('invalid_message');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'sendAsUser');
+      const result = await this.call(grant, 'chat.update', { channel, ts, text: markdownToMrkdwn(text) });
+      return normalizeMessage({ ...result.message, ts: result.ts, channel: result.channel }, { teamId: grant.identity.teamId, channelId: result.channel ?? channel });
+    });
+  }
+  async remove(credential, { channel, ts }) {
+    if (!idPattern.test(channel ?? '') || !isTs(ts)) throw new Fault('invalid_request');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'sendAsUser');
+      await this.call(grant, 'chat.delete', { channel, ts });
+      return { ok: true };
+    });
+  }
+  async reaction(credential, { channel, ts, name, on }) {
+    if (!idPattern.test(channel ?? '') || !isTs(ts) || typeof name !== 'string' || !/^[a-z0-9_+-]{1,64}(::skin-tone-[2-6])?$/.test(name)) throw new Fault('invalid_request');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'reactions');
+      try { await this.call(grant, on ? 'reactions.add' : 'reactions.remove', { channel, timestamp: ts, name }); } catch (error) {
+        if (!['already_reacted', 'no_reaction'].includes(error.slackError)) throw error;
+      }
+      return { ok: true };
+    });
+  }
+  async markRead(credential, { channel, ts }) {
+    if (!idPattern.test(channel ?? '') || !isTs(ts)) throw new Fault('invalid_request');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'readState');
+      await this.call(grant, 'conversations.mark', { channel, ts });
+      return { ok: true };
+    });
+  }
+  async search(credential, { query, cursor }) {
+    if (typeof query !== 'string' || !query.trim() || query.length > 500 || !Connector.cursorOk(cursor)) throw new Fault('invalid_request');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'search');
+      const result = await this.call(grant, 'search.messages', { query, count: '20', ...(cursor ? { cursor } : {}) });
+      const matches = result.messages?.matches ?? [];
+      return { messages: matches.filter(m => isTs(m.ts) && m.channel?.id).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: m.channel.id })), cursor: result.messages?.pagination?.next_cursor || null, partial: Boolean(result.messages?.pagination?.next_cursor) };
+    });
+  }
+  /** Chat events the Events API delivered for this grant since `since` (a
+   * sequence number from a previous call). Retention is bounded (5 minutes,
+   * 1000 rows); a client that falls behind gets `gap: true` and refetches. */
+  stream(credential, since) {
+    const { session, grant } = this.session(credential);
+    this.sweep();
+    const from = Number(since) || 0;
+    const rows = this.store.all('stream').filter(row => row.value.grantId === session.grantId && row.value.generation === grant.generation).sort((a, b) => a.value.seq - b.value.seq);
+    const oldest = rows[0]?.value.seq ?? null;
+    return { events: rows.filter(row => row.value.seq > from).map(row => row.value.event), seq: rows.length ? rows[rows.length - 1].value.seq : from, gap: from > 0 && oldest != null && oldest > from + 1 };
   }
   async callback({ state, code, error }) {
     if (typeof state !== 'string') throw new Fault('unsolicited_callback');
@@ -187,19 +325,22 @@ export class Connector {
       return this.describe(id, grant);
     });
   }
-  async send(credential, { channel, text }) {
-    if (!idPattern.test(channel ?? '') || typeof text !== 'string' || !text.trim() || text.length > 4000) throw new Fault('invalid_message');
+  async send(credential, { channel, text, thread_ts: threadTs }) {
+    if (!idPattern.test(channel ?? '') || typeof text !== 'string' || !text.trim() || text.length > 4000 || (threadTs != null && !isTs(threadTs))) throw new Fault('invalid_message');
     return this.withGrant(credential, async grant => {
       if (!grantedCapabilities(grant.scopes).sendAsUser) throw new Fault('missing_scopes', 403);
       const budget = JSON.stringify([grant.identity.teamId, 'chat.postMessage']);
       if ((this.rateLimits.get(budget) ?? 0) > this.now()) throw new Fault('rate_limited', 429);
       try {
-        const result = await this.slack('chat.postMessage', { channel, text, unfurl_links: 'false', unfurl_media: 'false' }, grant.accessToken);
+        // The body arrives as Flow markdown and goes out as mrkdwn; the reply
+        // comes back through the same normalizer every read path uses.
+        const result = await this.slack('chat.postMessage', { channel, text: markdownToMrkdwn(text), unfurl_links: 'false', unfurl_media: 'false', ...(threadTs ? { thread_ts: threadTs } : {}) }, grant.accessToken);
         // Slack stamps the app's bot_id/app_id/bot_profile on user-token posts
         // too, so authorship is message.user; a bot_message is never the user's.
         // 409, not 5xx: a proxy may replace a 5xx body and hide this code.
         if (result.message?.user !== grant.identity.userId || result.message?.subtype === 'bot_message') throw new Fault('authorship_mismatch', 409);
-        return { channel: result.channel, ts: result.ts, userId: result.message.user };
+        const message = normalizeMessage({ ...result.message, ts: result.ts, channel: result.channel, ...(threadTs ? { thread_ts: threadTs } : {}) }, { teamId: grant.identity.teamId, channelId: result.channel ?? channel });
+        return { channel: result.channel, ts: result.ts, userId: result.message.user, message };
       } catch (error) {
         if (error.retryAfter) this.rateLimits.set(budget, this.now() + error.retryAfter * 1000);
         throw error;
@@ -214,7 +355,7 @@ export class Connector {
     if (envelope.type === 'url_verification') return { challenge: envelope.challenge };
     if (envelope.type !== 'event_callback' || typeof envelope.event_id !== 'string') throw new Fault('invalid_event');
     const event = envelope.event;
-    if (!['tokens_revoked', 'app_uninstalled'].includes(event?.type)) return { ok: true };
+    if (!['tokens_revoked', 'app_uninstalled'].includes(event?.type)) return this.streamEvent(envelope);
     this.sweep();
     this.store.transaction(() => {
       for (const { id, value: grant } of this.store.all('grant')) {
@@ -228,6 +369,28 @@ export class Connector {
       }
       const rows = this.store.all('event');
       for (const row of rows.slice(0, Math.max(0, rows.length - 1000))) this.store.remove('event', row.id);
+    });
+    return { ok: true };
+  }
+  /** Route a chat event to the grants Slack says are authorized for it — the
+   * `authorizations` list names installing users who can see the event —
+   * never to every grant on the team. Stored per grant with bounded retention. */
+  streamEvent(envelope) {
+    const normalized = normalizeEvent(envelope.event, { teamId: envelope.team_id });
+    if (!normalized) return { ok: true };
+    const authorized = new Set((envelope.authorizations ?? []).filter(a => !a.is_bot && typeof a.user_id === 'string').map(a => a.user_id));
+    if (!authorized.size) return { ok: true };
+    this.sweep();
+    this.store.transaction(() => {
+      for (const { id, value: grant } of this.store.all('grant')) {
+        if (grant.appId !== envelope.api_app_id || grant.identity.teamId !== envelope.team_id || grant.status !== 'active' || !authorized.has(grant.identity.userId)) continue;
+        const rowId = hash(JSON.stringify([envelope.event_id, id, 'stream']));
+        if (this.store.get('stream', rowId)) continue;
+        this.streamSeq = (this.streamSeq ?? 0) + 1;
+        this.store.put('stream', rowId, { grantId: id, generation: grant.generation, seq: this.streamSeq, event: normalized, expiresAt: this.now() + 300_000 });
+      }
+      const rows = this.store.all('stream');
+      for (const row of rows.slice(0, Math.max(0, rows.length - 1000))) this.store.remove('stream', row.id);
     });
     return { ok: true };
   }

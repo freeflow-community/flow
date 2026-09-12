@@ -15,6 +15,11 @@ enum ConnectionProvider: String, Codable, Sendable {
     case slack
 }
 
+enum SlackConnectionError: Error, Equatable {
+    /// The team is already recorded with a different connector; remove it first.
+    case connectorChanged
+}
+
 enum SessionStatus: String, Codable, Sendable {
     case authenticated
     case unauthorized
@@ -175,6 +180,54 @@ struct ConnectionRegistry: Codable, Equatable, Sendable {
             status: .signedOut
         ))
         if activeConnectionId == nil { activeConnectionId = connection.connectionId }
+        return connection
+    }
+
+    /// Add a Slack team authorized through a connector, or refresh the one
+    /// already recorded for that identity (#545). Identity is the immutable
+    /// `(environment, enterpriseId?, teamId, userId)` tuple — never the team
+    /// domain or name — so two teams at slack.com stay two connections and a
+    /// renamed workspace keeps its record. Changing the connector for an
+    /// existing team is refused: remove it first. Each team is its own single
+    /// workspace in the switcher, bound by the team id.
+    @discardableResult
+    mutating func addSlackConnection(
+        connectorOrigin: String, enterpriseId: String?, teamId: String, userId: String,
+        teamName: String, userName: String, capabilities: [String: Bool]
+    ) throws -> ServerConnection {
+        let identity = SlackIdentity.identityString(enterpriseId: enterpriseId, teamId: teamId, userId: userId)
+        let label = "\(teamName) · \(userName)"
+        if let index = connections.firstIndex(where: { $0.provider == .slack && $0.providerIdentity == identity }) {
+            if connections[index].origin != connectorOrigin {
+                throw SlackConnectionError.connectorChanged
+            }
+            connections[index].label = label
+            connections[index].capabilities = capabilities
+            setBinding(WorkspaceBinding(connectionId: connections[index].connectionId, userId: userId, workspaceId: teamId, name: teamName, hidden: false, order: nil))
+            return connections[index]
+        }
+        let scope = StorageScope.fresh()
+        let connection = ServerConnection(
+            connectionId: UUID().uuidString,
+            provider: .slack,
+            providerIdentity: identity,
+            origin: connectorOrigin,
+            connectionStorageKey: StorageScope.fresh().storageKey,
+            label: label,
+            apiVersion: 1,
+            capabilities: capabilities,
+            addedAt: Date()
+        )
+        connections.append(connection)
+        sessions.append(ServerSession(
+            connectionId: connection.connectionId,
+            userId: userId,
+            credentialRef: scope.keychainAccount,
+            storageKey: scope.storageKey,
+            authGeneration: 0,
+            status: .authenticated
+        ))
+        setBinding(WorkspaceBinding(connectionId: connection.connectionId, userId: userId, workspaceId: teamId, name: teamName, hidden: false, order: nil))
         return connection
     }
 

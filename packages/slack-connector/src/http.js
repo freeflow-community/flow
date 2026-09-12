@@ -16,7 +16,10 @@ export function createConnectorServer(connector) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+        // Retry-After is not CORS-safelisted; without this a browser client
+        // sees a 429 but not the wait, and would have to guess.
+        res.setHeader('Access-Control-Expose-Headers', 'Retry-After');
       }
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
       if (path === '/oauth/callback' && req.method === 'GET') {
@@ -62,6 +65,22 @@ export function createConnectorServer(connector) {
       if (path === '/v1/grant' && req.method === 'DELETE') { connector.removeGrant(credential); respond(200, { ok: true }); return; }
       if (path === '/v1/messages' && req.method === 'POST') { respond(200, await connector.send(credential, body)); return; }
       if (path === '/v1/events' && req.method === 'GET') { respond(200, { events: connector.events(credential) }); return; }
+      // Public-API baseline (#545). Read routes take their parameters from the
+      // query string; mutations take JSON bodies. Every route is credential-bound
+      // and capability-checked by the connector; a missing scope is 403
+      // `missing_scopes`, a parked rate budget is 429 with Retry-After.
+      const query = new URL(req.url, connector.publicOrigin).searchParams;
+      if (path === '/v1/workspace' && req.method === 'GET') { respond(200, await connector.workspace(credential)); return; }
+      if (path === '/v1/conversations' && req.method === 'GET') { respond(200, { conversations: await connector.conversations(credential) }); return; }
+      if (path === '/v1/members' && req.method === 'GET') { respond(200, { members: await connector.members(credential) }); return; }
+      if (path === '/v1/history' && req.method === 'GET') { respond(200, await connector.history(credential, { channel: query.get('channel'), cursor: query.get('cursor'), limit: query.get('limit') })); return; }
+      if (path === '/v1/replies' && req.method === 'GET') { respond(200, await connector.replies(credential, { channel: query.get('channel'), ts: query.get('ts'), cursor: query.get('cursor') })); return; }
+      if (path === '/v1/search' && req.method === 'GET') { respond(200, await connector.search(credential, { query: query.get('q'), cursor: query.get('cursor') })); return; }
+      if (path === '/v1/stream' && req.method === 'GET') { respond(200, connector.stream(credential, query.get('since'))); return; }
+      if (path === '/v1/messages' && req.method === 'PATCH') { respond(200, await connector.update(credential, body)); return; }
+      if (path === '/v1/messages' && req.method === 'DELETE') { respond(200, await connector.remove(credential, body)); return; }
+      if (path === '/v1/reactions' && req.method === 'POST') { respond(200, await connector.reaction(credential, body)); return; }
+      if (path === '/v1/read' && req.method === 'POST') { respond(200, await connector.markRead(credential, body)); return; }
       throw new Fault('not_found', 404);
     } catch (error) {
       // Never serialize Slack responses, URLs, request bodies, or exception text.

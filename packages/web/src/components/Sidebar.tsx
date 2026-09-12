@@ -9,6 +9,7 @@ import { dmTitle, isSelfDm as isSelfDmChannel } from '../lib/channelTitle';
 import { workspaceExit } from '../lib/workspaceExit';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import type { Selection } from '../state';
+import { useCapabilities } from '../lib/backend';
 import {
   useAppArtifacts,
   useArtifacts,
@@ -274,10 +275,15 @@ export default function Sidebar() {
 
   // Persistent self-DM: ensure "<Name> (you)" always exists under Direct
   // Messages (upsert — the server dedupes by dm_key, so this is idempotent).
+  // Capability gating (#545): Flow-only controls are not rendered in a
+  // workspace whose backend cannot do them, and never fall through to a Flow
+  // mutation. The reasons come from the backend, not from guesses here.
+  const caps = useCapabilities();
+  const canManage = caps.channelManagement.state !== 'unavailable';
   const ensuredSelfDm = useRef<string | null>(null);
   useEffect(() => {
     const wsId = sel.workspaceId;
-    if (!wsId || !channels.data || ensuredSelfDm.current === wsId) return;
+    if (!wsId || !channels.data || ensuredSelfDm.current === wsId || !canManage) return;
     const haveSelf = channels.data.some(
       (c) => c.kind === 'dm' && (c.memberIds ?? []).every((id) => id === auth.user.id),
     );
@@ -286,7 +292,7 @@ export default function Sidebar() {
     void api('POST', `/v1/workspaces/${wsId}/dms`, { userIds: [auth.user.id] })
       .then(() => qc.invalidateQueries({ queryKey: ['channels', wsId] }))
       .catch(() => { ensuredSelfDm.current = null; });
-  }, [sel.workspaceId, channels.data, auth.user.id, qc]);
+  }, [sel.workspaceId, channels.data, auth.user.id, qc, canManage]);
 
   const openDm = async (userId: string) => {
     if (!sel.workspaceId) return;
@@ -376,18 +382,18 @@ export default function Sidebar() {
               </MenuItem>
             ))}
             <hr className="my-1 border-hairline3" />
-            <MenuItem testid="menu-invite" onClick={() => { setWsMenuOpen(false); setShowInvite(true); }}>
+            {canManage && <MenuItem testid="menu-invite" onClick={() => { setWsMenuOpen(false); setShowInvite(true); }}>
               Invite People…
-            </MenuItem>
+            </MenuItem>}
             <MenuItem testid="menu-directory" onClick={() => { setWsMenuOpen(false); sel.selectChannel(DIRECTORY_VIEW_ID); }}>
               Directory
             </MenuItem>
             {/* any member can sponsor agents (AGENT_MEMBERS.md) — the modal
                 explains registration and lets sponsors remove their own */}
-            <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
+            {caps.agents.state !== 'unavailable' && <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
               Agents…
-            </MenuItem>
-            {isAdmin && (
+            </MenuItem>}
+            {isAdmin && caps.admin.state !== 'unavailable' && (
               <>
                 <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
                   Workspace appearance…
@@ -410,7 +416,7 @@ export default function Sidebar() {
                 owner with company has to hand the workspace over first; an
                 owner on their own has nobody to hand it to, so they get to end
                 it instead of staring at a permanently disabled row. */}
-            {exit === 'delete' ? (
+            {!canManage ? null : exit === 'delete' ? (
               <MenuItem
                 testid="menu-delete-workspace"
                 destructive
@@ -446,15 +452,15 @@ export default function Sidebar() {
         <div className="flex shrink-0 items-center">
           <NavButton dir="back" enabled={sel.canGoBack} onClick={() => sel.goBack()} />
           <NavButton dir="forward" enabled={sel.canGoForward} onClick={() => sel.goForward()} />
-          <ScheduledClock
+          {caps.scheduledMessages.state !== 'unavailable' && <ScheduledClock
             active={sel.channelId === SCHEDULED_VIEW_ID}
             onOpen={() => sel.selectChannel(SCHEDULED_VIEW_ID)}
-          />
-          <ActivityBell
+          />}
+          {caps.notifications.state !== 'unavailable' && <ActivityBell
             active={sel.channelId === ACTIVITY_VIEW_ID}
             unread={live.notificationUnread}
             onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
-          />
+          />}
         </div>
       </div>
 
@@ -462,7 +468,7 @@ export default function Sidebar() {
         data-sidebar-scroll
         className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm"
       >
-        {isAdmin && sel.adminPanelOpen && (
+        {isAdmin && sel.adminPanelOpen && caps.admin.state !== 'unavailable' && (
           <AdminRow
             active={sel.channelId === ADMIN_VIEW_ID}
             onOpen={() => sel.selectChannel(ADMIN_VIEW_ID)}
@@ -472,12 +478,12 @@ export default function Sidebar() {
 
         <SectionHeader
           label="Channels"
-          action={{
+          action={canManage ? {
             label: '+',
             testid: 'sidebar-create-channel',
             title: 'Create a channel',
             onClick: () => setShowCreateChannel(true),
-          }}
+          } : undefined}
         />
         {joined.map(({ channel: c, nested }) => (
           <div key={c.id}>
@@ -574,12 +580,12 @@ export default function Sidebar() {
 
         <SectionHeader
           label="Direct messages"
-          action={{
+          action={canManage ? {
             label: '+',
             testid: 'sidebar-new-dm',
             title: 'New direct message',
             onClick: () => setShowNewDm(true),
-          }}
+          } : undefined}
         />
         {/* Directory (#430): a nav entry, not a DM row — it highlights when
             active and opens the member grid rather than a conversation. */}
@@ -626,7 +632,7 @@ export default function Sidebar() {
           );
         })}
 
-        {browsable.length > 0 && (
+        {browsable.length > 0 && canManage && (
           <>
             <SectionHeader label="Browse" />
             {browsable.map((c) => (
@@ -651,7 +657,7 @@ export default function Sidebar() {
 
       {/* Invite your Agent (phase 15): pinned above the profile footer — a
           slightly raised translucent CTA, noticeable without shouting. */}
-      <div className="px-3.5 pt-2 pb-1.5">
+      {caps.agents.state !== 'unavailable' && <div className="px-3.5 pt-2 pb-1.5">
         <button
           data-testid="invite-agent-button"
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/35 bg-white/[0.18] px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-white/25"
@@ -660,7 +666,7 @@ export default function Sidebar() {
           <span aria-hidden>🤖</span>
           Invite your Agent
         </button>
-      </div>
+      </div>}
 
       <StatusFooter />
 
