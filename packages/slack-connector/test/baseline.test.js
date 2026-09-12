@@ -225,6 +225,17 @@ test('Events API chat events reach only the authorized grant, in order, with bou
   assert.ok(late.seq > seq);
 });
 
+test('a malformed event is acknowledged and dropped; the next good one still streams', async t => {
+  const f = fixture(t);
+  const a = await f.connect();
+  assert.deepEqual(f.event({ type: 'message', channel: 'C1', user: 'U1', ts: 1789171841.148649, text: 'ts as a number' }), { ok: true }, 'acknowledged so Slack does not retry');
+  assert.deepEqual(f.event({ type: 'message', subtype: 'message_changed', channel: 'C1', message: { ts: 'not-a-ts', text: 'edited' } }), { ok: true }, 'a payload the normalizer rejects is dropped, not retried');
+  assert.deepEqual(f.event({ type: 'message', channel: 'C1', user: 'U1', ts: TS1, text: 'fine', blocks: [{ type: 'unknown_block_kind', weird: true }], extra_field_from_the_future: 1 }), { ok: true });
+  const stream = f.connector.stream(a.credential, 0);
+  assert.deepEqual(stream.events.map(e => [e.type, e.message?.provenance.degraded]), [['message.created', true]], 'unknown blocks degrade the message; unknown fields are ignored');
+  assert.equal(f.connector.driftCount, 1);
+});
+
 test('sends are idempotent per client id; an unknown outcome is reconciled on retry, never posted twice', async t => {
   let mode = 'ok';
   const posted = [];

@@ -412,7 +412,11 @@ export class Connector {
    * `authorizations` list names installing users who can see the event —
    * never to every grant on the team. Stored per grant with bounded retention. */
   streamEvent(envelope) {
-    const normalized = normalizeEvent(envelope.event, { teamId: envelope.team_id });
+    // Protocol drift is isolated to the one event: a payload the normalizer
+    // cannot read is acknowledged and dropped (Slack would otherwise retry it
+    // three times), and the next well-formed event still flows (#546).
+    let normalized;
+    try { normalized = normalizeEvent(envelope.event, { teamId: envelope.team_id }); } catch { this.driftCount = (this.driftCount ?? 0) + 1; return { ok: true }; }
     if (!normalized) return { ok: true };
     const authorized = new Set((envelope.authorizations ?? []).filter(a => !a.is_bot && typeof a.user_id === 'string').map(a => a.user_id));
     if (!authorized.size) return { ok: true };
