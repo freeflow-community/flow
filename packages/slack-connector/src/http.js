@@ -17,6 +17,9 @@ export function createConnectorServer(connector) {
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+        // Retry-After is not CORS-safelisted; without this a browser client
+        // sees a 429 but not the wait, and would have to guess.
+        res.setHeader('Access-Control-Expose-Headers', 'Retry-After');
       }
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
       if (path === '/oauth/callback' && req.method === 'GET') {

@@ -95,7 +95,9 @@ export default function Main() {
   // total, which can't drive a per-workspace badge).
   const refreshNotificationBadge = useCallback(async () => {
     const workspaceId = selRef.current.workspaceId;
-    if (!workspaceId) return;
+    // Notifications are a Flow feature; another provider's runtime has no
+    // such endpoint and its badge stays at zero (#545).
+    if (!workspaceId || runtime.provider !== 'flow') return;
     try {
       const j = await runtime.api<{ unreadCount?: number }>(
         'GET', `/v1/me/notifications?limit=1&workspaceId=${workspaceId}`,

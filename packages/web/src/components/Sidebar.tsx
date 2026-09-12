@@ -657,7 +657,7 @@ export default function Sidebar() {
 
       {/* Invite your Agent (phase 15): pinned above the profile footer — a
           slightly raised translucent CTA, noticeable without shouting. */}
-      <div className="px-3.5 pt-2 pb-1.5">
+      {caps.agents.state !== 'unavailable' && <div className="px-3.5 pt-2 pb-1.5">
         <button
           data-testid="invite-agent-button"
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/35 bg-white/[0.18] px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-white/25"
@@ -666,7 +666,7 @@ export default function Sidebar() {
           <span aria-hidden>🤖</span>
           Invite your Agent
         </button>
-      </div>
+      </div>}
 
       <StatusFooter />
 

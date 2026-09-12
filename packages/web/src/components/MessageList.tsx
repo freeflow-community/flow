@@ -444,8 +444,11 @@ function MessageRow({
     setDeleteError(null);
     try {
       await remove.mutateAsync({ message, purge: deleteMode === 'permanent' });
-      if (deleteMode === 'permanent' || provenance) {
-        if (message.threadRootId === null && sel.threadRootId === message.id) sel.openThread(null);
+      if (message.threadRootId === null && sel.threadRootId === message.id && (deleteMode === 'permanent' || provenance)) sel.openThread(null);
+      // A hard delete on Flow refetches what the server now says. Another
+      // provider's row was already removed from the cache by the hook, and a
+      // refetch there would spend its history budget for nothing.
+      if (deleteMode === 'permanent' && !provenance) {
         await Promise.all([
           qc.invalidateQueries({ queryKey: ['messages', message.channelId] }),
           qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] }),
@@ -687,7 +690,7 @@ function MessageRow({
         <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
           {!message.deletedAt && (
             <>
-              {QUICK_REACTIONS.map((emoji) => {
+              {caps.reactions.state !== 'unavailable' && QUICK_REACTIONS.map((emoji) => {
                 const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
                 return (
                   <button

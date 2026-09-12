@@ -7,7 +7,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { BackendError, emailDomain, isSelfRegisterableDomain } from '@flow/shared';
+import { BackendError, dedupeMessages, emailDomain, isSelfRegisterableDomain } from '@flow/shared';
 import type {
   AgentInviteDTO,
   AppDTO,
@@ -323,7 +323,9 @@ export function flattenMessages(pages: MessagePage[] | undefined): MessageDTO[] 
     const page = pages[i]!;
     for (let j = page.messages.length - 1; j >= 0; j--) all.push(page.messages[j]!);
   }
-  return all;
+  // A provider page can overlap the one before it (a message that arrived
+  // live is also in the next page fetched); one row per id, first seen wins.
+  return dedupeMessages(all);
 }
 
 /** `channelId` is what a provider that keys threads by channel needs (Slack);

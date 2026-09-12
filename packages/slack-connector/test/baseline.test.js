@@ -31,7 +31,7 @@ function fixture(t, options = {}) {
       case 'users.conversations': result = { ok: true, channels: [
         { id: 'C1', name: 'testing', is_channel: true, is_member: true, is_private: false, created: 1789170000, creator: 'U1', topic: { value: 'topic' } },
         { id: 'D1', is_im: true, user: 'U2', created: 1789170001 },
-        { id: 'G1', name: 'mpdm-a--b-1', is_mpim: true, is_private: true, created: 1789170002 },
+        { id: 'G1', name: 'mpdm-alice--bob--carol-1', is_mpim: true, is_private: true, created: 1789170002 },
       ], response_metadata: { next_cursor: '' } }; break;
       case 'users.list': result = { ok: true, members: [
         { id: 'U1', name: 'alice', real_name: 'Alice A', is_admin: true, profile: { display_name: 'alice', email: 'a@example.test', image_72: 'https://avatars.test/a.png', status_emoji: ':tada:', status_text: 'yay' } },
@@ -127,6 +127,7 @@ test('read routes: workspace, conversations, members, history pages, thread repl
   const conversations = await f.connector.conversations(credential);
   assert.deepEqual(conversations.map(c => [c.id, c.kind, c.name, c.isPrivate]), [['C1', 'standard', 'testing', false], ['D1', 'dm', null, true], ['G1', 'group_dm', null, true]]);
   assert.deepEqual(conversations[1].memberIds, ['U2', 'U1']);
+  assert.deepEqual(conversations[2].memberIds, ['U1', 'U2'], 'group DM handles resolve to ids (carol is unknown and dropped)');
   assert.equal(conversations[0].provenance.openUrl, 'https://app.slack.com/client/T1/C1');
   const members = await f.connector.members(credential);
   assert.deepEqual(members.map(m => [m.userId, m.displayName, m.role, m.isBot]), [['U1', 'alice', 'admin', false], ['U2', 'Bob', 'member', false], ['USLACKBOT', 'slackbot', 'member', true]]);

@@ -83,9 +83,14 @@ export function normalizeMessage(message, { teamId, channelId }) {
 }
 
 /** users.conversations / conversations.list item -> BackendChannel. */
-export function normalizeChannel(channel, { teamId, selfUserId }) {
+export function normalizeChannel(channel, { teamId, selfUserId, handles = null }) {
   const kind = channel.is_im ? 'dm' : channel.is_mpim ? 'group_dm' : 'standard';
-  const memberIds = channel.is_im ? [String(channel.user), selfUserId].filter(Boolean) : undefined;
+  let memberIds = channel.is_im ? [String(channel.user), selfUserId].filter(Boolean) : undefined;
+  if (channel.is_mpim && handles) {
+    const names = String(channel.name ?? '').replace(/^mpdm-/, '').replace(/-\d+$/, '').split('--');
+    const ids = names.map(n => handles.get(n)).filter(Boolean);
+    if (ids.length) memberIds = [...new Set([...ids, selfUserId].filter(Boolean))];
+  }
   return {
     id: String(channel.id), workspaceId: teamId, name: kind === 'standard' ? String(channel.name ?? channel.id) : null, kind,
     topic: channel.topic?.value || null, isPrivate: Boolean(channel.is_private || channel.is_im || channel.is_mpim),

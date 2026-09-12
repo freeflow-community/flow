@@ -101,7 +101,14 @@ export class Connector {
     return this.withGrant(credential, async grant => {
       this.requireCapability(grant, 'readConversations');
       const rows = await this.paged(grant, 'users.conversations', { types: 'public_channel,private_channel,mpim,im', exclude_archived: 'true', limit: '200' }, r => r.channels);
-      return rows.map(c => normalizeChannel(c, { teamId: grant.identity.teamId, selfUserId: grant.identity.userId }));
+      // A group DM only names its members by handle ("mpdm-alice--bob--carol-1");
+      // resolve handles to ids through the member list so clients can title it.
+      let handles = null;
+      if (rows.some(c => c.is_mpim)) {
+        const members = await this.paged(grant, 'users.list', { limit: '200' }, r => r.members);
+        handles = new Map(members.map(m => [m.name, m.id]));
+      }
+      return rows.map(c => normalizeChannel(c, { teamId: grant.identity.teamId, selfUserId: grant.identity.userId, handles }));
     });
   }
   async members(credential) {
