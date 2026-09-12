@@ -14,9 +14,22 @@ matrix.
 `packages/slack-connector` is an independent Node service with no dependency on
 Flow authentication or workspace membership. It uses Node's built-in SQLite and
 crypto modules (Node >=22.13; CI uses Node 24). Run one process with a persistent
-volume behind an HTTPS reverse proxy. It binds loopback port 8790; the proxy must
-run on the same host/network namespace. This is not deployed automatically with
-the Flow server. Do not run multiple replicas against the database.
+volume behind an HTTPS reverse proxy. By default it binds loopback port 8790, so
+the proxy must run on the same host/network namespace; set `HOST=0.0.0.0` where
+the platform's edge terminates TLS and reaches the container itself. This is not
+deployed automatically with the Flow server. Do not run multiple replicas against
+the database.
+
+**Railway (production):** service `slack-connector` in the `flow` project,
+deployed from `main` with `packages/slack-connector/railway.json` (builds
+`@flow/shared`, starts `src/index.js`, healthcheck `/health`), a volume at
+`/data` with `CONNECTOR_DB=/data/connector.sqlite`, `HOST=0.0.0.0`, and
+`CONNECTOR_LOCK=none` because Railway mounts a volume to exactly one container
+and stops the old one before starting the new, so the file lock would only turn
+a killed container into a boot loop. Public origin `https://slack.freeflow.im`
+(CNAME in Cloudflare, DNS-only). `CONNECTOR_CLIENT_ORIGINS` lists
+`https://app.freeflow.im` and `flow://slack`. Secrets are set in Railway by the
+operator, never committed.
 
 The operator sets `VITE_SLACK_CONNECTOR_ORIGIN` to the HTTPS connector origin
 when building the web client. Users click **Connect Slack** in Workspaces and
