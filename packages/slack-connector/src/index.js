@@ -23,8 +23,11 @@ const path = resolve(required('CONNECTOR_DB'));
 mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 // One writer owns refresh serialization. No horizontal replicas with this store.
 // A stale lock after a crash requires explicit operator recovery.
+// `CONNECTOR_LOCK=none` skips the file lock on a host that already guarantees
+// one container per volume (Railway): there a lock left behind by a killed
+// container would block every restart, and it protects against nothing.
 const lockPath = `${path}.lock`;
-const lock = openSync(lockPath, 'wx', 0o600);
+const lock = process.env.CONNECTOR_LOCK === 'none' ? null : openSync(lockPath, 'wx', 0o600);
 process.umask(0o077);
 const store = new Store(path, key);
 chmodSync(path, 0o600);
@@ -33,11 +36,14 @@ const server = createConnectorServer(connector);
 server.requestTimeout = 20_000;
 server.headersTimeout = 10_000;
 const sweep = setInterval(() => connector.sweep(), 60_000).unref();
-server.listen(Number(process.env.PORT ?? 8790), '127.0.0.1', () => console.log('Slack connector listening'));
+// Loopback by default (an HTTPS proxy on the same host); `HOST=0.0.0.0` where
+// the platform's edge terminates TLS and reaches the container over its own
+// network, as Railway does.
+server.listen(Number(process.env.PORT ?? 8790), process.env.HOST ?? '127.0.0.1', () => console.log('Slack connector listening'));
 let stopping = false;
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   if (stopping) return;
   stopping = true;
   clearInterval(sweep);
-  server.close(() => { store.close(); closeSync(lock); unlinkSync(lockPath); });
+  server.close(() => { store.close(); if (lock !== null) { closeSync(lock); unlinkSync(lockPath); } });
 });
