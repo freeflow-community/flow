@@ -21,8 +21,11 @@ deployed automatically with the Flow server. Do not run multiple replicas agains
 the database.
 
 **Railway (production):** service `slack-connector` in the `flow` project,
-deployed from `main` with `packages/slack-connector/railway.json` (builds
-`@flow/shared`, starts `src/index.js`, healthcheck `/health`), a volume at
+deployed from `main`. Its build (`pnpm --filter @flow/shared build && pnpm
+--filter @flow/slack-connector build`), start (`node
+packages/slack-connector/src/index.js`), healthcheck (`/health`) and watch
+patterns (`packages/slack-connector/**`, `packages/shared/**`) are set on the
+service in Railway, since Railway has deprecated config files; a volume at
 `/data` with `CONNECTOR_DB=/data/connector.sqlite`, `HOST=0.0.0.0`, and
 `CONNECTOR_LOCK=none` because Railway mounts a volume to exactly one container
 and stops the old one before starting the new, so the file lock would only turn
