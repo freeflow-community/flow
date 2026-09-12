@@ -158,7 +158,11 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  packages/slack-connector: {}
+  packages/slack-connector:
+    dependencies:
+      '@flow/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/web:
     dependencies:

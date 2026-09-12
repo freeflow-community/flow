@@ -6,7 +6,7 @@
     "pkce_enabled": true
   },
   "settings": {
-    "event_subscriptions": { "request_url": "https://CONNECTOR_HOST/slack/events", "user_events": ["tokens_revoked", "app_uninstalled"] },
+    "event_subscriptions": { "request_url": "https://CONNECTOR_HOST/slack/events", "user_events": ["tokens_revoked", "app_uninstalled", "message.channels", "message.groups", "message.im", "message.mpim"] },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false,
     "token_rotation_enabled": true
