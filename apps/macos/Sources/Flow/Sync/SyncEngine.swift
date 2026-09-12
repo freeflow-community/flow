@@ -2387,7 +2387,9 @@ actor SyncEngine {
     /// its workspace, the connector's event stream instead of a Flow socket.
     private func bootstrapBackend() async {
         guard let backend else { return }
-        guard Keychain.loadToken(account: keychainAccount) != nil else {
+        // The backend owns its credential (read from the Keychain per use);
+        // a signed-out state here means there is none to present.
+        guard await backend.auth().status != .signedOut else {
             await appState?.markConnectionSignedOut(connectionId: connectionId)
             await appState?.setPhase(.signedOut)
             return

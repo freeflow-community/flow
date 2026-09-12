@@ -332,6 +332,17 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         </div>
       )}
 
+      {/* A provider with retention or read limits never gets to look like an
+          empty, complete archive (#546): when its history is exhausted, say
+          where the rest lives — at the old end, under the header, where the
+          reader who scrolled up is looking. */}
+      {openUrl && !messagesQ.hasNextPage && !messagesQ.isLoading && (
+        <p data-testid="history-end-note" role="status" className="shrink-0 border-b border-hairline px-[22px] py-1 text-[11px] text-faint">
+          Older messages may exist in Slack beyond what Flow can read here.{' '}
+          <a className="underline" href={openUrl} target="_blank" rel="noreferrer">Open in Slack</a>
+        </p>
+      )}
+
       {showSyncBar && (
         <div
           className="mc-sync-bar shrink-0"
@@ -359,16 +370,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         focusMessageId={focusId}
         onFocused={() => sel.clearFocusMessage()}
       />
-
-      {/* A provider with retention or read limits never gets to look like an
-          empty, complete archive (#546): when its history is exhausted, say
-          where the rest lives. */}
-      {openUrl && !messagesQ.hasNextPage && !messagesQ.isLoading && (
-        <p data-testid="history-end-note" className="px-[22px] py-1 text-[11px] text-faint">
-          Older messages may exist in Slack beyond what Flow can read here.{' '}
-          <a className="underline" href={openUrl} target="_blank" rel="noreferrer">Open in Slack</a>
-        </p>
-      )}
 
       <div className="h-5 px-[22px] text-xs text-muted" data-testid="typing-indicator-slot">
         {typers.length === 1 && (

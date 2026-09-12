@@ -237,11 +237,15 @@ struct DirectoryView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            Circle()
-                .fill(online ? MC.online : MC.hairline2)
-                .frame(width: 12, height: 12)
-                .overlay(Circle().strokeBorder(MC.chat, lineWidth: 2))
-                .offset(x: 3, y: 3)
+            // No presence from this provider (#546): no dot rather than a
+            // grey one that would read as "offline".
+            if app.can(.presence) {
+                Circle()
+                    .fill(online ? MC.online : MC.hairline2)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().strokeBorder(MC.chat, lineWidth: 2))
+                    .offset(x: 3, y: 3)
+            }
         }
     }
 

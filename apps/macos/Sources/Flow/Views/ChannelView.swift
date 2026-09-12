@@ -151,6 +151,9 @@ struct ChannelView: View {
                 FindBarView(find: find, total: findMatches.count, onStep: stepFind)
             }
             SyncBar(syncing: app.isSyncing)
+            // A provider's limits, said once up here (#546): history budget,
+            // paused stream, and the "Open in Slack" way out. Empty on Flow.
+            ProviderLimitsBanner(channelId: channelId)
 
             MessageListView(
                 messages: transcript,
@@ -164,10 +167,12 @@ struct ChannelView: View {
                     agentIds: app.agentIds,
                     onError: { app.showError($0) },
                     onSelectArtifact: { win.selectArtifact($0) },
-                    onOpenScheduled: { win.showScheduledPanel() }
+                    onOpenScheduled: { win.showScheduledPanel() },
+                    capabilities: app.capabilities
                 ),
                 hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                 isLoadingHistory: app.loadingHistory.contains(channelId),
+                loadOlderRetryAt: hasMoreCached ? nil : app.loadOlderRetryAt(channelId: channelId),
                 showThreadAffordances: true,
                 unreadThreadRootIds: Set(currentChannel?.unreadThreadRootIds ?? []),
                 onLoadOlder: {
@@ -390,7 +395,7 @@ struct ChannelView: View {
                         }
                         .buttonStyle(.plain)
                         .help("View profile")
-                    } else if currentChannel?.kind == "standard" {
+                    } else if currentChannel?.kind == "standard", app.can(.channelManagement) {
                         // Clicking a channel's name opens the name/topic editor
                         // (ui_nits item 5).
                         Button {
@@ -427,6 +432,14 @@ struct ChannelView: View {
             Spacer()
             huddleButton
             headerAvatars
+            // Another provider's conversation opens natively there (#546).
+            if let url = app.providerOpenURL(channelId: channelId) {
+                Link("Open in Slack ↗", destination: url)
+                    .flowFont(size: 12, weight: .semibold)
+                    .foregroundStyle(MC.accentSoft)
+                    .pointingHandCursor()
+                    .accessibilityIdentifier("channel.openInProvider.header")
+            }
             channelMenu
         }
         .padding(.horizontal, 22)
@@ -441,7 +454,7 @@ struct ChannelView: View {
     /// indicator for a huddle that's live but not yet joined.
     @ViewBuilder
     private var huddleButton: some View {
-        if let channel = currentChannel, channel.archivedAt == nil {
+        if let channel = currentChannel, channel.archivedAt == nil, app.can(.huddles) {
             let isDm = channel.kind != "standard"
             let inThisHuddle = app.activeHuddleChannelId == channelId
             let roster = app.huddleRosters[channelId] ?? []
@@ -479,11 +492,15 @@ struct ChannelView: View {
     /// standalone pin button that used to sit next to the avatars.
     private var channelMenu: some View {
         Menu {
+            // Each entry is a Flow feature a provider may lack (#546): the
+            // item is disabled with the reason rather than removed, so the
+            // menu keeps its shape.
             Button {
                 win.openFiles(true)
             } label: {
                 Label("Files", systemImage: "paperclip")
             }
+            .capability(.files)
             .accessibilityIdentifier("channel.files")
 
             Button {
@@ -496,6 +513,7 @@ struct ChannelView: View {
                     systemImage: currentPinned.isEmpty ? "pin" : "pin.fill"
                 )
             }
+            .capability(.pins)
             .accessibilityIdentifier("channel.pins")
 
             let artifacts = win.artifacts(inChannel: channelId)
@@ -516,9 +534,10 @@ struct ChannelView: View {
                 Label(artifacts.isEmpty ? "Artifacts" : "Artifacts (\(artifacts.count))",
                       systemImage: "doc.text")
             }
+            .capability(.artifacts)
             .accessibilityIdentifier("channel.artifacts")
 
-            if currentChannel?.kind == "standard" {
+            if currentChannel?.kind == "standard", app.can(.channelManagement) {
                 Divider()
                 Button {
                     showChannelEdit = true
@@ -679,14 +698,16 @@ struct ChannelView: View {
                     }
                 }
                 Spacer(minLength: 4)
-                Circle()
-                    .fill(isOnline(user.id) ? MC.online : Color.clear)
-                    .overlay(
-                        Circle().strokeBorder(
-                            isOnline(user.id) ? Color.clear : MC.hairline2, lineWidth: 1.5
+                if app.can(.presence) {
+                    Circle()
+                        .fill(isOnline(user.id) ? MC.online : Color.clear)
+                        .overlay(
+                            Circle().strokeBorder(
+                                isOnline(user.id) ? Color.clear : MC.hairline2, lineWidth: 1.5
+                            )
                         )
-                    )
-                    .frame(width: 8, height: 8)
+                        .frame(width: 8, height: 8)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -792,7 +813,9 @@ struct TypingIndicatorView: View {
     @EnvironmentObject private var win: WindowState
 
     var body: some View {
-        let ids = app.typingUserIds(channelId: channelId, threadRootId: threadRootId)
+        // No typing events from a provider that has none (#546); the strip
+        // keeps its height so the composer never shifts between workspaces.
+        let ids = app.can(.typing) ? app.typingUserIds(channelId: channelId, threadRootId: threadRootId) : []
         HStack {
             if !ids.isEmpty {
                 Text(typingText(ids))

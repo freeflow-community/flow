@@ -106,8 +106,12 @@ struct ChannelScreen: View {
     private var huddleButton: some View {
         Group {
             if let ch = channel.value, ch.archivedAt == nil {
+                // Provider gating (#546): no agent call without agents, no
+                // huddle without huddles. Flow has both.
                 if agentParticipantId != nil {
-                    if let agent = agentParticipant {
+                    if !app.can(.agents) {
+                        EmptyView()
+                    } else if let agent = agentParticipant {
                         let inThisCall = agentCall.activeCall?.channelId == channelId
                         Button {
                             startAgentCall(with: agent)
@@ -128,7 +132,7 @@ struct ChannelScreen: View {
                             .tint(.white)
                             .frame(width: 44, height: 32)
                     }
-                } else {
+                } else if app.can(.huddles) {
                     let isDm = ch.kind != "standard"
                     let inThisHuddle = app.activeHuddleChannelId == channelId
                     let roster = app.huddleRosters[channelId] ?? []
@@ -202,14 +206,24 @@ struct ChannelScreen: View {
         )
     }
 
+    /// "Open in Slack" for a provider workspace (#546): the channel in the
+    /// provider's own client, for everything Flow cannot do here.
+    private var providerOpenURL: URL? {
+        guard app.capabilities.isProviderLimited, let ch = channel.value else { return nil }
+        return ProviderLinks.slackURL(workspaceId: ch.workspaceId, channelId: ch.id)
+    }
+
     private var channelMenu: some View {
         Menu {
+            // Provider gating (#546): an unavailable item is not in the menu,
+            // as on web and macOS. Flow keeps every item.
             Button {
                 filesRoute = FilesRoute(channelId: channelId)
             } label: {
                 Label("Files", systemImage: "paperclip")
             }
             .accessibilityIdentifier("channel.files")
+            .hiddenUnless(.files, in: app.capabilities)
 
             Button {
                 showPins = true
@@ -222,10 +236,19 @@ struct ChannelScreen: View {
                 )
             }
             .accessibilityIdentifier("channel.pins")
+            .hiddenUnless(.pins, in: app.capabilities)
 
             ArtifactsMenu(channelId: channelId)
+                .hiddenUnless(.artifacts, in: app.capabilities)
 
-            if channel.value?.kind == "standard" {
+            if let url = providerOpenURL {
+                Link(destination: url) {
+                    Label("Open in Slack", systemImage: "arrow.up.right.square")
+                }
+                .accessibilityIdentifier("channel.openInSlack.menu")
+            }
+
+            if channel.value?.kind == "standard", app.can(.channelManagement) {
                 Divider()
                 Button {
                     showInviteToChannel = true
@@ -272,6 +295,13 @@ struct ChannelScreen: View {
     private var chatStack: some View {
         VStack(spacing: 0) {
             SyncBar(syncing: app.isSyncing)
+            // A provider workspace's one strip (#546): paused live updates, or
+            // the history limit, with the way out. Nothing for Flow.
+            ProviderNoticeView(
+                capabilities: app.capabilities,
+                streamDegraded: app.streamDegraded,
+                openURL: providerOpenURL
+            )
             // The chat area — everything above the composer. Tapping or
             // scrolling any of it puts the keyboard away (#139); the composer
             // is deliberately outside, since tapping it means "type".
@@ -314,9 +344,12 @@ struct ChannelScreen: View {
                     focusMessageId: app.focusMessageId,
                     onFocused: { app.focusMessageId = nil },
                     scrollKey: app.sessionScope.key("scroll:\(channelId)"),
-                    onOpenProfile: { profileRoute = ProfileRoute(userId: $0) }
+                    onOpenProfile: { profileRoute = ProfileRoute(userId: $0) },
+                    capabilities: app.capabilities,
+                    historyLimit: app.historyLimits[channelId]
                 )
                 TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
+                    .hiddenUnless(.typing, in: app.capabilities)
             }
             .dismissesKeyboardOnChatInteraction()
             Divider()

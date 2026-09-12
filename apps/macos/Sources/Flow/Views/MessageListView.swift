@@ -25,6 +25,9 @@ struct MessageListView: View {
     /// Drives the loading states below — an empty transcript with no
     /// explanation reads as a lost conversation on a slow link.
     var isLoadingHistory: Bool = false
+    /// A provider asked for a wait before the next history page (#546): the
+    /// "Load earlier messages" button stays put but disabled until then.
+    var loadOlderRetryAt: Date? = nil
     let showThreadAffordances: Bool
     /// Thread roots holding an unread notification for me (#270) — their reply
     /// chips get a dot, so a reply that needs you is visible here and not only
@@ -143,6 +146,7 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
+                            let waiting = loadOlderRetryAt.map { $0 > Date() } ?? false
                             Button("Load earlier messages") {
                                 // Reading history is a decision to leave the
                                 // end: unpin, remember the current top row,
@@ -154,6 +158,9 @@ struct MessageListView: View {
                             .buttonStyle(.link)
                             .flowFont(.callout)
                             .pointingHandCursor()
+                            .disabled(waiting)
+                            .help(waiting ? "Slack asked Flow to wait before loading older messages." : "")
+                            .accessibilityIdentifier("transcript.loadOlder")
                             Spacer()
                         }
                         .padding(.vertical, 8)
@@ -699,13 +706,19 @@ struct MessageRow: View, @preconcurrency Equatable {
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
     private var deleteMode: MessageDeleteMode? {
-        MessageDeletePolicy.mode(
+        // A provider that cannot delete gets no delete affordance at all (#546).
+        guard caps.canUse(.delete) else { return nil }
+        return MessageDeletePolicy.mode(
             isMine: isMine,
             isDeleted: message.isDeleted,
             isSystem: message.systemKind != nil,
             canPermanentlyDelete: canPermanentlyDelete
         )
     }
+    /// The backend's capabilities, from the context so rows never observe
+    /// `AppState` (#546). Hidden, not disabled, in the hover pill and context
+    /// menu — same as the web row.
+    private var caps: Capabilities { context.capabilities }
     private var deleteLabel: String {
         deleteMode == .permanent ? "Permanently Delete" : "Delete"
     }
@@ -930,7 +943,7 @@ struct MessageRow: View, @preconcurrency Equatable {
             }
         }
         .contextMenu {
-            if !message.isDeleted, !message.pending, !message.failed {
+            if !message.isDeleted, !message.pending, !message.failed, caps.canUse(.reactions) {
                 ForEach(Array(EmojiCatalog.quickReactions.prefix(6)), id: \.self) { emoji in
                     Button(emoji) {
                         Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
@@ -954,15 +967,15 @@ struct MessageRow: View, @preconcurrency Equatable {
                     NSPasteboard.general.setString(message.body, forType: .string)
                 }
             }
-            if !message.isDeleted, !message.pending, !message.failed {
+            if !message.isDeleted, !message.pending, !message.failed, caps.canUse(.pins) {
                 Button(message.pinnedAt == nil ? "Pin Message" : "Unpin Message") {
                     Task { await context.engine.togglePin(message) }
                 }
             }
-            if !message.files.isEmpty, !message.isDeleted, !message.pending {
+            if !message.files.isEmpty, !message.isDeleted, !message.pending, caps.canUse(.artifacts) {
                 Button("Pin as Artifact") { pinAsArtifact() }
             }
-            if isMine, !message.isDeleted, !message.pending {
+            if isMine, !message.isDeleted, !message.pending, caps.canUse(.edit) {
                 Button("Edit…") { onEdit(message) }
             }
             if deleteMode != nil, !message.pending {
@@ -983,31 +996,40 @@ struct MessageRow: View, @preconcurrency Equatable {
     private var hoverMenu: some View {
         HStack(spacing: 2) {
             if !message.isDeleted {
-                ForEach(Self.quickReactions, id: \.self) { emoji in
-                    MenuIconButton(help: "React \(emoji)") {
-                        Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                if caps.canUse(.reactions) {
+                    ForEach(Self.quickReactions, id: \.self) { emoji in
+                        MenuIconButton(help: "React \(emoji)") {
+                            Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                        } label: {
+                            Text(emoji)
+                        }
+                        .accessibilityIdentifier("msg.quickReact.\(emoji)")
+                    }
+
+                    Rectangle()
+                        .fill(MC.hairline)
+                        .frame(width: 1, height: 22)
+                        .padding(.horizontal, 2)
+
+                    MenuIconButton(help: "Add reaction") {
+                        showReactionPicker = true
                     } label: {
-                        Text(emoji)
+                        Text("🙂")
                     }
-                    .accessibilityIdentifier("msg.quickReact.\(emoji)")
-                }
-
-                Rectangle()
-                    .fill(MC.hairline)
-                    .frame(width: 1, height: 22)
-                    .padding(.horizontal, 2)
-
-                MenuIconButton(help: "Add reaction") {
-                    showReactionPicker = true
-                } label: {
+                    .accessibilityIdentifier("msg.addReaction")
+                    .popover(isPresented: $showReactionPicker) {
+                        EmojiPickerView { emoji in
+                            showReactionPicker = false
+                            Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                        }
+                    }
+                } else {
+                    // Web parity: the glyph stays, dimmed, and says why.
                     Text("🙂")
-                }
-                .accessibilityIdentifier("msg.addReaction")
-                .popover(isPresented: $showReactionPicker) {
-                    EmojiPickerView { emoji in
-                        showReactionPicker = false
-                        Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
-                    }
+                        .opacity(0.4)
+                        .padding(.horizontal, 4)
+                        .help(caps[.reactions].reason ?? "Reactions are not available here.")
+                        .accessibilityIdentifier("msg.addReaction.unavailable")
                 }
 
                 if showThreadAffordances {
@@ -1029,16 +1051,18 @@ struct MessageRow: View, @preconcurrency Equatable {
                     .accessibilityIdentifier("msg.copy")
                 }
 
-                MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
-                    Task { await context.engine.togglePin(message) }
-                } label: {
-                    Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
+                if caps.canUse(.pins) {
+                    MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
+                        Task { await context.engine.togglePin(message) }
+                    } label: {
+                        Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
+                    }
+                    .accessibilityIdentifier("msg.togglePin")
                 }
-                .accessibilityIdentifier("msg.togglePin")
 
-                if !message.files.isEmpty {
+                if !message.files.isEmpty, caps.canUse(.artifacts) {
                     MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
                         // Web draws this one as an inline SVG (box + leaving arrow);
                         // the matching SF Symbol keeps the same open-external read.
@@ -1049,7 +1073,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                     .accessibilityIdentifier("msg.saveArtifact")
                 }
 
-                if isMine {
+                if isMine, caps.canUse(.edit) {
                     MenuIconButton(help: "Edit") {
                         onEdit(message)
                     } label: {

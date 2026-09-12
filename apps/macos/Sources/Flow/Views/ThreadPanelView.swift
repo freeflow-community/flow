@@ -100,7 +100,8 @@ struct ThreadPanelView: View {
                                     agentIds: app.agentIds,
                                     onError: { app.showError($0) },
                                     onSelectArtifact: { win.selectArtifact($0) },
-                                    onOpenScheduled: { win.showScheduledPanel() }
+                                    onOpenScheduled: { win.showScheduledPanel() },
+                                    capabilities: app.capabilities
                                 ),
                                 showHeader: true,
                                 showThreadAffordances: false,

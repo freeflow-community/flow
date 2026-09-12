@@ -33,12 +33,21 @@ struct ComposerView: View {
             }
 
             HStack(alignment: .bottom, spacing: 8) {
-                Button(action: pickFiles) {
+                // Attach (#546): hidden when the provider cannot take files,
+                // and a limited provider says where the file ends up.
+                if app.can(.files) {
+                    Button(action: pickFiles) {
+                        Image(systemName: "paperclip")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(app.capabilities[.files].reason ?? "Attach files")
+                    .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
+                } else {
                     Image(systemName: "paperclip")
+                        .opacity(0.4)
+                        .help(app.capabilities[.files].reason ?? "Attachments are not available here.")
+                        .accessibilityIdentifier(threadRootId == nil ? "composer.attach.unavailable" : "thread.composer.attach.unavailable")
                 }
-                .buttonStyle(.borderless)
-                .help("Attach files")
-                .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
 
                 // NSTextView-backed input with live blockquote/code-fence
                 // styling (phase-3.5 ruling 2). Same AX identifiers as the
@@ -67,7 +76,7 @@ struct ComposerView: View {
                     }
                 }
                 .onChange(of: text) { _, newValue in
-                    guard !newValue.isEmpty else { return }
+                    guard !newValue.isEmpty, app.can(.typing) else { return }
                     Task { await app.engine.typing(channelId: channelId, threadRootId: threadRootId) }
                 }
 
@@ -85,7 +94,7 @@ struct ComposerView: View {
                 // Schedule instead of send (#424): same message, posted later.
                 // Only on a channel's main composer — a scheduled message is a
                 // top-level post, not a thread reply.
-                if threadRootId == nil {
+                if threadRootId == nil, app.can(.scheduledMessages) {
                     Button {
                         scheduling = .creating(body: text, channelId: channelId)
                     } label: {
@@ -107,6 +116,7 @@ struct ComposerView: View {
                 .buttonStyle(.plain)
                 .disabled(!canSend)
                 .help("Send message")
+                .capability(.send)
                 .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
             }
 
@@ -183,7 +193,7 @@ struct ComposerView: View {
     }
 
     private var canSend: Bool {
-        uploading == 0 &&
+        app.can(.send) && uploading == 0 &&
             (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 

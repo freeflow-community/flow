@@ -470,6 +470,12 @@ final class AppState: ObservableObject {
 
     func can(_ name: CapabilityName) -> Bool { capabilities.canUse(name) }
 
+    /// The provider's own deep link for a conversation or message ("Open in
+    /// Slack"); nil on a Flow connection, which has nowhere else to open.
+    func providerOpenURL(channelId: String, messageId: String? = nil) -> URL? {
+        runtime.backend?.openURL(channelId: channelId, messageId: messageId)
+    }
+
     /// A provider that limits history says so per channel: the transcript is
     /// shown as partial, and `retryAfter` is when the next page may load.
     struct HistoryLimit: Equatable, Sendable {

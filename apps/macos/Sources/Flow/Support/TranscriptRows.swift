@@ -42,11 +42,15 @@ struct TranscriptContext: Equatable {
     var onSelectArtifact: (String) -> Void = { _ in }
     /// Open the Scheduled panel — what the SCHEDULED badge does (#424).
     var onOpenScheduled: () -> Void = {}
+    /// What the connection's backend can do (#546): rows hide the actions a
+    /// provider cannot take. A Flow server supports everything.
+    var capabilities: Capabilities = .allSupported
 
     static func == (a: Self, b: Self) -> Bool {
         a.engine === b.engine
             && a.avatarPaths == b.avatarPaths
             && a.agentIds == b.agentIds
+            && a.capabilities == b.capabilities
     }
 }
 

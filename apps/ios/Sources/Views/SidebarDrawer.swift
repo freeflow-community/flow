@@ -228,10 +228,14 @@ struct SidebarDrawer: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
+                    // Provider gating (#546), as on web: creating and browsing
+                    // conversations, agents, scheduling and admin are Flow
+                    // capabilities; a Slack workspace lists what it has.
                     sectionHeader("Channels") {
                         addButton(id: "channel.create", label: "New channel") {
                             showCreateChannel = true
                         }
+                        .hiddenUnless(.channelManagement, in: app.capabilities)
                     }
                     ForEach(standard, id: \.channel.id) { channelRow($0.channel, isNested: $0.isNested) }
 
@@ -240,7 +244,7 @@ struct SidebarDrawer: View {
                     // yet. An agent with a DM brings it up here, so it is never
                     // listed twice.
                     let agents = agentSplit.agents
-                    if !agents.isEmpty {
+                    if !agents.isEmpty, app.can(.agents) {
                         sectionHeader("Agents", collapsed: agentsCollapsed) {
                             agentsCollapsed.toggle()
                         } action: {
@@ -266,6 +270,7 @@ struct SidebarDrawer: View {
                         addButton(id: "dm.create", label: "New direct message") {
                             showNewDm = true
                         }
+                        .hiddenUnless(.channelManagement, in: app.capabilities)
                     }
                     // Directory (#432): a nav entry, not a DM row — it
                     // highlights when active and opens the member grid rather
@@ -277,7 +282,7 @@ struct SidebarDrawer: View {
                         ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
                     }
 
-                    if !browsable.isEmpty {
+                    if !browsable.isEmpty, app.can(.channelManagement) {
                         sectionHeader("Browse") { EmptyView() }
                         ForEach(browsable) { browseRow($0) }
                     }
@@ -306,7 +311,9 @@ struct SidebarDrawer: View {
         HStack(spacing: 6) {
             workspaceMenu
             scheduledClock
+                .hiddenUnless(.scheduledMessages, in: app.capabilities)
             activityBell
+                .hiddenUnless(.notifications, in: app.capabilities)
         }
     }
 
@@ -333,6 +340,7 @@ struct SidebarDrawer: View {
             Button("Invite People…") { showInvite = true }
                 .disabled(app.selectedWorkspaceId == nil)
                 .accessibilityIdentifier("sidebar.invitePeople")
+                .hiddenUnless(.channelManagement, in: app.capabilities)
             // Directory (#432), directly under Invite People… as on web + macOS.
             Button("Directory") {
                 app.showDirectoryPanel()
@@ -341,7 +349,8 @@ struct SidebarDrawer: View {
             .disabled(app.selectedWorkspaceId == nil)
             .accessibilityIdentifier("sidebar.directoryMenuItem")
             Button("Add Workspace…") { showAddWorkspace = true }
-            if currentWorkspace != nil {
+                .hiddenUnless(.channelManagement, in: app.capabilities)
+            if currentWorkspace != nil, app.can(.channelManagement) {
                 switch workspaceExit {
                 case .delete:
                     Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
@@ -560,6 +569,7 @@ struct SidebarDrawer: View {
                 Label("Invite to Channel…", systemImage: "person.badge.plus")
             }
             .accessibilityIdentifier("sidebar.channel.invite")
+            .hiddenUnless(.channelManagement, in: app.capabilities)
         }
         // Indent outside the background, so the pill insets with the row.
         .padding(.leading, isNested ? 12 : 0)
@@ -586,9 +596,16 @@ struct SidebarDrawer: View {
             open(channel)
         } label: {
             HStack(spacing: 9) {
-                if channel.kind == "dm" {
+                if channel.kind == "dm", app.can(.presence) {
                     // self-DM (no other member): online by definition
                     presenceDot(online: otherId.map { app.isOnline($0, in: app.selectedWorkspaceId) } ?? true)
+                        .frame(width: 18)
+                } else if channel.kind == "dm" {
+                    // No presence from this provider (#546): a person glyph,
+                    // never a dot that would read as "offline".
+                    Image(systemName: "person")
+                        .font(.caption)
+                        .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
                         .frame(width: 18)
                 } else {
                     Image(systemName: "person.2")

@@ -34,41 +34,57 @@ struct ComposerView: View {
                 suggestionBar(s)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                Menu {
-                    Button {
-                        showPhotoPicker = true
-                    } label: {
-                        Label("Photos & Videos", systemImage: "photo.on.rectangle")
-                    }
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        Button {
-                            showCamera = true
-                        } label: {
-                            Label("Camera", systemImage: "camera")
+                // Provider gating (#546): with no file and no schedule
+                // capability the `+` is a dimmed glyph carrying the reason
+                // (web parity), not an empty menu.
+                let canAttach = app.can(.files)
+                let canSchedule = threadRootId == nil && app.can(.scheduledMessages)
+                if canAttach || canSchedule {
+                    Menu {
+                        if canAttach {
+                            Button {
+                                showPhotoPicker = true
+                            } label: {
+                                Label("Photos & Videos", systemImage: "photo.on.rectangle")
+                            }
+                            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                                Button {
+                                    showCamera = true
+                                } label: {
+                                    Label("Camera", systemImage: "camera")
+                                }
+                            }
+                            Button {
+                                showFilePicker = true
+                            } label: {
+                                Label("Files", systemImage: "folder")
+                            }
                         }
-                    }
-                    Button {
-                        showFilePicker = true
-                    } label: {
-                        Label("Files", systemImage: "folder")
-                    }
-                    // Schedule instead of send (#424): same message, posted
-                    // later. The `+` menu is this composer's accessory idiom,
-                    // and it's main-composer only — a scheduled message is a
-                    // top-level post, not a thread reply.
-                    if threadRootId == nil {
-                        Button {
-                            scheduling = .creating(body: text, channelId: channelId)
-                        } label: {
-                            Label("Schedule this message", systemImage: "clock")
+                        // Schedule instead of send (#424): same message, posted
+                        // later. The `+` menu is this composer's accessory idiom,
+                        // and it's main-composer only — a scheduled message is a
+                        // top-level post, not a thread reply.
+                        if canSchedule {
+                            Button {
+                                scheduling = .creating(body: text, channelId: channelId)
+                            } label: {
+                                Label("Schedule this message", systemImage: "clock")
+                            }
                         }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(MC.faint)
                     }
-                } label: {
+                    .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
+                } else {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 28))
-                        .foregroundStyle(MC.faint)
+                        .foregroundStyle(MC.faint.opacity(0.4))
+                        .accessibilityLabel("Attach")
+                        .accessibilityHint(app.capabilities[.files].reason ?? "")
+                        .accessibilityIdentifier(threadRootId == nil ? "composer.attach.unavailable" : "thread.composer.attach.unavailable")
                 }
-                .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
 
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...6)
@@ -80,7 +96,7 @@ struct ComposerView: View {
                     .overlay(RoundedRectangle(cornerRadius: 18).stroke(MC.hairline2))
                     .onSubmit(send)
                     .onChange(of: text) { _, newValue in
-                        guard !newValue.isEmpty else { return }
+                        guard !newValue.isEmpty, app.can(.typing) else { return }
                         Task { await app.engine.typing(channelId: channelId, threadRootId: threadRootId) }
                     }
 
@@ -90,6 +106,7 @@ struct ComposerView: View {
                         .foregroundStyle(canSend ? MC.send : MC.faint)
                 }
                 .disabled(!canSend)
+                .disabledUnless(.send, in: app.capabilities)
                 .accessibilityLabel("Send")
                 .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
             }
@@ -102,6 +119,17 @@ struct ComposerView: View {
                 attachmentBar
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
+                // A provider that takes files but shows them elsewhere says so
+                // once, under what was attached (#546).
+                if app.capabilities[.files].state == .limited, let reason = app.capabilities[.files].reason {
+                    Text(reason)
+                        .font(.caption2)
+                        .foregroundStyle(MC.faint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                        .accessibilityIdentifier("composer.files.limited")
+                }
             }
         }
         .background(MC.base)
@@ -167,7 +195,7 @@ struct ComposerView: View {
     }
 
     private var canSend: Bool {
-        uploading == 0 &&
+        uploading == 0 && app.can(.send) &&
             (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 

@@ -170,6 +170,11 @@ targets:
       - path: ../macos/Sources/Flow/Support/ServerConnection.swift
       # The registry's Slack identity rules (#545), model-free on purpose.
       - path: ../macos/Sources/Flow/Support/SlackIdentity.swift
+      # Sharing text into a Slack team sends through the connector (#546):
+      # the contract, the Slack adapter, and the emoji table it references.
+      - path: ../macos/Sources/Flow/Support/WorkspaceBackend.swift
+      - path: ../macos/Sources/Flow/Support/SlackBackend.swift
+      - path: ../macos/Sources/Flow/Support/EmojiShortcodes.swift
       - path: ../macos/Sources/Flow/Support/ConnectionStore.swift
       - path: ../macos/Sources/Flow/Support/StorageScope.swift
       - path: ../macos/Sources/Flow/Support/CanonicalOrigin.swift
@@ -276,6 +281,7 @@ targets:
       # The Slack backend's decoding, capability wording, rate-limit handling
       # and registry identity rules (#545) — one adapter, both clients.
       - path: ../macos/Tests/FlowTests/SlackBackendTests.swift
+      - path: ../macos/Tests/FlowTests/SlackRuntimeTests.swift
     dependencies:
       - target: Flow
     settings:
