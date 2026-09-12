@@ -32,6 +32,9 @@ export class Connector {
     }
     for (const [key, expiresAt] of this.rateLimits) if (expiresAt <= now) this.rateLimits.delete(key);
   }
+  /** A configured client origin with the app's own URL scheme (`flow://…`):
+   * a native client, which cannot send an Origin header. */
+  isNativeOrigin(value) { return typeof value === 'string' && /^flow:\/\/[a-z0-9.-]+$/i.test(value) && this.clientOrigins.includes(value); }
   start({ challenge, clientOrigin, expectedTeamId }) {
     this.sweep();
     if (!this.clientOrigins.includes(clientOrigin)) throw new Fault('client_origin_not_allowed');

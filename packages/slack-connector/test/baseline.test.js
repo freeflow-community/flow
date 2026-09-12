@@ -56,7 +56,7 @@ function fixture(t, options = {}) {
     }
     return new Response(JSON.stringify(result));
   };
-  const connector = new Connector({ store, clientId: '123.456', clientSecret: 'client-secret', publicOrigin: 'https://connector.test', clientOrigins: ['https://flow.test'], signingSecret: 'signing-secret', fetcher, now: () => now });
+  const connector = new Connector({ store, clientId: '123.456', clientSecret: 'client-secret', publicOrigin: 'https://connector.test', clientOrigins: ['https://flow.test', ...(options.clientOrigins ?? [])], signingSecret: 'signing-secret', fetcher, now: () => now });
   async function connect() {
     const verifier = opaque();
     const start = connector.start({ challenge: hash(verifier), clientOrigin: 'https://flow.test' });
@@ -306,4 +306,38 @@ test('HTTP: baseline routes are credential-bound, JSON-only, and carry Retry-Aft
   assert.equal(limited.headers.get('retry-after'), '60');
   const preflight = await fetch(`${base}/v1/messages`, { method: 'OPTIONS', headers: { origin: 'https://flow.test' } });
   assert.match(preflight.headers.get('access-control-allow-methods'), /PATCH/);
+});
+
+test('HTTP: a native client signs in without an Origin header and returns to its own URL scheme', async t => {
+  const f = fixture(t, { clientOrigins: ['flow://slack'] });
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const json = { 'content-type': 'application/json' };
+  const post = (path, body, headers = {}) => fetch(`${base}${path}`, { method: 'POST', headers: { ...json, ...headers }, body: JSON.stringify(body) });
+  const verifier = opaque();
+  // No Origin header, native client origin: allowed. Same body from a browser
+  // origin, or a native origin nobody configured: refused.
+  const started = await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://slack' });
+  assert.equal(started.status, 200);
+  const { authorizationUrl, operationId } = await started.json();
+  assert.equal((await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://slack' }, { origin: 'https://evil.test' })).status, 403);
+  assert.equal((await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://other' })).status, 403);
+  // Polling before consent says pending, and the verifier is what binds it.
+  assert.deepEqual(await (await post('/v1/oauth/poll', { verifier, operationId, clientOrigin: 'flow://slack' })).json(), { status: 'pending' });
+  assert.equal((await post('/v1/oauth/poll', { verifier: opaque(), operationId, clientOrigin: 'flow://slack' })).status, 400);
+  // Slack's redirect lands on the connector, which bounces to flow://slack with
+  // only the operation id: no handoff or credential in the URL.
+  const state = new URL(authorizationUrl).searchParams.get('state');
+  const callback = await fetch(`${base}/oauth/callback?state=${state}&code=T1`, { redirect: 'manual' });
+  assert.equal(callback.status, 302);
+  assert.equal(callback.headers.get('location'), `flow://slack/connected?operationId=${encodeURIComponent(operationId)}`);
+  const done = await (await post('/v1/oauth/poll', { verifier, operationId, clientOrigin: 'flow://slack' })).json();
+  assert.equal(done.status, 'connected');
+  assert.equal(done.identity.teamId, 'T1');
+  assert.match(done.credential, /^[A-Za-z0-9_-]+$/);
+  // The credential then works on the read routes with no Origin at all.
+  const me = await fetch(`${base}/v1/workspace`, { headers: { authorization: `Bearer ${done.credential}` } });
+  assert.equal(me.status, 200);
 });

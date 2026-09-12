@@ -62,6 +62,21 @@ enum Banners {
         }
     }
 
+    /// A banner for a message that has no Flow notification row and no push:
+    /// a provider's event stream delivered it while the app runs (#546). The
+    /// identifier carries the connection so sign-out can clear its banners,
+    /// and the navigation fields ride in `userInfo` like any other banner.
+    static func showLocal(identifier: String, title: String, body: String, userInfo: [AnyHashable: Any], sound: Bool = true) {
+        guard available else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized else { return }
+            let content = makeContent(title: title, body: body, userInfo: userInfo, sound: sound)
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil)) { error in
+                if let error { NSLog("Flow banners: add failed: %@", error.localizedDescription) }
+            }
+        }
+    }
+
     /// The banner's content. Split out from `show` so the one branch that has
     /// no OS-level observable — a silenced alert looks exactly like a noisy one
     /// in a screenshot — is testable.
