@@ -1352,3 +1352,9 @@ one-recipient MCP correction).
 - **Raw captures never enter the repo.** Only `tools/sanitize.mjs` output does;
   the id map stays in the scratch directory, and the sanitizer fails the run if
   a token or workspace hostname survives.
+- **No public-API history experience is promised with this app.** Measured live:
+  `conversations.history` allows one request per minute with 15 objects per
+  page, shared per app + team, because the app is distributed outside the
+  Marketplace. The public route to tier-3 history is Marketplace approval; the
+  other route is the internal protocol, which is session-blocked. Discovery
+  and send remain fine on the public API.

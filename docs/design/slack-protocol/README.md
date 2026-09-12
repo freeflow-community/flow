@@ -20,7 +20,8 @@ fixture; anything not seen is listed under "Unresolved", not guessed.
 three human members and one app), channel `#testing`, the operator's own
 member account. Ruling recorded in `decision_log.md` (2026-09-11). All
 mutations were synthetic messages labelled "Flow protocol test" in `#testing`;
-one was deleted as part of the test, the others remain.
+one was deleted as part of the test, the others remain, plus twelve more
+posted through the connector for the page-size measurement in §6.
 
 - Client: Slack web client in Chrome 153 (macOS), build `_x_version_ts=1789166259`,
   `_x_frontend_build_type=current`, `_x_desktop_ia=4`, `_x_gantry=true`
@@ -69,7 +70,7 @@ one was deleted as part of the test, the others remain.
 | Live socket (`wss://wss-<pool>.slack.com/?…`) | `token=xoxc-…` in the socket URL query, plus `start_args`, `flannel=3`, `lazy_channels=1`, `batch_presence_aware=1`, `sync_desync`, `gateway_server`, `no_query_on_subscribe`, `slack_client`. A fast reconnect adds `frt` (a short-lived reconnect token). The server also pushes `reconnect_url` frames carrying a fresh full URL. | Socket URL is built by the client; `reconnect_url` supplies replacements. | High. Fixtures `05`, `06`, `session2`. |
 | Canvas collaboration service (`/canvas/collab/controller-init`) | A separate `oauth_token` + `oauth_token_expiry` in the response. | Issued per boot for the canvas editor. Redacted; not studied. | Medium. |
 | File upload (`files.slack.com/upload/v1/<opaque>`) | Opaque signed path returned by `files.getUploadURL`; the PUT carries only the file. | One-shot per upload. | High. Fixture `23`. |
-| Public Web API with the Flow connector (#543) | `xoxp-` user token, `xoxe-` refresh token, 12 h lifetime, refresh **requires** `client_secret` on live Slack (docs say otherwise). | OAuth v2 grant to the test app. | High (live, #543). |
+| Public Web API with the Flow connector (#543, re-authorized for #544) | `xoxp-` user token, `xoxe-` refresh token, 12 h lifetime, refresh **requires** `client_secret` on live Slack (docs say otherwise). Grant now carries `chat:write` plus the nine read scopes; a method outside the grant answers HTTP 200 with `{ok:false, error:"missing_scope", needed, provided}`. | OAuth v2 grant to the test app. | High (live, #543 and #544). |
 
 **OAuth user grant vs first-party session.** Not tested by design (hard rule).
 There is no observed evidence that an `xoxp-` token is accepted by
@@ -244,15 +245,37 @@ Sources: Slack docs fetched 2026-09-11 (rate limits, Events API, Socket Mode,
 | PKCE refresh without secret | **Contradicted live** (#543): refresh needs `client_secret`. |
 | User-token posts carry only `user` | **Contradicted live** (#543): the app's `bot_id`/`app_id`/`bot_profile` appear next to `user`. |
 
-**Not measured, and why.** Measuring the history/replies capacity and reading
-the app's classification needs (a) the test app to carry the user scopes
-`channels:history`, `groups:history`, `im:history`, `mpim:history`,
-`channels:read`, `groups:read`, `im:read`, `mpim:read`, `users:read` (the
-current manifest has only `chat:write`), a re-authorization, and a scripted
-probe that counts 429s over a minute; and (b) the app's "Distribution" page on
-`api.slack.com`, which the browser extension cannot open. Both are operator
-actions. Until they are done, **no history experience may be promised**
-(acceptance rule). Recorded as a blocker in the matrix, not as a gap.
+**Measured capacity (2026-09-11 evening, `fixtures/2026-09-11/public-api-rate-probe.json`).**
+The operator added the nine read scopes to the test app, the connector's
+scope manifest gained `readConversations` and `readHistory`, and the test
+workspace was re-authorized through the connector (grant shows all ten
+scopes). A local script then called the API directly with the grant's user
+token:
+
+| Run | Result |
+| --- | --- |
+| `conversations.history`, `#testing` with 5 messages, 1 call/s for 60 s, `limit=200` | 60/60 OK, no 429. A never-used grant starts with a full burst bucket (see the idle run). |
+| Same channel after 12 synthetic posts (17 messages), `limit=200` | 200 OK with **15 messages**, `has_more: true`, cursor present. The next two calls: 429 `ratelimited`. |
+| Same, `limit=15`, every 5 s for 180 s | One 200 per ~60 s (t = 1, 47, 104, 166 s); every other call 429 with `Retry-After: 60`. |
+| Self-DM with 0 messages, every 5 s, started 2 s after the run above | 429 immediately; one 200 in the minute. The budget is per **app + team + method**, shared across channels. |
+| After 5 min with no history calls: self-DM every 5 s, then `#testing` every 5 s | DM: 8 OK in the first 40 s, then 429 (`Retry-After: 60`); `#testing` right after: one OK in the minute. A **burst bucket refills at ~1 credit/min while idle**; sustained rate is 1/min. |
+| `conversations.replies`, thread of 2, every 5 s for 60 s | 12/12 OK. Not limited to 1/min in this run (its own bucket was still full). |
+| `chat.postMessage` ×12 at 1.1 s spacing (the fill) | 12/12 OK. |
+
+So this app **is in the restricted cohort** for `conversations.history`: one
+request per minute and 15 objects per response, exactly the documented
+non-Marketplace limit. Slack applied it to the app because distribution was
+enabled in #543 (needed to authorize a second workspace); the app's
+Distribution page itself was not read (the extension cannot open
+`api.slack.com`), so the *displayed* classification is still for the operator
+to confirm. The limiter is a token bucket: a fresh grant could spend ~60
+calls at once, a five-minute idle restored about eight, and the steady rate
+is one per minute. So a "burst" only exists for a grant that has been idle
+for a long time. Under the acceptance rule,
+**no usable history experience can be promised on the public API** with this
+app: a 17-message channel needs two minutes to page, and a busy channel is
+unreadable. `conversations.replies` behaved better but the docs list it in the
+same cohort, so treat that as unverified rather than safe.
 
 ## 7. Capability × platform feasibility matrix (spec area 5)
 
@@ -265,15 +288,15 @@ concrete blocker. Observed client: web, 2026-09-11, build 1789166259.
 
 | Capability | Public API | Internal protocol (observed) | Web | macOS | iOS | Unresolved |
 | --- | --- | --- | --- | --- | --- | --- |
-| Workspace, users, conversations | `auth.test` (live #543), `users.*`, `conversations.list` need `users:read`, `*:read` (not yet granted) | `client.init`/`client.channels`/`client.counts` + `edgeapi` cache — H for names and order, L for bodies (`session2`, v1) | public-API supported (once scopes granted) | same | same | bodies of `client.channels`; `edgeapi` semantics vs `users.list` |
-| History | `conversations.history` needs `*:history`; capacity **unmeasured**; possibly 1/min + 15 objects | `conversations.history` with client fields and conditional fetch — H (`01`, `20`) | blocked: scopes not granted and capacity unmeasured (§6) | same | same | app classification; pagination (not exercised) |
-| Threads | `conversations.replies`, same limit cohort | `subscriptions.thread.get` + `conversations.replies`; `message_replied`, `thread_subscribed` — H (`14`, `15`) | blocked as History | same | same | thread subscription semantics for other users' threads |
+| Workspace, users, conversations | `auth.test` (live #543); `conversations.list`, `users.list`, `conversations.info` live with the read scopes (§6) | `client.init`/`client.channels`/`client.counts` + `edgeapi` cache — H for names and order, L for bodies (`session2`, v1) | public-API supported | same | same | bodies of `client.channels`; `edgeapi` semantics vs `users.list` |
+| History | `conversations.history` **measured: 1 request/min, 15 objects, Retry-After 60**, shared per app+team (§6) | `conversations.history` with client fields and conditional fetch — H (`01`, `20`) | blocked for a usable experience: public capacity is 1/min + 15 objects (burst only after long idle); internal observed but session-blocked | same | same | exact bucket size; Marketplace approval as the only public route to tier 3 |
+| Threads | `conversations.replies`: 12/min observed OK, but documented in the same cohort | `subscriptions.thread.get` + `conversations.replies`; `message_replied`, `thread_subscribed` — H (`14`, `15`) | public-API supported with the History caveat | same | same | whether replies has its own budget |
 | Send as user | `chat.postMessage` live (#543); authorship = `message.user`, `bot_id` present | `chat.postMessage` with provisional `ts`, echo-before-response — H (`08`) | public-API supported | public-API supported | public-API supported | none for public; `xArgs`/`draft_id` for internal |
 | Edit / delete | `chat.update`, `chat.delete` (scope `chat:write`; not live-tested) | `chat.update`, `chat.delete`, hidden `message_changed`/`message_deleted` — H (`17`, `22`) | public-API supported (pending live test) | same | same | live test of public edit/delete |
-| Reactions | `reactions.add`/`remove` need `reactions:write`; `reaction_added` event needs `reactions:read` subscription | `reactions.add` + `reaction_added` — H (`12`) | blocked: scope not granted | same | same | — |
+| Reactions | `reactions.add` live → `missing_scope` (needs `reactions:write`); `reaction_added` event needs `reactions:read` subscription | `reactions.add` + `reaction_added` — H (`12`) | blocked: scope not granted | same | same | — |
 | Files | `files.getUploadURLExternal`/`completeUploadExternal` need `files:write`; download URLs need `files:read` | `files.getUploadURL` → signed PUT → `completeUpload` → `files.share` — H (`23`, `24`) | blocked: scope not granted | same | same | whether public upload can attach to a message identically to `files.share` |
-| Search | `search.messages` needs `search:read` (user token only) | not observed | blocked: scope not granted | same | same | — |
-| Unread / read state | `conversations.mark` needs the conversation write scopes (docs); `channel_marked`-class events are **not** in the Events API, so another device's read mark is invisible | `conversations.mark`, `channel_marked`, `client.counts`, `badge_counts_updated` — H for own marks (`18`); L for cross-device | blocked: cross-device read cursors only exist on the internal stream | same | same | what triggers the client's automatic mark on re-entry |
+| Search | `search.messages` live → `missing_scope` (needs `search:read`, user token only) | not observed | blocked: scope not granted | same | same | — |
+| Unread / read state | `conversations.mark` live → `missing_scope` (needs the conversation write scopes); `channel_marked`-class events are **not** in the Events API, so another device's read mark is invisible | `conversations.mark`, `channel_marked`, `client.counts`, `badge_counts_updated` — H for own marks (`18`); L for cross-device | blocked: cross-device read cursors only exist on the internal stream | same | same | what triggers the client's automatic mark on re-entry |
 | Live updates | Events API: `message.*` etc. need history scopes + event subscriptions; routed per grant; no ordering guarantee | socket stream — H for envelope/heartbeat/reconnect (`05`, `06`, `session2`), L for gap fill | internal-protocol observed; blocked for Flow by the session dependency; Events API viable once scopes/events granted | same | same | gap fill; server idle timeout |
 | Typing | none in public API | `user_typing` out; inbound not observed | blocked (no public API); internal observed one-way | same | same | inbound `user_typing` shape |
 | Presence | `users.getPresence` (polling, `users:read`) | `presence_sub`/`presence_change` — H (`05`) | public: polling only; internal observed | same | same | subscription limits |
@@ -293,10 +316,9 @@ equivalent public interface.
 
 ## 8. Next bounded experiments
 
-1. Grant the read scopes on the test app, re-authorize, and run a scripted
-   probe of `conversations.history`/`replies` for one minute; record the
-   429 pattern and the app's Distribution page state. This unblocks History,
-   Threads, Reactions, Files, Search rows.
+1. Done for history/replies (§6). Still open: the operator reads the app's
+   Distribution page; the exact bucket size; the same probe for `reactions:*`,
+   `files:*`, `search:read` once those scopes are added.
 2. Two-account run in `#testing`: second account posts, edits, reacts, and
    types while the first client is (a) connected, (b) disconnected for 30 s,
    (c) disconnected past the ~96 s deadline. Diff what arrives on the socket

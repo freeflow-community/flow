@@ -2,7 +2,7 @@
   "display_information": { "name": "Flow Slack connector", "description": "Connect your Slack identity to Flow", "background_color": "#4338ca" },
   "oauth_config": {
     "redirect_urls": ["https://CONNECTOR_HOST/oauth/callback"],
-    "scopes": { "user": ["chat:write"] },
+    "scopes": { "user": ["chat:write", "channels:read", "groups:read", "im:read", "mpim:read", "users:read", "channels:history", "groups:history", "im:history", "mpim:history"] },
     "pkce_enabled": true
   },
   "settings": {
