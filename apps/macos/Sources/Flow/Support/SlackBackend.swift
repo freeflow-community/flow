@@ -78,7 +78,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             .liveUpdates: on("liveUpdates") ? .limited("New messages arrive through the Flow Slack connector with a short delay.") : .unavailable("Live updates need the Slack app to subscribe to message events."),
             .typing: .unavailable("Typing indicators are not available for Slack workspaces."),
             .presence: .unavailable("Presence is not available for Slack workspaces."),
-            .notifications: .unavailable("Slack notifications are not delivered to Flow yet."),
+            .notifications: on("liveUpdates")
+                ? .limited("Mentions and direct messages alert you only while Flow is open. Slack has no push to Flow when it is closed.")
+                : .unavailable("Slack notifications need the Slack app to subscribe to message events."),
         ])
     }
 

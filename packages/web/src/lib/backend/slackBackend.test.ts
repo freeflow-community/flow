@@ -35,6 +35,9 @@ describe('slackCapabilities', () => {
     expect(caps.liveUpdates.state).toBe('unavailable');
     expect(caps.artifacts.state).toBe('unavailable');
     expect(caps.notifications.state).toBe('unavailable');
+    const live = slackCapabilities({ sendAsUser: true, readHistory: true, readConversations: true, liveUpdates: true });
+    expect(live.notifications.state).toBe('limited');
+    expect(live.notifications.reason).toMatch(/only while Flow is open/);
   });
   it('maps emoji to Slack names both ways', () => {
     expect(shortcodeFor('✅')).toBe('white_check_mark');
