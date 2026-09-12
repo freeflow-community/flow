@@ -170,11 +170,29 @@ export default function Main() {
           case 'stream.degraded':
             setStatus('reconnecting');
             break;
-          case 'stream.recovered':
+          case 'stream.recovered': {
+            // A gap means events were missed: refetch what is on screen — the
+            // visible conversation, its open thread and the channel list — not
+            // every cached transcript, which would burn a limited provider's
+            // history budget for channels nobody is looking at (#546).
             setStatus('connected');
             setCatchUpCount((n) => n + 1);
-            void qc.invalidateQueries().finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
+            const current = selRef.current;
+            if (current.channelId) {
+              // Keep only the newest page so the refetch costs one history call;
+              // older pages reload lazily as the user scrolls, as they did before.
+              qc.setQueryData<{ pages: unknown[]; pageParams: unknown[] }>(['messages', current.channelId], (old) =>
+                old ? { pages: old.pages.slice(0, 1), pageParams: old.pageParams.slice(0, 1) } : old,
+              );
+            }
+            const scoped = [
+              qc.invalidateQueries({ queryKey: ['channels'] }),
+              ...(current.channelId ? [qc.invalidateQueries({ queryKey: ['messages', current.channelId] })] : []),
+              ...(current.threadRootId ? [qc.invalidateQueries({ queryKey: ['thread', current.threadRootId] })] : []),
+            ];
+            void Promise.all(scoped).finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
             break;
+          }
           case 'auth.changed':
             if (event.auth.status !== 'authenticated') setStatus('reconnecting');
             break;

@@ -225,6 +225,51 @@ test('Events API chat events reach only the authorized grant, in order, with bou
   assert.ok(late.seq > seq);
 });
 
+test('sends are idempotent per client id; an unknown outcome is reconciled on retry, never posted twice', async t => {
+  let mode = 'ok';
+  const posted = [];
+  const f = fixture(t, { fetcher: async (method, params) => {
+    if (method === 'chat.postMessage') {
+      if (mode === 'timeout') { const error = new Error('timed out'); error.name = 'TimeoutError'; throw error; }
+      if (mode === 'down') return new Response('bad gateway', { status: 502 });
+      posted.push(params);
+      return { ok: true, channel: params.channel, ts: `1700000000.00000${posted.length}`, message: { user: 'U1', type: 'message', text: params.text, ts: `1700000000.00000${posted.length}`, bot_id: 'B9' } };
+    }
+    if (method === 'conversations.history' && mode === 'found') return { ok: true, messages: [{ type: 'message', user: 'U1', ts: '1800000000.000009', text: 'hello *there*' }], has_more: false };
+    return null;
+  } });
+  const { credential } = await f.connect();
+  const first = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0001' });
+  const again = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0001' });
+  assert.equal(again.ts, first.ts);
+  assert.equal(posted.length, 1, 'a repeated send with the same id posts once');
+  assert.equal(posted[0].text, 'hello *there*', 'markdown goes out as mrkdwn');
+  // Unknown outcome: Slack never answered. The client gets 504 and keeps its id.
+  mode = 'timeout';
+  await assert.rejects(f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0002' }), error => error.code === 'send_unknown' && error.status === 504);
+  // The retry reconciles first: Slack already has the message, so it is returned, not re-posted.
+  mode = 'found';
+  const reconciled = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0002' });
+  assert.equal(reconciled.ts, '1800000000.000009');
+  assert.equal(reconciled.reconciled, true);
+  assert.equal(reconciled.message.body, 'hello **there**');
+  assert.equal(posted.length, 1, 'nothing was posted again');
+  assert.equal(f.calls.filter(c => c.method === 'conversations.history').length, 1, 'one reconciliation read');
+  // A retry whose reconciliation finds nothing posts once.
+  mode = 'down';
+  await assert.rejects(f.connector.send(credential, { channel: 'C1', text: 'new text', client_msg_id: 'client-msg-0003' }), /send_unknown/);
+  mode = 'ok';
+  const third = await f.connector.send(credential, { channel: 'C1', text: 'new text', client_msg_id: 'client-msg-0003' });
+  assert.equal(third.reconciled, undefined);
+  assert.equal(posted.length, 2);
+  // A definite Slack refusal is not remembered: the next attempt may post.
+  await assert.rejects(f.connector.send(credential, { channel: 'C1', text: 'x', client_msg_id: 'bad id!' }), /invalid_message/);
+  // The memory expires.
+  f.advance(601_000);
+  const later = await f.connector.send(credential, { channel: 'C1', text: 'hello **there**', client_msg_id: 'client-msg-0001' });
+  assert.notEqual(later.ts, first.ts);
+});
+
 test('HTTP: baseline routes are credential-bound, JSON-only, and carry Retry-After on 429', async t => {
   const f = fixture(t);
   const server = createConnectorServer(f.connector);

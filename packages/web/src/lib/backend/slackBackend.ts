@@ -93,6 +93,9 @@ export class SlackBackend implements WorkspaceBackend {
       throw new BackendError('unauthorized', slackStatusMessage(code), { providerCode: code });
     }
     if (code === 'missing_scopes') throw new BackendError('unsupported', 'This Slack app has not been granted the permission for that.', { providerCode: code });
+    // The connector could not learn whether Slack took the message: the row
+    // stays failed with Retry, and the retry carries the same client id.
+    if (response.status === 504 || code === 'send_unknown') throw new BackendError('timeout', 'Slack did not confirm the message. Retry sends it once, never twice.', { providerCode: code });
     if (response.status === 404) throw new BackendError('not_found', slackStatusMessage(code), { providerCode: code });
     if (response.status === 403) throw new BackendError('invalid', 'Slack did not allow that action.', { providerCode: code });
     throw new BackendError(response.status >= 500 ? 'provider_error' : 'invalid', slackStatusMessage(code), { providerCode: code });
@@ -171,8 +174,10 @@ export class SlackBackend implements WorkspaceBackend {
 
   async send(input: SendMessageInput): Promise<SendReceipt> {
     if (input.fileIds?.length) throw new BackendError('unsupported', this.caps.files.reason ?? 'Files are not available.');
+    // The client id makes the send idempotent at the connector: a retry after
+    // a timeout reconciles against Slack instead of posting twice (#546).
     const result = await this.request<{ message: BackendMessage }>('POST', '/v1/messages', {
-      channel: input.channelId, text: input.body, ...(input.threadRootId ? { thread_ts: input.threadRootId } : {}),
+      channel: input.channelId, text: input.body, client_msg_id: input.clientMsgId, ...(input.threadRootId ? { thread_ts: input.threadRootId } : {}),
     });
     // Slack does not echo a client message id; the connector's reply carries
     // the real ts, so stamp our idempotency key on it for the optimistic row.

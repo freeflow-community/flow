@@ -27,7 +27,7 @@ export class Connector {
   }
   sweep() {
     const now = this.now();
-    for (const kind of ['oauth', 'handoff', 'session', 'event', 'stream']) {
+    for (const kind of ['oauth', 'handoff', 'session', 'event', 'stream', 'sent']) {
       for (const { id, value } of this.store.all(kind)) if (value.expiresAt <= now) this.store.remove(kind, id);
     }
     for (const [key, expiresAt] of this.rateLimits) if (expiresAt <= now) this.rateLimits.delete(key);
@@ -325,13 +325,29 @@ export class Connector {
       return this.describe(id, grant);
     });
   }
-  async send(credential, { channel, text, thread_ts: threadTs }) {
+  /** Sends are idempotent per grant + `client_msg_id` for ten minutes (#546):
+   * a repeated send returns the first result, and a send whose outcome the
+   * connector never learned (timeout, 5xx after the post) is reconciled
+   * against Slack before anything is posted again. A retry is therefore safe
+   * for the client to issue with the same id, and never through another
+   * transport. Slack has no idempotency key of its own. */
+  async send(credential, { channel, text, thread_ts: threadTs, client_msg_id: clientMsgId }) {
     if (!idPattern.test(channel ?? '') || typeof text !== 'string' || !text.trim() || text.length > 4000 || (threadTs != null && !isTs(threadTs))) throw new Fault('invalid_message');
-    return this.withGrant(credential, async grant => {
+    if (clientMsgId != null && !/^[A-Za-z0-9_-]{8,128}$/.test(clientMsgId)) throw new Fault('invalid_message');
+    return this.withGrant(credential, async (grant, grantId) => {
       if (!grantedCapabilities(grant.scopes).sendAsUser) throw new Fault('missing_scopes', 403);
+      const key = clientMsgId ? hash(JSON.stringify([grantId, 'sent', clientMsgId])) : null;
+      const prior = key ? this.store.get('sent', key) : null;
+      if (prior?.status === 'done' && prior.expiresAt > this.now()) return prior.result;
       const budget = JSON.stringify([grant.identity.teamId, 'chat.postMessage']);
       if ((this.rateLimits.get(budget) ?? 0) > this.now()) throw new Fault('rate_limited', 429);
+      const remember = value => { if (key) this.store.put('sent', key, { ...value, grantId, channel, expiresAt: this.now() + 600_000 }); };
       try {
+        if (prior?.status === 'unknown') {
+          const found = await this.reconcileSend(grant, { channel, text, threadTs, since: prior.startedAt });
+          if (found) { remember({ status: 'done', result: found }); return found; }
+        }
+        remember({ status: 'unknown', startedAt: this.now() });
         // The body arrives as Flow markdown and goes out as mrkdwn; the reply
         // comes back through the same normalizer every read path uses.
         const result = await this.slack('chat.postMessage', { channel, text: markdownToMrkdwn(text), unfurl_links: 'false', unfurl_media: 'false', ...(threadTs ? { thread_ts: threadTs } : {}) }, grant.accessToken);
@@ -340,12 +356,32 @@ export class Connector {
         // 409, not 5xx: a proxy may replace a 5xx body and hide this code.
         if (result.message?.user !== grant.identity.userId || result.message?.subtype === 'bot_message') throw new Fault('authorship_mismatch', 409);
         const message = normalizeMessage({ ...result.message, ts: result.ts, channel: result.channel, ...(threadTs ? { thread_ts: threadTs } : {}) }, { teamId: grant.identity.teamId, channelId: result.channel ?? channel });
-        return { channel: result.channel, ts: result.ts, userId: result.message.user, message };
+        const value = { channel: result.channel, ts: result.ts, userId: result.message.user, message };
+        remember({ status: 'done', result: value });
+        return value;
       } catch (error) {
         if (error.retryAfter) this.rateLimits.set(budget, this.now() + error.retryAfter * 1000);
-        throw error;
+        // Slack answered: the message was not posted, so the next attempt may post.
+        if (error instanceof Fault && error.code !== 'slack_unavailable') { if (key) this.store.remove('sent', key); throw error; }
+        // No answer, or a 5xx after Slack may have processed it: outcome unknown.
+        // 504 tells the client to retry with the same id, which reconciles first.
+        throw new Fault('send_unknown', 504);
       }
     });
+  }
+  /** After an unknown outcome: does Slack already hold this message? One
+   * history/replies call (the rare path pays one budget unit), matched on
+   * author, exact outgoing text and a timestamp not older than the attempt. */
+  async reconcileSend(grant, { channel, text, threadTs, since }) {
+    const wanted = markdownToMrkdwn(text);
+    const result = threadTs
+      ? await this.call(grant, 'conversations.replies', { channel, ts: threadTs, limit: '50' })
+      : await this.call(grant, 'conversations.history', { channel, limit: '20' });
+    const floor = Math.floor(since / 1000) - 5;
+    const match = (result.messages ?? []).find(m => isTs(m.ts) && m.user === grant.identity.userId && m.text === wanted && Number(m.ts.split('.')[0]) >= floor && (threadTs ? m.thread_ts === threadTs : !m.thread_ts || m.thread_ts === m.ts));
+    if (!match) return null;
+    const message = normalizeMessage({ ...match, channel }, { teamId: grant.identity.teamId, channelId: channel });
+    return { channel, ts: match.ts, userId: match.user, message, reconciled: true };
   }
   event(raw, timestamp, signature) {
     if (!/^\d+$/.test(timestamp ?? '') || Math.abs(this.now() / 1000 - Number(timestamp)) > 300) throw new Fault('invalid_signature', 401);
