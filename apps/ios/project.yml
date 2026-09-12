@@ -168,6 +168,8 @@ targets:
       # BuildInfo comes with it for the HTTP-loopback development allowance.
       # The share extension resolves the selected connection from the app group.
       - path: ../macos/Sources/Flow/Support/ServerConnection.swift
+      # The registry's Slack identity rules (#545), model-free on purpose.
+      - path: ../macos/Sources/Flow/Support/SlackIdentity.swift
       - path: ../macos/Sources/Flow/Support/ConnectionStore.swift
       - path: ../macos/Sources/Flow/Support/StorageScope.swift
       - path: ../macos/Sources/Flow/Support/CanonicalOrigin.swift
