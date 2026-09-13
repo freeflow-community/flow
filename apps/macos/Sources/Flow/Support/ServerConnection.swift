@@ -55,6 +55,11 @@ struct ServerConnection: Codable, Identifiable, Equatable, Sendable {
 
     var url: URL { URL(string: origin) ?? Server.defaultLocal }
     var canonicalOrigin: CanonicalOrigin? { CanonicalOrigin.originOf(url) }
+    /// How this connection names itself in the UI — the switcher sheet's rows
+    /// and the iOS sidebar header both use it, so they can't drift (#563).
+    var displayLabel: String {
+        provider == .slack ? "Slack · \(label)" : canonicalOrigin?.label ?? origin
+    }
     var connectionScope: StorageScope { StorageScope(storageKey: connectionStorageKey) }
 }
 
