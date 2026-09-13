@@ -18,6 +18,12 @@ struct RootView: View {
     var body: some View {
         SessionRootView()
             .environmentObject(active)
+            // The switcher used to be a floating capsule pinned to the
+            // bottom-right — which is exactly where the composer's send button
+            // lives, so typing a message put the pill on top of send (#561).
+            // The sheet still belongs to the root; its trigger now travels down
+            // as an action, and the composer's "+" menu raises it.
+            .environment(\.openConnections, OpenConnectionsAction { showConnections = true })
             .id("\(active.connectionId):\(workspace ?? "")")
             // A connection nobody is showing must not suppress its own
             // notifications or mark its channel read: its `WindowState`
@@ -31,10 +37,6 @@ struct RootView: View {
                         showing(owner)
                     }.padding(8)
                 }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Button("Workspaces and servers") { showConnections = true }
-                    .font(.caption).padding(8).background(.regularMaterial, in: Capsule()).padding(8)
             }
             .onReceive(NotificationCenter.default.publisher(for: .init("flow.selectConnection"))) { event in
                 if let app = event.object as? AppState { selected = app; workspace = nil; showing(app) }
@@ -114,5 +116,29 @@ private struct SessionRootView: View {
         } message: {
             Text("Flow needs camera access to turn on video in a huddle. Enable it in Settings → Flow → Camera.")
         }
+    }
+}
+
+/// Opens the workspace/server switcher (#561). Published by `RootView`, which
+/// owns the sheet, so a view as deep as the composer can raise it without a
+/// control floating over the conversation.
+struct OpenConnectionsAction: Sendable {
+    private let open: @MainActor @Sendable () -> Void
+
+    init(_ open: @escaping @MainActor @Sendable () -> Void) { self.open = open }
+
+    @MainActor func callAsFunction() { open() }
+}
+
+private struct OpenConnectionsKey: EnvironmentKey {
+    /// No-op above the root, so a preview or a detached host renders rather
+    /// than trapping — the same shape the confetti controller uses on macOS.
+    static let defaultValue = OpenConnectionsAction {}
+}
+
+extension EnvironmentValues {
+    var openConnections: OpenConnectionsAction {
+        get { self[OpenConnectionsKey.self] }
+        set { self[OpenConnectionsKey.self] = newValue }
     }
 }

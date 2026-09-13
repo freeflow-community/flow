@@ -10,6 +10,8 @@ struct AuthView: View {
     private enum Mode { case signIn, register }
 
     @EnvironmentObject var app: AppState
+    /// Raises the workspace/server switcher owned by `RootView` (#561).
+    @Environment(\.openConnections) private var openConnections
 
     @State private var mode: Mode = .signIn
     @State private var email = ""
@@ -26,6 +28,14 @@ struct AuthView: View {
     @State private var linkSent = false
     /// True after a signup email was requested — same swap for Register.
     @State private var signupSent = false
+
+    /// The connection this screen is signing in to — the live one, not the
+    /// compiled-in default, now that a phone can hold several (#542).
+    private var serverLabel: String {
+        URL(string: app.serverOrigin).flatMap { url in
+            url.host.map { host in url.port.map { "\(host):\($0)" } ?? host }
+        } ?? Server.displayName
+    }
 
     private var formValid: Bool { !email.isEmpty && !password.isEmpty }
     private var emailValid: Bool { email.contains("@") && !email.hasSuffix("@") }
@@ -58,9 +68,18 @@ struct AuthView: View {
                 if mode == .signIn { signInForm } else { registerForm }
             }
             Spacer()
-            Text("Server: \(Server.displayName)")
-                .font(.caption).foregroundStyle(MC.muted)
-                .padding(.bottom, 8)
+            // The switcher's floating pill is gone (#561) and this screen has
+            // no composer to hold its replacement — so the server line doubles
+            // as the way in, or a connection you are signed out of would be a
+            // dead end.
+            VStack(spacing: 4) {
+                Text("Server: \(serverLabel)")
+                    .font(.caption).foregroundStyle(MC.muted)
+                Button("Workspaces & servers") { openConnections() }
+                    .font(.caption)
+                    .accessibilityIdentifier("auth.connections")
+            }
+            .padding(.bottom, 8)
         }
         .padding()
         .background(MC.base.ignoresSafeArea())
