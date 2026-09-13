@@ -34,6 +34,7 @@ import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
 import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
+import { openServerConnections } from './ServerConnections';
 import { FeaturesModal } from './FeaturesModal';
 import { useHoverTooltip } from './HoverTooltip';
 import StatusFooter from './StatusPicker';
@@ -411,6 +412,11 @@ export default function Sidebar() {
             )}
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
+            </MenuItem>
+            {/* Workspace/nav-level actions live in this menu (#563, #565) —
+                the switcher used to be a button floating over the composer. */}
+            <MenuItem testid="menu-connections" onClick={() => { setWsMenuOpen(false); openServerConnections(); }}>
+              Workspaces &amp; servers…
             </MenuItem>
             {/* Leaving is self-service for everyone but the owner (#340). An
                 owner with company has to hand the workspace over first; an

@@ -31,11 +31,12 @@ This file keeps two things:
   teardown — deliberately out of scope here, because #540's own acceptance
   criteria required no behaviour change on upgrade.
 - **The floating "Workspaces and servers" button is still on macOS** (#561,
-  #563 — both iOS-only tickets). iOS removed the capsule that sat on the send
-  button and the entry point now lives in the sidebar's workspace header menu;
+  #563, #565). iOS removed the capsule that sat on the send button and web
+  removed its bottom-right button; on both, the entry point now lives in the
+  sidebar's workspace menu, with the sign-in screen keeping its own way in.
   `apps/macos/.../RootView.swift` still pins the same button to the
   bottom-right of the window, over its own composer. Closing it is the same
-  move, into the macOS sidebar header.
+  move, into the macOS sidebar header — ticket #566.
 - **The lightened mention highlight is macOS + iOS only** (#531, which scoped
   web out). Both native clients now draw an in-message mention as accent text
   on a 10% accent wash (20% for a mention of you); `packages/web`'s

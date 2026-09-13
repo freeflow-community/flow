@@ -9,6 +9,7 @@ import { useIsFlow } from '../lib/backend';
 import { EMPTY_SLUG_FIELD, slugEdited, slugForName } from '../lib/slugify';
 import { OpenInAppButton } from './OpenInApp';
 import { AuthImg } from './Avatar';
+import { openServerConnections } from './ServerConnections';
 
 export default function WorkspaceChooser() {
   const { api } = useBoundApi();
@@ -164,6 +165,15 @@ export default function WorkspaceChooser() {
         >
           Accept Invite…
         </button>}
+        {/* No workspace is selected here, so there is no sidebar menu to
+            hold the switcher (#565). */}
+        <button
+          data-testid="chooser-connections"
+          className="rounded border border-hairline2 bg-white px-3 py-1.5 text-sm hover:bg-daypill"
+          onClick={openServerConnections}
+        >
+          Workspaces &amp; servers…
+        </button>
         <button className="px-3 py-1.5 text-sm text-accent-soft hover:underline" onClick={auth.signOut}>
           Sign Out
         </button>

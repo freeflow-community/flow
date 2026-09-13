@@ -72,21 +72,27 @@ if (seedA.workspaceId !== seedB.workspaceId || seedA.generalChannelId !== seedB.
   process.exit(2);
 }
 
-/** Post as Bob, mentioning Alice — a mention is what raises a notification,
- * and the notification count is what the switcher badges. */
-const mention = async (api, seed, text) => {
+/** Post as Bob into the colliding general channel. */
+const post = async (api, seed, body, mentions = []) => {
   const res = await fetch(`${api}/v1/channels/${seed.generalChannelId}/messages`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${seed.bob.token}` },
-    body: JSON.stringify({
-      clientMsgId: randomUUID(),
-      body: `<@${seed.alice.userId}> ${text}`,
-      mentions: [seed.alice.userId],
-    }),
+    body: JSON.stringify({ clientMsgId: randomUUID(), body, mentions }),
   });
   if (!res.ok) throw new Error(`post failed: ${res.status} ${await res.text()}`);
   return res.json();
 };
+
+/** Post as Bob, mentioning Alice — a mention is what raises a notification,
+ * and the notification count is what the switcher badges. */
+const mention = (api, seed, text) =>
+  post(api, seed, `<@${seed.alice.userId}> ${text}`, [seed.alice.userId]);
+
+// The marker each stack is recognised by. Both channels carry the same id, so
+// "which server am I looking at" can only be answered by the content — and the
+// run seeds its own, rather than relying on someone having typed it by hand.
+await post(A.api, seedA, 'A-ONLY content, posted by the acceptance run');
+await post(B.api, seedB, 'B-ONLY content, posted by the acceptance run');
 
 const browser = await chromium.launch({ headless: !headed });
 const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
@@ -123,7 +129,11 @@ try {
   check('A: signed in and showing A-only content', true);
 
   // ---- add B from the switcher -------------------------------------------
-  await page.getByRole('button', { name: 'Workspaces and servers' }).click();
+  // #565 moved the way in: no floating button anywhere, the entry is a row in
+  // the sidebar's workspace drop-down.
+  const floating = await page.getByRole('button', { name: 'Workspaces and servers' }).count();
+  check('no floating "Workspaces and servers" button remains', floating === 0, `found ${floating}`);
+  await clickSwitcherEntry(page);
   const dialog = page.getByRole('dialog', { name: 'Workspaces and servers' });
   await dialog.waitFor();
   await dialog.getByLabel('Server or invite URL').fill(B.api);
@@ -206,11 +216,18 @@ try {
   await browser.close();
 }
 
+/** Click the way in to the switcher. Since #565 that is an item in the
+ * sidebar's workspace drop-down, not a button floating at bottom-right. */
+async function clickSwitcherEntry(page) {
+  await page.getByTestId('workspace-menu').click();
+  await page.getByTestId('menu-connections').click();
+}
+
 /** Open the switcher, whether or not it is already open. */
 async function openSwitcher(page) {
   const dialog = page.getByRole('dialog', { name: 'Workspaces and servers' });
   if (!(await dialog.count())) {
-    await page.getByRole('button', { name: 'Workspaces and servers' }).click();
+    await clickSwitcherEntry(page);
   }
   await dialog.waitFor({ timeout: 15_000 });
   return dialog;

@@ -165,7 +165,10 @@ export default function App() {
         <SessionApp key={`${runtime.connectionId}:${epoch}`} runtime={runtime} />
       </QueryClientProvider>
     </ConnectionContext.Provider>
-    <button className="fixed right-3 bottom-3 z-30 rounded bg-white px-3 py-2 text-xs text-ink shadow" onClick={() => setShowConnections(true)}>Workspaces and servers</button>
+    {/* The dialog still belongs to the root; only the way in moved (#565).
+        Every entry point — the sidebar's workspace menu, the sign-in screen,
+        the workspace chooser — raises it through `openServerConnections()`,
+        which is the `flow:connections` event the effect above listens for. */}
     {showConnections && <ServerConnections onClose={() => setShowConnections(false)} onSelect={(connectionId, workspaceId) => {
       manager.setActive(connectionId);
       const target = manager.active();

@@ -10,6 +10,7 @@ import type {
 import { api, scopedStorageKey } from '../lib/api';
 import { loadGoogleIdentity, publicConfig } from '../lib/google';
 import { MAC_DOWNLOAD_URL } from './OpenInApp';
+import { openServerConnections } from './ServerConnections';
 
 type Mode =
   | 'signin'
@@ -469,6 +470,17 @@ export default function AuthScreen({
         )}
         {body}
       </div>
+      {/* The sign-in screen has no sidebar, so without this a signed-out
+          connection could not reach any other server at all (#565, mirroring
+          what #562 did for the iOS AuthView). */}
+      <button
+        type="button"
+        data-testid="auth-connections"
+        className="text-sm text-muted hover:text-ink"
+        onClick={openServerConnections}
+      >
+        Workspaces &amp; servers…
+      </button>
       <a
         data-testid="download-mac-app"
         href={MAC_DOWNLOAD_URL}
