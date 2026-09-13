@@ -21,6 +21,8 @@ struct SidebarView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
     @Environment(\.textZoom) private var textZoom
+    /// Raises the workspace/server switcher owned by `RootView` (#566).
+    @Environment(\.openConnections) private var openConnections
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
@@ -1151,6 +1153,16 @@ struct SidebarView: View {
                 .accessibilityIdentifier("sidebar.directoryMenuItem")
             Divider()
             Button("All Workspaces") { win.selectWorkspace(nil) }
+            // Workspaces & servers (#566). Its old home was a button pinned to
+            // the bottom-right of the window, floating over the composer's send
+            // button; workspace-level navigation belongs with the rest of it,
+            // which is here. iOS (#563) and web (#565) made the same move.
+            Button {
+                openConnections()
+            } label: {
+                Label("Workspaces & servers…", systemImage: "server.rack")
+            }
+            .accessibilityIdentifier("sidebar.connections")
             if currentWorkspace != nil, app.can(.admin) {
                 switch workspaceExit {
                 case .delete:

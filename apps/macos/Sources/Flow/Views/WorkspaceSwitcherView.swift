@@ -4,6 +4,8 @@ import SwiftUI
 struct WorkspaceSwitcherView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
+    /// Raises the workspace/server switcher owned by `RootView` (#566).
+    @Environment(\.openConnections) private var openConnections
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @State private var showCreate = false
     @State private var showAcceptInvite = false
@@ -105,6 +107,10 @@ struct WorkspaceSwitcherView: View {
             HStack(spacing: 12) {
                 Button("Create Workspace…") { showCreate = true }
                 Button("Accept Invite…") { showAcceptInvite = true }
+                // No sidebar on this screen either (#566), and "none of these
+                // workspaces" is exactly the moment you want another server.
+                Button("Workspaces & servers…") { openConnections() }
+                    .accessibilityIdentifier("switcher.connections")
             }
 
             Button("Sign Out", role: .destructive) {

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AuthView: View {
     @EnvironmentObject private var app: AppState
+    /// Raises the workspace/server switcher owned by `RootView` (#566).
+    @Environment(\.openConnections) private var openConnections
 
     @State private var isRegister = false
     @State private var email = ""
@@ -114,9 +116,20 @@ struct AuthView: View {
                 .pointingHandCursor()
             }
 
-            Text("Server: \(Server.displayName)")
-                .flowFont(.caption)
-                .foregroundStyle(.secondary)
+            // The floating switcher button is gone (#566) and this screen has
+            // no sidebar to hold its replacement — so the server line carries
+            // the way in, or a connection you are signed out of would be a dead
+            // end. Same gap iOS closed in #562 and web in #565.
+            VStack(spacing: 4) {
+                Text("Server: \(Server.displayName)")
+                    .flowFont(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Workspaces & servers…") { openConnections() }
+                    .buttonStyle(.link)
+                    .flowFont(.caption)
+                    .pointingHandCursor()
+                    .accessibilityIdentifier("auth.connections")
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {

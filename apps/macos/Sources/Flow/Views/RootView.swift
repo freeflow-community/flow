@@ -21,6 +21,11 @@ struct RootView: View {
     var body: some View {
         SessionRootView(app: active, workspaceId: workspace, notification: notificationTarget)
             .environmentObject(active)
+            // The way into the workspace/server switcher (#566). The sheet stays
+            // here, where the window's selection lives; the control moved into
+            // the sidebar's workspace menu, so nothing floats over the composer
+            // any more — the same move iOS (#563) and web (#565) already made.
+            .environment(\.openConnections, OpenConnectionsAction { showConnections = true })
             .id("\(active.connectionId):\(workspace ?? ""):\(notificationTarget?.messageId ?? "")")
             // Every connected server syncs while the app runs, not just the one
             // this window shows (#542). Bounded and idempotent, so a second
@@ -49,9 +54,6 @@ struct RootView: View {
                     }.padding(8)
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                Button("Workspaces and servers") { showConnections = true }.padding(8)
-            }
             .onOpenURL { url in
                 if url.scheme == "https" || url.scheme == "http" {
                     incomingAddress = url.absoluteString
@@ -67,6 +69,30 @@ struct RootView: View {
                     showing(app)
                 }
             }
+    }
+}
+
+/// Opens the workspace/server switcher (#566). Published by `RootView`, which
+/// owns the sheet, so the sidebar menu — or a screen with no sidebar at all —
+/// can raise it without a button floating over the conversation.
+struct OpenConnectionsAction: Sendable {
+    private let open: @MainActor @Sendable () -> Void
+
+    init(_ open: @escaping @MainActor @Sendable () -> Void) { self.open = open }
+
+    @MainActor func callAsFunction() { open() }
+}
+
+private struct OpenConnectionsKey: EnvironmentKey {
+    /// No-op above the root, so a preview or a detached host renders rather
+    /// than trapping — the same shape the confetti controller uses.
+    static let defaultValue = OpenConnectionsAction {}
+}
+
+extension EnvironmentValues {
+    var openConnections: OpenConnectionsAction {
+        get { self[OpenConnectionsKey.self] }
+        set { self[OpenConnectionsKey.self] = newValue }
     }
 }
 
