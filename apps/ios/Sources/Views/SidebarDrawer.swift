@@ -26,6 +26,8 @@ struct SidebarDrawer: View {
     var onSelect: () -> Void = {}
 
     @EnvironmentObject private var app: AppState
+    /// Raises the workspace/server switcher owned by `RootView` (#563).
+    @Environment(\.openConnections) private var openConnections
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
@@ -335,6 +337,14 @@ struct SidebarDrawer: View {
                 }
             }
             Divider()
+            // Workspaces & servers (#563). Workspace-level navigation lives at
+            // the top of the sidebar — the Slack/Discord idiom — not in the
+            // composer's "+", which is for composing; #561 parked it there and
+            // it came straight back out.
+            Button { openConnections() } label: {
+                Label("Workspaces & servers…", systemImage: "server.rack")
+            }
+            .accessibilityIdentifier("sidebar.connections")
             // Invite People (web + macOS parity, #283). Disabled with no
             // workspace selected — there'd be nothing to invite anyone to.
             Button("Invite People…") { showInvite = true }
@@ -378,11 +388,17 @@ struct SidebarDrawer: View {
             }
             .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
-            HStack(spacing: 4) {
-                Text(currentWorkspace?.name ?? "Flow")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(currentWorkspace?.name ?? "Flow")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    // Which server this workspace is on — a phone can hold
+                    // several now (#542), and this row is the way to the rest
+                    // of them (#563).
+                    SidebarServerLabel(connections: app.connections, connectionId: app.connectionId)
+                }
                 Image(systemName: "chevron.down")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.55))
@@ -864,6 +880,26 @@ struct SidebarDrawer: View {
                 Task { _ = try? await app.engine.createDm(workspaceId: wsId, userIds: [me]) }
             }
         }
+    }
+}
+
+/// The server line under the sidebar's workspace name (#563). Observes the
+/// connection manager rather than reading it once, so a label the switcher
+/// sheet changes — a rename, a discovery that canonicalizes the origin —
+/// shows up behind the sheet instead of at the next drawer open.
+private struct SidebarServerLabel: View {
+    @ObservedObject var connections: ConnectionManager
+    let connectionId: String
+
+    var body: some View {
+        Text(
+            connections.registry.connections
+                .first { $0.connectionId == connectionId }?.displayLabel ?? Server.displayName
+        )
+        .font(.system(size: 11))
+        .foregroundStyle(.white.opacity(0.55))
+        .lineLimit(1)
+        .accessibilityIdentifier("sidebar.serverLabel")
     }
 }
 

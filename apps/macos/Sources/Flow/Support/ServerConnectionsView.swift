@@ -42,7 +42,7 @@ struct ServerConnectionsView: View {
                 ForEach(manager.registry.connections, id: \.connectionId) { connection in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(connection.provider == .slack ? "Slack · \(connection.label)" : connection.canonicalOrigin?.label ?? connection.origin).font(.headline)
+                            Text(connection.displayLabel).font(.headline)
                             // Aggregated from this connection's own live session
                             // — no server can total the others (#542).
                             let total = manager.unreadByConnection[connection.connectionId] ?? 0

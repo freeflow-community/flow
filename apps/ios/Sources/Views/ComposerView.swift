@@ -14,8 +14,6 @@ struct ComposerView: View {
     var threadRootId: String? = nil
     var placeholder: String = "Message"
     @EnvironmentObject var app: AppState
-    /// Raises the workspace/server switcher owned by `RootView` (#561).
-    @Environment(\.openConnections) private var openConnections
     @State private var text = ""
     @FocusState private var focused: Bool
     @StateObject private var members = DBObserved<[MemberRow]>(initial: [])
@@ -37,8 +35,10 @@ struct ComposerView: View {
             }
             HStack(alignment: .bottom, spacing: 8) {
                 // Provider gating (#546): with no file and no schedule
-                // capability the `+` is a dimmed glyph carrying the reason
-                // (web parity), not an empty menu.
+                // capability the `+` dims, and the reason rides a disabled row
+                // inside the menu rather than a glyph that opens nothing. The
+                // workspace switcher is not in here — it belongs to the sidebar
+                // (#563); this menu is for composing.
                 let canAttach = app.can(.files)
                 let canSchedule = threadRootId == nil && app.can(.scheduledMessages)
                 Menu {
@@ -61,10 +61,9 @@ struct ComposerView: View {
                             Label("Files", systemImage: "folder")
                         }
                     } else {
-                        // The `+` is always a menu now that it carries the
-                        // workspace switcher too (#561), so a provider without
-                        // files (#546) states the reason on a disabled row
-                        // instead of on a glyph that opens nothing.
+                        // The `+` is always a menu (#561), so a provider
+                        // without files (#546) states the reason on a disabled
+                        // row instead of on a glyph that opens nothing.
                         Button {} label: {
                             Label(
                                 app.capabilities[.files].reason ?? "Attachments unavailable",
@@ -85,19 +84,6 @@ struct ComposerView: View {
                             Label("Schedule this message", systemImage: "clock")
                         }
                     }
-                    Divider()
-                    // Workspaces & servers (#561). Its old home was a capsule
-                    // floating at the bottom-right of the screen — directly over
-                    // the send button, which it covered the moment you typed
-                    // anything. The sheet it opens is unchanged; only the way in
-                    // moved, to the one menu that is always a tap from the
-                    // composer.
-                    Button {
-                        openConnections()
-                    } label: {
-                        Label("Workspaces & servers", systemImage: "server.rack")
-                    }
-                    .accessibilityIdentifier(threadRootId == nil ? "composer.connections" : "thread.composer.connections")
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 28))
