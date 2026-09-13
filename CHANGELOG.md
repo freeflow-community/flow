@@ -30,6 +30,11 @@ This file keeps two things:
   handler in `packages/web/src/App.tsx` that runs the existing `signOut`
   teardown — deliberately out of scope here, because #540's own acceptance
   criteria required no behaviour change on upgrade.
+- **The floating "Workspaces and servers" button is still on macOS** (#561,
+  an iOS-only ticket). iOS moved that entry point into the composer's `+` menu
+  because the capsule sat on the send button; `apps/macos/.../RootView.swift`
+  still pins the same button to the bottom-right of the window, over its own
+  composer. Closing it is the same move into a macOS menu.
 - **The lightened mention highlight is macOS + iOS only** (#531, which scoped
   web out). Both native clients now draw an in-message mention as accent text
   on a 10% accent wash (20% for a mention of you); `packages/web`'s

@@ -14,6 +14,8 @@ struct ComposerView: View {
     var threadRootId: String? = nil
     var placeholder: String = "Message"
     @EnvironmentObject var app: AppState
+    /// Raises the workspace/server switcher owned by `RootView` (#561).
+    @Environment(\.openConnections) private var openConnections
     @State private var text = ""
     @FocusState private var focused: Bool
     @StateObject private var members = DBObserved<[MemberRow]>(initial: [])
@@ -39,52 +41,69 @@ struct ComposerView: View {
                 // (web parity), not an empty menu.
                 let canAttach = app.can(.files)
                 let canSchedule = threadRootId == nil && app.can(.scheduledMessages)
-                if canAttach || canSchedule {
-                    Menu {
-                        if canAttach {
+                Menu {
+                    if canAttach {
+                        Button {
+                            showPhotoPicker = true
+                        } label: {
+                            Label("Photos & Videos", systemImage: "photo.on.rectangle")
+                        }
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
                             Button {
-                                showPhotoPicker = true
+                                showCamera = true
                             } label: {
-                                Label("Photos & Videos", systemImage: "photo.on.rectangle")
-                            }
-                            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                                Button {
-                                    showCamera = true
-                                } label: {
-                                    Label("Camera", systemImage: "camera")
-                                }
-                            }
-                            Button {
-                                showFilePicker = true
-                            } label: {
-                                Label("Files", systemImage: "folder")
+                                Label("Camera", systemImage: "camera")
                             }
                         }
-                        // Schedule instead of send (#424): same message, posted
-                        // later. The `+` menu is this composer's accessory idiom,
-                        // and it's main-composer only — a scheduled message is a
-                        // top-level post, not a thread reply.
-                        if canSchedule {
-                            Button {
-                                scheduling = .creating(body: text, channelId: channelId)
-                            } label: {
-                                Label("Schedule this message", systemImage: "clock")
-                            }
+                        Button {
+                            showFilePicker = true
+                        } label: {
+                            Label("Files", systemImage: "folder")
                         }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 28))
-                            .foregroundStyle(MC.faint)
+                    } else {
+                        // The `+` is always a menu now that it carries the
+                        // workspace switcher too (#561), so a provider without
+                        // files (#546) states the reason on a disabled row
+                        // instead of on a glyph that opens nothing.
+                        Button {} label: {
+                            Label(
+                                app.capabilities[.files].reason ?? "Attachments unavailable",
+                                systemImage: "paperclip"
+                            )
+                        }
+                        .disabled(true)
+                        .accessibilityIdentifier(threadRootId == nil ? "composer.attach.unavailable" : "thread.composer.attach.unavailable")
                     }
-                    .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
-                } else {
+                    // Schedule instead of send (#424): same message, posted
+                    // later. The `+` menu is this composer's accessory idiom,
+                    // and it's main-composer only — a scheduled message is a
+                    // top-level post, not a thread reply.
+                    if canSchedule {
+                        Button {
+                            scheduling = .creating(body: text, channelId: channelId)
+                        } label: {
+                            Label("Schedule this message", systemImage: "clock")
+                        }
+                    }
+                    Divider()
+                    // Workspaces & servers (#561). Its old home was a capsule
+                    // floating at the bottom-right of the screen — directly over
+                    // the send button, which it covered the moment you typed
+                    // anything. The sheet it opens is unchanged; only the way in
+                    // moved, to the one menu that is always a tap from the
+                    // composer.
+                    Button {
+                        openConnections()
+                    } label: {
+                        Label("Workspaces & servers", systemImage: "server.rack")
+                    }
+                    .accessibilityIdentifier(threadRootId == nil ? "composer.connections" : "thread.composer.connections")
+                } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 28))
-                        .foregroundStyle(MC.faint.opacity(0.4))
-                        .accessibilityLabel("Attach")
-                        .accessibilityHint(app.capabilities[.files].reason ?? "")
-                        .accessibilityIdentifier(threadRootId == nil ? "composer.attach.unavailable" : "thread.composer.attach.unavailable")
+                        .foregroundStyle(canAttach || canSchedule ? MC.faint : MC.faint.opacity(0.4))
                 }
+                .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
 
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...6)
