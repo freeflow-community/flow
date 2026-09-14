@@ -129,6 +129,34 @@ export interface InviteDTO {
   emailSent?: boolean;
 }
 
+/** Per-address outcome of a batch invite (issue #577). */
+export type InviteStatus =
+  /** new invite created and emailed */
+  | 'sent'
+  /** a pending invite existed: replaced with a fresh token and emailed again */
+  | 'resent'
+  /** invite is valid but the email could not be delivered — use `inviteUrl` */
+  | 'email_failed'
+  /** the address already belongs to a member of this workspace */
+  | 'already_member'
+  /** not a usable email address — nothing was created */
+  | 'invalid_email';
+
+export interface InviteResultDTO {
+  email: string;
+  status: InviteStatus;
+  /** invite id — absent for `already_member` / `invalid_email` */
+  id?: string;
+  /** <INVITE_URL_BASE><token>, raw token returned once — absent when nothing was created */
+  inviteUrl?: string;
+  expiresAt?: string;
+}
+
+/** Response to `POST /v1/workspaces/:id/invites` when called with `emails`. */
+export interface InviteBatchDTO {
+  results: InviteResultDTO[];
+}
+
 /**
  * A workspace invitation addressed to a Flow user in-app (#359) — what the
  * invitee sees, and what they Accept or Decline. No token: an in-app invite is

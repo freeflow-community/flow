@@ -132,9 +132,20 @@ export const CreateWorkspaceBody = z.object({
 });
 export type CreateWorkspaceBody = z.infer<typeof CreateWorkspaceBody>;
 
-export const CreateInviteBody = z.object({
-  email: z.string().email().max(320),
-});
+/**
+ * One address (`email`, the legacy shape older macOS/iOS clients still send) or
+ * many (`emails`, issue #577). Batch addresses are deliberately NOT validated
+ * as emails here: a typo in address 4 must come back as that address's
+ * `invalid_email` result, not a 400 that throws away the other nine.
+ */
+export const CreateInviteBody = z
+  .object({
+    email: z.string().email().max(320).optional(),
+    emails: z.array(z.string().min(1).max(320)).min(1).max(100).optional(),
+  })
+  .refine((b) => b.email !== undefined || b.emails !== undefined, {
+    message: 'email or emails is required',
+  });
 export type CreateInviteBody = z.infer<typeof CreateInviteBody>;
 
 /** PATCH /v1/workspaces/:id — owner/admin only (phase 3.5: workspace branding). */

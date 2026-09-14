@@ -1,10 +1,12 @@
 import sharp from 'sharp';
+import { z } from 'zod';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import {
   SIDEBAR_COLOR_IDS,
   emailDomain,
   isSelfRegisterableDomain,
   type InviteDTO,
+  type InviteResultDTO,
   type JoinLinkDTO,
   type JoinLinkPreviewDTO,
   type MemberRole,
@@ -601,10 +603,49 @@ export async function leaveWorkspace(workspaceId: string, userId: string): Promi
   await removeMemberDeep(workspaceId, userId);
 }
 
-/** Owner/admin only (spec permission rules). Returns invite URL with raw token (shown once). */
-export async function createInvite(workspaceId: string, inviterId: string, email: string): Promise<InviteDTO> {
-  const m = await requireMembership(workspaceId, inviterId);
-  if (m.role !== 'owner' && m.role !== 'admin') throw forbidden('only owners and admins can invite');
+// ---- Invites (issue #577: one call, many addresses) ----------------------
+//
+// A batch must not be all-or-nothing: a typo in the fourth address cannot cost
+// the other nine their invite. So the per-address work below reports an outcome
+// instead of throwing, and only the legacy single-`email` wrapper turns those
+// outcomes back into the conflicts current macOS/iOS clients expect.
+
+/** Same rule zod's `.email()` applies, checked per address so a bad one is a
+ * result rather than a 400 for the whole batch. */
+function isEmailAddress(email: string): boolean {
+  return z.string().email().max(320).safeParse(email).success;
+}
+
+/** The invite email (operator request 2026-07-20). Throws on send failure —
+ * callers decide what that means. */
+async function sendInviteEmail(workspaceId: string, inviterId: string, email: string, token: string): Promise<void> {
+  const inviter = (await db.select().from(users).where(eq(users.id, inviterId)).limit(1))[0];
+  const wsRow = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0];
+  await emailSender().send({
+    to: email,
+    subject: `${inviter?.displayName ?? 'Someone'} invited you to ${wsRow?.name ?? 'a workspace'} on Flow`,
+    text:
+      `${inviter?.displayName ?? 'Someone'} invited you to join the "${wsRow?.name ?? ''}" workspace on Flow.\n\n` +
+      `Accept the invite here:\n\n` +
+      `${config.webUrlBase}/invite/${token}\n\n` +
+      `If you don't have a Flow account yet, you'll create one first and the ` +
+      `invite is applied automatically. This link expires in ${config.inviteTtlDays} days ` +
+      `and can only be used once.\n`,
+  });
+}
+
+/**
+ * Invite one address, permission already checked. Never throws for an outcome a
+ * caller can report: a malformed address, an existing member, or a failed send
+ * all come back as a status.
+ *
+ * The emailed link is always the web accept URL — the web app walks through
+ * register-then-accept — while `inviteUrl` keeps the configured base (a deep
+ * link on default local config).
+ */
+async function inviteOne(workspaceId: string, inviterId: string, rawEmail: string): Promise<InviteResultDTO> {
+  const email = rawEmail.trim();
+  if (!isEmailAddress(email)) return { email: rawEmail, status: 'invalid_email' };
 
   const already = await db
     .select({ one: sql`1` })
@@ -612,58 +653,95 @@ export async function createInvite(workspaceId: string, inviterId: string, email
     .innerJoin(users, eq(users.id, workspaceMembers.userId))
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(users.email, email)))
     .limit(1);
-  if (already.length > 0) throw conflict('already_member', 'user is already a member of this workspace');
+  if (already.length > 0) return { email, status: 'already_member' };
 
   const token = newToken();
   const id = newId();
   const expiresAt = new Date(Date.now() + config.inviteTtlDays * 86400_000);
-  // one pending invite per email: replace any prior (possibly expired) invite
-  await db.delete(invites).where(and(eq(invites.workspaceId, workspaceId), eq(invites.email, email), isNull(invites.acceptedAt)));
+  // one pending invite per email: replace any prior (possibly expired) invite.
+  // Re-inviting is therefore a resend — a fresh token for the same address, not
+  // a duplicate row and not an error.
+  const replaced = await db
+    .delete(invites)
+    .where(and(eq(invites.workspaceId, workspaceId), eq(invites.email, email), isNull(invites.acceptedAt)))
+    .returning({ id: invites.id });
+  const values = { id, workspaceId, email, tokenHash: hashToken(token), invitedBy: inviterId, expiresAt };
   try {
-    await db.insert(invites).values({
-      id,
-      workspaceId,
-      email,
-      tokenHash: hashToken(token),
-      invitedBy: inviterId,
-      expiresAt,
-    });
+    await db.insert(invites).values(values);
   } catch (err: unknown) {
-    if (isUniqueViolation(err)) throw conflict('invite_exists', 'an invite for this email already exists');
-    throw err;
+    // The pending-unique index fired despite the delete above: a concurrent
+    // invite for the same address landed in between. Its raw token was handed
+    // to whoever made that call and we cannot return it, so claim the slot —
+    // delete again and retry once, and let a second failure surface.
+    if (!isUniqueViolation(err)) throw err;
+    await db.delete(invites).where(and(eq(invites.workspaceId, workspaceId), eq(invites.email, email), isNull(invites.acceptedAt)));
+    await db.insert(invites).values(values);
   }
 
-  // Invite email (operator request 2026-07-20). The emailed link is always the
-  // web accept URL — the web app walks through register-then-accept — while
-  // inviteUrl keeps the configured base (deep link on default local config).
   // A failed send never fails the invite: the admin still gets the link.
   let emailSent = false;
   try {
-    const inviter = (await db.select().from(users).where(eq(users.id, inviterId)).limit(1))[0];
-    const wsRow = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0];
-    await emailSender().send({
-      to: email,
-      subject: `${inviter?.displayName ?? 'Someone'} invited you to ${wsRow?.name ?? 'a workspace'} on Flow`,
-      text:
-        `${inviter?.displayName ?? 'Someone'} invited you to join the "${wsRow?.name ?? ''}" workspace on Flow.\n\n` +
-        `Accept the invite here:\n\n` +
-        `${config.webUrlBase}/invite/${token}\n\n` +
-        `If you don't have a Flow account yet, you'll create one first and the ` +
-        `invite is applied automatically. This link expires in ${config.inviteTtlDays} days ` +
-        `and can only be used once.\n`,
-    });
+    await sendInviteEmail(workspaceId, inviterId, email, token);
     emailSent = true;
   } catch (err) {
     console.error(`invite email failed for ${email}: ${(err as Error).message}`);
   }
 
   return {
-    id,
-    workspaceId,
     email,
+    status: emailSent ? (replaced.length > 0 ? 'resent' : 'sent') : 'email_failed',
+    id,
     inviteUrl: `${config.inviteUrlBase}${token}`,
     expiresAt: expiresAt.toISOString(),
-    emailSent,
+  };
+}
+
+/** Owner/admin gate on inviting (spec permission rules), checked once per call. */
+async function requireInviteRole(workspaceId: string, inviterId: string): Promise<void> {
+  const m = await requireMembership(workspaceId, inviterId);
+  if (m.role !== 'owner' && m.role !== 'admin') throw forbidden('only owners and admins can invite');
+}
+
+/**
+ * Owner/admin only. Invites every address independently and reports each one,
+ * so a mix of valid, malformed and already-member addresses partially succeeds.
+ * Addresses are de-duplicated case-insensitively (emails are citext), so the
+ * same person pasted twice gets one invite and one result.
+ */
+export async function createInvites(workspaceId: string, inviterId: string, emails: string[]): Promise<InviteResultDTO[]> {
+  await requireInviteRole(workspaceId, inviterId);
+  const seen = new Set<string>();
+  const results: InviteResultDTO[] = [];
+  for (const raw of emails) {
+    const key = raw.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push(await inviteOne(workspaceId, inviterId, raw));
+  }
+  return results;
+}
+
+/**
+ * Legacy single-address invite (`{ email }`) — the shape current macOS/iOS
+ * clients send, unchanged by batching: an already-member address is still a
+ * 409, not a result.
+ *
+ * Returns invite URL with raw token (shown once).
+ */
+export async function createInvite(workspaceId: string, inviterId: string, email: string): Promise<InviteDTO> {
+  await requireInviteRole(workspaceId, inviterId);
+  const r = await inviteOne(workspaceId, inviterId, email);
+  if (r.status === 'already_member') throw conflict('already_member', 'user is already a member of this workspace');
+  // Unreachable through the route (zod validates the legacy `email` field), but
+  // the service is called directly by tests and scripts.
+  if (r.status === 'invalid_email') throw badRequest('invalid_email', 'not a valid email address');
+  return {
+    id: r.id!,
+    workspaceId,
+    email: r.email,
+    inviteUrl: r.inviteUrl!,
+    expiresAt: r.expiresAt!,
+    emailSent: r.status !== 'email_failed',
   };
 }
 

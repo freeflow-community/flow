@@ -624,10 +624,16 @@ export function registerRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
+  // Two shapes, one route (#577): `emails` returns a per-address result list,
+  // `email` keeps the single-invite DTO current macOS/iOS clients parse.
   app.post('/v1/workspaces/:id/invites', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(CreateInviteBody, req.body);
-    const dto = await ws.createInvite(id, req.user.id, body.email);
+    if (body.emails) {
+      const results = await ws.createInvites(id, req.user.id, body.emails);
+      return reply.status(201).send({ results });
+    }
+    const dto = await ws.createInvite(id, req.user.id, body.email!);
     return reply.status(201).send(dto);
   });
 
