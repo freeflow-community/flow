@@ -986,7 +986,7 @@ export function DocsGroup({ channelId, docs }: { channelId: string; docs: Artifa
 
   return (
     <div className="ml-3">
-      <div className="group/docs flex items-center gap-1 px-2 pt-1">
+      <div className="flex items-center gap-1 px-2 pt-1">
         <button
           data-testid={`sidebar-docs-toggle-${channelId}`}
           aria-expanded={!collapsed}
@@ -1001,13 +1001,18 @@ export function DocsGroup({ channelId, docs }: { channelId: string; docs: Artifa
         >
           <span className="text-[9px]" aria-hidden>{collapsed ? '▸' : '▾'}</span>
           Docs
-          <span className="font-normal tracking-normal tabular-nums opacity-70">{docs.length}</span>
+          {/* While filtering, the count says how much of the list you are
+              looking at — 2/14 reads as "filtered", a bare 2 reads as "two
+              docs", which is the one thing it must not say. */}
+          <span className="font-normal tracking-normal tabular-nums opacity-70">
+            {query.trim() ? `${shown.length}/${docs.length}` : docs.length}
+          </span>
         </button>
         {!collapsed && !searching && (
           <button
             data-testid={`sidebar-docs-search-${channelId}`}
             title="Filter docs"
-            className="rounded px-1 text-[10px] text-white/40 opacity-0 group-hover/docs:opacity-100 hover:bg-white/10 hover:text-white focus-visible:opacity-100"
+            className="rounded px-1 text-[10px] text-white/40 hover:bg-white/10 hover:text-white"
             onClick={() => setSearching(true)}
           >
             🔍
