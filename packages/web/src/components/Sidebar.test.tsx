@@ -1,18 +1,24 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import {
   ActivityBell,
   ActivitySpinner,
   appEntries,
   channelLabel,
+  DocsGroup,
+  filterDocs,
   NavButton,
   nearestScrollDelta,
   nestChannels,
   openChannelFromSidebar,
+  readCollapsedDocs,
   splitAgents,
+  writeCollapsedDocs,
   WorkspaceTitle,
 } from './Sidebar';
+import { SelectionContext } from '../state';
 import type { Selection } from '../state';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
@@ -401,5 +407,134 @@ describe('openChannelFromSidebar', () => {
     const { sel, calls, revisit } = selection('other');
     openChannelFromSidebar(sel, chan('alpha'), revisit);
     expect(calls).toEqual(['select:alpha']); // entering it marks it read already
+  });
+});
+
+// Channel Docs list (#574): a channel with dozens of artifacts pushed every
+// other channel off the sidebar. The group folds, and the filter finds one by
+// name without scrolling.
+const doc = (id: string, name: string, channelId = 'factory'): ArtifactDTO => ({
+  ...app(id, name, channelId),
+  kind: 'file',
+  isApp: false,
+  url: null,
+});
+
+describe('filterDocs', () => {
+  const docs = [doc('d1', 'Q3 roadmap'), doc('d2', 'roadmap-archive'), doc('d3', 'Onboarding')];
+
+  it('returns everything for an empty query, so clearing the box restores the list', () => {
+    expect(filterDocs(docs, '')).toEqual(docs);
+    expect(filterDocs(docs, '   ')).toEqual(docs);
+  });
+
+  it('matches a substring anywhere in the name, ignoring case', () => {
+    expect(filterDocs(docs, 'ROADMAP').map((d) => d.id)).toEqual(['d1', 'd2']);
+    expect(filterDocs(docs, 'board').map((d) => d.id)).toEqual(['d3']);
+  });
+
+  it('ignores padding a person types around the query', () => {
+    expect(filterDocs(docs, '  onboarding ').map((d) => d.id)).toEqual(['d3']);
+  });
+
+  it('returns nothing when nothing matches, rather than falling back to all', () => {
+    expect(filterDocs(docs, 'zzz')).toEqual([]);
+  });
+
+  it('keeps the incoming (newest-first) order', () => {
+    expect(filterDocs([docs[1]!, docs[0]!], 'roadmap').map((d) => d.id)).toEqual(['d2', 'd1']);
+  });
+});
+
+describe('collapsed-docs preference', () => {
+  let store: Record<string, string>;
+  beforeEach(() => {
+    store = {};
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('remembers a collapsed channel and forgets it again', () => {
+    writeCollapsedDocs('factory', true);
+    expect([...readCollapsedDocs()]).toEqual(['factory']);
+    writeCollapsedDocs('general', true);
+    expect(readCollapsedDocs().has('factory')).toBe(true);
+    writeCollapsedDocs('factory', false);
+    expect([...readCollapsedDocs()]).toEqual(['general']);
+  });
+
+  it('treats an unreadable preference as "nothing collapsed" instead of throwing', () => {
+    // A sidebar that won't render because one localStorage key is junk is a
+    // far worse outcome than a section that reopens.
+    store['flow.sidebarDocsCollapsed'] = 'not json';
+    expect([...readCollapsedDocs()]).toEqual([]);
+    store['flow.sidebarDocsCollapsed'] = '{"factory":true}';
+    expect([...readCollapsedDocs()]).toEqual([]);
+  });
+});
+
+describe('DocsGroup', () => {
+  let store: Record<string, string>;
+  beforeEach(() => {
+    store = {};
+    const storage = {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+    };
+    vi.stubGlobal('localStorage', storage);
+    vi.stubGlobal('sessionStorage', storage);
+    // An expanded group renders real ArtifactRows, which reach the connection
+    // runtime — it wants an origin to key its registry by.
+    vi.stubGlobal('location', { origin: 'https://flow.test' });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('renders nothing at all for a channel with no docs', () => {
+    // The common case: every channel row must look exactly as it did before.
+    expect(renderToStaticMarkup(<DocsGroup channelId="factory" docs={[]} />)).toBe('');
+  });
+
+  it('folds the rows away but keeps the count visible when collapsed', () => {
+    store['flow.sidebarDocsCollapsed'] = JSON.stringify(['factory']);
+    const html = renderToStaticMarkup(
+      <DocsGroup channelId="factory" docs={[doc('d1', 'Q3 roadmap'), doc('d2', 'Onboarding')]} />,
+    );
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('2'); // the count is what says there is something hidden
+    expect(html).not.toContain('Q3 roadmap');
+  });
+
+  // Expanded, the rows are real ArtifactRows, so they need the contexts the
+  // sidebar normally supplies.
+  const renderExpanded = (channelId: string, docs: ArtifactDTO[]) =>
+    renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <SelectionContext.Provider value={{ artifactId: null } as unknown as Selection}>
+          <DocsGroup channelId={channelId} docs={docs} />
+        </SelectionContext.Provider>
+      </QueryClientProvider>,
+    );
+
+  it('lists every doc when the channel is not collapsed', () => {
+    store['flow.sidebarDocsCollapsed'] = JSON.stringify(['general']); // a different channel
+    const html = renderExpanded('factory', [doc('d1', 'Q3 roadmap'), doc('d2', 'Onboarding')]);
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('Q3 roadmap');
+    expect(html).toContain('Onboarding');
+  });
+
+  it('keeps the artifact row test ids, so opening a doc is unchanged', () => {
+    const html = renderExpanded('factory', [doc('d1', 'Q3 roadmap')]);
+    expect(html).toContain('sidebar-artifact-Q3 roadmap');
   });
 });

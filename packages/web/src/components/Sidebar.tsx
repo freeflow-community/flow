@@ -119,6 +119,47 @@ export { dmTitle };
 const AGENTS_COLLAPSED_KEY = 'flow.sidebarAgentsCollapsed';
 /** Apps section (#394): same per-device collapse memory as Agents. */
 const APPS_COLLAPSED_KEY = 'flow.sidebarAppsCollapsed';
+/**
+ * Docs list (#574): the artifacts nested under a channel row. A busy channel
+ * collects dozens of them and pushes the next channel off the screen, so the
+ * run of rows is a group you can fold away, with a filter for finding one by
+ * name. Collapse is remembered per device like the sections above — but per
+ * channel, so the key holds a list of channel ids rather than a flag.
+ *
+ * The filter text is deliberately *not* remembered: a query left behind from
+ * last week would reopen the sidebar hiding most of a channel's docs, which
+ * reads as "my docs are gone", not as "a filter is on".
+ */
+const DOCS_COLLAPSED_KEY = 'flow.sidebarDocsCollapsed';
+
+/** Case-insensitive substring match on an artifact name. An empty or
+ * whitespace-only query matches everything, so clearing the box restores the
+ * full list instead of emptying it. */
+export function filterDocs<T extends { name: string }>(docs: T[], query: string): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return docs;
+  return docs.filter((d) => d.name.toLowerCase().includes(q));
+}
+
+export function readCollapsedDocs(): Set<string> {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(DOCS_COLLAPSED_KEY) ?? '[]');
+    return new Set(Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set(); // an unreadable preference is not worth breaking the sidebar over
+  }
+}
+
+export function writeCollapsedDocs(channelId: string, collapsed: boolean) {
+  const ids = readCollapsedDocs();
+  if (collapsed) ids.add(channelId);
+  else ids.delete(channelId);
+  try {
+    localStorage.setItem(DOCS_COLLAPSED_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* storage denied (private mode): the toggle still works for this session */
+  }
+}
 
 /** A row in the Apps section: the app plus the channel that hosts it. */
 export type AppEntry = { artifact: ArtifactDTO; channel: ChannelDTO };
@@ -494,9 +535,7 @@ export default function Sidebar() {
         {joined.map(({ channel: c, nested }) => (
           <div key={c.id}>
             <ChannelRow channel={c} label={c.name ?? ''} nested={nested} onMenu={() => setMenuChannel(c)} />
-            {(artifactsByChannel.get(c.id) ?? []).map((a) => (
-              <ArtifactRow key={a.id} artifact={a} />
-            ))}
+            <DocsGroup channelId={c.id} docs={artifactsByChannel.get(c.id) ?? []} />
           </div>
         ))}
 
@@ -555,15 +594,11 @@ export default function Sidebar() {
                       leading={<PresenceDot online={live.isOnline(a.userId)} />}
                       onMenu={() => setMenuChannel(c)}
                     />
-                    {(artifactsByChannel.get(c.id) ?? []).map((x) => (
-                      <ArtifactRow key={x.id} artifact={x} />
-                    ))}
+                    <DocsGroup channelId={c.id} docs={artifactsByChannel.get(c.id) ?? []} />
                     {(dmChildren.get(c.id) ?? []).map((k) => (
                       <div key={k.id}>
                         <ChannelRow channel={k} label={k.name ?? ''} nested onMenu={() => setMenuChannel(k)} />
-                        {(artifactsByChannel.get(k.id) ?? []).map((x) => (
-                          <ArtifactRow key={x.id} artifact={x} />
-                        ))}
+                        <DocsGroup channelId={k.id} docs={artifactsByChannel.get(k.id) ?? []} />
                       </div>
                     ))}
                   </div>
@@ -623,15 +658,11 @@ export default function Sidebar() {
                 }
                 onMenu={() => setMenuChannel(c)}
               />
-              {(artifactsByChannel.get(c.id) ?? []).map((a) => (
-                <ArtifactRow key={a.id} artifact={a} />
-              ))}
+              <DocsGroup channelId={c.id} docs={artifactsByChannel.get(c.id) ?? []} />
               {(dmChildren.get(c.id) ?? []).map((k) => (
                 <div key={k.id}>
                   <ChannelRow channel={k} label={k.name ?? ''} nested onMenu={() => setMenuChannel(k)} />
-                  {(artifactsByChannel.get(k.id) ?? []).map((a) => (
-                    <ArtifactRow key={a.id} artifact={a} />
-                  ))}
+                  <DocsGroup channelId={k.id} docs={artifactsByChannel.get(k.id) ?? []} />
                 </div>
               ))}
             </div>
@@ -928,6 +959,91 @@ function AdminRow({
   );
 }
 
+/**
+ * The Docs group under a channel (#574): the channel's artifacts, foldable and
+ * filterable.
+ *
+ * The filter hides behind a 🔍 so a channel with two docs doesn't grow a search
+ * box it will never need — but it is there at any length, so a list you can't
+ * scan is always one click from being scannable. Nothing about opening a doc
+ * changes: the rows below are the same `ArtifactRow`s as before.
+ */
+export function DocsGroup({ channelId, docs }: { channelId: string; docs: ArtifactDTO[] }) {
+  const [collapsed, setCollapsed] = useState(() => readCollapsedDocs().has(channelId));
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (searching) inputRef.current?.focus();
+  }, [searching]);
+
+  if (docs.length === 0) return null;
+  const shown = filterDocs(docs, query);
+  const closeSearch = () => {
+    setSearching(false);
+    setQuery('');
+  };
+
+  return (
+    <div className="ml-3">
+      <div className="group/docs flex items-center gap-1 px-2 pt-1">
+        <button
+          data-testid={`sidebar-docs-toggle-${channelId}`}
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Show docs' : 'Hide docs'}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded text-[10px] font-semibold tracking-[.06em] text-white/45 uppercase hover:text-white/75"
+          onClick={() => {
+            const next = !collapsed;
+            setCollapsed(next);
+            writeCollapsedDocs(channelId, next);
+            if (next) closeSearch(); // a hidden list has nothing to filter
+          }}
+        >
+          <span className="text-[9px]" aria-hidden>{collapsed ? '▸' : '▾'}</span>
+          Docs
+          <span className="font-normal tracking-normal tabular-nums opacity-70">{docs.length}</span>
+        </button>
+        {!collapsed && !searching && (
+          <button
+            data-testid={`sidebar-docs-search-${channelId}`}
+            title="Filter docs"
+            className="rounded px-1 text-[10px] text-white/40 opacity-0 group-hover/docs:opacity-100 hover:bg-white/10 hover:text-white focus-visible:opacity-100"
+            onClick={() => setSearching(true)}
+          >
+            🔍
+          </button>
+        )}
+      </div>
+
+      {!collapsed && searching && (
+        <input
+          ref={inputRef}
+          data-testid={`sidebar-docs-filter-${channelId}`}
+          value={query}
+          placeholder="Filter docs…"
+          aria-label="Filter docs"
+          className="mt-1 mb-0.5 w-full rounded-md bg-white/10 px-2 py-1 text-xs text-white placeholder:text-white/40 focus:bg-white/15 focus:outline-none"
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') closeSearch();
+          }}
+          onBlur={() => {
+            if (!query) setSearching(false); // an empty box is just clutter
+          }}
+        />
+      )}
+
+      {!collapsed &&
+        shown.map((a) => <ArtifactRow key={a.id} artifact={a} />)}
+      {!collapsed && shown.length === 0 && (
+        <div data-testid={`sidebar-docs-empty-${channelId}`} className="px-2 py-1 text-xs text-white/40">
+          No docs match “{query.trim()}”
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** An artifact row (phase 13): nested under its channel; selectable opens the
  * side panel; hover ✕ DELETES the shared artifact (and its own file, if the
  * artifact owns it — server-side). */
@@ -979,7 +1095,7 @@ function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
   return (
     // No white pill for the active artifact — it would stack under the active
     // channel's pill (double-highlight). Selection reads as bold white text.
-    <div className="group ml-3 flex items-center gap-[9px] rounded-lg px-2 py-[5px] hover:bg-white/10">
+    <div className="group flex items-center gap-[9px] rounded-lg px-2 py-[5px] hover:bg-white/10">
       <button
         data-testid={`sidebar-artifact-${artifact.name}`}
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
