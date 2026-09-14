@@ -334,6 +334,18 @@ extension FileAttachment {
         "html", "htm", "css", "scss", "less", "sql", "csv", "tsv", "env", "gitignore",
     ]
 
+    /// Markdown documents render as formatted prose (#569), not as raw
+    /// monospace. Markdown is a SUBSET of `isTextPreviewable`, so every router
+    /// must test this FIRST or the text branch swallows it. Mime wins over
+    /// extension so a `text/markdown` blob with no `.md` name still renders.
+    /// Mirrors web `fileKind.ts`.
+    var isMarkdown: Bool {
+        if ["text/markdown", "text/x-markdown"].contains(mimeType) { return true }
+        return Self.markdownExtensions.contains((name as NSString).pathExtension.lowercased())
+    }
+
+    static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd", "mkdn", "mdtext"]
+
     var isPDF: Bool {
         mimeType == "application/pdf" || name.lowercased().hasSuffix(".pdf")
     }

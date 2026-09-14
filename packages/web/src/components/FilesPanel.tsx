@@ -11,11 +11,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChannelFileDTO, ChannelFileSort } from '@flow/shared';
 import { blobUrl, fileStreamUrl } from '../lib/api';
 import { bytesLabel } from '../lib/format';
-import { isImageFile, isVideoFile } from '../lib/fileKind';
-import { useChannelFiles, useChannels } from '../hooks';
-import { useSelection } from '../state';
+import { isImageFile, isMarkdownFile, isVideoFile } from '../lib/fileKind';
+import { useChannelFiles, useChannels, useNameMap } from '../hooks';
+import { useAuth, useSelection } from '../state';
 import { LightboxButton, LightboxShell } from './Lightbox';
 import { useFileImageSource } from './FileImage';
+import { MarkdownDocBody, SourceToggle } from './MarkdownDoc';
 
 const SORTS: { key: ChannelFileSort; label: string }[] = [
   { key: 'newest', label: 'Newest' },
@@ -302,18 +303,26 @@ function RowThumb({ file }: { file: ChannelFileDTO }) {
 
 /**
  * Preview over the chat. Images and videos get the lightbox chrome the message
- * list already uses; a PDF gets the browser's own viewer in the same shell;
- * anything else has no in-app renderer, so opening it downloads it.
+ * list already uses; a PDF gets the browser's own viewer and markdown gets the
+ * rendered document (#569) in the same shell; anything else has no in-app
+ * renderer, so opening it downloads it.
  */
 function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => void }) {
-  const { blobUrl, fileStreamUrl } = useBoundApi();
+  const { blobUrl, fileStreamUrl, fileText } = useBoundApi();
   const download = useDownload(file);
   const [url, setUrl] = useState<string | null>(null);
+  const [markdown, setMarkdown] = useState<string | null>(null);
+  const [source, setSource] = useState(false);
   const image = isImageFile(file);
   const video = isVideoFile(file);
   const pdf = file.mimeType === 'application/pdf';
-  const inline = image || video || pdf;
+  // Markdown reads as text, not bytes — checked before the blob loader below.
+  const md = isMarkdownFile(file);
+  const inline = image || video || pdf || md;
   const imageSource = useFileImageSource(file.id, 'original', image);
+  const sel = useSelection();
+  const auth = useAuth();
+  const names = useNameMap(sel.workspaceId);
 
   useEffect(() => {
     let alive = true;
@@ -322,6 +331,14 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
       return () => { alive = false; };
     }
     if (image) return () => { alive = false; };
+    if (md) {
+      // A fetch failure falls back to the download the panel would have done
+      // anyway, so a markdown file is never a dead-end preview.
+      void fileText(`/v1/files/${file.id}`)
+        .then((t) => { if (alive) setMarkdown(t); })
+        .catch(() => { if (alive) void download().finally(() => onClose()); });
+      return () => { alive = false; };
+    }
     // Video prefers the presigned stream URL (seekable, no full download);
     // PDF and the local-dev fallback read the bytes.
     const load = video
@@ -330,7 +347,7 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
     void load.then((u) => { if (alive) setUrl(u); }).catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file.id, image, inline, video]);
+  }, [file.id, image, inline, video, md]);
 
   if (!inline) return null;
 
@@ -340,9 +357,14 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
       onClose={onClose}
       caption={`${file.name} · ${bytesLabel(file.sizeBytes)} · ${file.uploaderName} · ${dateLabel(file.createdAt)}`}
       actions={
-        <LightboxButton testId="files-preview-download" title="Download" onClick={() => void download()}>
-          ⤓ Download
-        </LightboxButton>
+        <>
+          {md && markdown !== null && (
+            <SourceToggle source={source} onToggle={() => setSource((v) => !v)} testId="files-preview-source" />
+          )}
+          <LightboxButton testId="files-preview-download" title="Download" onClick={() => void download()}>
+            ⤓ Download
+          </LightboxButton>
+        </>
       }
     >
       {image ? (
@@ -367,6 +389,20 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
           </div>
         ) : (
           <span className="text-sm text-white/70">Loading…</span>
+        )
+      ) : md ? (
+        markdown === null ? (
+          <span className="text-sm text-white/70">Loading…</span>
+        ) : (
+          <div className="mc-scroll max-h-[85vh] w-[80vw] overflow-auto rounded-lg bg-white">
+            <MarkdownDocBody
+              text={markdown}
+              names={names}
+              currentUserId={auth.user.id}
+              source={source}
+              testId={`files-preview-markdown-${file.name}`}
+            />
+          </div>
         )
       ) : !url ? (
         <span className="text-sm text-white/70">Loading…</span>

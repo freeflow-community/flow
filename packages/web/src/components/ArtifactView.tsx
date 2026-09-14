@@ -10,10 +10,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO } from '@flow/shared';
 import { ApiError, api, blobUrl, fileStreamUrl, fileText, mintAppToken } from '../lib/api';
 import { bytesLabel } from '../lib/format';
-import { isHtmlFile, isImageFile, isTextFile, isVideoFile } from '../lib/fileKind';
-import { useSelection } from '../state';
-import { useArtifacts } from '../hooks';
+import { isHtmlFile, isImageFile, isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
+import { useAuth, useSelection } from '../state';
+import { useArtifacts, useNameMap } from '../hooks';
 import { useFileImageSource } from './FileImage';
+import { MarkdownDocBody, SourceToggle } from './MarkdownDoc';
 
 export default function ArtifactBody({ artifactId }: { artifactId: string }) {
   const sel = useSelection();
@@ -447,6 +448,8 @@ function ArtifactContent({ file }: { file: FileDTO }) {
   if (isVideoFile(file)) return <VideoPane file={file} />;
   if (file.mimeType === 'application/pdf') return <PdfPane file={file} />;
   if (isHtmlFile(file)) return <HtmlPane file={file} />;
+  // Before the text branch — markdown is text, and text would claim it (#569).
+  if (isMarkdownFile(file)) return <MarkdownPane file={file} />;
   if (isTextFile(file)) return <TextPane file={file} />;
   return <DownloadPane file={file} />;
 }
@@ -547,6 +550,76 @@ function HtmlPane({ file }: { file: FileDTO }) {
       sandbox="allow-scripts"
       className="min-h-0 flex-1 bg-white"
     />
+  );
+}
+
+/**
+ * Rendered markdown document (#569). A strip above the prose carries the
+ * View-source toggle and a copy-raw control; the body itself is the message
+ * renderer, so a doc an agent wrote reads the same in the panel as it would in
+ * a message — mermaid diagrams included.
+ */
+function MarkdownPane({ file }: { file: FileDTO }) {
+  // Server-scoped fetch, like every sibling pane — a module-level `fileText`
+  // would read from the wrong server once a second one is connected.
+  const { fileText } = useBoundApi();
+  const sel = useSelection();
+  const auth = useAuth();
+  const names = useNameMap(sel.workspaceId);
+  const [text, setText] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [source, setSource] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void fileText(`/v1/files/${file.id}`).then((t) => { if (alive) setText(t); }).catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [file.id]);
+
+  // "Copied" is a two-second acknowledgement, not state anyone else reads.
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  if (failed) return <DownloadPane file={file} />;
+  if (text === null) return <Centered>Loading…</Centered>;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      /* clipboard denied (insecure origin / permission) — the toggle still shows the source */
+    }
+  };
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex h-8 shrink-0 items-center justify-end gap-1 border-b border-hairline px-2">
+        <SourceToggle source={source} onToggle={() => setSource((v) => !v)} testId="artifact-markdown-toggle" />
+        <button
+          type="button"
+          data-testid="artifact-markdown-copy"
+          className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-accent-soft hover:bg-daypill"
+          title="Copy the raw markdown"
+          onClick={() => void copy()}
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <div className="mc-scroll min-h-0 flex-1 overflow-auto">
+        <MarkdownDocBody
+          text={text}
+          names={names}
+          currentUserId={auth.user.id}
+          source={source}
+          testId={`artifact-markdown-${file.name}`}
+        />
+      </div>
+    </div>
   );
 }
 

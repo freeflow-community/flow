@@ -17,6 +17,11 @@ This file keeps two things:
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
+- iOS renders a markdown **attachment** in a pushed sheet, not inline: web and
+  macOS show the rendered document in the message stream (#569). Follows from
+  iOS having no inline text-preview cards at all — every non-image attachment is
+  a chip that opens a viewer — so closing this means giving iOS inline cards,
+  not porting the markdown work. The artifact viewer is at parity on all three.
 - **The aggregate switcher badge has no bridge equivalent** (#542). The agent
   bridge speaks to one backend per process, so "how much is waiting on your
   other servers" has no meaning there yet. Closing it needs a bridge-side
