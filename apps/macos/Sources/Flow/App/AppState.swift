@@ -791,6 +791,15 @@ final class AppState: ObservableObject {
             .sorted()
     }
 
+    func openReport(id: String, in targetWindow: WindowState? = nil) async throws {
+        let report = try await engine.fetchArtifact(id: id)
+        var reports = artifacts(workspaceId: report.workspaceId)
+        reports.removeAll { $0.id == report.id }
+        reports.insert(report, at: 0)
+        setArtifacts(reports, workspaceId: report.workspaceId)
+        (targetWindow ?? window).selectArtifact(report.id)
+    }
+
     // MARK: - App-level actions
 
     /// Handles flow://invite/<token> deep links (and pasted URLs/tokens).

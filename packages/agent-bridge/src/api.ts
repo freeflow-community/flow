@@ -116,15 +116,19 @@ export class FlowApi {
   }
 
   /** Post a message; mentions are parsed out of the body (server fans out notifications). */
-  sendMessage(channelId: string, body: string, threadRootId?: string, fileIds?: string[]): Promise<MessageDTO> {
+  sendMessage(channelId: string, body: string, threadRootId?: string, fileIds?: string[], clientMsgId: string = randomUUID()): Promise<MessageDTO> {
     const mentions = [...new Set([...body.matchAll(USER_MENTION_RE)].map((m) => m[1]!))];
     return this.req('POST', `/v1/channels/${channelId}/messages`, {
-      clientMsgId: randomUUID(),
+      clientMsgId,
       body: body.slice(0, 12000),
       ...(threadRootId ? { threadRootId } : {}),
       ...(fileIds?.length ? { fileIds } : {}),
       ...(mentions.length ? { mentions: mentions.slice(0, 50) } : {}),
     });
+  }
+
+  getArtifact(artifactId: string): Promise<ArtifactDTO> {
+    return this.req('GET', `/v1/artifacts/${artifactId}`);
   }
 
   editMessage(messageId: string, body: string): Promise<MessageDTO> {
@@ -286,6 +290,9 @@ export class FlowApi {
       name?: string | undefined;
       ownsFile?: boolean | undefined;
       app?: boolean | undefined;
+      requesterUserId?: string | undefined;
+      sourceThreadRootId?: string | undefined;
+      operationId?: string | undefined;
     },
   ): Promise<ArtifactDTO & { appSecret?: string }> {
     return this.req('POST', '/v1/artifacts', {
@@ -295,6 +302,9 @@ export class FlowApi {
       ...(opts.name ? { name: opts.name } : {}),
       ...(opts.ownsFile ? { ownsFile: opts.ownsFile } : {}),
       ...(opts.app ? { app: true } : {}),
+      ...(opts.requesterUserId ? { requesterUserId: opts.requesterUserId } : {}),
+      ...(opts.sourceThreadRootId ? { sourceThreadRootId: opts.sourceThreadRootId } : {}),
+      ...(opts.operationId ? { operationId: opts.operationId } : {}),
     });
   }
 

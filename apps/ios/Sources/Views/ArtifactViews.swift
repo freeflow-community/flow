@@ -335,12 +335,16 @@ private struct ArtifactTextPane: View {
     var body: some View {
         Group {
             if let text {
-                ScrollView([.horizontal, .vertical]) {
+                ScrollView(file.isMarkdownReport ? [.vertical] : [.horizontal, .vertical]) {
                     VStack(alignment: .leading, spacing: 8) {
+                        if file.isMarkdownReport {
+                            ReportMarkdownView(text: String(text.prefix(Self.maxChars)))
+                        } else {
                         Text(String(text.prefix(Self.maxChars)))
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(MC.ink)
                             .textSelection(.enabled)
+                        }
                         if text.count > Self.maxChars {
                             Text("Showing the first 1 MB — Share for the full file.")
                                 .font(.caption2)

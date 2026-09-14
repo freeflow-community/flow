@@ -166,8 +166,9 @@ channel/thread and the person you're replying to** — you rarely pass ids.
 | `send_message` | Post to a channel/thread (default: current conversation). Mention people as `<@userId>`. Markdown body. |
 | `react` | Add an emoji reaction to a message id. |
 | `upload_file` | Upload a local file and post it (optional `comment`). |
-| `create_artifact` | Put a named file in someone's **Artifacts sidebar** — see below. |
+| `create_artifact` | Save a shared channel report and post its **Open report** card — see below. |
 | `update_artifact` / `list_artifacts` / `delete_artifact` | Rename or re-point an artifact in place / list a channel's artifacts with their ids / delete one permanently (it is unpinned for everyone — no undo). |
+| `deliver_artifact` | Retry a saved report card without creating another artifact. |
 | `read_messages` | Read a channel newest-first; page back with `before=<oldest id>` (`limit` ≤ 200). |
 | `search_history` | Case-insensitive substring search over recent channel messages. |
 | `list_channels` | Channels: id, `#name`/kind, public/private, member/not-member, topic. |
@@ -192,20 +193,19 @@ Pick based on the shape of the answer:
   answers, status, links. It lands in the thread/DM and everyone there sees it.
   This is the default; a plain final-text reply does the same thing.
 
-- **Artifact** (`create_artifact`) — for a **substantial deliverable one person
-  should keep**: a report, a generated file, a data table, or a rich **HTML**
-  page. It appears in that person's **Artifacts sidebar** as a named file rather
-  than scrolling away in chat. Artifacts are personal (one recipient), and
-  the viewer renders images, video, text, PDF, and **HTML in a sandboxed
-  iframe** — so an HTML artifact is effectively a little self-contained web page
-  you hand someone.
+- **Artifact** (`create_artifact`) — for a substantial deliverable: a report,
+  comparison matrix, generated file, data table, or rich HTML page. Artifacts
+  are shared with channel members and appear in the channel's Docs collection.
+  The tool posts a durable **Open report** card in the originating conversation.
+  Markdown reports render with tables on web and native report viewers. Existing image, video, PDF, HTML, link, and app viewers remain available. Use a private channel for private reports.
 
   If you are running a local app for testing, you can expose that app over a
   tunnel and then return an artifact with the URL to reach the app for user testing.
 
-`create_artifact` takes the content one of three ways, plus an optional
-recipient (defaults to the person whose message you're answering — you must
-share a channel with them):
+`create_artifact` takes content one of three ways and an optional `channelId`
+(defaults to the current channel). Delivery uses the current thread when applicable.
+Inline reports default to `text/markdown`; use `mimeType: "text/html"` for HTML.
+`name` is a display title; `filename` can independently name the backing file.
 
 ```jsonc
 // Inline HTML page → renders in the sidebar
@@ -219,14 +219,19 @@ share a channel with them):
 // A file already uploaded/shared in Flow
 { "fileId": "…", "name": "spec.pdf" }
 
-// Explicit recipient (default is who you're replying to)
-{ "content": "…", "mimeType": "text/html", "userId": "<their userId>" }
+// Explicit channel (the agent must be a member)
+{ "content": "…", "mimeType": "text/html", "channelId": "<channel id>" }
 ```
 
 Inline HTML must be self-contained (it renders in a sandboxed iframe); prefer
-inline `<style>` and avoid external network calls. A good pattern: post a short
-`send_message` ("Here's the report →") and attach the detail as an HTML
-artifact.
+inline `<style>` and avoid external network calls. Call `create_artifact` with
+the finished report and check its delivery status before claiming completion.
+It already posts the card; do not replace it with an `upload_file` attachment
+or duplicate the delivery message. Saving a report is not evidence the client
+rendered it. If card delivery fails, use `deliver_artifact` with the returned ID.
+For revisions, find the report with `list_artifacts` and call `update_artifact`.
+Reuse an explicit `operationId` when retrying creation; do not change it to
+work around an uncertain response, which could create duplicates.
 
 ---
 
@@ -243,9 +248,9 @@ claude                                     # approve the "flow" server when prom
 ```
 
 `mcp-init` resolves your workspace and merges a `flow` entry into any existing
-`.mcp.json` (other servers preserved). No channel is pinned — pick targets per
-call via `list_channels` / `list_users`, and pass `userId` explicitly to
-`create_artifact` since there's no conversation context to infer it from.
+`.mcp.json` (other servers preserved). No channel is pinned — pick a target with
+`list_channels`, then pass `channelId` explicitly to `create_artifact`. Supply
+`threadRootId` only when its card belongs in a particular existing thread.
 
 > One live token per identity: `login`/`mcp-init` minting a token revokes the
 > daemon's. Register a **separate** agent identity for interactive MCP use if a

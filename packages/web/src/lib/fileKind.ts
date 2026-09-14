@@ -27,6 +27,11 @@ export function isTextFile(file: FileKindInput): boolean {
   return TEXT_EXTS.has(ext(file));
 }
 
+export function isMarkdownFile(file: FileDTO): boolean {
+  return file.mimeType.split(';')[0]?.trim().toLowerCase() === 'text/markdown'
+    || ['md', 'markdown'].includes(ext(file));
+}
+
 /** Video formats we render inline (ui_nits); anything the browser can't
  * decode falls back to the file chip at runtime via the <video> error event. */
 export const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);

@@ -264,6 +264,7 @@ targets:
     sources:
       - path: Tests
       - path: ../macos/Tests/FlowTests/MiniAppTests.swift
+      - path: ../macos/Tests/FlowTests/ArtifactReportTests.swift
       - path: ../macos/Tests/FlowTests/AppTokenTests.swift
       - path: ../macos/Tests/FlowTests/MessageDeletePolicyTests.swift
       - path: ../macos/Tests/FlowTests/ScheduleEditorTests.swift

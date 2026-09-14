@@ -599,7 +599,8 @@ export type UpdateAppBody = z.infer<typeof UpdateAppBody>;
 /** POST /v1/artifacts — pin a file as an artifact in a channel. Any member of
  * the channel can pin. Name defaults to the file name. `ownsFile` marks an
  * artifact whose file was uploaded for it (agent-generated) so deleting the
- * artifact can reap the file. */
+ * artifact can reap the file. Requester attribution is agent-only and identifies who
+ * requested a report and which source thread should receive its report card. */
 /** Pin a file (`fileId`) OR a link (`url`) — exactly one. A link artifact opens
  * in the co-browsing mini-browser; only http(s) URLs are accepted. */
 export const CreateArtifactBody = z
@@ -612,6 +613,9 @@ export const CreateArtifactBody = z
     /** Mini apps (MINI_APPS.md): register this link as an app — the row gets a
      * per-artifact secret, returned once in the create response. Link-only. */
     app: z.boolean().optional(),
+    requesterUserId: z.string().uuid().optional(),
+    sourceThreadRootId: z.string().uuid().optional(),
+    operationId: z.string().uuid().optional(),
   })
   .refine((b) => (b.fileId === undefined) !== (b.url === undefined), {
     message: 'provide exactly one of fileId or url',

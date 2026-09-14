@@ -18,6 +18,7 @@ import type {
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { applyChannelEmoji, applyHuddle, applyIndicator } from '../lib/channelCache';
 import { api } from '../lib/api';
+import { shouldOpenArtifact } from '../lib/artifactDelivery';
 import { backendFor } from '../lib/backend';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
@@ -412,6 +413,8 @@ export default function Main() {
         // …and the workspace-wide app list behind the sidebar's Apps section (#394).
         void qc.invalidateQueries({ queryKey: ['app-artifacts', event.workspaceId] });
         const a = event.data as ArtifactDTO;
+        if (event.type === 'artifact.deleted') qc.removeQueries({ queryKey: ['artifact', a.id] });
+        else qc.setQueryData(['artifact', a.id], a);
         if (event.type === 'artifact.deleted' && cur.artifactId === a.id) cur.selectArtifact(null);
         // Co-browsing: an updated link artifact's url must reach every viewer
         // right away (the refetch above is async). Seed the new DTO into the
@@ -421,12 +424,10 @@ export default function Main() {
             old ? { artifacts: old.artifacts.map((x) => (x.id === a.id ? a : x)) } : old,
           );
         }
-        // Auto-open an agent-created artifact for whoever is looking at its
-        // channel — the user who asked the agent to make it. Gated on ownsFile
-        // (agent-generated content) so a human "Pin as artifact" never steals
-        // focus, and on the active channel so it only pops for someone in that
-        // conversation. Updates don't re-open (they'd yank focus mid-view).
-        if (event.type === 'artifact.created' && a.ownsFile && a.channelId === cur.channelId) {
+        // Auto-open only a report explicitly delivered to the requester in the
+        // originating conversation. File ownership is a lifecycle concern, not
+        // an attention-routing signal. Updates never re-open a report.
+        if (event.type === 'artifact.created' && shouldOpenArtifact(a, authRef.current.user.id, cur.channelId, cur.threadRootId)) {
           // Seed the list cache with the DTO *before* selecting: the invalidate
           // above refetches async, and ArtifactBody self-closes if the selected
           // id isn't in the (still-stale) list — so without this the panel would

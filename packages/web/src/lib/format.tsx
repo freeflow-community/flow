@@ -18,12 +18,21 @@ import { MermaidBlock } from '../components/MermaidBlock';
 /** Lets a message row offer "Pin as artifact" on every inline link it renders,
  * without threading a callback through the recursive renderer. Rendering sites
  * that don't provide it (previews, etc.) just get plain links. */
-export const InlineLinkContext = createContext<{ onPinLink?: (url: string) => void }>({});
+export const InlineLinkContext = createContext<{ onPinLink?: (url: string) => void; onOpenArtifact?: (id: string) => void }>({});
 
 /** A link in a message body: opens in a new tab, and — when a pin handler is in
  * context — reveals a small 📌 on hover to pin the URL as a co-browsing artifact. */
 function InlineLink({ href, children }: { href: string; children: ReactNode }) {
-  const { onPinLink } = useContext(InlineLinkContext);
+  const { onPinLink, onOpenArtifact } = useContext(InlineLinkContext);
+  if (href.startsWith('flow-artifact:')) {
+    const id = href.slice('flow-artifact:'.length);
+    return onOpenArtifact ? (
+      <button type="button" data-testid="open-report" onClick={() => onOpenArtifact(id)}
+        className="my-2 block max-w-full rounded-lg border border-hairline bg-white px-4 py-3 text-left font-semibold text-accent-deep hover:border-accent">
+        📄 {children}
+      </button>
+    ) : <span>{children}</span>;
+  }
   const a = (
     <a href={href} target="_blank" rel="noreferrer noopener" className="text-accent-deep underline">
       {children}
@@ -58,7 +67,7 @@ const TOKEN_RE = /<@([0-9a-fA-F-]{36})>|<!(channel|here|everyone)>/g;
 // "2 * 3 * 4" and snake_case stay literal. Applied to plain/quote segments
 // only — fenced code blocks never get here.
 const INLINE_RE =
-  /(`[^`\n]+`)|(\*\*(?=\S)(?:[^*\n]|\*(?!\*))+?(?<=\S)\*\*)|(\*(?!\*)(?=\S)[^*\n]+?(?<=\S)\*)|((?<![\w`])_(?=\S)[^_\n]+?(?<=\S)_(?![\w`]))|(~~(?=\S)[^~\n]+?(?<=\S)~~)|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
+  /(`[^`\n]+`)|(\*\*(?=\S)(?:[^*\n]|\*(?!\*))+?(?<=\S)\*\*)|(\*(?!\*)(?=\S)[^*\n]+?(?<=\S)\*)|((?<![\w`])_(?=\S)[^_\n]+?(?<=\S)_(?![\w`]))|(~~(?=\S)[^~\n]+?(?<=\S)~~)|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|flow-artifact:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
 
 function renderInline(text: string, keyBase: string): ReactNode[] {
   const out: ReactNode[] = [];

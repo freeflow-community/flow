@@ -697,6 +697,9 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     /// a non-optional `Bool` fails the whole artifacts payload, not just this
     /// key. Test with `isApp == true`.
     let isApp: Bool?
+    var requesterUserId: String? = nil
+    var sourceThreadRootId: String? = nil
+    var operationId: String? = nil
     let createdAt: String
     let updatedAt: String
     let file: FileAttachment? // null for link artifacts

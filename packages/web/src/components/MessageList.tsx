@@ -3,7 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
-import { isTextFile, isVideoFile } from '../lib/fileKind';
+import { isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
+import { MarkdownReport } from './ArtifactView';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { burstConfetti, celebrationsAdded } from '../lib/confetti';
 import { SCHEDULED_VIEW_ID, useAuth, useSelection } from '../state';
@@ -547,7 +548,7 @@ function MessageRow({
                 data-search-body=""
                 className="text-sm leading-normal break-words whitespace-pre-wrap"
               >
-                <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
+                <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url), onOpenArtifact: sel.selectArtifact }}>
                   {renderBlocks(message.body, names, auth.user.id)}
                 </InlineLinkContext.Provider>
                 {message.editedAt && (
@@ -1180,12 +1181,12 @@ function TextAttachment({ file }: { file: FileDTO }) {
       {!collapsed && (
         <div className="mt-0.5">
           <div className="group/att relative">
-            <pre
+            {isMarkdownFile(file) ? <MarkdownReport text={shown} /> : <pre
               data-testid={`file-text-${file.name}`}
               className="mc-scroll overflow-x-auto rounded-lg border border-hairline bg-white px-3 py-2 font-mono text-[11px] leading-4 whitespace-pre text-ink"
             >
               {shown}
-            </pre>
+            </pre>}
             <DownloadHoverButton file={file} onDownload={download} />
           </div>
           {expanded && expandTruncated && (

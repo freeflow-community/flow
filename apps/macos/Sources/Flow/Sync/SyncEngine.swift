@@ -1477,6 +1477,10 @@ actor SyncEngine {
         await appState?.setAppArtifacts(resp.artifacts, workspaceId: workspaceId)
     }
 
+    func fetchArtifact(id: String) async throws -> Artifact {
+        try await api.get("/v1/artifacts/\(id)")
+    }
+
     /// Pins a file as a shared artifact in a channel (idempotent per
     /// channel+file for pins, server-enforced) and refreshes the sidebar list.
     func createArtifact(channelId: String, fileId: String, name: String? = nil) async throws -> Artifact {

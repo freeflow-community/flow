@@ -313,6 +313,73 @@ describe('file access via a channel artifact', () => {
   });
 });
 
+describe('artifact delivery and reopening', () => {
+  it('keeps a saved report and its thread card stable after a lost response', async () => {
+    const { deliverArtifact } = await import('../../agent-bridge/src/artifact-delivery.js');
+    const root = await msg.sendMessage(channelId, aliceId, randomUUID(), 'Create a sample report');
+    const reportFile = await fl.uploadFile(workspaceId, agentId, 'sample.md', 'text/markdown',
+      Buffer.from('# Sample report\n\n| Item | Status |\n| --- | --- |\n| Test | Passed |'));
+    const report = await ar.createArtifact(agentId, channelId, {
+      fileId: reportFile.id, ownsFile: true, operationId: randomUUID(),
+      requesterUserId: aliceId, sourceThreadRootId: root.id,
+    });
+    let loseResponse = true;
+    const api = { sendMessage: async (channel: string, body: string, thread?: string, fileIds?: string[], clientId?: string) => {
+      const saved = await msg.sendMessage(channel, agentId, clientId!, body, thread, fileIds);
+      if (loseResponse) { loseResponse = false; throw new Error('response lost'); }
+      return saved;
+    } };
+    expect((await deliverArtifact(api, report, root.id)).isError).toBe(true);
+    const retried = await deliverArtifact(api, report, root.id);
+    expect(retried.isError).toBe(false);
+    const cards = await db.select().from(schema.messages).where(eq(schema.messages.id, retried.structuredContent.messageId!));
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.threadRootId).toBe(root.id);
+    expect((await ar.getArtifact(report.id, aliceId)).file?.mimeType).toBe('text/markdown');
+    expect(await migrate(process.env.DATABASE_URL!)).toEqual([]);
+    expect((await ar.getArtifact(report.id, aliceId)).operationId).toBe(report.operationId);
+  });
+
+  it('reopens a report by ID for a member and rejects a non-member', async () => {
+    const fileId = await uploadedFile(agentId);
+    const report = await ar.createArtifact(agentId, channelId, { fileId, ownsFile: true });
+    expect((await ar.getArtifact(report.id, bobId)).fileId).toBe(fileId);
+    await expect(ar.getArtifact(report.id, lonerId)).rejects.toThrow(/join the channel/);
+    await ar.deleteArtifact(report.id, agentId);
+    await expect(ar.getArtifact(report.id, bobId)).rejects.toThrow(/not found/);
+  });
+
+  it('persists requester context independently of ownership', async () => {
+    const fileId = await sharedFile(agentId);
+    const root = await msg.sendMessage(channelId, aliceId, randomUUID(), 'Build report');
+    const report = await ar.createArtifact(agentId, channelId, {
+      fileId, requesterUserId: aliceId, sourceThreadRootId: root.id, operationId: randomUUID(),
+    });
+    expect(report.ownsFile).toBe(false);
+    expect((await ar.getArtifact(report.id, aliceId)).requesterUserId).toBe(aliceId);
+    expect(report.sourceThreadRootId).toBe(root.id);
+  });
+
+  it('converges concurrent creation retries and reaps the surplus owned upload', async () => {
+    const operationId = randomUUID();
+    const uploads = await Promise.all([uploadedFile(agentId), uploadedFile(agentId)]);
+    const reports = await Promise.all(uploads.map((fileId) => ar.createArtifact(agentId, channelId, {
+      fileId, ownsFile: true, operationId, requesterUserId: aliceId,
+    })));
+    expect(reports[0]!.id).toBe(reports[1]!.id);
+    const unused = uploads.find((id) => id !== reports[0]!.fileId)!;
+    expect(await db.select().from(files).where(eq(files.id, unused))).toHaveLength(0);
+  });
+
+  it('rejects cross-channel thread context and an inaccessible requester', async () => {
+    const fileId = await uploadedFile(agentId);
+    const root = await msg.sendMessage(privateId, aliceId, randomUUID(), 'Private root');
+    await expect(ar.createArtifact(agentId, channelId, { fileId, sourceThreadRootId: root.id })).rejects.toThrow(/live root/);
+    await expect(ar.createArtifact(agentId, channelId, { fileId, requesterUserId: lonerId })).rejects.toThrow(/join the channel/);
+    await expect(ar.createArtifact(aliceId, channelId, { fileId, requesterUserId: bobId })).rejects.toThrow(/only an agent/);
+  });
+});
+
 describe('orphan sweep exemption', () => {
   it('never reaps a file that an artifact references, even unattached', async () => {
     const keptId = await uploadedFile(aliceId);

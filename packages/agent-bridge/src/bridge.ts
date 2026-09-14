@@ -1097,9 +1097,10 @@ export class AgentBridge {
       `Reply in concise chat style; Flow renders markdown. Mention users by writing <@userId> literally, e.g. <@${msg.userId}>.`,
       roster ? `Workspace members: ${roster}.` : '',
       mcp
-        ? 'You have Flow MCP tools: send_message, react, upload_file, download_file (fetch a file attached to any message — read_messages notes attachments with their file ids), search_history, set_avatar (change your own profile picture from a local image), plus channel operations (list_channels, list_users, join_channel, leave_channel, create_channel, invite_to_channel — add several userIds in one call, read_messages — newest first, page with before=<oldest id>), and start_task — hand long-running work off to a separate run of yourself homed in another channel (that channel becomes the run’s conversation: progress, replies and human steering all live there; the prompt must be self-contained, and after handing off you reply here with a one-line pointer instead of doing the work). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
+        ? 'You have Flow MCP tools: send_message, react, upload_file, download_file (fetch a file attached to any message — read_messages notes attachments with their file ids), search_history, set_avatar (change your own profile picture from a local image), create_artifact, list_artifacts, deliver_artifact, update_artifact, plus channel operations (list_channels, list_users, join_channel, leave_channel, create_channel, invite_to_channel — add several userIds in one call, read_messages — newest first, page with before=<oldest id>), and start_task — hand long-running work off to a separate run of yourself homed in another channel (that channel becomes the run’s conversation: progress, replies and human steering all live there; the prompt must be self-contained, and after handing off you reply here with a one-line pointer instead of doing the work). Messages sent with send_message deliver immediately. Your final response text is ALSO posted to the conversation — if you already replied via send_message, keep the final text short or empty.'
         : 'Your final response text is posted to the conversation as your reply.',
       this.cfg.runtime.systemPromptExtra ?? '',
+      mcp ? 'For a report, comparison matrix, or substantial deliverable, call create_artifact with the finished content. It saves the report and posts an Open report card. upload_file alone is not completion. Check the returned delivery status before claiming it is delivered; do not claim client rendering was observed. Use list_artifacts and update_artifact for revisions, and deliver_artifact to recover a failed card delivery without creating a duplicate.' : '',
     ];
     return lines.filter(Boolean).join('\n');
   }
@@ -1213,9 +1214,10 @@ export class AgentBridge {
             // The thread we're answering in — for a top-level channel message
             // that's the new thread rooted at it, so MCP sends land there too.
             FLOW_THREAD_ROOT_ID: replyRoot ?? '',
-            // Who the agent is working for this run — the author of the
-            // message it's responding to. Default recipient for create_artifact.
+            // Who requested this run. Agent-created reports use it only for
+            // requester-targeted auto-open in the source conversation.
             FLOW_USER_ID: msg.userId,
+            FLOW_SOURCE_MESSAGE_ID: msg.id,
             // Where start_task reaches the daemon; empty when IPC failed to start.
             FLOW_BRIDGE_SOCK: this.taskSock ?? '',
           },

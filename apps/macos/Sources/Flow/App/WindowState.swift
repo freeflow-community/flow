@@ -394,13 +394,10 @@ final class WindowState: ObservableObject {
         selectedArtifactId = id
     }
 
-    /// Auto-open an agent-created artifact for the user viewing its channel —
-    /// the person who asked the agent to make it. Gated on `ownsFile` (the
-    /// content was agent-generated, not a human pin) and on the artifact's
-    /// channel being this window's active one, so it only pops for someone in
-    /// that conversation and a human "Pin as artifact" never steals focus.
+    /// Only the requester viewing the original conversation may auto-open a report.
     func maybeAutoOpenArtifact(_ a: Artifact) {
-        guard a.ownsFile, a.channelId == selectedChannelId else { return }
+        guard let requester = a.requesterUserId, requester == app.currentUser?.id,
+              a.channelId == selectedChannelId, a.sourceThreadRootId == openThreadRootId else { return }
         selectArtifact(a.id)
     }
 

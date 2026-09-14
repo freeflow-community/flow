@@ -1232,7 +1232,9 @@ struct MessageRow: View, @preconcurrency Equatable {
             ChatSearch.segmentBases(segments, names: userNames, query: $0.query)
         }
         return Group {
-            if segments.count == 1, case .paragraph(let text) = segments[0] {
+            if let report = ArtifactReference.parse(message.body) {
+                ArtifactOpenButton(title: report.title, artifactId: report.id)
+            } else if segments.count == 1, case .paragraph(let text) = segments[0] {
                 // Fast path: single plain paragraph keeps the original inline
                 // layout (baseline-aligned edited/pending markers).
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
