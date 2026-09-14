@@ -797,7 +797,14 @@ final class AppState: ObservableObject {
         reports.removeAll { $0.id == report.id }
         reports.insert(report, at: 0)
         setArtifacts(reports, workspaceId: report.workspaceId)
+#if os(iOS)
         (targetWindow ?? window).selectArtifact(report.id)
+#else
+        // `window` is the iOS single-window bridge; on macOS a report opens in
+        // the window whose card was clicked, and anything that arrives without
+        // one (a deep link) lands in the window last worked in.
+        (targetWindow ?? routingWindow)?.selectArtifact(report.id)
+#endif
     }
 
     // MARK: - App-level actions
