@@ -138,12 +138,13 @@ final class LiveAPITests: XCTestCase {
         )
         XCTAssertTrue(read.ok)
 
-        // Invite
-        let invite: InviteResponse = try await api.post(
+        // Invite — the batch shape every client now sends (#577)
+        let invites: InviteBatchResponse = try await api.post(
             "/v1/workspaces/\(ws.id)/invites",
-            body: CreateInviteBody(email: "invitee\(stamp)@test.local")
+            body: CreateInviteBatchBody(emails: ["invitee\(stamp)@test.local"])
         )
-        XCTAssertTrue(invite.inviteUrl.hasPrefix("flow://invite/"))
+        XCTAssertEqual(invites.results.count, 1)
+        XCTAssertTrue(invites.results[0].inviteUrl?.hasPrefix("flow://invite/") ?? false)
 
         // Error envelope decoding
         do {

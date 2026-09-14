@@ -3,6 +3,9 @@ import XCTest
 /// #283 — inviting someone to the workspace from iOS. Until now the phone had
 /// no invite surface at all: you could join a workspace on iOS but never bring
 /// anyone else into one, and #85's join-link management had nowhere to live.
+/// #579 moved the email half onto the batch endpoint (#577): a comma-separated
+/// list in one submit, one result row per address, and the server actually
+/// mails each person — the sheet no longer mints a link for you to carry.
 ///
 /// The sheet is a modal reached through a system `Menu`, so none of this is
 /// assertable from outside the simulator — this file is the acceptance criteria
@@ -60,54 +63,87 @@ final class InviteTests: XCTestCase {
         XCTAssertTrue(invite.waitForExistence(timeout: 10), "the workspace menu has no Invite People item")
         invite.tap()
         XCTAssertTrue(
-            app.buttons["invite.create"].waitForExistence(timeout: 20),
+            app.buttons["invite.send"].waitForExistence(timeout: 20),
             "Invite People opened no sheet"
         )
     }
 
+    /// The address box is a multi-line `TextField(axis: .vertical)`, which
+    /// surfaces as a text view on some iOS versions and a text field on others.
+    private func emailField(_ app: XCUIApplication) -> XCUIElement {
+        let field = app.textFields["invite.email"]
+        return field.exists ? field : app.textViews["invite.email"]
+    }
+
     /// Acceptance 1: the workspace menu offers Invite People, and it opens a
-    /// sheet with an email field. This is the whole of what #283 asks for.
+    /// sheet with an address box and a disabled Send Invites.
     func testWorkspaceMenuOpensTheInviteSheet() {
         let app = launch()
         openInviteSheet(app)
-        XCTAssertTrue(app.textFields["invite.email"].exists, "the sheet has no email field")
+        XCTAssertTrue(emailField(app).exists, "the sheet has no address field")
         XCTAssertFalse(
-            app.buttons["invite.create"].isEnabled,
-            "Create Invite should be disabled with no address typed"
+            app.buttons["invite.send"].isEnabled,
+            "Send Invites should be disabled with no address typed"
         )
         attach("01-invite-sheet")
     }
 
-    /// Acceptance 2: an address mints an invite link, shown with Copy and Share.
-    /// The link is the deliverable — the server sends no email — so a sheet that
-    /// creates one without showing it would be useless.
-    func testCreatingAnInviteShowsACopyableLink() {
+    /// Acceptance 2 (#579): several comma-separated addresses go out in one
+    /// submit and come back with a result each. The typo is the point — it must
+    /// be reported against its own address without costing the rest the batch,
+    /// and it stays in the box so it can be fixed and resent.
+    func testSendingSeveralAddressesReportsEachOne() {
         let app = launch()
         openInviteSheet(app)
 
-        let field = app.textFields["invite.email"]
+        let field = emailField(app)
         field.tap()
-        field.typeText("invitee-283@example.com")
-        let create = app.buttons["invite.create"]
-        XCTAssertTrue(create.isEnabled, "Create Invite stayed disabled with an address typed")
-        create.tap()
+        field.typeText("invitee-579a@example.com, bob@qa.local, nope")
 
-        let link = app.staticTexts["invite.link"]
-        XCTAssertTrue(link.waitForExistence(timeout: 30), "no invite link came back")
-        XCTAssertTrue(link.label.contains("invite"), "that does not look like an invite URL — got \(link.label)")
-        XCTAssertTrue(app.buttons["invite.link.copy"].exists, "the link has no Copy button")
-        XCTAssertTrue(app.buttons["invite.link.share"].exists, "the link has no Share button")
-        attach("02-invite-link")
+        let send = app.buttons["invite.send"]
+        XCTAssertTrue(send.isEnabled, "Send Invites stayed disabled with addresses typed")
+        XCTAssertEqual(send.label, "Send 3 Invites", "the button does not say how many are going out")
+        send.tap()
 
-        app.buttons["invite.link.copy"].tap()
-        XCTAssertTrue(
-            app.buttons["Copied"].waitForExistence(timeout: 5),
-            "Copy gave no confirmation"
+        let emailed = app.staticTexts["invite.status.invitee-579a@example.com"]
+        XCTAssertTrue(emailed.waitForExistence(timeout: 30), "no result row for the new address")
+        XCTAssertEqual(emailed.label, "Invite emailed")
+        XCTAssertEqual(
+            app.staticTexts["invite.status.bob@qa.local"].label, "Already a member",
+            "an existing member should be reported as one, not emailed"
         )
-        attach("03-invite-link-copied")
+        XCTAssertEqual(app.staticTexts["invite.status.nope"].label, "Not a valid email address")
+        attach("02-invite-results")
+
+        // Only what failed stays editable — a retry must not re-mail the rest.
+        XCTAssertEqual(
+            emailField(app).value as? String, "nope",
+            "the box should hold exactly the addresses worth retrying"
+        )
     }
 
-    /// Acceptance 3 (#85 on iOS): an admin can create, regenerate and revoke the
+    /// Acceptance 3: one address still works on its own — the batch of one is
+    /// the ordinary case, and it must not read as a list.
+    func testSingleAddressStillWorks() {
+        let app = launch()
+        openInviteSheet(app)
+
+        let field = emailField(app)
+        field.tap()
+        field.typeText("invitee-579b@example.com")
+        let send = app.buttons["invite.send"]
+        XCTAssertEqual(send.label, "Send Invites", "a single address should not be pluralised")
+        send.tap()
+
+        let status = app.staticTexts["invite.status.invitee-579b@example.com"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30), "no result row came back")
+        XCTAssertEqual(status.label, "Invite emailed")
+        // Everything landed, so there is nothing left to retype.
+        XCTAssertFalse(app.buttons["invite.send"].exists, "the form stayed up after a clean send")
+        attach("03-invite-single")
+    }
+
+    /// Acceptance 4 (#85 on iOS): an admin can create, regenerate and revoke the
     /// workspace's persistent join link. Regenerate is also the revoke-a-leaked-
     /// link path, so the link must actually change.
     func testAdminCanManageTheJoinLink() {
@@ -145,7 +181,7 @@ final class InviteTests: XCTestCase {
         attach("06-join-link-revoked")
     }
 
-    /// Acceptance 4: a plain member never sees the join-link section. The server
+    /// Acceptance 5: a plain member never sees the join-link section. The server
     /// is the authority (403), and the client must not render a section whose
     /// every button would fail.
     func testPlainMemberSeesNoJoinLinkSection() {
@@ -153,7 +189,7 @@ final class InviteTests: XCTestCase {
         openInviteSheet(app)
         // The invite half is still there — the section that must not appear is
         // the join-link one.
-        XCTAssertTrue(app.textFields["invite.email"].exists, "the sheet did not open for a plain member")
+        XCTAssertTrue(emailField(app).exists, "the sheet did not open for a plain member")
         XCTAssertFalse(
             app.buttons["invite.joinLink.create"].exists,
             "a non-admin was offered join-link management"

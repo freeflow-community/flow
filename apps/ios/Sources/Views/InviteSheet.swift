@@ -3,8 +3,9 @@ import SwiftUI
 /// iOS counterpart of the macOS `InviteSheetView`: the one place you invite a
 /// person to the workspace. Two ways in, same as macOS —
 ///
-/// 1. an emailed-to-nobody **invite link** minted per address (the server sends
-///    no mail; you copy the link and pass it on yourself), and
+/// 1. **invite by email** — one or more addresses in a single submit; the
+///    server emails each person an invite link and answers per address (#577),
+///    and
 /// 2. the workspace's persistent **join link**, which owners/admins can create,
 ///    regenerate or revoke (issue #85).
 ///
@@ -21,11 +22,11 @@ struct InviteSheet: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
 
-    @State private var email = ""
-    @State private var inviteUrl: String?
+    @State private var emails = ""
+    @State private var results: [InviteResult]?
     @State private var busy = false
     @State private var error: String?
-    @State private var copied = false
+    @State private var copiedUrl: String?
 
     // Persistent workspace join link. `canManageJoinLink` stays false until the
     // server answers, so the section never flashes for someone who can't use it.
@@ -35,12 +36,18 @@ struct InviteSheet: View {
     @State private var joinCopied = false
     @State private var joinError: String?
 
-    private var trimmedEmail: String { email.trimmingCharacters(in: .whitespaces) }
+    /// Whatever was pasted, split into addresses (shared with macOS and web).
+    private var parsed: [String] { InviteAddresses.parse(emails) }
+
+    private var sendTitle: String { parsed.count > 1 ? "Send \(parsed.count) Invites" : "Send Invites" }
 
     var body: some View {
         NavigationStack {
             Form {
-                inviteSection
+                if let results, !results.isEmpty { resultsSection(results) }
+                // Everything landed: nothing is left to retype, so the box goes
+                // away and Done is the only thing left to do.
+                if results == nil || !parsed.isEmpty { inviteSection }
                 if canManageJoinLink { joinLinkSection }
             }
             .navigationTitle("Invite People")
@@ -59,17 +66,17 @@ struct InviteSheet: View {
 
     private var inviteSection: some View {
         Section {
-            TextField("person@example.com", text: $email)
+            TextField("person@example.com, someone@example.com", text: $emails, axis: .vertical)
+                .lineLimit(1...4)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.emailAddress)
                 .textContentType(.emailAddress)
-                .onSubmit(createInvite)
                 .accessibilityIdentifier("invite.email")
 
-            Button("Create Invite") { createInvite() }
-                .disabled(busy || trimmedEmail.isEmpty)
-                .accessibilityIdentifier("invite.create")
+            Button(sendTitle) { sendInvites() }
+                .disabled(busy || parsed.isEmpty)
+                .accessibilityIdentifier("invite.send")
 
             if let error {
                 Text(error)
@@ -77,23 +84,60 @@ struct InviteSheet: View {
                     .foregroundStyle(MC.danger)
                     .accessibilityIdentifier("invite.error")
             }
-
-            if let inviteUrl {
-                linkRow(
-                    url: inviteUrl,
-                    copied: copied,
-                    idPrefix: "invite.link",
-                    onCopy: {
-                        UIPasteboard.general.string = inviteUrl
-                        copied = true
-                    }
-                )
-            }
         } header: {
             Text("Invite by email")
         } footer: {
-            Text("Creates an invite link for that address. No email is sent — share the link yourself.")
+            Text("Separate addresses with commas. We'll email each person an invite link.")
         }
+    }
+
+    // MARK: - Results
+
+    /// One row per address, in the order they were typed. Only an address the
+    /// email could not reach shows a link — the rest were delivered, and five
+    /// links for five successes is noise.
+    private func resultsSection(_ results: [InviteResult]) -> some View {
+        Section {
+            ForEach(results, id: \.email) { result in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: result.status.isDelivered ? "checkmark.circle.fill" : "exclamationmark.circle")
+                            .foregroundStyle(statusColor(result.status))
+                        Text(result.email)
+                            .font(.callout)
+                            .accessibilityIdentifier("invite.result.\(result.email)")
+                        Spacer(minLength: 8)
+                        Text(result.status.label)
+                            .font(.caption)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(statusColor(result.status))
+                            .accessibilityIdentifier("invite.status.\(result.email)")
+                    }
+
+                    // The one case where the person still has to do something:
+                    // nothing was delivered, so hand them the link to pass on.
+                    if result.status == .emailFailed, let url = result.inviteUrl {
+                        linkRow(
+                            url: url,
+                            copied: copiedUrl == url,
+                            idPrefix: "invite.link.\(result.email)",
+                            onCopy: {
+                                UIPasteboard.general.string = url
+                                copiedUrl = url
+                            }
+                        )
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        } header: {
+            Text("Results")
+        }
+    }
+
+    private func statusColor(_ status: InviteStatus) -> Color {
+        if status.isFailure { return MC.danger }
+        return status.isDelivered ? .green : .secondary
     }
 
     // MARK: - Join link
@@ -176,16 +220,22 @@ struct InviteSheet: View {
 
     // MARK: - Actions
 
-    private func createInvite() {
-        let trimmed = trimmedEmail
-        guard !trimmed.isEmpty, !busy else { return }
+    /// One call for the whole list (#577): the server decides per address, so a
+    /// typo never costs the rest of the batch.
+    private func sendInvites() {
+        let addresses = parsed
+        guard !addresses.isEmpty, !busy else { return }
         busy = true
         error = nil
-        copied = false
+        copiedUrl = nil
         Task {
             defer { busy = false }
             do {
-                inviteUrl = try await app.engine.createInvite(workspaceId: workspaceId, email: trimmed)
+                let results = try await app.engine.createInvites(workspaceId: workspaceId, emails: addresses)
+                self.results = results
+                // Only what failed stays in the box: hitting Send again retries
+                // exactly those and never re-mails the ones that landed.
+                emails = results.filter { $0.status.isFailure }.map(\.email).joined(separator: ", ")
             } catch {
                 self.error = error.localizedDescription
             }

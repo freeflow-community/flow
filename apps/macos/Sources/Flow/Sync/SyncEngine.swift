@@ -522,19 +522,8 @@ actor SyncEngine {
         return ws
     }
 
-    /// Single-address invite, the legacy `{ email }` shape. Only the iOS sheet
-    /// still calls it — #579 moves that one to `createInvites` too, and this
-    /// goes with it. Web and macOS send a batch.
-    func createInvite(workspaceId: String, email: String) async throws -> String {
-        let resp: InviteResponse = try await api.post(
-            "/v1/workspaces/\(workspaceId)/invites",
-            body: CreateInviteBody(email: email)
-        )
-        return resp.inviteUrl
-    }
-
     /// Emails an invite to each address and reports what happened to each one
-    /// (#578). One address is just a batch of one — the server decides per
+    /// (#578, #579 — every client sends this now). One address is just a batch of one — the server decides per
     /// address, so a typo never costs the rest of the list.
     func createInvites(workspaceId: String, emails: [String]) async throws -> [InviteResult] {
         let resp: InviteBatchResponse = try await api.post(

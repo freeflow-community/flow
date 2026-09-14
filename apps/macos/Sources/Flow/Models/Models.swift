@@ -946,11 +946,6 @@ struct ThreadResponse: Decodable, Sendable {
     let messages: [Message] // replies, ascending
     let hasMore: Bool
 }
-struct InviteResponse: Decodable, Sendable {
-    let inviteUrl: String
-    let email: String?
-    let expiresAt: String?
-}
 /// Per-address outcome of a batch invite (#577). Decoded leniently: a status a
 /// newer server grows must not fail the whole sheet's response.
 enum InviteStatus: String, Decodable, Sendable {
@@ -1133,8 +1128,7 @@ struct UpdateChannelBody: Encodable, Sendable {
     let name: String?
     let topic: String?
 }
-struct CreateInviteBody: Encodable, Sendable { let email: String }
-/// The batch shape (#577): one call per submit, one result per address.
+/// The only invite shape (#577): one call per submit, one result per address.
 struct CreateInviteBatchBody: Encodable, Sendable { let emails: [String] }
 
 /// Turns whatever an admin pasted into the invite field into addresses.
