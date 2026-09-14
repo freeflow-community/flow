@@ -42,6 +42,15 @@ This file keeps two things:
   proximity to the bottom only, so a back-scrolled sender — in a channel or in
   the thread panel over the same component — watches their own message land off
   screen. Closing it is one own-message check where `pinnedRef` is set.
+- **In-channel search has a different shape on each client, and one real gap**
+  (#518 built the find bar on web + macOS, #570 the iOS half). All three share
+  the matching model (`ChatSearch` in Swift, `chatSearch.ts` on web), so a hit
+  means the same thing everywhere. What differs is deliberate: web and macOS
+  step a ⌘F cursor through highlights in place, iOS lists matching messages and
+  taps through to one — a phone has no ⌘G and no room for a counter. The gap is
+  scope: the desktop bars search only the *loaded* transcript, while iOS
+  searches the channel's whole cached history and can page in more. Closing it
+  means pointing the desktop bars at the same cached-history query.
 - **Ongoing agent calls are iOS-only.** One-to-one agent DMs on iPhone can
   listen, send each pause as a normal message, speak the answer and minimize
   into a persistent call bar. Web and macOS keep text agent conversations.

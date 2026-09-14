@@ -42,6 +42,21 @@ struct ChannelScreen: View {
     @State private var profileRoute: ProfileRoute?
     @State private var startingAgentCall = false
 
+    /// In-channel search (#570): open state, the live query, a tick that pulls
+    /// focus back when the header is tapped again, and its own observation of
+    /// the channel's cached messages. Search deliberately does not reuse the
+    /// transcript's windowed observation — the window is what the reader has
+    /// scrolled into, and a search that could only see the last 100 messages
+    /// would be a search of the screen rather than of the channel.
+    @State private var searchOpen = false
+    @State private var searchQuery = ""
+    @State private var searchFocusTick = 0
+    @StateObject private var searchable = DBObserved<[Message]>(initial: [])
+    /// Rendered-body cache shared by every keystroke, so typing re-matches
+    /// strings instead of re-parsing every body's markdown (the same object
+    /// macOS's find bar holds).
+    @State private var searchIndex = ChatSearchIndex()
+
     /// The open artifact (#157), presented as a sheet over the conversation.
     /// Driven by `AppState.selectedArtifactId` — the same selection macOS uses
     /// for its side panel — so an agent-created artifact auto-opens here too
@@ -197,6 +212,9 @@ struct ChannelScreen: View {
             leadingAccessibilityIdentifier: "nav.menu",
             leadingAccessibilityLabel: "Channels",
             subtitleAccessibilityIdentifier: "channel.header.topic",
+            // Tapping the name toggles in-channel search (#570) — the ticket
+            // asks for the header to dismiss it as well as open it.
+            titleAction: toggleSearch,
             trailing: {
                 HStack(spacing: 6) {
                     huddleButton
@@ -215,6 +233,20 @@ struct ChannelScreen: View {
 
     private var channelMenu: some View {
         Menu {
+            // The header tap is the quick way into search (#570), but a bare
+            // tap gesture is invisible to VoiceOver and to anyone who never
+            // thinks to try it — so the action lives here as a real button too.
+            //
+            // Not gated on `.search`: like the macOS and web find bars, this
+            // searches messages already on the device, so it needs nothing from
+            // the provider. `.search` is about a backend's own search API.
+            Button {
+                openSearch()
+            } label: {
+                Label("Search in Channel…", systemImage: "magnifyingglass")
+            }
+            .accessibilityIdentifier("channel.search")
+
             // Provider gating (#546): an unavailable item is not in the menu,
             // as on web and macOS. Flow keeps every item.
             Button {
@@ -283,10 +315,59 @@ struct ChannelScreen: View {
                 // area, so it lands just under the status bar for free.
                 .ignoresSafeArea(.container, edges: .top)
                 .fadesAboveFloatingHeader(floatingHeaderTopInset)
-            headerPill
+            // Pill, then — when open — the search field and its results, all in
+            // one top-aligned stack (#570). Stacking them rather than insetting
+            // the results by hand is what keeps the header from moving a pixel
+            // when search opens: the pill is the first element either way.
+            // With search closed the stack holds only the pill and hugs the top;
+            // the results view is greedy, so it fills the rest when it appears.
+            VStack(spacing: 0) {
+                headerPill
+                if searchOpen {
+                    // No gap anywhere below the pill: the bar's own background
+                    // runs right up to the pill's bottom edge and carries the
+                    // breathing room as internal padding instead. A spacer here
+                    // would show a sliver of half-drawn transcript between the
+                    // two, which reads as a glitch rather than as depth.
+                    VStack(spacing: 0) {
+                        searchField
+                        searchResults
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
         }
         // No system bar on this screen any more — the pill replaces it.
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var searchField: some View {
+        ChannelSearchField(
+            placeholder: "Search in \(title)",
+            query: $searchQuery,
+            focusTick: searchFocusTick,
+            onCancel: closeSearch
+        )
+    }
+
+    private var searchResults: some View {
+        // One dictionary for both the matching and the drawing: `ChatSearch`
+        // resolves mention tokens to `@name` before matching, so the two have
+        // to agree on the names or the highlight lands on other characters
+        // than the count was taken from.
+        let names = usersById.mapValues { $0.displayNameWithBadge }
+        return ChannelSearchResults(
+            results: ChannelSearch.results(
+                in: searchable.value, index: searchIndex, names: names, query: searchQuery
+            ),
+            query: searchQuery,
+            userNames: names,
+            index: searchIndex,
+            canLoadOlder: app.hasMore[channelId] ?? false,
+            isLoadingOlder: app.loadingHistory.contains(channelId),
+            onLoadOlder: { Task { await app.engine.loadOlder(channelId: channelId) } },
+            onSelect: jumpToSearchResult
+        )
     }
 
     /// Everything the channel screen scrolls or types into, plus the sheets and
@@ -352,8 +433,14 @@ struct ChannelScreen: View {
                     .hiddenUnless(.typing, in: app.capabilities)
             }
             .dismissesKeyboardOnChatInteraction()
-            Divider()
-            ComposerView(channelId: channelId)
+            // Search owns the keyboard while it is open, so the composer steps
+            // out of the way (#570). Left in place it would sit between the
+            // results and the keyboard, inviting a tap that types into a box
+            // nobody can see.
+            if !searchOpen {
+                Divider()
+                ComposerView(channelId: channelId)
+            }
         }
         .sheet(item: $editingMessage) { message in
             EditMessageSheet(message: message)
@@ -498,6 +585,70 @@ struct ChannelScreen: View {
                     .reversed()
             )
         }
+    }
+
+    // MARK: - In-channel search (#570)
+
+    /// The header's tap: open the field, or close it if it is already open.
+    private func toggleSearch() {
+        if searchOpen { closeSearch() } else { openSearch() }
+    }
+
+    private func openSearch() {
+        guard !searchOpen else {
+            searchFocusTick += 1
+            return
+        }
+        startSearchable()
+        searchFocusTick += 1
+        withAnimation(.easeOut(duration: 0.18)) { searchOpen = true }
+    }
+
+    /// Cancel: field gone, keyboard down, query forgotten. The transcript is
+    /// never unmounted while search is open, so "scroll position preserved"
+    /// needs no restore — it was never lost.
+    private func closeSearch() {
+        withAnimation(.easeOut(duration: 0.18)) { searchOpen = false }
+        searchQuery = ""
+        // Nothing reads these until the next open, and the corpus observation
+        // is the expensive one to leave running on every channel ever visited.
+        searchable.stop()
+    }
+
+    /// The channel's cached messages, newest first. Thread replies are in
+    /// scope — a search of "this channel" that skipped the reply someone
+    /// actually wrote would be lying about what it searched — and tapping one
+    /// opens its thread, the same route the pins sheet takes.
+    ///
+    /// "Cached" is the real boundary, and it bites hardest on replies: the sync
+    /// engine fetches a thread's replies when that thread is first opened, so
+    /// until then only the root message is findable. The root carries the reply
+    /// count, so the trail is still there — but this is why the empty state
+    /// offers to page in more history rather than asserting "not here".
+    private func startSearchable() {
+        let channelId = channelId
+        searchable.start(db: app.db, reset: []) { db in
+            try Message
+                .filter(Column("channelId") == channelId)
+                .order(Column("id").desc)
+                .limit(ChannelSearch.corpusLimit)
+                .fetchAll(db)
+        }
+    }
+
+    /// Tapping a result: close search and hand the message to the existing
+    /// jump-to-message path, which pages history until the target is loaded and
+    /// then scrolls to it — in the thread screen when the hit is a reply.
+    private func jumpToSearchResult(_ message: Message) {
+        closeSearch()
+        if let rootId = message.threadRootId {
+            app.openThread(rootId)
+            threadRoute = ThreadRoute(rootId: rootId)
+        } else {
+            app.openThread(nil)
+            threadRoute = nil
+        }
+        app.focusMessageId = message.id
     }
 
     /// Page older history toward a jump-to-message target until it's loaded.

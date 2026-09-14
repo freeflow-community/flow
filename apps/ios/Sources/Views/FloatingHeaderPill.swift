@@ -26,6 +26,14 @@ struct FloatingHeaderPill<Trailing: View>: View {
     var leadingAccessibilityLabel: String
     /// Identifier for the subtitle line, when a screen's tests look for it.
     var subtitleAccessibilityIdentifier: String?
+    /// Makes the title area itself tappable (#570: the channel header opens
+    /// in-channel search). A plain tap gesture rather than a `Button`, on
+    /// purpose: a button here would fold the title and subtitle into one
+    /// accessibility element, and `header.title` has to stay a static text —
+    /// four UI test files look it up as `app.staticTexts["header.title"]`.
+    /// Screens that adopt this must also offer the same action somewhere with
+    /// a real button, since a bare tap gesture is not reachable by VoiceOver.
+    var titleAction: (() -> Void)?
     @ViewBuilder var trailing: () -> Trailing
 
     @EnvironmentObject private var app: AppState
@@ -73,6 +81,11 @@ struct FloatingHeaderPill<Trailing: View>: View {
                         .accessibilityIdentifier(subtitleAccessibilityIdentifier ?? "header.subtitle")
                 }
             }
+            // The whole title block is the tap target, not just the glyphs of
+            // the name — a one-word channel would otherwise be a very small
+            // thing to hit.
+            .contentShape(Rectangle())
+            .onTapGesture { titleAction?() }
             Spacer(minLength: 2)
             trailing()
         }
