@@ -63,6 +63,14 @@ struct MainView: View {
         }
         .onChange(of: allChannels.value) { _, list in debugAutoOpen(list) }
         .environmentObject(app)
+        .sheet(isPresented: Binding(
+            get: { app.selectedArtifactId != nil },
+            set: { if (!$0) { app.selectArtifact(nil) } }
+        )) {
+            if let id = app.selectedArtifactId {
+                ArtifactReportSheet(artifactId: id).environmentObject(app)
+            }
+        }
     }
 
     /// The full-screen conversation pane. A `NavigationStack` so a channel can

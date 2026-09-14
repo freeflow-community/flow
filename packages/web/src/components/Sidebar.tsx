@@ -296,9 +296,7 @@ export default function Sidebar() {
         {joined.map(({ channel: c, nested }) => (
           <div key={c.id}>
             <ChannelRow channel={c} label={c.name ?? ''} nested={nested} onMenu={() => setMenuChannel(c)} />
-            {(artifactsByChannel.get(c.id) ?? []).map((a) => (
-              <ArtifactRow key={a.id} artifact={a} />
-            ))}
+            <ChannelDocs artifacts={artifactsByChannel.get(c.id) ?? []} />
           </div>
         ))}
 
@@ -352,15 +350,11 @@ export default function Sidebar() {
                 }
                 onMenu={() => setMenuChannel(c)}
               />
-              {(artifactsByChannel.get(c.id) ?? []).map((a) => (
-                <ArtifactRow key={a.id} artifact={a} />
-              ))}
+              <ChannelDocs artifacts={artifactsByChannel.get(c.id) ?? []} />
               {(dmChildren.get(c.id) ?? []).map((k) => (
                 <div key={k.id}>
                   <ChannelRow channel={k} label={k.name ?? ''} nested onMenu={() => setMenuChannel(k)} />
-                  {(artifactsByChannel.get(k.id) ?? []).map((a) => (
-                    <ArtifactRow key={a.id} artifact={a} />
-                  ))}
+                  <ChannelDocs artifacts={artifactsByChannel.get(k.id) ?? []} />
                 </div>
               ))}
             </div>
@@ -536,6 +530,22 @@ function AdminRow({
 /** An artifact row (phase 13): nested under its channel; selectable opens the
  * side panel; hover ✕ DELETES the shared artifact (and its own file, if the
  * artifact owns it — server-side). */
+function ChannelDocs({ artifacts }: { artifacts: ArtifactDTO[] }) {
+  const [query, setQuery] = useState('');
+  if (!artifacts.length) return null;
+  const matches = artifacts.filter((a) => a.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return <details className="ml-6 text-sm text-white/80">
+    <summary className="cursor-pointer rounded px-2 py-1 hover:bg-white/10">Docs · {artifacts.length}</summary>
+    <input aria-label="Search channel documents" placeholder="Search docs" value={query} onChange={(e) => setQuery(e.target.value)}
+      className="my-1 w-full rounded bg-white/10 px-2 py-1 text-white placeholder:text-white/50" />
+    <div className="max-h-60 overflow-y-auto">
+      {matches.map((a) => <ArtifactRow key={a.id} artifact={a} />)}
+      {!matches.length && <p className="px-2 py-2 text-xs">No matching documents.</p>}
+    </div>
+  </details>;
+}
+
 function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
   const sel = useSelection();
   const qc = useQueryClient();

@@ -15,7 +15,7 @@
 // were personal bookmarks fanned out per recipient; they are now shared per
 // channel. Events ride a per-channel subject; the gateway's visible() filter
 // gates them by channel membership, so private channels stay private.
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { ArtifactDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -24,7 +24,7 @@ import { reapFileIfUnreferenced, requireFileAccess, toFileDTO } from './files.js
 import { requireChannelAccess } from './channels.js';
 import { publishEvent, subjectArtifact } from '../bus.js';
 
-const { artifacts, files, channelMembers } = schema;
+const { artifacts, files, channelMembers, users } = schema;
 
 type ArtifactRow = typeof artifacts.$inferSelect;
 type FileRow = typeof files.$inferSelect;
@@ -39,6 +39,9 @@ function toArtifactDTO(a: ArtifactRow, f: FileRow | null): ArtifactDTO {
     url: a.url,
     name: a.name,
     ownsFile: a.ownsFile,
+    requesterUserId: a.requesterUserId,
+    sourceThreadRootId: a.sourceThreadRootId,
+    operationId: a.operationId,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
     file: f ? toFileDTO(f) : null,
@@ -81,9 +84,40 @@ function linkName(url: string): string {
 export async function createArtifact(
   userId: string,
   channelId: string,
-  opts: { fileId?: string | undefined; url?: string | undefined; name?: string | undefined; ownsFile?: boolean | undefined },
+  opts: {
+    fileId?: string | undefined; url?: string | undefined; name?: string | undefined; ownsFile?: boolean | undefined;
+    requesterUserId?: string | undefined; sourceThreadRootId?: string | undefined; operationId?: string | undefined;
+  },
 ): Promise<ArtifactDTO> {
   const chan = await requireChannelMember(channelId, userId);
+  if (opts.requesterUserId) {
+    const [actor] = await db.select({ isAgent: users.isAgent }).from(users).where(eq(users.id, userId)).limit(1);
+    if (!actor?.isAgent) throw forbidden('only an agent can set a report requester');
+    await requireChannelMember(channelId, opts.requesterUserId);
+  }
+  if (opts.sourceThreadRootId) {
+    const [root] = await db.select().from(schema.messages).where(and(
+      eq(schema.messages.id, opts.sourceThreadRootId), eq(schema.messages.channelId, channelId),
+      isNull(schema.messages.threadRootId), isNull(schema.messages.deletedAt),
+    )).limit(1);
+    if (!root) throw badRequest('bad_thread', 'artifact thread must be a live root in this channel');
+  }
+  // An operation key identifies a delivery, not the report title. Retrying a
+  // timed-out creation returns the persisted report and reaps only surplus uploads.
+  const retryResult = async (): Promise<ArtifactDTO | undefined> => {
+    if (!opts.operationId) return undefined;
+    const [row] = await db.select().from(artifacts).where(and(
+      eq(artifacts.channelId, channelId), eq(artifacts.createdBy, userId), eq(artifacts.operationId, opts.operationId),
+    )).limit(1);
+    if (!row) return undefined;
+    if (opts.ownsFile && opts.fileId && row.fileId !== opts.fileId) {
+      const supplied = await requireFileAccess(opts.fileId, userId);
+      if (supplied.userId === userId) await reapFileIfUnreferenced(opts.fileId);
+    }
+    return getArtifact(row.id, userId);
+  };
+  const prior = await retryResult();
+  if (prior) return prior;
 
   // ---- link artifact -------------------------------------------------
   if (opts.url !== undefined) {
@@ -117,7 +151,7 @@ export async function createArtifact(
   const f = await requireFileAccess(opts.fileId, userId);
   const ownsFile = opts.ownsFile ?? false;
 
-  if (!ownsFile) {
+  if (!ownsFile && !opts.operationId) {
     const existing = await db
       .select()
       .from(artifacts)
@@ -135,11 +169,25 @@ export async function createArtifact(
       kind: 'file',
       fileId: opts.fileId,
       ownsFile,
+      requesterUserId: opts.requesterUserId ?? null,
+      sourceThreadRootId: opts.sourceThreadRootId ?? null,
+      operationId: opts.operationId ?? null,
       name: opts.name ?? f.name,
       createdBy: userId,
     })
+    .onConflictDoNothing()
     .returning();
-  const dto = toArtifactDTO(inserted[0]!, f);
+  if (!inserted[0]) {
+    const retried = await retryResult();
+    if (retried) return retried;
+    // Concurrent ordinary pins converge on the existing file pin.
+    const [pin] = await db.select().from(artifacts).where(and(
+      eq(artifacts.channelId, channelId), eq(artifacts.fileId, opts.fileId), eq(artifacts.ownsFile, false),
+    )).limit(1);
+    if (pin) return toArtifactDTO(pin, f);
+    throw badRequest('artifact_conflict', 'artifact creation conflicted; retry the operation');
+  }
+  const dto = toArtifactDTO(inserted[0], f);
   publishArtifactEvent('artifact.created', dto);
   return dto;
 }
@@ -158,7 +206,7 @@ export async function listArtifacts(workspaceId: string, userId: string): Promis
     .from(artifacts)
     .leftJoin(files, eq(files.id, artifacts.fileId))
     .where(and(eq(artifacts.workspaceId, workspaceId), inArray(artifacts.channelId, memberChannels)))
-    .orderBy(desc(artifacts.createdAt));
+    .orderBy(desc(artifacts.updatedAt));
   return rows
     .filter((r) => r.a.kind === 'link' || (r.f !== null && r.f.deletedAt === null))
     .map((r) => toArtifactDTO(r.a, r.f));
@@ -184,6 +232,12 @@ async function requireArtifactMember(artifactId: string, userId: string): Promis
  * changes and the old file was owned by this artifact, the old file is reaped
  * once unreferenced. Any channel member may update.
  */
+export async function getArtifact(artifactId: string, userId: string): Promise<ArtifactDTO> {
+  const { a, f } = await requireArtifactMember(artifactId, userId);
+  if (a.kind === 'file' && (!f || f.deletedAt)) throw notFound('artifact file unavailable');
+  return toArtifactDTO(a, f);
+}
+
 export async function updateArtifact(
   artifactId: string,
   userId: string,

@@ -719,6 +719,9 @@ export function registerRoutes(app: FastifyInstance): void {
       url: body.url,
       name: body.name,
       ownsFile: body.ownsFile,
+      requesterUserId: body.requesterUserId,
+      sourceThreadRootId: body.sourceThreadRootId,
+      operationId: body.operationId,
     });
     return reply.status(201).send(dto);
   });
@@ -726,6 +729,11 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/workspaces/:id/artifacts', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return { artifacts: await ar.listArtifacts(id, req.user.id) };
+  });
+
+  app.get('/v1/artifacts/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.getArtifact(id, req.user.id);
   });
 
   // rename and/or re-point at a new file (the agent "update" path)

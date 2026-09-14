@@ -544,7 +544,9 @@ struct MessageRow: View {
     /// fenced code renders monospaced in a warm block, fence markers hidden.
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        if segments.count == 1, case .paragraph(let text) = segments[0] {
+        if let report = ArtifactReference.parse(message.body) {
+            ArtifactOpenButton(title: report.title, artifactId: report.id)
+        } else if segments.count == 1, case .paragraph(let text) = segments[0] {
             // Fast path: single plain paragraph keeps baseline-aligned markers.
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 paragraphText(text)

@@ -425,14 +425,20 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Auto-open an agent-created artifact for the user viewing its channel —
-    /// the person who asked the agent to make it. Gated on `ownsFile` (the
-    /// content was agent-generated, not a human pin) and on the artifact's
-    /// channel being the active one, so it only pops for someone in that
-    /// conversation and a human "Pin as artifact" never steals focus.
+    /// Auto-open only a report explicitly delivered to the current requester in
+    /// its originating conversation. Backing-file ownership is unrelated to
+    /// delivery and must never be used to steal another member's focus.
     func maybeAutoOpenArtifact(_ a: Artifact) {
-        guard a.ownsFile, a.channelId == selectedChannelId else { return }
+        guard let requester = a.requesterUserId, requester == currentUser?.id,
+              a.channelId == selectedChannelId, a.sourceThreadRootId == openThreadRootId else { return }
         selectArtifact(a.id)
+    }
+
+    func openReport(id: String) async throws {
+        let report = try await engine.fetchArtifact(id: id)
+        artifacts.removeAll { $0.id == report.id }
+        artifacts.insert(report, at: 0)
+        selectArtifact(report.id)
     }
 
     /// Artifacts pinned in a given channel (for the sidebar's nested rows).

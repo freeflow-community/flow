@@ -291,6 +291,9 @@ export const artifacts = pgTable(
     fileId: uuid('file_id').references(() => files.id, { onDelete: 'cascade' }),
     url: text('url'),
     ownsFile: boolean('owns_file').notNull().default(false),
+    requesterUserId: uuid('requester_user_id').references(() => users.id, { onDelete: 'set null' }),
+    sourceThreadRootId: uuid('source_thread_root_id').references(() => messages.id, { onDelete: 'set null' }),
+    operationId: uuid('operation_id'),
     name: text('name').notNull(),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -298,6 +301,7 @@ export const artifacts = pgTable(
   },
   (t) => [
     index('artifacts_channel_idx').on(t.channelId, t.createdAt.desc()),
+    uniqueIndex('artifacts_delivery_operation').on(t.channelId, t.createdBy, t.operationId),
     // pins of a shared file are idempotent per channel; owned artifacts are always distinct
     uniqueIndex('artifacts_channel_file_pin').on(t.channelId, t.fileId).where(sql`owns_file = false`),
     // link pins are idempotent per channel too (the url is mutable via co-browsing)

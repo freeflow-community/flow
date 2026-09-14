@@ -494,6 +494,9 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     /// content via the Flow MCP rather than a human pinning a message file.
     /// Drives auto-opening agent-created artifacts for the requester.
     let ownsFile: Bool
+    var requesterUserId: String? = nil
+    var sourceThreadRootId: String? = nil
+    var operationId: String? = nil
     let createdAt: String
     let updatedAt: String
     let file: FileAttachment? // null for link artifacts

@@ -95,15 +95,24 @@ export class FlowApi {
   }
 
   /** Post a message; mentions are parsed out of the body (server fans out notifications). */
-  sendMessage(channelId: string, body: string, threadRootId?: string, fileIds?: string[]): Promise<MessageDTO> {
+  sendMessage(channelId: string, body: string, threadRootId?: string, fileIds?: string[], clientMsgId: string = randomUUID()): Promise<MessageDTO> {
     const mentions = [...new Set([...body.matchAll(USER_MENTION_RE)].map((m) => m[1]!))];
     return this.req('POST', `/v1/channels/${channelId}/messages`, {
-      clientMsgId: randomUUID(),
+      clientMsgId,
       body: body.slice(0, 12000),
       ...(threadRootId ? { threadRootId } : {}),
       ...(fileIds?.length ? { fileIds } : {}),
       ...(mentions.length ? { mentions: mentions.slice(0, 50) } : {}),
     });
+  }
+
+  getArtifact(artifactId: string): Promise<ArtifactDTO> {
+    return this.req('GET', `/v1/artifacts/${artifactId}`);
+  }
+
+  async listArtifacts(workspaceId: string): Promise<ArtifactDTO[]> {
+    const result = await this.req<{ artifacts: ArtifactDTO[] }>('GET', `/v1/workspaces/${workspaceId}/artifacts`);
+    return result.artifacts;
   }
 
   editMessage(messageId: string, body: string): Promise<MessageDTO> {
@@ -204,15 +213,17 @@ export class FlowApi {
     return (await res.json()) as UserDTO;
   }
 
-  /** Phase 13: pin `fileId` as a shared artifact in a channel. The caller must
-   * be a member of the channel and able to read the file. `ownsFile` marks an
-   * artifact whose file was uploaded for it (agent-generated). */
-  createArtifact(channelId: string, fileId: string, name?: string, ownsFile?: boolean): Promise<ArtifactDTO> {
+  /** Pin a shared file artifact. `ownsFile` is file-lifecycle state; delivery
+   * context tells the server who requested this agent-created report. */
+  createArtifact(channelId: string, fileId: string, name?: string, ownsFile?: boolean,
+    delivery?: { operationId: string; requesterUserId?: string; sourceThreadRootId?: string },
+  ): Promise<ArtifactDTO> {
     return this.req('POST', '/v1/artifacts', {
       channelId,
       fileId,
       ...(name ? { name } : {}),
       ...(ownsFile ? { ownsFile } : {}),
+      ...delivery,
     });
   }
 

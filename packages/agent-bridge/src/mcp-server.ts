@@ -15,6 +15,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { FlowApi, FlowApiError } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
+import { deliverArtifact, deliveryId, inlineArtifactFile } from './artifact-delivery.js';
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -31,6 +32,7 @@ const channelLabel = (c: { name: string | null; kind: string }): string =>
  * than the per-turn one, because nothing refreshes this one — but still bounded,
  * so an agent that forgets to clear it doesn't leave a channel spinning. */
 const MANUAL_INDICATOR_TTL_SECONDS = 300;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const TOOLS = [
   {
@@ -61,7 +63,7 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: 'Upload a local file and post it to a Flow channel (defaults to the current conversation).',
+    description: 'Upload a local file attachment. For a report, comparison matrix, or other substantial deliverable, use create_artifact instead: it creates the report and posts an Open report card.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -197,18 +199,31 @@ const TOOLS = [
   {
     name: 'create_artifact',
     description:
-      'Create an artifact — a named file pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Provide the content inline, or a local file path, or the id of an already-uploaded file. Returns the artifact id (use it with update_artifact).',
+      'Create a persistent report/artifact shared with the channel and deliver an Open report card in this conversation. Use this for reports and comparison matrices; uploading a file alone is not report delivery. Markdown is rendered as a document. Returns saved artifact and delivery status. Use update_artifact for revisions and deliver_artifact to retry a failed card delivery.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Display name for the artifact (defaults to the file name).' },
         content: { type: 'string', description: 'Inline file content to upload (use with name; mimeType recommended).' },
-        mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML artifacts).' },
+        mimeType: { type: 'string', description: 'Inline format (default text/markdown; use text/html for HTML artifacts).' },
+        filename: { type: 'string', description: 'Backing filename, separate from the display name; extension is added when omitted.' },
+        operationId: { type: 'string', description: 'Optional UUID identifying this creation; reuse on retry. Otherwise derived from the source message and input.' },
+        threadRootId: { type: 'string', description: 'Delivery thread (default: current thread).' },
         path: { type: 'string', description: 'Path to a local file to upload instead of inline content.' },
         fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to pin as-is.' },
         channelId: { type: 'string', description: 'Channel to pin the artifact in (default: the current conversation).' },
       },
     },
+  },
+  {
+    name: 'list_artifacts',
+    description: 'Find saved reports in the current channel before updating or redelivering one. Returns IDs and names, newest updated first.',
+    inputSchema: { type: 'object', properties: { channelId: { type: 'string' } } },
+  },
+  {
+    name: 'deliver_artifact',
+    description: 'Post or retry the Open report card for a saved artifact without creating a duplicate. Uses the artifact channel and current thread when applicable.',
+    inputSchema: { type: 'object', properties: { artifactId: { type: 'string' }, threadRootId: { type: 'string' } }, required: ['artifactId'] },
   },
   {
     name: 'update_artifact',
@@ -344,9 +359,9 @@ export async function runMcpServer(): Promise<void> {
   async function resolveArtifactFile(
     args: Record<string, unknown>,
     label: string | undefined,
-  ): Promise<{ fileId: string; label: string | undefined; ownsFile: boolean } | { error: true }> {
+  ): Promise<{ fileId: string; label: string | undefined; ownsFile: boolean; fingerprint: string } | { error: true }> {
     const existing = (args.fileId as string | undefined) || '';
-    if (existing) return { fileId: existing, label, ownsFile: false };
+    if (existing) return { fileId: existing, label, ownsFile: false, fingerprint: existing };
     let filename: string;
     let mime: string;
     let data: Buffer;
@@ -356,19 +371,20 @@ export async function runMcpServer(): Promise<void> {
       filename = path.basename(p);
       mime = String(args.mimeType ?? '') || MIME_BY_EXT[path.extname(p).toLowerCase()] || 'application/octet-stream';
     } else if (typeof args.content === 'string') {
-      filename = label ?? 'artifact.txt';
-      mime = String(args.mimeType ?? '') || 'text/plain';
+      const inline = inlineArtifactFile(label, String(args.mimeType ?? ''), String(args.filename ?? ''));
+      filename = inline.filename;
+      mime = inline.mime;
       data = Buffer.from(args.content, 'utf8');
     } else {
       return { error: true };
     }
     const file = await api.uploadFile(workspaceId, filename, mime, data);
-    return { fileId: file.id, label: label ?? filename, ownsFile: true };
+    return { fileId: file.id, label: label ?? filename, ownsFile: true, fingerprint: deliveryId(filename, mime, data.toString('base64')) };
   }
 
   async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     const channelId = (args.channelId as string | undefined) || defaultChannelId;
-    const threadRootId = (args.threadRootId as string | undefined) || defaultThreadRootId;
+    const threadRootId = (args.threadRootId as string | undefined) || (channelId === defaultChannelId ? defaultThreadRootId : undefined);
     switch (name) {
       case 'send_message': {
         const msg = await api.sendMessage(channelId, String(args.text ?? ''), threadRootId);
@@ -542,11 +558,26 @@ export async function runMcpServer(): Promise<void> {
         if (!channelId) {
           return toolText('create_artifact needs a channelId (no conversation context to infer the channel)', true);
         }
-        // resolve a file id: pin an existing file, or upload path/content (owned)
+        if (args.operationId !== undefined && (typeof args.operationId !== 'string' || !UUID_RE.test(args.operationId))) {
+          return toolText('create_artifact operationId must be a UUID; reuse the same UUID when retrying', true);
+        }
         const resolved = await resolveArtifactFile(args, (args.name as string | undefined) || undefined);
-        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, or fileId`, true);
-        const created = await api.createArtifact(channelId, resolved.fileId, resolved.label, resolved.ownsFile);
-        return toolText(`artifact "${created.name}" created (id ${created.id})`);
+        if ('error' in resolved) return toolText('create_artifact needs one of: content, path, or fileId', true);
+        const operationId = String(args.operationId || deliveryId('create-artifact', process.env.FLOW_SOURCE_MESSAGE_ID ?? '', channelId, threadRootId ?? '', resolved.label ?? '', resolved.fingerprint));
+        const created = await api.createArtifact(channelId, resolved.fileId, resolved.label, resolved.ownsFile, {
+          operationId,
+          ...(process.env.FLOW_USER_ID && channelId === defaultChannelId ? { requesterUserId: process.env.FLOW_USER_ID } : {}),
+          ...(threadRootId ? { sourceThreadRootId: threadRootId } : {}),
+        });
+        return deliverArtifact(api, created, threadRootId);
+      }
+      case 'list_artifacts': {
+        const reports = (await api.listArtifacts(workspaceId)).filter((a) => a.channelId === channelId);
+        return toolText(JSON.stringify(reports.map(({ id, name, fileId, updatedAt }) => ({ id, name, fileId, updatedAt }))));
+      }
+      case 'deliver_artifact': {
+        const saved = await api.getArtifact(String(args.artifactId ?? ''));
+        return deliverArtifact(api, saved, (args.threadRootId as string | undefined) || (saved.channelId === defaultChannelId ? defaultThreadRootId : undefined));
       }
       case 'update_artifact': {
         const artifactId = (args.artifactId as string | undefined) || '';

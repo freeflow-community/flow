@@ -205,12 +205,14 @@ export interface ArtifactDTO {
    * mini-browser re-points the artifact and everyone's viewer follows (co-browse). */
   url: string | null;
   name: string; // display name, defaults to the file name or the link host
-  /** True when the artifact owns its backing file — i.e. an agent generated the
-   * content via the Flow MCP (uploaded a fresh blob) rather than a human pinning
-   * an existing message file. Clients use this to auto-open agent-created
-   * artifacts for the requester (a human pin does not steal focus). Always false
-   * for link artifacts. */
+  /** True when the artifact owns its backing file — it was uploaded for this
+   * artifact and may be reaped when the artifact changes or is deleted. Always
+   * false for link artifacts; it does not control report delivery or auto-open. */
   ownsFile: boolean;
+  /** Delivery context is independent of backing-file ownership. */
+  requesterUserId?: string | null;
+  sourceThreadRootId?: string | null;
+  operationId?: string | null;
   createdAt: string;
   updatedAt: string; // bumped when the name, backing file, or link url changes
   /** The underlying file, hydrated so clients can render without a second fetch.

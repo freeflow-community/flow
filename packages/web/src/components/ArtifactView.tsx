@@ -5,11 +5,11 @@
 // tab strip, close) lives in SidePanel. The underlying file stays
 // access-checked server-side.
 import { useEffect, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO } from '@flow/shared';
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
-import { bytesLabel } from '../lib/format';
-import { isHtmlFile, isImageFile, isTextFile, isVideoFile } from '../lib/fileKind';
+import { bytesLabel, renderBlocks } from '../lib/format';
+import { isHtmlFile, isImageFile, isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { useSelection } from '../state';
 import { useArtifacts } from '../hooks';
 
@@ -17,13 +17,19 @@ export default function ArtifactBody({ artifactId }: { artifactId: string }) {
   const sel = useSelection();
   const qc = useQueryClient();
   const artifacts = useArtifacts(sel.workspaceId);
-  const artifact = (artifacts.data ?? []).find((a) => a.id === artifactId);
+  const detail = useQuery({
+    queryKey: ['artifact', artifactId],
+    queryFn: () => api<ArtifactDTO>('GET', `/v1/artifacts/${artifactId}`),
+    retry: false,
+  });
+  const artifact = detail.data ?? (artifacts.data ?? []).find((a) => a.id === artifactId);
 
-  // The artifact vanished (deleted here or on another device / event raced the
-  // list): clear the active-artifact tab.
-  useEffect(() => {
-    if (artifacts.data && !artifact) sel.selectArtifact(null);
-  }, [artifacts.data, artifact, sel]);
+  if (detail.isError) {
+    return <div role="alert" className="p-6 text-sm text-ink">
+      <p>Unable to open this report. It may have been deleted or you may no longer have access.</p>
+      <button className="mt-3 text-accent-deep underline" onClick={() => void detail.refetch()}>Retry</button>
+    </div>;
+  }
 
   if (!artifact) {
     return <div className="flex min-h-0 flex-1 items-center justify-center text-faint">Loading…</div>;
@@ -363,24 +369,34 @@ function HtmlPane({ file }: { file: FileDTO }) {
 
 const TEXT_MAX = 1_000_000; // chars — full-pane viewer, roomier than the chat preview
 
+export function MarkdownReport({ text }: { text: string }) {
+  return <article data-testid="markdown-report" className="min-w-0 px-[22px] py-5 text-sm leading-7 whitespace-pre-wrap text-ink">
+    {renderBlocks(text, {}, undefined)}
+  </article>;
+}
+
 function TextPane({ file }: { file: FileDTO }) {
   const [text, setText] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
+    setFailed(false);
     void fileText(`/v1/files/${file.id}`).then((t) => { if (alive) setText(t); }).catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
-  }, [file.id]);
-  if (failed) return <DownloadPane file={file} />;
+  }, [file.id, attempt]);
+  if (failed) return <div role="alert" className="p-6 text-sm">Could not load the report.
+    <button className="ml-2 text-accent-deep underline" onClick={() => setAttempt((n) => n + 1)}>Retry</button>
+  </div>;
   if (text === null) return <Centered>Loading…</Centered>;
   return (
     <div className="mc-scroll min-h-0 flex-1 overflow-auto">
-      <pre
+      {isMarkdownFile(file) ? <MarkdownReport text={text.slice(0, TEXT_MAX)} /> : <pre
         data-testid={`artifact-text-${file.name}`}
         className="px-[22px] py-4 font-mono text-xs leading-5 whitespace-pre text-ink"
       >
         {text.slice(0, TEXT_MAX)}
-      </pre>
+      </pre>}
       {text.length > TEXT_MAX && (
         <p className="px-[22px] pb-4 text-xs text-faint">Showing the first 1 MB — download for the full file.</p>
       )}
