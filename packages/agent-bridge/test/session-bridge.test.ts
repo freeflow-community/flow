@@ -94,10 +94,11 @@ describe('a turn nobody asked for', () => {
     const b = bridge();
     const conv = conversation();
     b.startAmbientTurn('chan-1|', conv);
-    expect(b.liveRuns.get('chan-1|').ambient).toBe(true);
+    expect(b.ambientRuns.get('chan-1|').ambient).toBe(true);
+    expect(b.liveRuns.has('chan-1|')).toBe(false); // that slot is for turns a message asked for
     await b.finishAmbientTurn('chan-1|', conv, { ok: true, text: 'the build passed' });
     expect(b.api.sendMessage).toHaveBeenCalledWith('chan-1', 'the build passed', undefined);
-    expect(b.liveRuns.has('chan-1|')).toBe(false);
+    expect(b.ambientRuns.has('chan-1|')).toBe(false);
   });
 
   it('says so when the follow-up turn failed instead of going quiet', async () => {
@@ -117,12 +118,43 @@ describe('a turn nobody asked for', () => {
     expect(b.api.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('does not steal the row from a turn a message asked for', () => {
+  // #522, race 2: a message's run registers before its turn reaches the CLI,
+  // and a follow-up turn can start in that gap. It used to find the slot taken,
+  // run with no reporter, and drop its reply.
+  it('gets its own run, and posts, while a message it is ahead of is registered', async () => {
     const b = bridge();
     const conv = conversation();
-    b.liveRuns.set('chan-1|', { controller: new AbortController(), progress: { statusId: null }, stoppedBy: null, ambient: false });
+    const queued = { controller: new AbortController(), progress: { statusId: null }, stoppedBy: null, ambient: false };
+    b.liveRuns.set('chan-1|', queued);
     b.startAmbientTurn('chan-1|', conv);
-    expect(b.liveRuns.get('chan-1|').ambient).toBe(false);
+    expect(b.ambientRuns.get('chan-1|').ambient).toBe(true);
+    expect(b.liveRuns.get('chan-1|')).toBe(queued); // left alone
+    await b.finishAmbientTurn('chan-1|', conv, { ok: true, text: 'the build passed' });
+    expect(b.api.sendMessage).toHaveBeenCalledWith('chan-1', 'the build passed', undefined);
+    expect(b.liveRuns.get('chan-1|')).toBe(queued);
+  });
+
+  it('still posts its reply if it somehow has no run', async () => {
+    const b = bridge();
+    await b.finishAmbientTurn('chan-1|', conversation(), { ok: true, text: 'the build passed' });
+    expect(b.api.sendMessage).toHaveBeenCalledWith('chan-1', 'the build passed', undefined);
+  });
+
+  it('is what /stop stops while a message waits behind it', async () => {
+    const b = bridge();
+    const interrupt = vi.fn();
+    b.sessions.get = () => ({ interrupt });
+    b.replyRoot = () => undefined;
+    const queued = { controller: new AbortController(), progress: { statusId: 'row-1' }, stoppedBy: null, ambient: false };
+    const running = { controller: new AbortController(), progress: { statusId: 'row-2' }, stoppedBy: null, ambient: true };
+    b.liveRuns.set('chan-1|', queued);
+    b.ambientRuns.set('chan-1|', running);
+    await b.handleStop(message({ body: '/stop' }));
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(queued.controller.signal.aborted).toBe(false);
+    // 🛑 names its row, so it can still reach the queued one.
+    await b.handleReaction({ emoji: '🛑', userId: HUMAN, messageId: 'row-1', channelId: 'chan-1' });
+    expect(queued.controller.signal.aborted).toBe(true);
   });
 
   // 🛑 on a follow-up row has no runTurn promise to abort — it has to reach
@@ -191,14 +223,16 @@ describe('a follow-up turn that a message interrupts', () => {
       b.sessions.session = () => ({ runTurn: async () => ({ ok: true, text: 'answered you' }) });
 
       b.startAmbientTurn('chan-1|', conv);
-      const ambient = b.liveRuns.get('chan-1|');
+      const ambient = b.ambientRuns.get('chan-1|');
       ambient.progress.onStep('running the tests'); // give the follow-up turn a status row
       await vi.advanceTimersByTimeAsync(1);
       const ambientRow = ambient.progress.statusId;
       expect(ambientRow).not.toBeNull();
 
-      // A message for the same conversation lands mid-turn and claims the slot…
+      // A message for the same conversation lands mid-turn…
       await b.processMessage(conv, message({ id: 'msg-2' }), 'chan-1|');
+      // …which does not switch off a spinner the follow-up turn still owns…
+      expect(indicatorStates(b)).not.toContain('none');
       // …and only then does the follow-up turn settle.
       await b.finishAmbientTurn('chan-1|', conv, { ok: true, text: 'the build passed' });
 

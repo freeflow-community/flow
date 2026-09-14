@@ -181,7 +181,10 @@ export class RuntimeSession {
   async runTurn(prompt: string, signal?: AbortSignal): Promise<RunResult> {
     const run = this.gate.then(async () => {
       if (signal?.aborted) return { ok: false, text: '', error: INTERRUPTED, interrupted: true };
-      await this.waitForNoTurn();
+      await this.waitForNoTurn(signal);
+      // Stopped while it queued behind another turn (#522): it never reached the
+      // CLI, so there is nothing to interrupt — just say it was stopped.
+      if (signal?.aborted) return { ok: false, text: '', error: INTERRUPTED, interrupted: true };
       let result = await this.attempt(prompt, signal);
       // Session-id collision (a previous process died after the CLI created the
       // session): the session exists — flip to --resume and retry this same
@@ -236,10 +239,14 @@ export class RuntimeSession {
     );
   }
 
-  /** Resolves once no turn is running — ambient turns queue new messages too. */
-  private waitForNoTurn(): Promise<void> {
+  /** Resolves once no turn is running — ambient turns queue new messages too —
+   * or as soon as the waiting turn is stopped. */
+  private waitForNoTurn(signal?: AbortSignal): Promise<void> {
     if (this.turn === null) return Promise.resolve();
-    return new Promise((resolve) => this.idleWaiters.push(resolve));
+    return new Promise((resolve) => {
+      this.idleWaiters.push(resolve);
+      signal?.addEventListener('abort', () => resolve(), { once: true });
+    });
   }
 
   private async attempt(prompt: string, signal?: AbortSignal): Promise<RunResult> {
@@ -498,6 +505,8 @@ export interface SessionManagerOpts {
   log(msg: string): void;
   /** Overridable for tests; the reaper otherwise wakes on its own timer. */
   sweepMs?: number;
+  /** A conversation's session went away — reap, `/reset`, or shutdown. */
+  onDispose?(key: string): void;
 }
 
 /** How often the reaper looks, unless a caller says otherwise. */
@@ -538,14 +547,17 @@ export class SessionManager {
     if (!s) return;
     this.sessions.delete(key);
     s.dispose(reason, 0);
+    this.opts.onDispose?.(key);
   }
 
   /** Bridge shutdown: every live session process dies with us (AC 6). */
   killAll(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = null;
+    const keys = [...this.sessions.keys()];
     for (const [key, s] of this.sessions) s.dispose(`bridge shutting down (${key})`, 0);
     this.sessions.clear();
+    for (const key of keys) this.opts.onDispose?.(key);
   }
 
   /** One reaper pass — exported behaviour, so tests can drive it directly. */
@@ -557,6 +569,7 @@ export class SessionManager {
       this.sessions.delete(key);
       // SIGTERM first: the CLI flushes its transcript, so `--resume` works.
       s.dispose(reason);
+      this.opts.onDispose?.(key);
     }
   }
 }

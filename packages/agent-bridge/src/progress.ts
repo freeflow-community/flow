@@ -49,6 +49,52 @@ const INDICATOR_REFRESH_MS = 30_000;
 const INDICATOR_CLEAR_RETRIES = 2;
 const INDICATOR_CLEAR_RETRY_MS = 250;
 
+/**
+ * Who is spinning which channel, across every reporter in this bridge (#522).
+ *
+ * The server keeps one indicator entry per channel *per agent*, but one agent
+ * can have several reporters alive on a channel at once — a follow-up turn and
+ * the message queued behind it, or two threads. A reporter finishing must not
+ * switch off a spinner another one still owns, so the clear only goes out when
+ * the last hold is released; and every write for a channel goes through one
+ * chain, so a late `busy` from one reporter can't land after another's clear.
+ */
+export class ChannelIndicatorLeases {
+  private held = new Map<string, number>();
+  private chains = new Map<string, Promise<unknown>>();
+
+  hold(channelId: string): void {
+    this.held.set(channelId, (this.held.get(channelId) ?? 0) + 1);
+  }
+
+  /** True when that was the last hold — the caller should clear. */
+  release(channelId: string): boolean {
+    const n = (this.held.get(channelId) ?? 0) - 1;
+    if (n > 0) {
+      this.held.set(channelId, n);
+      return false;
+    }
+    this.held.delete(channelId);
+    return true;
+  }
+
+  isHeld(channelId: string): boolean {
+    return this.held.has(channelId);
+  }
+
+  /** Run `write` after every earlier write for this channel has settled. */
+  serialize<T>(channelId: string, write: () => Promise<T>): Promise<T> {
+    const next = (this.chains.get(channelId) ?? Promise.resolve()).then(write);
+    const settled = next.catch(() => {});
+    this.chains.set(channelId, settled);
+    // Don't grow the map by one entry per channel ever touched.
+    void settled.then(() => {
+      if (this.chains.get(channelId) === settled) this.chains.delete(channelId);
+    });
+    return next;
+  }
+}
+
 export class ProgressReporter {
   private typingTimer: NodeJS.Timeout | null = null;
   private indicatorTimer: NodeJS.Timeout | null = null;
@@ -58,7 +104,8 @@ export class ProgressReporter {
   private inFlight = false;
   private pendingStep: string | null = null;
   private finished = false;
-  private indicatorChain: Promise<void> = Promise.resolve();
+  /** Whether start() took a hold on the channel indicator. */
+  private holding = false;
   /** Text blocks waiting to be written into the narration message. */
   private pendingText: string[] = [];
   /** The narration message being grown, and the blocks currently in it. */
@@ -79,6 +126,8 @@ export class ProgressReporter {
     private readonly channelId: string,
     private readonly threadRootId: string | undefined,
     private readonly log: (msg: string) => void,
+    /** Shared across the bridge; a reporter on its own gets a private one. */
+    private readonly leases: ChannelIndicatorLeases = new ChannelIndicatorLeases(),
   ) {}
 
   /** The live status row's message id, once it exists — what an Interrupt
@@ -92,6 +141,8 @@ export class ProgressReporter {
     this.socket.sendTyping(this.channelId, this.threadRootId);
     this.typingTimer = setInterval(() => this.socket.sendTyping(this.channelId, this.threadRootId), TYPING_INTERVAL_MS);
     this.typingTimer.unref();
+    this.leases.hold(this.channelId);
+    this.holding = true;
     void this.setIndicator('busy');
     this.indicatorTimer = setInterval(() => void this.setIndicator('busy'), INDICATOR_REFRESH_MS);
     this.indicatorTimer.unref();
@@ -101,14 +152,14 @@ export class ProgressReporter {
    * Errors are swallowed: the spinner is decoration, and a turn must never fail
    * because a channel row didn't light up (an older server 404s here).
    *
-   * Serialized through one chain so the final clear can't overtake a set that
-   * is still in flight — a turn short enough for that to happen is exactly the
-   * one where a stuck spinner would be most obviously wrong.
+   * Serialized through the channel's chain so the final clear can't overtake a
+   * set that is still in flight — a turn short enough for that to happen is
+   * exactly the one where a stuck spinner would be most obviously wrong.
    *
    * Resolves false when the write failed, which is what lets the clear retry.
    */
   private setIndicator(state: 'busy' | 'none'): Promise<boolean> {
-    const next = this.indicatorChain.then(async () => {
+    return this.leases.serialize(this.channelId, async () => {
       try {
         await this.api.setChannelIndicator(this.channelId, state, INDICATOR_TTL_SECONDS);
         return true;
@@ -119,8 +170,6 @@ export class ProgressReporter {
         return false;
       }
     });
-    this.indicatorChain = next.then(() => {});
-    return next;
   }
 
   /** The end-of-turn clear, with a short retry — see INDICATOR_CLEAR_RETRIES. */
@@ -322,8 +371,12 @@ export class ProgressReporter {
     this.finished = true;
     if (this.typingTimer) clearInterval(this.typingTimer);
     if (this.indicatorTimer) clearInterval(this.indicatorTimer);
-    // Only if start() actually turned it on; 'silent' never does.
-    if (this.mode !== 'silent') await this.clearIndicator();
+    // Only if start() actually turned it on ('silent' never does), and only if
+    // no other reporter of ours is still working in this channel.
+    if (this.holding) {
+      this.holding = false;
+      if (this.leases.release(this.channelId)) await this.clearIndicator();
+    }
     // wait out an in-flight post/edit so the delete can't race message creation
     this.wake(); // don't sit out a narration throttle we're about to flush anyway
     while (this.inFlight) await new Promise((r) => setTimeout(r, 25));

@@ -10,6 +10,10 @@
 //                     task_started now, and <ms> later the completion events
 //                     followed by a *self-started* turn, exactly as the SDK's
 //                     re-invocation looks on the wire
+//   bgslow <ms> <followMs> <desc>
+//                     like bg, but the self-started turn runs a tool and works
+//                     for <followMs> before it answers — room for a message to
+//                     land mid-follow-up-turn
 //   wait <ms>         pause mid-turn (rearms the caller's idle timer meanwhile)
 //   hang              never finish this turn (idle-timeout tests)
 //   fail <subtype>    end the turn with an error result
@@ -60,7 +64,7 @@ function endTurn(text, subtype = 'success') {
   out({ type: 'result', subtype, is_error: isError, result: text, session_id: session });
 }
 
-function background(ms, desc) {
+function background(ms, desc, followMs = 0) {
   // Number('60_000') is NaN (numeric separators are a source-literal feature),
   // and setTimeout(fn, NaN) fires immediately — which once turned a "60s" task
   // into an instant completion whose empty snapshot raced the test's
@@ -80,7 +84,8 @@ function background(ms, desc) {
     snapshot();
     out({ type: 'system', subtype: 'task_notification', task_id: id, tool_use_id: toolUseId, status: 'completed', summary: `${desc} completed`, session_id: session });
     // The SDK re-invokes the agent in this same process — a turn nobody asked for.
-    void runTurn(`say ${desc} is done\ndone ${desc} finished`);
+    const work = followMs > 0 ? `tool Bash checking ${desc}\nwait ${followMs}\n` : '';
+    void runTurn(`${work}say ${desc} is done\ndone ${desc} finished`);
   }, ms).unref?.();
 }
 
@@ -100,6 +105,9 @@ async function runTurn(script) {
         break;
       case 'bg':
         background(Number(rest[0]), rest.slice(1).join(' ') || 'background work');
+        break;
+      case 'bgslow':
+        background(Number(rest[0]), rest.slice(2).join(' ') || 'background work', Number(rest[1]));
         break;
       case 'wait':
         await wait(Number(arg));

@@ -28,7 +28,7 @@ import { defaultVoiceConfig, mentionChainLimit, resolveWorkspace, type BridgeCon
 import { FlowApi } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
-import { ProgressReporter } from './progress.js';
+import { ChannelIndicatorLeases, ProgressReporter } from './progress.js';
 import { killAllRuntimes, runRuntime, type RunResult } from './runtime.js';
 import { SessionManager, type SessionOpts } from './session.js';
 import { EXIT_RESTART, EXIT_UPDATE } from './supervisor.js';
@@ -179,18 +179,22 @@ export class AgentBridge {
   private taskChannels = new Set<string>();
   /** threadRootId → "we've spoken in this thread" (see inThread). */
   private threadParticipation = new Map<string, boolean>();
-  /** convKey → the turn currently running there, for `/stop` and 🛑. */
+  /** convKey → the turn a message asked for, from arrival to reply — for `/stop` and 🛑. */
   private liveRuns = new Map<string, LiveRun>();
   /**
-   * convKey → the follow-up turn's own run, held directly (#534).
+   * convKey → the follow-up turn the SDK started by itself (#534, #522).
    *
-   * `liveRuns` is a slot, and a message arriving mid-follow-up-turn takes it.
-   * Reading the reporter back out of that slot at the end of the turn therefore
-   * found somebody else's run and finished nothing — leaving a reporter whose
-   * 30s interval re-asserted the channel spinner forever. The turn that made a
-   * reporter keeps the reference to it.
+   * Kept apart from `liveRuns` on purpose. Both can be alive for one
+   * conversation — a message registers its run the moment it arrives and then
+   * queues behind the follow-up turn in the CLI, or a follow-up turn starts
+   * while that message is still being prepared — and sharing one slot meant
+   * whichever wrote last orphaned the other's reporter (a channel spinner
+   * re-asserted every 30s forever) and dropped its reply. The CLI runs one turn
+   * at a time, so while an entry here exists it *is* the running turn.
    */
   private ambientRuns = new Map<string, LiveRun>();
+  /** One count of live reporters per channel, shared by every turn (#522). */
+  private readonly indicatorLeases = new ChannelIndicatorLeases();
   /** convKey → the conversation's persistent CLI process (claude runtime). */
   private readonly sessions: SessionManager;
   private readonly sem: Semaphore;
@@ -209,6 +213,7 @@ export class AgentBridge {
       idleMs: cfg.runtime.sessionIdleSec * 1000,
       hardCapMs: cfg.runtime.sessionHardCapSec * 1000,
       log: (m) => this.log(m),
+      onDispose: (key) => void this.clearIndicator(key.slice(0, key.indexOf('|'))),
     });
     if (cfg.logFile) {
       try {
@@ -239,6 +244,7 @@ export class AgentBridge {
     // #357: an agent can belong to several workspaces; this process serves one.
     this.workspace = resolveWorkspace(await this.api.myWorkspaces(), this.cfg.workspace);
     await this.refreshDirectory();
+    this.clearLeftoverIndicators();
     const voiceConfig = this.cfg.voice ?? defaultVoiceConfig();
     this.huddleVoice = new HuddleVoiceManager({
       api: this.api,
@@ -465,11 +471,34 @@ export class AgentBridge {
     // killAll() ends the map, killAllRuntimes() the process groups.
     this.sessions.killAll();
     killAllRuntimes();
+    // The disposes above settle their turns, whose reporters clear on their
+    // way out; this is for everything that was not mid-turn.
+    await Promise.all([...new Set([...this.conversations.values()].map((c) => c.channelId))].map((id) => this.clearIndicator(id)));
     await this.huddleVoice?.stop();
     this.huddleVoice = null;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.logStream?.end();
     this.logStream = null;
+  }
+
+  /**
+   * A spinner we left on can outlive the process that set it: a bridge killed
+   * mid-turn, or one whose reporter leaked, keeps its `busy` alive until the
+   * TTL at best. Nothing of ours is running yet, so any channel still showing
+   * an indicator gets our entry cleared — the PUT only ever removes our own.
+   */
+  private clearLeftoverIndicators(): void {
+    for (const chan of this.channels.values()) {
+      if (chan.indicator) void this.clearIndicator(chan.id);
+    }
+  }
+
+  /** Clear our indicator in a channel, unless a turn of ours still owns it. */
+  private async clearIndicator(channelId: string): Promise<void> {
+    if (!channelId || this.indicatorLeases.isHeld(channelId)) return;
+    await this.indicatorLeases
+      .serialize(channelId, () => this.api.setChannelIndicator(channelId, 'none'))
+      .catch((err: Error) => this.log(`channel indicator clear failed: ${err.message}`));
   }
 
   private async refreshDirectory(): Promise<void> {
@@ -574,10 +603,13 @@ export class AgentBridge {
     // re-arms the loop breaker exactly like a human message would (#583).
     if (data.channelId && this.members.get(data.userId)?.isAgent === false) this.resetChain(data.channelId);
     if (data.emoji !== INTERRUPT_EMOJI || data.userId === this.me.id) return;
-    for (const [key, run] of this.liveRuns) {
-      if (run.progress.statusId !== data.messageId) continue;
-      this.stopRun(key, run, data.userId);
-      return;
+    // Each run has its own row, so the row says which one to stop.
+    for (const runs of [this.ambientRuns, this.liveRuns]) {
+      for (const [key, run] of runs) {
+        if (run.progress.statusId !== data.messageId) continue;
+        this.stopRun(key, run, data.userId);
+        return;
+      }
     }
     // No live run owns that row. Either the turn just finished (harmless), or
     // the row was orphaned by a bridge that died mid-turn and nothing ever
@@ -859,7 +891,9 @@ export class AgentBridge {
    */
   private async handleStop(msg: MessageDTO): Promise<void> {
     const key = this.convKey(msg);
-    const run = this.liveRuns.get(key);
+    // The turn actually running in the CLI: a follow-up turn, when one is in
+    // flight, is ahead of any message queued behind it.
+    const run = this.ambientRuns.get(key) ?? this.liveRuns.get(key);
     if (run) return this.stopRun(key, run, msg.userId);
     await this.api
       .sendMessage(msg.channelId, '🤖 nothing running here to stop.', this.replyRoot(msg))
@@ -930,6 +964,7 @@ export class AgentBridge {
       msg.channelId,
       replyRoot,
       (m) => this.log(m),
+      this.indicatorLeases,
     );
     // The persistent session owns its own MCP config for as long as its process
     // lives; only the one-shot path writes (and deletes) one per turn.
@@ -938,11 +973,9 @@ export class AgentBridge {
     // Registered before the runtime starts, so a stop that arrives in the gap
     // still lands: both paths check the signal before they send anything.
     const live: LiveRun = { controller: new AbortController(), progress, stoppedBy: null, ambient: false };
-    // A follow-up turn may still hold the row (#534). Hand it over rather than
-    // stacking two live reporters on one channel — its reply still posts when
-    // it settles, and finish() is idempotent.
-    const displaced = this.liveRuns.get(key);
-    if (displaced?.ambient) await displaced.progress.finish().catch(() => {});
+    // A follow-up turn still running here keeps its own run in `ambientRuns`
+    // and finishes it itself (#522); the two share the channel spinner through
+    // the indicator leases.
     this.liveRuns.set(key, live);
     // Inside the try from here: anything that throws must reach the `finally`
     // that finishes this reporter, or the spinner it just lit stays lit.
@@ -1052,10 +1085,11 @@ export class AgentBridge {
         };
       },
       hooks: {
-        // Whichever turn is live owns the narration — the one a message asked
-        // for, or the follow-up the SDK started by itself.
-        onToolStep: (step) => this.liveRuns.get(key)?.progress.onStep(step),
-        onText: (text) => this.liveRuns.get(key)?.progress.onText(text),
+        // The turn running in the CLI owns the narration: a follow-up turn
+        // while there is one (a message's run may be registered and queued
+        // behind it), otherwise the turn a message asked for.
+        onToolStep: (step) => this.runningRun(key)?.progress.onStep(step),
+        onText: (text) => this.runningRun(key)?.progress.onText(text),
         onAmbientStart: () => this.startAmbientTurn(key, conv),
         onAmbientEnd: (result) => void this.finishAmbientTurn(key, conv, result),
         log: (m) => this.log(m),
@@ -1069,7 +1103,10 @@ export class AgentBridge {
    * interruptible like any other.
    */
   private startAmbientTurn(key: string, conv: Conversation): void {
-    if (this.liveRuns.has(key)) return; // a solicited turn is already narrating
+    // Always its own reporter, even with a message's run registered here — that
+    // run is queued behind this turn, not narrating it (#522). A stale entry
+    // (a start with no end) is finished rather than orphaned.
+    void this.ambientRuns.get(key)?.progress.finish().catch(() => {});
     const progress = new ProgressReporter(
       this.api,
       this.socket,
@@ -1078,26 +1115,28 @@ export class AgentBridge {
       conv.channelId,
       conv.replyRoot,
       (m) => this.log(m),
+      this.indicatorLeases,
     );
     progress.start();
     const live: LiveRun = { controller: new AbortController(), progress, stoppedBy: null, ambient: true };
     this.ambientRuns.set(key, live);
-    this.liveRuns.set(key, live);
+  }
+
+  private runningRun(key: string): LiveRun | undefined {
+    return this.ambientRuns.get(key) ?? this.liveRuns.get(key);
   }
 
   /** …and its reply is posted like any other, with no message to reply to. */
   private async finishAmbientTurn(key: string, conv: Conversation, result: RunResult): Promise<void> {
     const live = this.ambientRuns.get(key);
-    if (!live) return; // a solicited turn held the row, so this turn never made a reporter
     this.ambientRuns.delete(key);
-    // Only if it is still ours: a message arriving mid-turn takes the slot.
-    if (this.liveRuns.get(key) === live) this.liveRuns.delete(key);
     try {
-      await live.progress.finish(result.text);
+      // No run is not a reason to drop the reply — it is still the agent's.
+      await live?.progress.finish(result.text);
       const text = result.text.trim();
       if (result.interrupted) {
         await this.api
-          .sendMessage(conv.channelId, interruptReply(result, live.stoppedBy), conv.replyRoot)
+          .sendMessage(conv.channelId, interruptReply(result, live?.stoppedBy ?? null), conv.replyRoot)
           .catch(() => {});
       } else if (!result.ok) {
         this.log(`follow-up turn failed: ${result.error ?? 'unknown'}`);
@@ -1109,7 +1148,7 @@ export class AgentBridge {
       }
       if (conv.replyRoot) this.threadParticipation.set(conv.replyRoot, true);
     } finally {
-      await live.progress.finish().catch(() => {});
+      await live?.progress.finish().catch(() => {});
     }
   }
 
