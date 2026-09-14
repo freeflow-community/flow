@@ -866,7 +866,7 @@ actor SyncEngine {
     }
 
     func fetchArtifact(id: String) async throws -> Artifact {
-        try await api.get(\"/v1/artifacts/\\(id)\")
+        try await api.get("/v1/artifacts/\(id)")
     }
 
     /// Pins a file as a shared artifact in a channel (idempotent per
