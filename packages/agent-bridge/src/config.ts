@@ -132,6 +132,13 @@ export interface BridgeConfig {
    * impossible to sustain. 0 disables. Default 6.
    */
   agentChainLimit: number;
+  /**
+   * The breaker's limit for agent messages that explicitly <@mention> me — a
+   * deliberate hand-off, not chatter, so it trips later (#583). Never below
+   * agentChainLimit; ignored when that is 0. Default 4× agentChainLimit.
+   * Optional for source-level callers; loadConfig always fills it.
+   */
+  agentMentionChainLimit?: number;
   /** Max conversations processed concurrently (serial within one conversation). */
   concurrency: number;
   progress: ProgressMode;
@@ -157,6 +164,7 @@ interface RawConfig {
   respondToAgents?: boolean;
   agentMentionsOnly?: boolean;
   agentChainLimit?: number;
+  agentMentionChainLimit?: number;
   concurrency?: number;
   progress?: string;
   relayText?: boolean;
@@ -245,6 +253,7 @@ export function loadConfig(configPath: string): BridgeConfig {
     throw new Error('config: voice.maxSessionMinutes must be a positive number');
   }
 
+  const agentChainLimit = Math.max(0, raw.agentChainLimit ?? 6);
   return {
     serverUrl,
     agentToken,
@@ -254,12 +263,23 @@ export function loadConfig(configPath: string): BridgeConfig {
     eventScope,
     respondToAgents: raw.respondToAgents ?? false,
     agentMentionsOnly: raw.agentMentionsOnly ?? false,
-    agentChainLimit: Math.max(0, raw.agentChainLimit ?? 6),
+    agentChainLimit,
+    agentMentionChainLimit: mentionChainLimit(agentChainLimit, raw.agentMentionChainLimit),
     concurrency: Math.max(1, raw.concurrency ?? 4),
     progress,
     relayText: raw.relayText ?? true,
     voice,
   };
+}
+
+/**
+ * The effective mention limit: unset means 4× the chain limit, 0 means the
+ * same as it, and it never undercuts it — a mention can only buy more room.
+ */
+export function mentionChainLimit(chainLimit: number, mentionLimit: number | undefined): number {
+  if (chainLimit <= 0) return 0;
+  const limit = mentionLimit === undefined ? chainLimit * 4 : mentionLimit;
+  return Math.max(chainLimit, limit);
 }
 
 /** The minimum a workspace must expose for `resolveWorkspace` to pick between them. */

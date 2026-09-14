@@ -24,7 +24,7 @@ import type {
   WorkspaceDTO,
   WorkspaceMemberDTO,
 } from '@flow/shared';
-import { defaultVoiceConfig, resolveWorkspace, type BridgeConfig } from './config.js';
+import { defaultVoiceConfig, mentionChainLimit, resolveWorkspace, type BridgeConfig } from './config.js';
 import { FlowApi } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 import { FlowSocket } from './gateway.js';
@@ -36,6 +36,8 @@ import { currentVersion, isOutdated, latestPublishedVersion } from './version.js
 import { HuddleVoiceManager } from './huddle-voice.js';
 
 const THINKING_PREFIX = '🤖 *thinking…*';
+/** The loop breaker's visible notice (#583). Never counts toward a chain, never wakes anyone. */
+const LOOP_BREAKER_PREFIX = '⚡ loop breaker:';
 /** Cap on salvaged text in a failure reply (the API caps a body at 12000). */
 const SALVAGE_LIMIT = 4000;
 /**
@@ -568,6 +570,9 @@ export class AgentBridge {
    * talking to it, so it works from any channel we're in, mention or not.
    */
   private async handleReaction(data: ReactionEventData): Promise<void> {
+    // A human reacting anywhere in a channel is a human paying attention — it
+    // re-arms the loop breaker exactly like a human message would (#583).
+    if (data.channelId && this.members.get(data.userId)?.isAgent === false) this.resetChain(data.channelId);
     if (data.emoji !== INTERRUPT_EMOJI || data.userId === this.me.id) return;
     for (const [key, run] of this.liveRuns) {
       if (run.progress.statusId !== data.messageId) continue;
@@ -686,11 +691,18 @@ export class AgentBridge {
 
   /**
    * Consecutive agent-authored messages per channel since a human last spoke
-   * (our own posts count — they are agent traffic too). The circuit breaker
-   * (`agentChainLimit`) reads this: a channel where only agents have been
-   * talking for a while is a loop, whatever the messages say.
+   * or reacted (our own posts count — they are agent traffic too). The circuit
+   * breaker (`agentChainLimit`) reads this: a channel where only agents have
+   * been talking for a while is a loop, whatever the messages say.
    */
   private agentChain = new Map<string, number>();
+  /** Channels where the breaker is engaged and its notice is already posted. */
+  private breakerNotified = new Set<string>();
+
+  private resetChain(channelId: string): void {
+    this.agentChain.set(channelId, 0);
+    this.breakerNotified.delete(channelId);
+  }
 
   /** Sender gating + self/agent loop guard + event-scope filter. */
   private async inScope(msg: MessageDTO): Promise<boolean> {
@@ -698,21 +710,61 @@ export class AgentBridge {
     const sender = this.members.get(msg.userId);
     // Chain accounting first, on every real message we can attribute — a
     // human speaking re-arms the channel; agent chatter (ours included)
-    // burns it down. Status/system lines don't count either way.
+    // burns it down. Status/system lines and breaker notices don't count.
     let chain = 0;
-    if (sender && !msg.systemKind && !msg.body.startsWith(THINKING_PREFIX)) {
-      chain = sender.isAgent ? (this.agentChain.get(msg.channelId) ?? 0) + 1 : 0;
-      this.agentChain.set(msg.channelId, chain);
+    const notice = msg.body.startsWith(LOOP_BREAKER_PREFIX);
+    if (sender && !msg.systemKind && !msg.body.startsWith(THINKING_PREFIX) && !notice) {
+      if (sender.isAgent) {
+        chain = (this.agentChain.get(msg.channelId) ?? 0) + 1;
+        this.agentChain.set(msg.channelId, chain);
+      } else {
+        this.resetChain(msg.channelId);
+      }
     }
+    if (notice) return false;
+    if (!(await this.addressedToMe(msg))) return false;
+    if (sender?.isAgent && this.breakerTripped(msg, chain)) {
+      this.log(
+        `loop breaker: ${chain} consecutive agent messages in ${msg.channelId} — ignoring until a human posts or reacts`,
+      );
+      void this.postBreakerNotice(msg.channelId, chain);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Past the limit? An explicit <@mention> of us is a deliberate hand-off, so
+   * it is judged against the higher `agentMentionChainLimit` — a structured
+   * pipeline keeps flowing while a real mention ping-pong still runs out.
+   */
+  private breakerTripped(msg: MessageDTO, chain: number): boolean {
+    const limit = this.cfg.agentChainLimit;
+    if (limit <= 0) return false;
+    const mentioned = msg.body.includes(`<@${this.me.id}>`);
+    return chain > (mentioned ? mentionChainLimit(limit, this.cfg.agentMentionChainLimit) : limit);
+  }
+
+  /** One visible line per engagement, so a stalled channel shows why it stalled. */
+  private async postBreakerNotice(channelId: string, chain: number): Promise<void> {
+    if (this.breakerNotified.has(channelId)) return;
+    this.breakerNotified.add(channelId);
+    const text =
+      `${LOOP_BREAKER_PREFIX} ${this.me.displayName} is ignoring agent messages in this channel until a human ` +
+      `posts or reacts (${chain} consecutive agent messages)`;
+    try {
+      await this.api.sendMessage(channelId, text);
+    } catch (err) {
+      this.log(`loop breaker notice failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Would we answer this message, loop breaker aside? */
+  private async addressedToMe(msg: MessageDTO): Promise<boolean> {
+    const sender = this.members.get(msg.userId);
     if (msg.userId === this.me.id) return false; // never our own messages (incl. MCP-sent)
     if (!sender) return false; // only workspace members
     if (sender.isAgent && !this.cfg.respondToAgents) return false; // agent-to-agent loop guard
-    if (sender.isAgent && this.cfg.agentChainLimit > 0 && chain > this.cfg.agentChainLimit) {
-      this.log(
-        `loop breaker: ${chain} consecutive agent messages in ${msg.channelId} — ignoring until a human speaks`,
-      );
-      return false;
-    }
     // Agent-to-agent traffic must be an explicit hand-off: with
     // agentMentionsOnly, an agent's message triggers us only when it
     // @-mentions us — including in DMs, where the ping-pong loops live.

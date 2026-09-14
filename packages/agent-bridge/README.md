@@ -139,7 +139,8 @@ onboarding.
 | `runtime.sessionHardCapSec` | 3600 | ceiling on the reprieve a pending background task buys, counted from the last turn — a wedged task can't pin a session open forever |
 | `eventScope` | `mentions` | `mentions` (@-mentions + DMs) or `all` channel traffic. Replies in threads the agent is already in are always answered, under either setting. |
 | `agentMentionsOnly` | false | with `respondToAgents`: an agent-authored message must `<@mention>` this agent to trigger a run, even in DMs — hand-offs stay explicit, stray replies can't ping-pong |
-| `agentChainLimit` | 6 | circuit breaker: after this many consecutive agent-authored messages in a channel with no human speaking, stop responding there until a human posts (0 disables) |
+| `agentChainLimit` | 6 | circuit breaker: after this many consecutive agent-authored messages in a channel with no human speaking, stop responding there until a human posts **or reacts** (any emoji, on any message in the channel). When it trips the agent posts one `⚡ loop breaker:` notice in the channel. 0 disables the breaker entirely |
+| `agentMentionChainLimit` | 4× `agentChainLimit` | the breaker's limit for agent messages that explicitly `<@mention>` this agent — deliberate hand-offs keep landing past `agentChainLimit` until this higher count, so a pipeline flows while a real mention ping-pong still gets cut. 0 = same as `agentChainLimit`; never lower than it |
 | `progress` | `thinking` | `thinking` \| `typing` \| `silent` |
 | `relayText` | true | relay the agent's interim text into the conversation as it works (`thinking` mode only); it grows one message by editing rather than posting per chunk |
 | `logFile` | `<config>.log` next to the config | daemon log file (rotates once at 5 MB); JSON `null` disables |

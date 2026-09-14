@@ -198,8 +198,8 @@ describe('inScope — agent loop guards', () => {
     expect(await b.inScope(message({ channelId: 'dm-1', userId: HUMAN, body: 'hi' }))).toBe(true);
   });
 
-  it('chain limit: consecutive agent messages trip the breaker, even with mentions', async () => {
-    const b = bridge(config({ respondToAgents: true, agentChainLimit: 3 }), [dm]);
+  it('chain limit: consecutive agent messages trip the breaker, even with mentions at the same limit', async () => {
+    const b = bridge(config({ respondToAgents: true, agentChainLimit: 3, agentMentionChainLimit: 0 }), [dm]);
     const agentMsg = (i: number) =>
       message({ id: `m-${i}`, channelId: 'dm-1', userId: OTHER_AGENT, body: `<@${AGENT}> ping ${i}` });
     expect(await b.inScope(agentMsg(1))).toBe(true);
@@ -210,7 +210,7 @@ describe('inScope — agent loop guards', () => {
   });
 
   it('chain limit: a human speaking re-arms the channel', async () => {
-    const b = bridge(config({ respondToAgents: true, agentChainLimit: 2 }), [dm]);
+    const b = bridge(config({ respondToAgents: true, agentChainLimit: 2, agentMentionChainLimit: 0 }), [dm]);
     const agentMsg = (i: number) =>
       message({ id: `m-${i}`, channelId: 'dm-1', userId: OTHER_AGENT, body: `<@${AGENT}> ping ${i}` });
     await b.inScope(agentMsg(1));
@@ -221,7 +221,7 @@ describe('inScope — agent loop guards', () => {
   });
 
   it("chain limit: my own posts count toward the chain (they're agent traffic too)", async () => {
-    const b = bridge(config({ respondToAgents: true, agentChainLimit: 2 }), [dm]);
+    const b = bridge(config({ respondToAgents: true, agentChainLimit: 2, agentMentionChainLimit: 0 }), [dm]);
     b.members.set(AGENT, { userId: AGENT, displayName: 'Omni', isAgent: true });
     const mine = (i: number) => message({ id: `s-${i}`, channelId: 'dm-1', userId: AGENT, body: `note ${i}` });
     await b.inScope(mine(1));
@@ -229,6 +229,85 @@ describe('inScope — agent loop guards', () => {
     expect(
       await b.inScope(message({ id: 'm-o', channelId: 'dm-1', userId: OTHER_AGENT, body: `<@${AGENT}> hey` })),
     ).toBe(false); // 3rd consecutive agent message — tripped
+  });
+
+  describe('loop breaker (#583)', () => {
+    const general = channel({ id: 'chan-g' });
+    const withApi = (cfg: Partial<BridgeConfig>) => {
+      const b = bridge(config({ respondToAgents: true, ...cfg }), [dm, general]);
+      b.api = { sendMessage: vi.fn(async () => ({})) };
+      return b;
+    };
+    const from = (userId: string, i: number, body: string) =>
+      message({ id: `g-${i}`, channelId: 'chan-g', userId, body });
+
+    it('un-mentioned chatter stops at agentChainLimit; mentions land until 4× that', async () => {
+      const b = withApi({ agentChainLimit: 6, eventScope: 'all' });
+      for (let i = 1; i <= 6; i++) expect(await b.inScope(from(OTHER_AGENT, i, `chatter ${i}`))).toBe(true);
+      expect(await b.inScope(from(OTHER_AGENT, 7, 'chatter 7'))).toBe(false);
+      for (let i = 8; i <= 24; i++) expect(await b.inScope(from(OTHER_AGENT, i, `<@${AGENT}> hand-off ${i}`))).toBe(true);
+      expect(await b.inScope(from(OTHER_AGENT, 25, `<@${AGENT}> hand-off 25`))).toBe(false);
+    });
+
+    it('a two-agent mention ping-pong is still broken', async () => {
+      const b = withApi({ agentChainLimit: 6 });
+      b.members.set(AGENT, { userId: AGENT, displayName: 'Omni', isAgent: true });
+      let answered = 0;
+      for (let i = 1; i <= 100; i++) {
+        const mine = i % 2 === 0;
+        const ok = await b.inScope(from(mine ? AGENT : OTHER_AGENT, i, mine ? `<@${OTHER_AGENT}> pong` : `<@${AGENT}> ping`));
+        if (ok) answered++;
+      }
+      expect(answered).toBe(12); // odd pings 1..23 — the chain passes 24 and every later ping is dropped
+    });
+
+    it('tripping posts exactly one visible notice per engagement, top-level in the channel', async () => {
+      const b = withApi({ agentChainLimit: 2, agentMentionChainLimit: 0 });
+      for (let i = 1; i <= 6; i++) await b.inScope(from(OTHER_AGENT, i, `<@${AGENT}> ping ${i}`));
+      expect(b.api.sendMessage).toHaveBeenCalledTimes(1);
+      const [chan, text, root] = b.api.sendMessage.mock.calls[0];
+      expect(chan).toBe('chan-g');
+      expect(root).toBeUndefined();
+      expect(text).toMatch(/^⚡ loop breaker: Omni is ignoring agent messages in this channel until a human posts.*\(3 consecutive agent messages\)/);
+      // a human re-arms it; the next engagement gets its own notice
+      await b.inScope(from(HUMAN, 10, 'carry on'));
+      for (let i = 11; i <= 14; i++) await b.inScope(from(OTHER_AGENT, i, `<@${AGENT}> ping ${i}`));
+      expect(b.api.sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('the notice counts toward no chain and wakes nobody', async () => {
+      const b = withApi({ agentChainLimit: 2, agentMentionChainLimit: 0, eventScope: 'all' });
+      await b.inScope(from(OTHER_AGENT, 1, 'one'));
+      expect(await b.inScope(from(OTHER_AGENT, 2, `⚡ loop breaker: Bot is ignoring agent messages <@${AGENT}>`))).toBe(false);
+      expect(await b.inScope(from(OTHER_AGENT, 3, 'two'))).toBe(true); // still only the 2nd agent message
+    });
+
+    it('no notice for traffic that was never addressed to us', async () => {
+      const b = withApi({ agentChainLimit: 2 });
+      for (let i = 1; i <= 10; i++) expect(await b.inScope(from(OTHER_AGENT, i, `chatter ${i}`))).toBe(false);
+      expect(b.api.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('a human reaction (any emoji, any message) re-arms the channel — a mention wakes us again', async () => {
+      const b = withApi({ agentChainLimit: 2, agentMentionChainLimit: 0 });
+      for (let i = 1; i <= 3; i++) await b.inScope(from(OTHER_AGENT, i, `<@${AGENT}> ping ${i}`));
+      expect(await b.inScope(from(OTHER_AGENT, 4, `<@${AGENT}> ping 4`))).toBe(false); // tripped
+      await b.handleReaction({ messageId: 'some-old-message', channelId: 'chan-g', userId: HUMAN, emoji: '👍' });
+      expect(await b.inScope(from(OTHER_AGENT, 5, `<@${AGENT}> after the reaction`))).toBe(true);
+    });
+
+    it("an agent's reaction does not re-arm it", async () => {
+      const b = withApi({ agentChainLimit: 2, agentMentionChainLimit: 0 });
+      for (let i = 1; i <= 3; i++) await b.inScope(from(OTHER_AGENT, i, `<@${AGENT}> ping ${i}`));
+      await b.handleReaction({ messageId: 'g-1', channelId: 'chan-g', userId: OTHER_AGENT, emoji: '👍' });
+      expect(await b.inScope(from(OTHER_AGENT, 4, `<@${AGENT}> ping 4`))).toBe(false);
+    });
+
+    it('agentChainLimit 0 disables mentions and notices too', async () => {
+      const b = withApi({ agentChainLimit: 0, agentMentionChainLimit: 3 });
+      for (let i = 1; i <= 30; i++) expect(await b.inScope(from(OTHER_AGENT, i, `<@${AGENT}> ping ${i}`))).toBe(true);
+      expect(b.api.sendMessage).not.toHaveBeenCalled();
+    });
   });
 
   it('chain limit: 0 disables the breaker', async () => {
