@@ -99,7 +99,7 @@ export async function signInWithGoogleClaims(
   const row = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0];
   if (!row) throw new ApiError(500, 'internal', 'user vanished during sign-in');
   const token = await issueSession(userId, clientInfo);
-  return { token, user: toUserDTO(row), autoJoined };
+  return { token, user: toUserDTO(row, row.id), autoJoined };
 }
 
 /** Google serves profile pictures from this host only — the URL rides inside a

@@ -178,10 +178,10 @@ final class TextZoomTests: XCTestCase {
         let pillFont = { (s: AttributedString) in
             s.runs.compactMap(\.font).first
         }
-        XCTAssertEqual(pillFont(plain), .system(.callout, weight: .bold))
+        XCTAssertEqual(pillFont(plain), .system(.callout, weight: .regular))
         XCTAssertEqual(
             pillFont(zoomed),
-            .system(size: ZoomedFont.pointSize(.callout) * 1.5, weight: .bold)
+            .system(size: ZoomedFont.pointSize(.callout) * 1.5, weight: .regular)
         )
     }
 

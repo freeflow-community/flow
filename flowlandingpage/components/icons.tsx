@@ -3,7 +3,7 @@ import type { ReactNode, SVGProps } from "react";
 type IconProps = SVGProps<SVGSVGElement>;
 
 /**
- * Hand-rolled inline SVG set — keeps the dependency tree at zero and every glyph
+ * Hand-rolled inline SVG set keeps the dependency tree at zero and every glyph
  * on the same 24px stroke grid. All icons inherit `currentColor`.
  */
 function Base({ children, ...props }: IconProps & { children: ReactNode }) {

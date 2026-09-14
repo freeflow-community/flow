@@ -6,6 +6,7 @@ import {
   applyTopLevel,
   markSendFailed,
   pendingId,
+  removeMessageFromCache,
   removePendingMessage,
   type LocalMessage,
   type MessagesData,
@@ -28,6 +29,7 @@ function msg(over: Partial<MessageDTO> = {}): MessageDTO {
     pinnedAt: null,
     pinnedBy: null,
     systemKind: null,
+    scheduled: false,
     replyCount: 0,
     lastReplyAt: null,
     replyParticipantUserIds: [],
@@ -70,6 +72,31 @@ describe('applyTopLevel', () => {
     const existing = msg();
     const r = applyTopLevel(data(page([existing])), msg(), false);
     expect(r.data.pages[0]!.messages).toHaveLength(1);
+  });
+});
+
+describe('applyTopLevel with provider-ordered ids (Slack ts)', () => {
+  const ts = (n: number) => `1789171800.${String(n).padStart(6, '0')}`;
+  const page = (...ids: string[]): MessagesData => ({ pages: [{ messages: ids.map((id) => msg({ id, clientMsgId: '' })), hasMore: false }], pageParams: [''] });
+
+  it('a duplicate delivery of the same ts replaces in place — one row', () => {
+    const data = page(ts(3), ts(2), ts(1));
+    const twice = applyTopLevel(applyTopLevel(data, msg({ id: ts(4), clientMsgId: '' }), true).data, msg({ id: ts(4), clientMsgId: '' }), true).data;
+    expect(twice.pages[0]!.messages.map((m) => m.id)).toEqual([ts(4), ts(3), ts(2), ts(1)]);
+  });
+
+  it('a late (out-of-order) event lands by ts, not on top of a newer message', () => {
+    const data = page(ts(5), ts(3), ts(1));
+    const next = applyTopLevel(data, msg({ id: ts(4), clientMsgId: '' }), true).data;
+    expect(next.pages[0]!.messages.map((m) => m.id)).toEqual([ts(5), ts(4), ts(3), ts(1)]);
+    const oldest = applyTopLevel(next, msg({ id: ts(0), clientMsgId: '' }), true).data;
+    expect(oldest.pages[0]!.messages.map((m) => m.id).at(-1)).toBe(ts(0));
+  });
+
+  it('Flow ids keep arrival order on top', () => {
+    const data = page('01948-0002', '01948-0001');
+    const next = applyTopLevel(data, msg({ id: '01948-0000', clientMsgId: '' }), true).data;
+    expect(next.pages[0]!.messages[0]!.id).toBe('01948-0000');
   });
 });
 
@@ -186,5 +213,89 @@ describe('removePendingMessage', () => {
     removePendingMessage(qc, 'chan-1', 'cm-d', 'root-3');
     expect(qc.getQueryData<ThreadData>(['thread', 'root-3'])!.messages).toHaveLength(0);
     expect(channelCache(qc).find((m) => m.id === 'root-3')!.replyCount).toBe(0);
+  });
+});
+
+describe('removeMessageFromCache', () => {
+  it('permanently removes a root and its cached thread', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-purge', replyCount: 1 });
+    const reply = msg({ id: 'reply-purge', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [reply], hasMore: false });
+
+    removeMessageFromCache(qc, root);
+
+    expect(channelCache(qc)).toHaveLength(0);
+    expect(qc.getQueryData(['thread', root.id])).toBeUndefined();
+  });
+
+  it('removes one reply and exactly recomputes the cached root rollup', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-reply-purge', replyCount: 2 });
+    const first = msg({
+      id: 'reply-first',
+      threadRootId: root.id,
+      userId: 'user-b',
+      createdAt: '2026-08-25T01:00:00.000Z',
+    });
+    const last = msg({
+      id: 'reply-last',
+      threadRootId: root.id,
+      userId: 'user-c',
+      createdAt: '2026-08-25T02:00:00.000Z',
+    });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [first, last], hasMore: false });
+
+    removeMessageFromCache(qc, last);
+    removeMessageFromCache(qc, last); // API response + websocket echo
+
+    const thread = qc.getQueryData<ThreadData>(['thread', root.id])!;
+    expect(thread.messages.map((m) => m.id)).toEqual([first.id]);
+    expect(thread.root.replyCount).toBe(1);
+    expect(thread.root.lastReplyAt).toBe(first.createdAt);
+    expect(thread.root.replyParticipantUserIds).toEqual(['user-b']);
+    expect(channelCache(qc).find((m) => m.id === root.id)!.replyCount).toBe(1);
+  });
+
+  it('decrements a partially loaded thread without replacing the server reply count', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-partial', replyCount: 250, lastReplyAt: '2026-08-25T03:00:00.000Z' });
+    const loaded = msg({ id: 'reply-loaded', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [loaded], hasMore: true });
+
+    removeMessageFromCache(qc, loaded);
+
+    const cachedRoot = qc.getQueryData<ThreadData>(['thread', root.id])!.root;
+    expect(cachedRoot.replyCount).toBe(249);
+    expect(cachedRoot.lastReplyAt).toBe(root.lastReplyAt);
+  });
+
+  it('decrements a channel-only reply rollup once for the API response and websocket echo', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-channel-only', replyCount: 4 });
+    const reply = msg({ id: 'reply-channel-only', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+
+    removeMessageFromCache(qc, reply);
+    removeMessageFromCache(qc, reply);
+
+    expect(channelCache(qc).find((m) => m.id === root.id)!.replyCount).toBe(3);
+  });
+
+  it('uses loaded survivors as the exact count when the deleted reply is already absent', () => {
+    const qc = new QueryClient();
+    const root = msg({ id: 'root-refetched', replyCount: 1 });
+    const survivor = msg({ id: 'reply-survivor', threadRootId: root.id });
+    const delayedEvent = msg({ id: 'reply-already-gone', threadRootId: root.id });
+    qc.setQueryData<MessagesData>(['messages', 'chan-1'], data(page([root])));
+    qc.setQueryData<ThreadData>(['thread', root.id], { root, messages: [survivor], hasMore: false });
+
+    removeMessageFromCache(qc, delayedEvent);
+
+    expect(qc.getQueryData<ThreadData>(['thread', root.id])!.root.replyCount).toBe(1);
+    expect(channelCache(qc).find((m) => m.id === root.id)!.replyCount).toBe(1);
   });
 });

@@ -14,6 +14,8 @@ server (and previously production).
 
 **Works today:**
 - Sign in (email + password) against any Flow server
+- Ongoing agent calls in one-to-one DMs: pause-to-send speech, spoken replies,
+  automatic listening between turns, and a persistent huddle-style call bar
 - Workspace switcher; channel + DM lists with unread badges
 - Message list: authenticated avatars, timestamps, 5-minute author grouping,
   day dividers, scroll-to-bottom
@@ -178,6 +180,9 @@ For driving the simulator without a UI text-input tool. Prefix with
 | `FLOW_DEBUG_OPEN_THREAD_LAST=1` | push the thread screen for the newest threaded message |
 | `FLOW_DEBUG_UPLOAD=<path>[,<path>…]` | route host files through the composer upload pipeline |
 | `FLOW_DEBUG_UPLOAD_SEND=<text>` | send the uploaded attachments with that body |
+| `FLOW_DEBUG_AGENT_CALL_TRANSCRIPT=<text>` | inject recognized agent-call speech without microphone input |
+| `FLOW_DEBUG_AGENT_CALL_HOLD_TRANSCRIPT=1` | hold injected speech as a live caption instead of auto-sending |
+| `FLOW_DEBUG_AGENT_CALL_REPLY=<text>` | speak a synthetic agent reply after a debug turn sends |
 
 Any `FLOW_DEBUG_*` variable also suppresses the badge-permission prompt in
 DEBUG builds (a system alert would wedge headless runs — simctl can't tap).

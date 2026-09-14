@@ -22,6 +22,8 @@ struct AccountSheet: View {
     /// so a headless run can screenshot the form without tap automation. Same
     /// family as the other FLOW_DEBUG_* hooks in `Platform/`.
     @State private var pushProfile = false
+    /// The same hook for the notification prefs (#251): `FLOW_DEBUG_OPEN_NOTIFICATIONS=1`.
+    @State private var pushNotifications = false
 
     private var statusEmoji: String { app.currentUser?.statusEmoji ?? "" }
     private var statusText: String { app.currentUser?.statusText ?? "" }
@@ -81,6 +83,13 @@ struct AccountSheet: View {
                     }
                     .accessibilityIdentifier("account.profile")
 
+                    NavigationLink {
+                        NotificationSettingsView()
+                    } label: {
+                        Label("Notifications", systemImage: "bell")
+                    }
+                    .accessibilityIdentifier("account.notifications")
+
                     Button(role: .destructive) {
                         dismiss()
                         Task { await app.engine.logout() }
@@ -91,9 +100,13 @@ struct AccountSheet: View {
                 }
             }
             .navigationDestination(isPresented: $pushProfile) { MyProfileView() }
+            .navigationDestination(isPresented: $pushNotifications) { NotificationSettingsView() }
             .onAppear {
                 if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_PROFILE"] == "1" {
                     pushProfile = true
+                }
+                if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_NOTIFICATIONS"] == "1" {
+                    pushNotifications = true
                 }
             }
             .listStyle(.insetGrouped)
@@ -163,6 +176,7 @@ struct MyProfileView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var displayName = ""
+    @State private var title = ""
     @State private var timezone = TimeZone.current.identifier
     @State private var website = ""
     @State private var bio = ""
@@ -172,6 +186,11 @@ struct MyProfileView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var confirmDelete = false
     @State private var deleteBusy = false
+    /// #490: saved on the flip rather than on Save, like the notification
+    /// prefs — a privacy switch that waited for a second tap to take effect
+    /// would be the wrong shape.
+    @State private var privacyMode = false
+    @State private var privacyError: String?
 
     private static let timezones = TimeZone.knownTimeZoneIdentifiers.sorted()
 
@@ -219,6 +238,17 @@ struct MyProfileView: View {
                     .accessibilityIdentifier("profile.displayName")
             }
 
+            // #434: directly under the name — the two together are what a
+            // Directory card shows, so they are edited together.
+            Section("Title") {
+                TextField("Title (optional)", text: $title)
+                    .textInputAutocapitalization(.words)
+                    .accessibilityIdentifier("profile.title")
+                    .onChange(of: title) { _, new in
+                        if new.count > profileTitleMax { title = String(new.prefix(profileTitleMax)) }
+                    }
+            }
+
             Section("Timezone") {
                 Picker("Timezone", selection: $timezone) {
                     ForEach(Self.timezones, id: \.self) { tz in Text(tz).tag(tz) }
@@ -261,9 +291,32 @@ struct MyProfileView: View {
                     .accessibilityIdentifier("profile.bioCount")
             }
 
-            Section("Email") {
-                Text(app.currentUser?.email ?? "")
-                    .foregroundStyle(MC.inkSoft)
+            // #490: the address sits directly above the switch that hides it,
+            // because "here is the email we show people, here is how to stop
+            // showing it" is one thought — the same shape web uses.
+            Section {
+                HStack {
+                    Text("Email").foregroundStyle(MC.faint)
+                    Spacer(minLength: 12)
+                    Text(app.currentUser?.email ?? "")
+                        .foregroundStyle(MC.inkSoft)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("profile.email")
+                }
+                Toggle(isOn: Binding(get: { privacyMode }, set: { setPrivacyMode($0) })) {
+                    Text("Privacy mode").foregroundStyle(MC.ink)
+                }
+                .accessibilityIdentifier("profile.privacyMode")
+            } header: {
+                Text("Privacy")
+            } footer: {
+                if let privacyError {
+                    Text(privacyError)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("profile.privacyMode.error")
+                } else {
+                    Text("Hide your email and remove you from the Directory.")
+                }
             }
 
             // App Store 5.1.1(v): account deletion must be reachable in-app.
@@ -287,7 +340,7 @@ struct MyProfileView: View {
             Button("Delete Account", role: .destructive) { deleteAccount() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently deletes your account. It cannot be undone.")
+            Text("Permanently delete \(app.currentUser?.email ?? "this account") on \(app.serverOrigin), removing it from every workspace on this server. It cannot be undone.")
         }
         .navigationTitle("My Profile")
         .navigationBarTitleDisplayMode(.inline)
@@ -300,13 +353,37 @@ struct MyProfileView: View {
         }
         .onAppear {
             displayName = app.currentUser?.displayName ?? ""
+            title = app.currentUser?.title ?? ""
             timezone = app.currentUser?.timezone ?? TimeZone.current.identifier
             website = app.currentUser?.website ?? ""
             bio = app.currentUser?.bio ?? ""
+            privacyMode = app.currentUser?.privacyMode == true
+        }
+        // A flip made on the Mac or on web arrives as a new `currentUser`;
+        // adopt it. Our own writes land here too, carrying what we already show.
+        .onChange(of: app.currentUser?.privacyMode) { _, new in
+            privacyMode = new == true
         }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             uploadAvatar(item)
+        }
+    }
+
+    /// Optimistic, then reconciled: the switch moves now and reverts if the
+    /// write fails. The engine refreshes the roster on success, so the
+    /// Directory adds or drops this member in the same beat.
+    private func setPrivacyMode(_ on: Bool) {
+        let previous = privacyMode
+        privacyMode = on
+        privacyError = nil
+        Task {
+            do {
+                try await app.engine.setPrivacyMode(on)
+            } catch {
+                privacyMode = previous
+                privacyError = error.localizedDescription
+            }
         }
     }
 
@@ -333,7 +410,9 @@ struct MyProfileView: View {
             do {
                 try await app.engine.updateProfile(
                     displayName: trimmedName, timezone: timezone,
-                    website: trimmedWebsite, bio: bio
+                    website: trimmedWebsite, bio: bio,
+                    // "" clears it
+                    title: title.trimmingCharacters(in: .whitespaces)
                 )
                 dismiss()
             } catch {

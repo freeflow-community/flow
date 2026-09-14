@@ -10,20 +10,45 @@ import GRDB
 /// Selecting anything (channel, DM, activity) drives `AppState` the same way
 /// macOS does, then calls `onSelect` so `MainView` can close the drawer and let
 /// the conversation take the full screen (matching the web's mobile behavior).
+/// Just enough of the roster to answer "is this workspace down to one person?"
+/// — plus the name, which the Agents section (#361) lists agents by.
+struct WorkspaceRosterEntry: Decodable, FetchableRecord, Equatable, Sendable, WorkspaceRosterMember {
+    var userId: String
+    var displayName: String
+    var isAgent: Bool?
+    var isBot: Bool?
+}
+
+extension WorkspaceRosterEntry: SidebarAgentMemberInfo {}
+
 struct SidebarDrawer: View {
     /// Called after a selection so the host can dismiss the drawer.
     var onSelect: () -> Void = {}
 
     @EnvironmentObject private var app: AppState
+    /// Raises the workspace/server switcher owned by `RootView` (#563).
+    @Environment(\.openConnections) private var openConnections
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var users = DBObserved<[User]>(initial: [])
+    /// The current workspace's roster, for the sole-human check behind Delete
+    /// workspace (#340). `users` is every user we've ever cached, which is not
+    /// the same question.
+    @StateObject private var roster = DBObserved<[WorkspaceRosterEntry]>(initial: [])
 
     @State private var showCreateChannel = false
+    @State private var showNewDm = false
     @State private var showAddWorkspace = false
+    @State private var showInvite = false
+    /// The channel whose "Invite to Channel…" sheet is open (long-press a row).
+    @State private var inviteChannel: Channel?
     @State private var showFeatures = false
+    @State private var confirmLeaveWorkspace = false
+    @State private var confirmDeleteWorkspace = false
     /// One-shot guard so the persistent self-DM upsert fires once per workspace.
     @State private var ensuredSelfDmWs: String?
+    /// Agents section collapsed? Remembered per device, like macOS and web.
+    @AppStorage("flow.sidebarAgentsCollapsed") private var agentsCollapsed = false
 
     private var usersById: [String: User] {
         Dictionary(users.value.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -37,6 +62,17 @@ struct SidebarDrawer: View {
     }
     private var palette: SidebarPalette {
         SidebarPalette.palette(for: currentWorkspace?.sidebarColor)
+    }
+
+
+    /// Which way out this workspace offers — see `WorkspaceExit`, which is
+    /// shared with macOS and holds the "empty roster means don't know" rule.
+    private var workspaceExit: WorkspaceExit {
+        WorkspaceExit.offered(
+            role: currentWorkspace?.role,
+            roster: roster.value,
+            me: app.currentUser?.id
+        )
     }
 
     /// Joined standard channels in sidebar order — sub-channels (#118) follow
@@ -68,6 +104,15 @@ struct SidebarDrawer: View {
             by: { $0.parentId! }
         )
     }
+    /// Agents (#361) and the DMs left over once their 1:1s move up with them.
+    private var agentSplit: (agents: [AgentSection.Entry<WorkspaceRosterEntry>], rest: [Channel]) {
+        AgentSection.split(
+            dms: channels.value.filter { $0.isMember && $0.isDM },
+            members: roster.value,
+            currentUserId: app.currentUser?.id
+        )
+    }
+
     private var dms: [Channel] {
         // Direct messages sort alphabetically by display title, case-insensitive
         // (ui_nits — matches web/macOS). DM channels have a null `name`, so sort
@@ -79,8 +124,7 @@ struct SidebarDrawer: View {
         func isSelf(_ c: Channel) -> Bool {
             c.kind == "dm" && (c.memberIds ?? []).allSatisfy { $0 == me }
         }
-        return channels.value
-            .filter { $0.isMember && $0.isDM }
+        return agentSplit.rest
             .sorted {
                 if isSelf($0) != isSelf($1) { return !isSelf($0) }
                 return $0.displayTitle(userNames: names, currentUserId: me)
@@ -117,9 +161,13 @@ struct SidebarDrawer: View {
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
             }
             users.start(db: app.db) { try User.fetchAll($0) }
+            reloadRoster()
             reloadChannels()
         }
-        .onChange(of: app.selectedWorkspaceId) { _, _ in reloadChannels() }
+        .onChange(of: app.selectedWorkspaceId) { _, _ in
+            reloadRoster()
+            reloadChannels()
+        }
         // Default channel + persistent self-DM (macOS SidebarView parity): a
         // workspace opened with nothing selected lands on #general; every
         // workspace gets a "<Name> (you)" DM (idempotent server upsert).
@@ -129,8 +177,46 @@ struct SidebarDrawer: View {
                 NewChannelSheet(workspaceId: wsId, onCreated: { open($0) })
             }
         }
+        .sheet(isPresented: $showNewDm) {
+            if let wsId = app.selectedWorkspaceId {
+                NewDmSheet(workspaceId: wsId, onCreated: { open($0) })
+            }
+        }
         .sheet(isPresented: $showAddWorkspace) { AddWorkspaceSheet() }
+        .sheet(isPresented: $showInvite) {
+            if let wsId = app.selectedWorkspaceId {
+                InviteSheet(workspaceId: wsId)
+            }
+        }
+        .sheet(item: $inviteChannel) { InviteToChannelSheet(channel: $0) }
+        .modifier(DebugOpenNewDm { showNewDm = true })
         .sheet(isPresented: $showFeatures) { FeaturesSheet() }
+        // `.alert`, not `.confirmationDialog`: hung off the drawer the dialog
+        // adapts to a *popover*, which drops the cancel button entirely and
+        // leaves tapping outside as the only way back (#340). An alert always
+        // renders both choices.
+        .alert(
+            "Leave \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmLeaveWorkspace
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Leave Workspace", role: .destructive) { leaveWorkspace() }
+        } message: {
+            Text("Leave as \(app.currentUser?.email ?? "this account") on \(app.serverOrigin). You'll lose access to all its channels. Your past messages will remain.")
+        }
+        .alert(
+            "Delete \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmDeleteWorkspace
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Workspace", role: .destructive) { deleteWorkspace() }
+        } message: {
+            Text(
+                "You're the only one left, so there's nobody to hand it to. "
+                    + "Deleting removes the workspace and every channel, message and file in it, "
+                    + "for good. This cannot be undone."
+            )
+        }
     }
 
     // MARK: - Sidebar column
@@ -144,37 +230,66 @@ struct SidebarDrawer: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    activityRow
-
+                    // Provider gating (#546), as on web: creating and browsing
+                    // conversations, agents, scheduling and admin are Flow
+                    // capabilities; a Slack workspace lists what it has.
                     sectionHeader("Channels") {
-                        Button {
+                        addButton(id: "channel.create", label: "New channel") {
                             showCreateChannel = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.6))
-                                .frame(width: 28, height: 28)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("channel.create")
-                        .accessibilityLabel("New channel")
+                        .hiddenUnless(.channelManagement, in: app.capabilities)
                     }
                     ForEach(standard, id: \.channel.id) { channelRow($0.channel, isNested: $0.isNested) }
 
-                    if !dms.isEmpty {
-                        sectionHeader("Direct Messages") { EmptyView() }
-                        ForEach(dms) { dm in
-                            dmRow(dm)
-                            ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
+                    // Agents (#361): one row per workspace agent, between
+                    // Channels and Direct Messages, whether or not a DM exists
+                    // yet. An agent with a DM brings it up here, so it is never
+                    // listed twice.
+                    let agents = agentSplit.agents
+                    if !agents.isEmpty, app.can(.agents) {
+                        sectionHeader("Agents", collapsed: agentsCollapsed) {
+                            agentsCollapsed.toggle()
+                        } action: {
+                            EmptyView()
+                        }
+                        if !agentsCollapsed {
+                            ForEach(agents) { entry in
+                                if let dm = entry.channel {
+                                    dmRow(dm, label: entry.member.displayName)
+                                    ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
+                                } else {
+                                    agentRow(entry.member)
+                                }
+                            }
                         }
                     }
 
-                    if !browsable.isEmpty {
+                    // The header renders whether or not there are DMs yet: its
+                    // "+" is the only way in to a first conversation (#257), so
+                    // it must not be the thing that disappears when the list is
+                    // empty. Channels behaves the same way.
+                    sectionHeader("Direct Messages") {
+                        addButton(id: "dm.create", label: "New direct message") {
+                            showNewDm = true
+                        }
+                        .hiddenUnless(.channelManagement, in: app.capabilities)
+                    }
+                    // Directory (#432): a nav entry, not a DM row — it
+                    // highlights when active and opens the member grid rather
+                    // than a conversation. Directly under the header, as on
+                    // web and macOS.
+                    directoryRow
+                    ForEach(dms) { dm in
+                        dmRow(dm)
+                        ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
+                    }
+
+                    if !browsable.isEmpty, app.can(.channelManagement) {
                         sectionHeader("Browse") { EmptyView() }
                         ForEach(browsable) { browseRow($0) }
                     }
 
-                    if standard.isEmpty && dms.isEmpty && browsable.isEmpty {
+                    if standard.isEmpty && dms.isEmpty && agents.isEmpty && browsable.isEmpty {
                         Text("No channels yet")
                             .font(.system(size: 14))
                             .foregroundStyle(.white.opacity(0.6))
@@ -195,20 +310,74 @@ struct SidebarDrawer: View {
     // MARK: - Header
 
     private var header: some View {
+        HStack(spacing: 6) {
+            workspaceMenu
+            scheduledClock
+                .hiddenUnless(.scheduledMessages, in: app.capabilities)
+            activityBell
+                .hiddenUnless(.notifications, in: app.capabilities)
+        }
+    }
+
+    private var workspaceMenu: some View {
         Menu {
             ForEach(workspaces.value) { ws in
+                // The switcher spells the count out (#345): the rail badge is a
+                // 10pt number on a 40pt icon, and this menu is the accessible
+                // way to the same information.
+                let title = unreadBadgeLabel(ws.unreadCount).map { "\(ws.name) (\($0))" } ?? ws.name
                 Button {
                     app.selectWorkspace(ws.id)
                 } label: {
                     if ws.id == app.selectedWorkspaceId {
-                        Label(ws.name, systemImage: "checkmark")
+                        Label(title, systemImage: "checkmark")
                     } else {
-                        Text(ws.name)
+                        Text(title)
                     }
                 }
             }
             Divider()
+            // Workspaces & servers (#563). Workspace-level navigation lives at
+            // the top of the sidebar — the Slack/Discord idiom — not in the
+            // composer's "+", which is for composing; #561 parked it there and
+            // it came straight back out.
+            Button { openConnections() } label: {
+                Label("Workspaces & servers…", systemImage: "server.rack")
+            }
+            .accessibilityIdentifier("sidebar.connections")
+            // Invite People (web + macOS parity, #283). Disabled with no
+            // workspace selected — there'd be nothing to invite anyone to.
+            Button("Invite People…") { showInvite = true }
+                .disabled(app.selectedWorkspaceId == nil)
+                .accessibilityIdentifier("sidebar.invitePeople")
+                .hiddenUnless(.channelManagement, in: app.capabilities)
+            // Directory (#432), directly under Invite People… as on web + macOS.
+            Button("Directory") {
+                app.showDirectoryPanel()
+                onSelect()
+            }
+            .disabled(app.selectedWorkspaceId == nil)
+            .accessibilityIdentifier("sidebar.directoryMenuItem")
             Button("Add Workspace…") { showAddWorkspace = true }
+                .hiddenUnless(.channelManagement, in: app.capabilities)
+            if currentWorkspace != nil, app.can(.channelManagement) {
+                switch workspaceExit {
+                case .delete:
+                    Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
+                        .accessibilityIdentifier("sidebar.deleteWorkspace")
+                case .leave, .transferFirst:
+                    // Destructive, and disabled for the owner with the reason in
+                    // the label — a menu item has nowhere else to put a hint
+                    // (web + macOS parity, #340).
+                    let blocked = workspaceExit == .transferFirst
+                    Button(
+                        blocked ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                        role: .destructive
+                    ) { confirmLeaveWorkspace = true }
+                        .disabled(blocked)
+                        .accessibilityIdentifier("sidebar.leaveWorkspace")
+                }
+            }
             Divider()
             // Version tag + release notes (web + macOS parity: macOS hangs the
             // sheet off the version label at the foot of this same menu).
@@ -219,11 +388,17 @@ struct SidebarDrawer: View {
             }
             .accessibilityIdentifier("sidebar.buildNumber")
         } label: {
-            HStack(spacing: 4) {
-                Text(currentWorkspace?.name ?? "Flow")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(currentWorkspace?.name ?? "Flow")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    // Which server this workspace is on — a phone can hold
+                    // several now (#542), and this row is the way to the rest
+                    // of them (#563).
+                    SidebarServerLabel(connections: app.connections, connectionId: app.connectionId)
+                }
                 Image(systemName: "chevron.down")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.55))
@@ -234,12 +409,38 @@ struct SidebarDrawer: View {
         .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 
-    private func sectionHeader(_ label: String, @ViewBuilder action: () -> some View) -> some View {
+    /// A section title, optionally a collapse toggle (#361): pass `collapsed`
+    /// and `onToggle` and the label becomes a button with a disclosure chevron.
+    private func sectionHeader(
+        _ label: String,
+        collapsed: Bool? = nil,
+        onToggle: (() -> Void)? = nil,
+        @ViewBuilder action: () -> some View
+    ) -> some View {
         HStack {
-            Text(label.uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.55))
+            if let collapsed, let onToggle {
+                Button(action: onToggle) {
+                    HStack(spacing: 3) {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(label.uppercased())
+                            .font(.system(size: 11, weight: .semibold))
+                            .tracking(0.7)
+                    }
+                    .foregroundStyle(.white.opacity(0.55))
+                    // A tap target the size of the header strip, not of the text.
+                    .frame(height: 28)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.section.\(label.lowercased())")
+                .accessibilityValue(collapsed ? "collapsed" : "expanded")
+            } else {
+                Text(label.uppercased())
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.7)
+                    .foregroundStyle(.white.opacity(0.55))
+            }
             Spacer()
             action()
         }
@@ -248,47 +449,100 @@ struct SidebarDrawer: View {
         .padding(.bottom, 3)
     }
 
+    /// The "+" that hangs off a section header. One helper so Channels and
+    /// Direct Messages can't drift apart in weight or tap target.
+    private func addButton(id: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+        .accessibilityLabel(label)
+    }
+
     // MARK: - Rows
 
     private func rowBackground(_ active: Bool) -> some View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
 
-    /// The always-present Activity feed row (phase 12) — a virtual, client-only
-    /// entry carrying the notification unread badge.
-    private var activityRow: some View {
+    /// The channel's own emoji (#396), drawn after its name. On macOS this slot
+    /// is shared with the activity spinner (#137) and needs a precedence rule;
+    /// iOS draws no spinner, so the emoji is its only tenant and simply shows
+    /// whenever the column is set. Read straight off the cached `Channel` row,
+    /// which is what makes it survive a relaunch.
+    @ViewBuilder
+    private func channelEmoji(_ channel: Channel) -> some View {
+        if let emoji = channel.emoji, !emoji.isEmpty {
+            Text(emoji)
+                .font(.system(size: 14))
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The Activity feed's bell (#385) — fixed in the drawer header rather than
+    /// sitting at the top of the channel list, so it can never scroll out of
+    /// view and the list holds only real channels. Carries the notification
+    /// unread badge and highlights while the feed is the open view.
+    private var activityBell: some View {
         let active = app.showActivity
         let unread = app.notificationUnread
         return Button {
             app.showActivityFeed()
             onSelect()
         } label: {
-            HStack(spacing: 9) {
-                Image(systemName: unread > 0 ? "bell.badge" : "bell")
-                    .font(.system(size: 15))
-                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.6))
-                    .frame(width: 18)
-                Text("Activity")
-                    .font(.system(size: 15, weight: active || unread > 0 ? .semibold : .regular))
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(unread > 0 ? 1 : 0.82))
-                Spacer(minLength: 0)
-                if unread > 0 { unreadBadge(min(unread, 99)) }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 9)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+            Image(systemName: "bell")
+                .font(.system(size: 16))
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 30, height: 28)
+                .background(rowBackground(active))
+                .overlay(alignment: .topTrailing) {
+                    if unread > 0 {
+                        unreadBadge(min(unread, 99))
+                            .offset(x: 6, y: -6)
+                    }
+                }
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Activity")
         .accessibilityIdentifier("sidebar.activity")
+        .accessibilityValue(unread > 0 ? "\(unread) unread" : "read")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// The Scheduled list's entry point (#424) — a clock beside the Activity
+    /// bell, since both open a workspace-wide view rather than a channel. No
+    /// badge: a scheduled message that fired is already a message in a
+    /// conversation, and that is where it should be noticed.
+    private var scheduledClock: some View {
+        let active = app.showScheduled
+        return Button {
+            app.showScheduledPanel()
+            onSelect()
+        } label: {
+            Image(systemName: "clock")
+                .font(.system(size: 16))
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 30, height: 28)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scheduled messages")
+        .accessibilityIdentifier("sidebar.scheduled")
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
-        let active = app.selectedChannelId == channel.id && !app.showActivity
+        let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
+            && !app.showDirectory
         return Button {
-            open(channel.id)
+            open(channel)
         } label: {
             HStack(spacing: 9) {
                 Group {
@@ -305,6 +559,7 @@ struct SidebarDrawer: View {
                     .font(.system(size: 15, weight: active || channel.unreadCount > 0 ? .semibold : .regular))
                     .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
                     .lineLimit(1)
+                channelEmoji(channel)
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
                         .font(.caption2)
@@ -321,6 +576,17 @@ struct SidebarDrawer: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Long-press: the channel context actions web + macOS hang off a
+        // right-click. Only "invite" so far — see the CHANGELOG Parity note.
+        .contextMenu {
+            Button {
+                inviteChannel = channel
+            } label: {
+                Label("Invite to Channel…", systemImage: "person.badge.plus")
+            }
+            .accessibilityIdentifier("sidebar.channel.invite")
+            .hiddenUnless(.channelManagement, in: app.capabilities)
+        }
         // Indent outside the background, so the pill insets with the row.
         .padding(.leading, isNested ? 12 : 0)
         .accessibilityElement(children: .combine)
@@ -332,18 +598,30 @@ struct SidebarDrawer: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
-    private func dmRow(_ channel: Channel) -> some View {
-        let title = channel.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
-        let active = app.selectedChannelId == channel.id && !app.showActivity
+    /// `label` overrides the resolved DM title — the Agents section (#361)
+    /// passes the agent's plain name, since a 🤖 badge under a header that
+    /// already says AGENTS is noise.
+    private func dmRow(_ channel: Channel, label: String? = nil) -> some View {
+        let title = label
+            ?? channel.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
+        let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
+            && !app.showDirectory
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { usersById[$0] }
         return Button {
-            open(channel.id)
+            open(channel)
         } label: {
             HStack(spacing: 9) {
-                if channel.kind == "dm" {
+                if channel.kind == "dm", app.can(.presence) {
                     // self-DM (no other member): online by definition
-                    presenceDot(online: otherId.map { app.presence[$0] == true } ?? true)
+                    presenceDot(online: otherId.map { app.isOnline($0, in: app.selectedWorkspaceId) } ?? true)
+                        .frame(width: 18)
+                } else if channel.kind == "dm" {
+                    // No presence from this provider (#546): a person glyph,
+                    // never a dot that would read as "offline".
+                    Image(systemName: "person")
+                        .font(.caption)
+                        .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
                         .frame(width: 18)
                 } else {
                     Image(systemName: "person.2")
@@ -358,6 +636,7 @@ struct SidebarDrawer: View {
                 if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
                     Text(emoji).font(.system(size: 15))
                 }
+                channelEmoji(channel)
                 if channel.notifyLevel == 0 {
                     Image(systemName: "bell.slash")
                         .font(.caption2)
@@ -381,6 +660,75 @@ struct SidebarDrawer: View {
             : channel.unreadCount > 0 ? "unread" : "read"
         )
         .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// The Directory entry under the Direct Messages header (#432) — the same
+    /// nav-item shape as a channel row, minus everything that belongs to a
+    /// conversation (unread badge, long-press menu). Selecting it closes the
+    /// drawer, like any other selection.
+    private var directoryRow: some View {
+        let active = app.showDirectory
+        return Button {
+            app.showDirectoryPanel()
+            onSelect()
+        } label: {
+            HStack(spacing: 9) {
+                Text("👥")
+                    .font(.system(size: 15))
+                    .opacity(active ? 0.7 : 0.6)
+                    .frame(width: 18)
+                Text("Directory")
+                    .font(.system(size: 15, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.82))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 9)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.directory")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// An agent with no DM yet (#361) — tapping creates one and opens it. Same
+    /// shape as a DM row minus the unread badge, which needs a channel to count.
+    private func agentRow(_ member: WorkspaceRosterEntry) -> some View {
+        let online = app.isOnline(member.userId, in: app.selectedWorkspaceId)
+        let status = usersById[member.userId]
+        return Button {
+            guard let wsId = app.selectedWorkspaceId else { return }
+            Task {
+                if let dm = try? await app.engine.createDm(workspaceId: wsId, userIds: [member.userId]) {
+                    open(dm.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 9) {
+                presenceDot(online: online)
+                    .frame(width: 18)
+                Text(member.displayName)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                if let emoji = status?.statusEmoji, !emoji.isEmpty {
+                    Text(emoji).font(.system(size: 15))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        // Same id shape as a real DM row, so an agent is targetable by name
+        // whether or not the conversation exists yet.
+        .accessibilityIdentifier("sidebar.dm.\(member.displayName)")
+        .accessibilityValue(online ? "online" : "offline")
     }
 
     /// A public channel you're not in yet: tapping Join enrolls and opens it,
@@ -430,6 +778,46 @@ struct SidebarDrawer: View {
         onSelect()
     }
 
+    /// Tapping a row in the list: same thing, except that a channel whose
+    /// oldest unread is a thread reply opens on that reply inside its thread
+    /// (#441). The id-only version above is for channels we just created or
+    /// joined, which have nothing unread to jump to.
+    private func open(_ channel: Channel) {
+        app.openChannelFromSidebar(channel)
+        onSelect()
+    }
+
+    /// Confirmed departure (#340): the engine leaves, clears the local mirror
+    /// and reports where to land; `workspaceBecameUnavailable` moves the
+    /// window. Closing the drawer afterwards puts the new workspace on screen.
+    private func leaveWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.leaveWorkspace(ws.id)
+                app.workspaceBecameUnavailable(ws.id, landOn: next)
+                onSelect()
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Confirmed deletion (#340 follow-up). Same landing as leaving — the
+    /// workspace is gone for us either way.
+    private func deleteWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.deleteWorkspace(ws.id)
+                app.workspaceBecameUnavailable(ws.id, landOn: next)
+                onSelect()
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
     private func join(_ channel: Channel) {
         Task {
             do {
@@ -438,6 +826,29 @@ struct SidebarDrawer: View {
             } catch {
                 app.showError(error.localizedDescription)
             }
+        }
+    }
+
+    private func reloadRoster() {
+        guard let wsId = app.selectedWorkspaceId else { return }
+        // Fetch the roster directly rather than waiting for `selectWorkspace`'s
+        // channels → members → artifacts chain to reach it. The workspace menu
+        // decides between Leave and Delete from this list, and a SwiftUI `Menu`
+        // snapshots its contents when it opens — so a roster that arrives late
+        // doesn't correct an already-open menu, it just makes the next one
+        // right (#340 follow-up).
+        Task { await app.engine.refreshMembers(workspaceId: wsId) }
+        roster.start(db: app.db, reset: []) { db in
+            try WorkspaceRosterEntry.fetchAll(
+                db,
+                sql: """
+                    SELECT m.userId AS userId, u.displayName AS displayName,
+                           u.isAgent AS isAgent, u.isBot AS isBot
+                    FROM member m JOIN user u ON u.id = m.userId
+                    WHERE m.workspaceId = ?
+                    """,
+                arguments: [wsId]
+            )
         }
     }
 
@@ -454,7 +865,8 @@ struct SidebarDrawer: View {
 
     private func defaultSelectionAndSelfDm(_ chans: [Channel]) {
         guard let wsId = app.selectedWorkspaceId, !chans.isEmpty else { return }
-        if app.selectedChannelId == nil && !app.showActivity {
+        if app.selectedChannelId == nil && !app.showActivity && !app.showScheduled
+            && !app.showDirectory {
             let target = chans.first { $0.isMember && $0.name == "general" }
                 ?? chans.first { $0.isMember && !$0.isDM }
             if let target { app.selectChannel(target.id) }
@@ -471,8 +883,62 @@ struct SidebarDrawer: View {
     }
 }
 
+/// The server line under the sidebar's workspace name (#563). Observes the
+/// connection manager rather than reading it once, so a label the switcher
+/// sheet changes — a rename, a discovery that canonicalizes the origin —
+/// shows up behind the sheet instead of at the next drawer open.
+private struct SidebarServerLabel: View {
+    @ObservedObject var connections: ConnectionManager
+    let connectionId: String
+
+    var body: some View {
+        Text(
+            connections.registry.connections
+                .first { $0.connectionId == connectionId }?.displayLabel ?? Server.displayName
+        )
+        .font(.system(size: 11))
+        .foregroundStyle(.white.opacity(0.55))
+        .lineLimit(1)
+        .accessibilityIdentifier("sidebar.serverLabel")
+    }
+}
+
 /// The 64px workspace rail (web/macOS design column 1): the active workspace's
 /// siblings as initial chips, plus a "+" that offers create/accept-invite.
+/// The workspace identity mark: its avatar image when one is set (#336),
+/// otherwise the initial on a color chip. Display-only on iOS — the avatar is
+/// managed from web/macOS. Active is a white fill for the initial mark and a
+/// white ring for an avatar, since an image can't be tinted.
+private struct WorkspaceMark: View {
+    let workspace: Workspace
+    let size: CGFloat
+    var cornerRadius: CGFloat = 12
+    var active: Bool = true
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        Group {
+            if let path = workspace.avatarUrl, path.hasPrefix("/v1/avatars/") {
+                AuthImage(path: path) { shape.fill(Color.white.opacity(0.15)) }
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(shape)
+                    .opacity(active ? 1 : 0.7)
+                    .overlay(active ? shape.strokeBorder(Color.white, lineWidth: 2) : nil)
+            } else {
+                shape
+                    .fill(active ? Color.white : Color.white.opacity(0.15))
+                    .frame(width: size, height: size)
+                    .overlay(
+                        Text(String(workspace.name.prefix(1)).uppercased())
+                            .font(.system(size: size * 0.4, weight: .heavy))
+                            .foregroundStyle(active ? MC.accent : .white)
+                    )
+            }
+        }
+    }
+}
+
 private struct WorkspaceRail: View {
     let workspaces: [Workspace]
     let palette: SidebarPalette
@@ -488,18 +954,20 @@ private struct WorkspaceRail: View {
                     Button {
                         if !active { app.selectWorkspace(ws.id) }
                     } label: {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(active ? Color.white : Color.white.opacity(0.15))
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                Text(String(ws.name.prefix(1)).uppercased())
-                                    .font(.system(size: 16, weight: .heavy))
-                                    .foregroundStyle(active ? MC.accent : .white)
-                            )
+                        WorkspaceMark(workspace: ws, size: 40, cornerRadius: 12, active: active)
+                            // Unread across this workspace's channels (#345) —
+                            // the overlay sits outside the mark's clip shape,
+                            // so it can overhang the corner as designed.
+                            .overlay(alignment: .topTrailing) {
+                                WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: palette.rail)
+                                    .offset(x: 7, y: -7)
+                                    .accessibilityIdentifier("rail.unread.\(ws.slug)")
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("rail.workspace.\(ws.slug)")
                     .accessibilityLabel(ws.name)
+                    .accessibilityValue((ws.unreadCount ?? 0) > 0 ? "\(ws.unreadCount!) unread" : "read")
                     .accessibilityAddTraits(active ? [.isSelected] : [])
                 }
                 Button(action: onAdd) {
@@ -518,6 +986,10 @@ private struct WorkspaceRail: View {
                 .accessibilityLabel("Add a workspace")
             }
             .padding(.vertical, 16)
+            // The scroll content is clipped to its own width, and the unread
+            // badge (#345) overhangs its icon — without this the content sizes
+            // to the 40pt marks and the badge loses its right-hand edge.
+            .frame(maxWidth: .infinity)
         }
         .frame(width: 64)
         .frame(maxHeight: .infinity)
@@ -589,9 +1061,11 @@ private struct DrawerStatusFooter: View {
         }
         .sheet(isPresented: $showAccount) { AccountSheet() }
         // QA: FLOW_DEBUG_OPEN_PROFILE=1 opens the account sheet on launch; the
-        // sheet then pushes My Profile itself.
+        // sheet then pushes My Profile itself. FLOW_DEBUG_OPEN_NOTIFICATIONS=1
+        // (#251) does the same for the notification prefs.
         .onAppear {
-            if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_PROFILE"] == "1" {
+            let env = ProcessInfo.processInfo.environment
+            if env["FLOW_DEBUG_OPEN_PROFILE"] == "1" || env["FLOW_DEBUG_OPEN_NOTIFICATIONS"] == "1" {
                 showAccount = true
             }
         }

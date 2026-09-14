@@ -207,18 +207,19 @@ all on) and `status_suppress_alerts` (boolean, set by DND-family statuses).
 | Sidebar badge = notifications | ✅ | ✅ | ✅ |
 | App badge | — | dock (needs the `.app` bundle; bare `swift run` is a no-op) | app icon |
 | OS banners | Notification API | `UNUserNotificationCenter`, honours `suppressAlert` | **none** — awaits APNs |
-| Preference UI | ✅ all toggles | ❌ Parity gap | ❌ Parity gap |
+| Preference UI | ✅ all toggles | ✅ in My Profile (#464) | ✅ Settings ▸ Notifications (#251) |
 | Push when the app isn't running | n/a | n/a | ❌ `PUSH_APNS.md` |
 
-The preference gaps are UI-only: the toggles are per-user and server-enforced,
-so setting them on web already silences banners on macOS.
+Prefs are per-user and server-enforced, so all three clients read and write the
+same object: a flip on any one of them silences the other two. The one key that
+isn't universal is `persistentBanners` — web-only, because on macOS and iOS
+whether an alert stays on screen is an OS setting no app can override. It
+round-trips untouched through the native clients rather than being dropped.
 
 ## Open threads
 
 - **iOS APNs** — the last real gap. `PUSH_APNS.md` has the design; phase 1 of
   it needs no Apple account.
-- **Notification settings on macOS and iOS** — the toggles exist and work;
-  neither native client can show them yet.
 - **`scenePhase` is an approximation.** A macOS window that is frontmost but
   fully covered still reports `.active`, so we may treat a hidden-behind-another
   -window channel as seen. The same approximation the web makes with

@@ -8,7 +8,8 @@ image loader. Only the touch UI is new; the whole data/sync stack is reused.
 **Status: daily-driver parity (phase 7).** Sign-in → workspace switch →
 channel & DM list → messaging with rich markdown, mention pills, reactions,
 long-press actions (edit/delete/react/reply), threads (pushed screen),
-typing indicators, attachments (render + upload: photo library / Files /
+typing indicators, ongoing huddle-style calls with one-to-one agents,
+attachments (render + upload: photo library / Files /
 camera, QuickLook previews, lightbox), and an unread app-icon badge. The one
 remaining gap is push notifications (deferred; see CHANGELOG Parity).
 
@@ -99,6 +100,9 @@ Drive the simulator without a UI text-input tool via environment variables
 | `FLOW_DEBUG_EMAIL` / `FLOW_DEBUG_PASSWORD` | auto sign-in once bootstrap resolves |
 | `FLOW_DEBUG_OPEN_CHANNEL=<name>` | auto-push that channel |
 | `FLOW_DEBUG_SEND=<text>` | post one message via the composer's engine path |
+| `FLOW_DEBUG_AGENT_CALL_TRANSCRIPT=<text>` | inject recognized speech without simulator microphone input |
+| `FLOW_DEBUG_AGENT_CALL_HOLD_TRANSCRIPT=1` | keep injected speech as a live caption instead of auto-sending |
+| `FLOW_DEBUG_AGENT_CALL_REPLY=<text>` | speak a synthetic reply after a debug voice turn sends |
 
 Additional hooks (react / edit / delete / thread-reply / open-thread /
 upload) are listed in `docs/design/IOS.md`.

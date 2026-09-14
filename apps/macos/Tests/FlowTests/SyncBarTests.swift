@@ -1,3 +1,4 @@
+import Clocks
 import XCTest
 
 @testable import Flow
@@ -36,53 +37,62 @@ final class SyncBarTests: XCTestCase {
 
     // MARK: - Timing
 
-    /// 40ms/120ms stands in for the shipped 250ms/500ms — the same state
-    /// machine, without a slow test.
+    // Driven by a TestClock, so these test the SHIPPED 250ms/500ms numbers
+    // and cannot flake on a slow runner: time only moves when advanced.
+
     @MainActor
-    private func indicator() -> SyncIndicator {
-        SyncIndicator(showDelay: .milliseconds(40), minimumVisible: .milliseconds(120))
+    private func indicator(_ clock: TestClock<Duration>) -> SyncIndicator<TestClock<Duration>> {
+        SyncIndicator(clock: clock)
     }
 
     @MainActor
     func testShortReconnectNeverDrawsAnything() async throws {
-        let ind = indicator()
+        let clock = TestClock()
+        let ind = indicator(clock)
         ind.update(syncing: true)
-        try await Task.sleep(for: .milliseconds(15))
+        await clock.advance(by: .milliseconds(100))
         ind.update(syncing: false)
-        try await Task.sleep(for: .milliseconds(80))
+        await clock.advance(by: .seconds(10))
         XCTAssertFalse(ind.visible, "resolved inside the show delay — no flash")
     }
 
     @MainActor
     func testLongerReconnectShowsTheBar() async throws {
-        let ind = indicator()
+        let clock = TestClock()
+        let ind = indicator(clock)
         ind.update(syncing: true)
         XCTAssertFalse(ind.visible, "not immediately")
-        try await Task.sleep(for: .milliseconds(90))
+        await clock.advance(by: .milliseconds(249))
+        XCTAssertFalse(ind.visible, "not before the show delay")
+        await clock.advance(by: .milliseconds(1))
         XCTAssertTrue(ind.visible)
     }
 
     @MainActor
     func testShownBarStaysForTheMinimumDuration() async throws {
-        let ind = indicator()
+        let clock = TestClock()
+        let ind = indicator(clock)
         ind.update(syncing: true)
-        try await Task.sleep(for: .milliseconds(60))
+        await clock.advance(by: .milliseconds(250))
         XCTAssertTrue(ind.visible)
-        ind.update(syncing: false)  // ~20ms after it appeared
-        try await Task.sleep(for: .milliseconds(40))
+        await clock.advance(by: .milliseconds(100))
+        ind.update(syncing: false)  // 100ms after it appeared
+        await clock.advance(by: .milliseconds(399))
         XCTAssertTrue(ind.visible, "held to the minimum instead of flashing")
-        try await Task.sleep(for: .milliseconds(140))
-        XCTAssertFalse(ind.visible)
+        await clock.advance(by: .milliseconds(1))
+        XCTAssertFalse(ind.visible, "hidden the moment the minimum is served")
     }
 
     @MainActor
     func testResyncingWhileVisibleCancelsThePendingHide() async throws {
-        let ind = indicator()
+        let clock = TestClock()
+        let ind = indicator(clock)
         ind.update(syncing: true)
-        try await Task.sleep(for: .milliseconds(60))
+        await clock.advance(by: .milliseconds(250))
+        XCTAssertTrue(ind.visible)
         ind.update(syncing: false)
         ind.update(syncing: true)  // dropped again straight away
-        try await Task.sleep(for: .milliseconds(200))
+        await clock.advance(by: .seconds(10))
         XCTAssertTrue(ind.visible, "still syncing — the hide must not land")
     }
 }

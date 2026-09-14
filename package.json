@@ -16,6 +16,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "dev": "pnpm --filter @flow/server dev"
+    "dev": "pnpm --filter @flow/server dev",
+    "qa:up": "node scripts/qa-up.mjs",
+    "qa:down": "node scripts/qa-down.mjs"
   }
 }

@@ -134,6 +134,20 @@ interface (`send({to, subject, text})`) in `packages/server/src/email/index.ts`,
 deliberately kept to one method so adding SES/Postmark/SMTP is a contained
 change. See §5 for how to bootstrap without any email at all.
 
+### Push notifications (iOS)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FLOW_PUSH_DRIVER` | `dev` | `dev` writes each push to `packages/server/.push/*.json` and logs it. `apns` sends for real — not implemented yet. |
+| `FLOW_APNS_KEY` | — | base64 of the `.p8` APNs Auth Key |
+| `FLOW_APNS_KEY_ID` | — | 10-char key id naming that `.p8` |
+| `FLOW_APNS_TEAM_ID` | — | Apple Developer team id |
+| `FLOW_APNS_TOPIC` | `im.freeflow.app` | APNs topic — the app's bundle id. A device that registered under a different bundle id wins over this. |
+| `FLOW_APNS_ENV` | `sandbox` | Fallback APNs environment; the per-device `environment` wins over it. TestFlight builds are `production`. |
+
+The dev driver's files are exactly what `xcrun simctl push <device> <file>`
+takes, so you can replay any push into a simulator without an Apple account.
+
 ### Sign in with Google (optional)
 
 | Variable | Purpose |

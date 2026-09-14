@@ -1,7 +1,8 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Initials-on-color avatar chips (design 3a) with real-image fallback, and the
 // bearer-auth <img> helper shared by attachments and profile views.
 import { useEffect, useState } from 'react';
-import { blobUrl } from '../lib/api';
+import { blobUrl, cachedBlobUrl } from '../lib/api';
 
 /* Design 3a avatar palette (bg / text), extended with two matching pairs. */
 const PALETTE: [string, string][] = [
@@ -73,12 +74,46 @@ export function AuthImg({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const { blobUrl, cachedBlobUrl } = useBoundApi();
+  const [url, setUrl] = useState<string | null>(() => cachedBlobUrl(path) ?? null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
-    void blobUrl(path).then((u) => { if (alive) setUrl(u); }).catch(() => {});
+    setFailed(false);
+    // An absolute URL is another origin's public image (a Slack avatar): hand
+    // it to the element as-is. The authenticated blob path is for our backend
+    // only — it must never carry a bearer to a foreign origin.
+    if (/^https?:\/\//.test(path)) { setUrl(path); return; }
+    const cached = cachedBlobUrl(path);
+    if (cached) { setUrl(cached); return; }
+    setUrl(null);
+    void blobUrl(path)
+      .then((u) => { if (alive) setUrl(u); })
+      .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, [path]);
-  if (!url) return <span className={`inline-block animate-pulse rounded-lg bg-daypill ${className ?? ''}`} style={style} />;
-  return <img src={url} alt={alt} className={className} style={style} />;
+  if (failed) {
+    return (
+      <span
+        role="img"
+        aria-label={`${alt || 'Image'} unavailable`}
+        title={`${alt || 'Image'} unavailable`}
+        className={`inline-flex items-center justify-center rounded-lg bg-daypill text-faint ${className ?? ''}`}
+        style={style}
+      >
+        !
+      </span>
+    );
+  }
+  if (!url) {
+    return (
+      <span
+        role="status"
+        aria-label={`Loading ${alt || 'image'}`}
+        className={`inline-block animate-pulse rounded-lg bg-daypill ${className ?? ''}`}
+        style={style}
+      />
+    );
+  }
+  return <img src={url} alt={alt} className={className} style={style} onError={() => setFailed(true)} />;
 }

@@ -8,6 +8,9 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift.git
     from: 7.0.0
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift.git
+    from: 2.0.0
 targets:
   Flow:
     type: application
@@ -25,6 +28,7 @@ targets:
       - path: ../macos/Sources/Flow/Database
       - path: ../macos/Sources/Flow/Sync
       - path: ../macos/Sources/Flow/App/AppState.swift
+      - path: ../macos/Sources/Flow/App/ConnectionManager.swift
       - path: ../macos/Sources/Flow/App/WindowState.swift
       - path: ../macos/Sources/Flow/Support
         # Updater.swift is Sparkle (macOS-only auto-update); iOS ships through
@@ -33,6 +37,10 @@ targets:
         excludes: [Banners.swift, Updater.swift]
     dependencies:
       - package: GRDB
+      # Voice huddle (Phase 1). XcodeGen/SPM auto-embeds its XCFrameworks —
+      # unlike the macOS SwiftPM executable, no make-app.sh-style manual
+      # embedding/signing needed here.
+      - package: LiveKit
       # Embeds FlowShare.appex in the app's PlugIns folder. A share extension
       # is only installed as part of its host app.
       - target: FlowShare
@@ -66,6 +74,12 @@ targets:
       path: Sources/Flow.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # APNs (#249). Xcode expands build settings inside the entitlements
+        # file at signing time, so one committed file serves both environments:
+        # Debug talks to the APNs sandbox, Release — TestFlight and the App
+        # Store, which both use production APNs — talks to production. Hard-
+        # coding either is the classic first-deploy trap.
+        aps-environment: $(APS_ENVIRONMENT)
         # Shared with the share extension. The group is the app's own id, so
         # tokens already written by the app are inside it and no migration is
         # needed (issue #214, failure mode 1).
@@ -80,7 +94,7 @@ targets:
         # Version + build come from the MARKETING_VERSION / CURRENT_PROJECT_VERSION
         # build settings below. Without these, XcodeGen writes literal "1.0"/"1"
         # into the plist, which override the settings and pin every archive to
-        # 1.0 (1) — bump CURRENT_PROJECT_VERSION per TestFlight upload.
+        # 1.0 (1).
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
@@ -92,7 +106,19 @@ targets:
             CFBundleURLSchemes: [flow]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSCameraUsageDescription: Take a photo to share in the conversation.
+        # Two uses now: a photo for the composer, and video in a huddle (#435).
+        NSCameraUsageDescription: Take a photo to share, or turn on your camera in a huddle.
+        # Huddles and ongoing one-to-one agent calls.
+        NSMicrophoneUsageDescription: Flow needs microphone access to let you talk in a huddle or agent call.
+        NSSpeechRecognitionUsageDescription: Flow turns speech into messages during an agent call.
+        # An ambient huddle has to survive backgrounding/lock-screen, not just
+        # in-app navigation (decision log 2026-08-20), or it fails the "feels
+        # like a real call" bar the moment you switch apps.
+        # `audio` for the huddle; `remote-notification` for the silent
+        # badge-sync push (#248) — without it iOS never hands a
+        # `content-available` push to didReceiveRemoteNotification, so reading
+        # a mention on the laptop would leave the phone's badge stale.
+        UIBackgroundModes: [audio, remote-notification]
         ITSAppUsesNonExemptEncryption: false
         # Allow cleartext HTTP only to loopback/.local (dev server); prod
         # (app.freeflow.im) stays HTTPS-enforced under ATS.
@@ -102,8 +128,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app
         DEVELOPMENT_TEAM: RP5QYMYA4Z # App Store signing team (clean 2026-07 account)
-        MARKETING_VERSION: "2.0"
-        CURRENT_PROJECT_VERSION: "27"
+        MARKETING_VERSION: "2.2"
+        # Fallback only. Releases derive the build number from the commit
+        # count and pass it to xcodebuild, which outranks this — see
+        # apps/ios/tools/release-ios.sh. Do not bump this per upload.
+        CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -111,6 +140,14 @@ targets:
         # Capabilities, or via DEVELOPMENT_TEAM). Simulator CLI builds pass
         # CODE_SIGNING_ALLOWED=NO on the xcodebuild invocation instead, so the
         # committed project stays device-ready by default.
+      # Expanded into `aps-environment` in the entitlements above. Archives use
+      # the Release config, and TestFlight builds talk to *production* APNs
+      # despite not being on the store yet.
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production
 
   # Share extension (issue #214). Its own process, its own bundle and its own
   # App ID — hence the duplicated entitlements and the FlowServerURL below.
@@ -127,6 +164,21 @@ targets:
       - path: ../macos/Sources/Flow/Support/Server.swift
       - path: ../macos/Sources/Flow/Support/Profile.swift
       - path: ../macos/Sources/Flow/Support/Keychain.swift
+      # APIClient decides what may carry the bearer by canonical origin (#540).
+      # BuildInfo comes with it for the HTTP-loopback development allowance.
+      # The share extension resolves the selected connection from the app group.
+      - path: ../macos/Sources/Flow/Support/ServerConnection.swift
+      # The registry's Slack identity rules (#545), model-free on purpose.
+      - path: ../macos/Sources/Flow/Support/SlackIdentity.swift
+      # Sharing text into a Slack team sends through the connector (#546):
+      # the contract, the Slack adapter, and the emoji table it references.
+      - path: ../macos/Sources/Flow/Support/WorkspaceBackend.swift
+      - path: ../macos/Sources/Flow/Support/SlackBackend.swift
+      - path: ../macos/Sources/Flow/Support/EmojiShortcodes.swift
+      - path: ../macos/Sources/Flow/Support/ConnectionStore.swift
+      - path: ../macos/Sources/Flow/Support/StorageScope.swift
+      - path: ../macos/Sources/Flow/Support/CanonicalOrigin.swift
+      - path: ../macos/Sources/Flow/Support/BuildInfo.swift
       - path: ../macos/Sources/Flow/Support/ImagePrep.swift
       - path: ../macos/Sources/Flow/Support/ISO8601.swift
       - path: ../macos/Sources/Flow/Support/UUIDv7.swift
@@ -191,10 +243,56 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.share
         DEVELOPMENT_TEAM: RP5QYMYA4Z
-        MARKETING_VERSION: "2.0"
-        CURRENT_PROJECT_VERSION: "27"
+        MARKETING_VERSION: "2.2"
+        # Fallback only. Releases derive the build number from the commit
+        # count and pass it to xcodebuild, which outranks this — see
+        # apps/ios/tools/release-ios.sh. Do not bump this per upload.
+        CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
+
+  # Unit tests, hosted in the app (issue #380). Deliberately *not* a second
+  # copy of the macOS suite: it compiles selected shared test files against the
+  # very same shared sources, so cross-client rules (app guards, tokens, message
+  # deletion permissions) cannot pass on macOS and quietly rot on iOS. Run it
+  # with `xcodebuild test -scheme Flow`; it needs no server or fixtures, unlike
+  # FlowUITests below.
+  FlowUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests
+      - path: ../macos/Tests/FlowTests/MiniAppTests.swift
+      - path: ../macos/Tests/FlowTests/AppTokenTests.swift
+      - path: ../macos/Tests/FlowTests/MessageDeletePolicyTests.swift
+      - path: ../macos/Tests/FlowTests/ScheduleEditorTests.swift
+      - path: ../macos/Tests/FlowTests/ChannelEmojiTests.swift
+      # Shared-layer rule iOS now depends on (#441): the sidebar tap decides
+      # here whether to jump into a thread, on both clients.
+      - path: ../macos/Tests/FlowTests/SidebarThreadJumpTests.swift
+      # The APNs payload contract and the foreground-banner rule (#249) — the
+      # rule is iOS's alone, so this is the suite that must keep it honest.
+      - path: ../macos/Tests/FlowTests/PushPayloadTests.swift
+      # The Directory's search, labels and privacy-mode exclusion (#432/#490).
+      # One rule, two clients: iOS runs the same suite so a drift shows up on
+      # whichever platform is built first.
+      - path: ../macos/Tests/FlowTests/DirectoryTests.swift
+      # The Slack backend's decoding, capability wording, rate-limit handling
+      # and registry identity rules (#545) — one adapter, both clients.
+      - path: ../macos/Tests/FlowTests/SlackBackendTests.swift
+      - path: ../macos/Tests/FlowTests/SlackRuntimeTests.swift
+    dependencies:
+      - target: Flow
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: im.freeflow.app.unittests
+        DEVELOPMENT_TEAM: RP5QYMYA4Z
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Flow.app/Flow
+        BUNDLE_LOADER: $(TEST_HOST)
 
   # XCUITest target: taps happen inside the simulator, so iOS UI checks don't
   # need the operator's desktop the way the macOS AX harness does. Runs against
@@ -221,9 +319,10 @@ schemes:
     build:
       targets:
         Flow: all
+        FlowUnitTests: [test]
         FlowUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
-      targets: [FlowUITests]
+      targets: [FlowUnitTests, FlowUITests]

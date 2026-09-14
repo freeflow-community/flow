@@ -2,14 +2,115 @@ import AppKit
 import SwiftUI
 
 struct RootView: View {
+    let initial: AppState
+    @State private var selected: AppState?
+    @State private var showConnections = false
+    @State private var incomingAddress = ""
+    @State private var workspace: String?
+    @State private var notificationTarget: NavigationTarget?
+    /// This window's identity, so the manager can tell which connection each
+    /// window is showing — and which one a window stopped showing (#542).
+    @State private var windowId = UUID()
+    init(app: AppState) { initial = app }
+    private var active: AppState { selected ?? initial }
+
+    /// Tell the manager this window is now showing `app`'s connection.
+    private func showing(_ app: AppState) {
+        app.connections.noteShowing(app.connectionId, window: windowId)
+    }
+    var body: some View {
+        SessionRootView(app: active, workspaceId: workspace, notification: notificationTarget)
+            .environmentObject(active)
+            // The way into the workspace/server switcher (#566). The sheet stays
+            // here, where the window's selection lives; the control moved into
+            // the sidebar's workspace menu, so nothing floats over the composer
+            // any more — the same move iOS (#563) and web (#565) already made.
+            .environment(\.openConnections, OpenConnectionsAction { showConnections = true })
+            .id("\(active.connectionId):\(workspace ?? ""):\(notificationTarget?.messageId ?? "")")
+            // Every connected server syncs while the app runs, not just the one
+            // this window shows (#542). Bounded and idempotent, so a second
+            // window calling it again costs nothing.
+            .task { active.connections.startBackgroundSync() }
+            // Which server this window is looking at. A connection nobody is
+            // showing must not suppress its own banners or mark its channel
+            // read — its `WindowState` outlives the switch (#542). Recorded on
+            // appearance *and* at every site that changes `selected`, because
+            // the two have to agree before the first event arrives.
+            .onAppear { showing(active) }
+            .background(WindowKeyObserver {
+                active.connections.presentNotification = { app, target in
+                    selected = app
+                    workspace = target.workspaceId
+                    notificationTarget = target
+                    showing(app)
+                }
+            })
+            .overlay(alignment: .topTrailing) {
+                if let owner = AppState.joinedHuddleOwner, owner !== active {
+                    Button("Return to huddle on \(URL(string: owner.serverOrigin)?.host ?? "server")") {
+                        selected = owner
+                        workspace = owner.activeHuddleWorkspaceId
+                        showing(owner)
+                    }.padding(8)
+                }
+            }
+            .onOpenURL { url in
+                if url.scheme == "https" || url.scheme == "http" {
+                    incomingAddress = url.absoluteString
+                    showConnections = true
+                } else { active.handleDeepLink(url) }
+            }
+            .sheet(isPresented: $showConnections) {
+                ServerConnectionsView(current: active, initialAddress: incomingAddress) { app, workspaceId in
+                    if let workspaceId { UserDefaults.standard.set(workspaceId, forKey: app.sessionScope.key("activeWorkspaceId")) }
+                    notificationTarget = nil
+                    workspace = workspaceId
+                    selected = app
+                    showing(app)
+                }
+            }
+    }
+}
+
+/// Opens the workspace/server switcher (#566). Published by `RootView`, which
+/// owns the sheet, so the sidebar menu — or a screen with no sidebar at all —
+/// can raise it without a button floating over the conversation.
+struct OpenConnectionsAction: Sendable {
+    private let open: @MainActor @Sendable () -> Void
+
+    init(_ open: @escaping @MainActor @Sendable () -> Void) { self.open = open }
+
+    @MainActor func callAsFunction() { open() }
+}
+
+private struct OpenConnectionsKey: EnvironmentKey {
+    /// No-op above the root, so a preview or a detached host renders rather
+    /// than trapping — the same shape the confetti controller uses.
+    static let defaultValue = OpenConnectionsAction {}
+}
+
+extension EnvironmentValues {
+    var openConnections: OpenConnectionsAction {
+        get { self[OpenConnectionsKey.self] }
+        set { self[OpenConnectionsKey.self] = newValue }
+    }
+}
+
+private struct SessionRootView: View {
     @EnvironmentObject private var app: AppState
     /// This window's own selection state (workspace/channel/thread/…) — a
     /// `@StateObject` here is per window, unlike one on the `App` struct,
     /// which is what used to make every window mirror the same selection.
     @StateObject private var win: WindowState
 
-    init(app: AppState) {
-        _win = StateObject(wrappedValue: WindowState(app: app))
+    init(app: AppState, workspaceId: String?, notification: NavigationTarget?) {
+        let window = WindowState(app: app)
+        if let workspaceId { window.selectWorkspace(workspaceId) }
+        if let notification, let channel = notification.channelId, let message = notification.messageId {
+            window.openNotification(workspaceId: notification.workspaceId, channelId: channel,
+                                    messageId: message, threadRootId: notification.threadRootId)
+        }
+        _win = StateObject(wrappedValue: window)
     }
 
     var body: some View {
@@ -30,12 +131,14 @@ struct RootView: View {
             }
         }
         .environmentObject(win)
+        // Confetti overlay for 🎉 reactions (#524). Per window, so a burst
+        // lands in the window whose pill was reacted to and nowhere else.
+        .confettiHost()
+        .debugAutoLogin(app)
         // Banner taps and accepted invites navigate the key window — tell the
         // shared state which one that is.
         .background(WindowKeyObserver { app.noteKeyWindow(win) })
-        .onOpenURL { url in
-            app.handleDeepLink(url)
-        }
+
         .alert(
             "Error",
             isPresented: Binding(
@@ -46,6 +149,44 @@ struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(app.errorMessage ?? "")
+        }
+        // Voice huddle (Phase 1): unmuting with no OS mic permission. Its own
+        // alert (not the generic one above) because this is the one place an
+        // action button — jumping straight to the Microphone privacy pane —
+        // actually helps.
+        .alert(
+            "Microphone Access Needed",
+            isPresented: $app.micPermissionBlocked
+        ) {
+            Button("Open Settings") { app.openMicrophoneSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Flow needs microphone access to talk in a huddle. Enable it in System Settings → Privacy & Security → Microphone.")
+        }
+        // Same shape for the camera (#435) — a separate OS grant, a separate
+        // pane, and the same reason for its own alert: "Open Settings" is the
+        // only useful thing to offer.
+        .alert(
+            "Camera Access Needed",
+            isPresented: $app.cameraPermissionBlocked
+        ) {
+            Button("Open Settings") { app.openCameraSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Flow needs camera access to turn on video in a huddle. Enable it in System Settings → Privacy & Security → Camera.")
+        }
+        // Screen Recording refused, or never granted. ScreenCaptureKit answers
+        // an ungranted app with an empty source list rather than an error, so
+        // this covers both "denied" and "never asked" — and both are fixed in
+        // the same pane.
+        .alert(
+            "Screen Recording Access Needed",
+            isPresented: $app.screenPermissionBlocked
+        ) {
+            Button("Open Settings") { app.openScreenRecordingSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Flow needs Screen Recording access to share a window or screen. Enable it in System Settings → Privacy & Security → Screen Recording, then reopen Flow.")
         }
     }
 }
@@ -84,7 +225,12 @@ private struct WindowKeyObserver: NSViewRepresentable {
             observer = NotificationCenter.default.addObserver(
                 forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
             ) { [weak self] _ in
-                self?.onKey?()
+                // Delivery is pinned to the main queue above, but
+                // NotificationCenter's callback is `@Sendable`; make that
+                // runtime guarantee explicit to Swift 6's actor checker.
+                MainActor.assumeIsolated {
+                    self?.onKey?()
+                }
             }
         }
     }

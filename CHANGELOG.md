@@ -12,12 +12,130 @@ This file keeps two things:
 
 ## Parity
 
+- Slack chat (#545, #546) is on web, macOS and iOS: Connect Slack, channels, DMs, limited history, threads, send/edit/delete, live updates, capability gating. Two deliberate platform constraints remain: **Slack alerts reach a client only while it is open** on every platform (no connector→push route exists; design recorded in `docs/dev/SLACK_CONNECTOR.md`), and **the iOS share extension sends text only** to a Slack team (file upload needs a scope the app is not granted). The agent bridge has no Slack backend, by design: it speaks to one Flow server per process.
+- Multi-server huddles (#541): web leaves the room when switching server; native keeps it running with a return control. Both limit the client to one joined room.
+- Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
+
 ### Gaps to close
 - iOS renders a markdown **attachment** in a pushed sheet, not inline: web and
   macOS show the rendered document in the message stream (#569). Follows from
   iOS having no inline text-preview cards at all — every non-image attachment is
   a chip that opens a viewer — so closing this means giving iOS inline cards,
   not porting the markdown work. The artifact viewer is at parity on all three.
+- **The aggregate switcher badge has no bridge equivalent** (#542). The agent
+  bridge speaks to one backend per process, so "how much is waiting on your
+  other servers" has no meaning there yet. Closing it needs a bridge-side
+  connection registry, which no ticket asks for.
+- **A mid-session 401 signs you out on macOS + iOS, but not on web** (#540, which
+  built the mechanism on all three). Both native clients tear the session down
+  and drop to the sign-in screen; web now records the connection as
+  `unauthorized` in the registry but leaves the UI signed in, reading from its
+  caches until the next failure surfaces in a component. The auth-generation
+  guard that makes a *stale* 401 harmless is in all three. Closing it is a
+  handler in `packages/web/src/App.tsx` that runs the existing `signOut`
+  teardown — deliberately out of scope here, because #540's own acceptance
+  criteria required no behaviour change on upgrade.
+- **The lightened mention highlight is macOS + iOS only** (#531, which scoped
+  web out). Both native clients now draw an in-message mention as accent text
+  on a 10% accent wash (20% for a mention of you); `packages/web`'s
+  `renderBody` still paints `bg-accent/15 font-semibold` and a solid
+  `bg-accent` block for the strong case. Closing it is two class strings in
+  `packages/web/src/lib/format.tsx`.
+- **Sending a message never re-pins the scroll on web** (#494, which scoped
+  itself to the native clients). Both native clients follow *my own* send back
+  to the end however far up I was reading; web's `MessageList` pins on
+  proximity to the bottom only, so a back-scrolled sender — in a channel or in
+  the thread panel over the same component — watches their own message land off
+  screen. Closing it is one own-message check where `pinnedRef` is set.
+- **In-channel search has a different shape on each client, and one real gap**
+  (#518 built the find bar on web + macOS, #570 the iOS half). All three share
+  the matching model (`ChatSearch` in Swift, `chatSearch.ts` on web), so a hit
+  means the same thing everywhere. What differs is deliberate: web and macOS
+  step a ⌘F cursor through highlights in place, iOS lists matching messages and
+  taps through to one — a phone has no ⌘G and no room for a counter. The gap is
+  scope: the desktop bars search only the *loaded* transcript, while iOS
+  searches the channel's whole cached history and can page in more. Closing it
+  means pointing the desktop bars at the same cached-history query.
+- **Ongoing agent calls are iOS-only.** One-to-one agent DMs on iPhone can
+  listen, send each pause as a normal message, speak the answer and minimize
+  into a persistent call bar. Web and macOS keep text agent conversations.
+- **Screen-share audio is Chromium-web only** (#435). The web client asks for
+  it (`getDisplayMedia({ audio: true })`) and Chromium supplies tab audio;
+  Firefox/Safari ignore the flag and share silently, which is the intended
+  degradation. **macOS and iOS share silently too** — LiveKit's Swift
+  `setScreenShare` publishes video only, and macOS system-audio capture needs a
+  separate ScreenCaptureKit audio stream. Closing the macOS half is that
+  stream published as a second track; iOS cannot close it without a Broadcast
+  Upload Extension.
+- **iOS can view any screen share but only publishes Flow's own content**
+  (#435, deliberate for this PR). Full-screen capture on iOS requires a
+  Broadcast Upload Extension — a separate target, its own entitlement and an
+  App Group — which the issue explicitly deferred. Web and macOS publish
+  whatever the picker chose.
+- **The ring is in-app only, on every client** (#436, Track A). It reaches a
+  live socket, so a closed tab or a backgrounded iPhone is treated as
+  unavailable and the call is missed instantly. Closing this is Track B
+  (APNs/PushKit/CallKit, Web Push/VAPID) — a separate feature, not a client
+  gap: no client can close it alone.
+- Push notifications name their conversation on the phone only (#460). The
+  APNs alert carries a `subtitle` row (`#channel`, or the members for a DM),
+  but the **macOS** banner is built locally in `Banners.swift` from the WS
+  event and still sets title + body only — closing the gap is one
+  `content.subtitle` there off the channel it already has in hand. **Web**
+  cannot close it: the browser Notification API has no third row, so its
+  equivalent would be folding the channel into the title.
+- **Apps section in the left nav** (#394) landed on web and macOS only; iOS was
+  explicitly out of scope for the issue. The server query
+  (`GET /v1/workspaces/:id/app-artifacts`) is client-agnostic and complete, so
+  closing the gap is an iOS sidebar section over it plus the join-then-open tap
+  — the same shape as `AppsSection` on macOS.
+- Built-in **help docs** (#383) ship on web and macOS (#384); **iOS has no help
+  viewer**. The content and the API are client-agnostic (`docs/help/*.md` behind
+  `GET /v1/help/topics` and `/v1/help/pages/:slug`), so closing the gap is one
+  more viewer — the macOS one is ~200 lines over `MarkdownBlocks`, which iOS
+  already compiles. Web also hides help below the `md` breakpoint, so a
+  phone-width browser window has no way in.
+- Mini apps in a **frame** don't work in Safari, on any client. The #371 spike
+  measured it: WebKit neither stores the guard's `SameSite=None` cookie in a
+  frame nor sends one already established first-party, and the guard's 302 to
+  the clean url drops the token — so re-minting per load can't help either. Web
+  routes Safari to a new tab, which works. Closing the gap needs a guard-side
+  change (bridge): keep the session in a url the guard controls, or have the 401
+  page call `requestStorageAccess()`.
+  **The native clients are not affected** — #372 (macOS panel `WKWebView`) and
+  #373 (iOS in-app `WKWebView` and mobile Safari) each re-ran the spike and both
+  pass: the app loads as a *top-level* document, so the guard's cookie is
+  first-party and ITP has nothing to block (document, subresource and XHR all
+  authenticated). The limitation is iframe-specific, not WebKit-wide.
+- **Chat polish** (#387) landed on web and macOS only; iOS was out of scope for
+  the issue. The white chat background is an `MC.chat` token macOS uses and iOS
+  does not, and the message-body rhythm (1.5 line-height, block/list spacing,
+  `list-disc`-sized bullets) plus the inline-code chip live in the macOS
+  `MessageListView` and behind `MentionRendering.attributed(codeChips:)`, which
+  defaults off. Closing the gap is adopting both in the iOS message list.
+- **Invite to workspace** on the profile popup (#358) landed on web and macOS
+  only; iOS was explicitly out of scope for the batch. The server side (#357
+  agents, #359 people) is client-agnostic and complete, so closing this is a
+  `MemberProfileSheet` equivalent plus Accept/Decline cards on the iOS
+  workspace switcher — the same two views the other clients grew. Until then an
+  iOS-only user can be invited but cannot accept in the app.
+- The channel Files list (#347/#348) shows a video's first frame on web only.
+  The browser can paint one from the presigned stream URL for free; macOS and
+  iOS render a play badge on a tinted block instead, because AVFoundation would
+  have to decode a frame to produce the same thing. The duration badge itself
+  is on all three. Closing this means either a server-side video thumbnail
+  (needs a decoder the server doesn't have) or a one-frame AVAssetImageGenerator
+  pass on the native clients.
+- Jump-to-message does not land in a transcript deep enough to need paging
+  (#332): with the target more than one 100-row window back, `ChannelScreen`
+  widens the window and the centring scroll still leaves the row off screen.
+  Shallower jumps, and jumps inside a thread, land on every client. macOS pages
+  differently (no window) and is unaffected; web is unaffected.
+- Clearing a channel's Activity unreads on open without waiting for the server
+  (#227) landed on macOS and iOS only. Web still leaves the badge up until the
+  `notification.read` round trip returns; the fix is an optimistic cache write
+  in `useMarkRead`/`ChannelView`, and web's `markRead` is gated behind the
+  message query in the same way the native one was.
 - "Share to Flow" from the system share sheet is iOS-only (#214, extended to
   videos and documents in #219). macOS supports
   share extensions too and the extension's logic is platform-agnostic
@@ -59,37 +177,20 @@ This file keeps two things:
   Google/password. `/v1/auth/apple` is client-agnostic; macOS can use the same
   native ASAuthorization flow, web needs Apple's JS flow (Services ID +
   redirect setup — more than a pure port).
-- iOS: no join-link management (#85). Web + macOS can create/copy/regenerate/
-  revoke the workspace's persistent join link from the invite surface; iOS has
-  no invite surface at all to hang it on. Server API is done and client-agnostic
-  (`/v1/workspaces/:id/join-link`), so this is a pure client port. Following a
-  join link still works on iOS — it opens the web app, which redeems it.
 - iOS: optimistic-send failures aren't recoverable — web + macOS keep a failed
   message in the stream with a Retry/Discard affordance (retry re-POSTs with the
   original `clientMsgId`); iOS still needs the `failed` flag on its message row,
   the un-bump/re-bump rollup handling, and the retry UI. Server is already
   idempotent on `(channelId, clientMsgId)`, so it's a client-only port.
-- iOS: a thread-reply Activity notification lands in the originating channel
-  but does not open the thread or scroll to the reply (web + macOS open the
-  thread and flash the reply). iOS threads are a pushed screen owned by
-  `ChannelScreen`'s `$threadRoute`; since #89 that route is seeded from
-  `AppState.openThreadRootId` on appear, so the thread half is now plumbed —
-  what's missing is an Activity row that sets `openThreadRootId` for a reply
-  (it deliberately targets only top-level messages today) and the in-thread
-  jump target, which `ThreadScreen` still ignores. Phase 12.
+- iOS: a thread-reply *Activity-feed* row lands in the originating channel but
+  does not open the thread or scroll to the reply (web + macOS open the thread
+  and flash the reply). Only the feed row is left: #332 gave `ThreadScreen` its
+  jump target and #476 wired `WindowState.openNotification`'s thread half all
+  the way through from a push tap, so closing this is the Activity row passing
+  the reply's `threadRootId` the way `PushDelegate` now does — it deliberately
+  targets only top-level messages today.
 - Phase 11 unfurls: the §10 settings UI (per-user "don't unfurl my links",
   per-workspace switch/allowlist) is missing on *every* client — API-only.
-- macOS: phase 10 notification settings — no Notifications section in the
-  profile/settings UI (including the new per-user **Reactions** toggle), and the
-  status picker doesn't set `status_suppress_alerts` (web shipped 2026-07-21).
-  The shared `setStatus(emoji:text:suppressAlerts:)` now carries the flag and
-  iOS sends it; macOS just needs to pass it at the call site. The banner path
-  itself now honours the server's `suppressAlert` (2026-07-25, #63), so prefs
-  set on web do take effect on macOS — only the settings surface is missing.
-- iOS: no Notifications section in the account/profile UI (web shipped the
-  per-user pref toggles in phase 10, plus the Reactions toggle 2026-07-25).
-  Nothing on-device consumes them yet — iOS has no push notifications — so this
-  closes with the APNs work.
 - iOS artifacts, what's still missing after #157 (2026-07-30). Viewing is done —
   header Docs button, count badge, dropdown, full-screen viewer, co-browsing
   mini-browser, and auto-open of agent-created ones. What's left:
@@ -124,8 +225,6 @@ This file keeps two things:
   channel (web + macOS offer "Add to channel" — matters most for agents, which
   never see mentions in channels they haven't joined). iOS has its own composer
   (not the shared macOS one), so the CTA needs porting there.
-- macOS: sidebar doesn't list DM-less agents under Direct Messages (web shows
-  virtual rows with presence + 🤖 that create the DM on click).
 - Web composer: browser-native undo degrades after programmatic splices
   (autocomplete/suggestion inserts) — contenteditable limitation; macOS undo is clean.
 - macOS: pasting a non-image file URL inserts its path as text; web handles
@@ -134,13 +233,6 @@ This file keeps two things:
   (macOS profiles handle multi-account). Candidate phase-3-adjacent fix.
 - macOS: workspace-chooser tiles ignore AX activation (real click required) — a11y gap.
 - No syntax highlighting in code blocks (both clients; never scoped).
-- iOS: no push notifications (APNs — deferred to a follow-on phase; needs
-  server device-token registry + Apple push key + device testing). Everything
-  else in core messaging + files is now at parity. Now designed end-to-end in
-  `docs/design/PUSH_APNS.md` (registry, sender seam, outbox, payload, client
-  work, phasing) — that doc also carries the open operator questions:
-  message body in the payload or not, the Apple Developer key, and
-  sandbox-vs-production.
 - macOS has no in-app registration, password-reset, or passwordless sign-in
   link against real servers — by design it links to the web (email-first flow +
   app-link handoff); the dev-only autoVerify register remains for the local dev
@@ -153,31 +245,21 @@ This file keeps two things:
 - iOS: no inline video preview/playback card — video attachments render as a
   name+size chip that opens in QuickLook (which does play them); web/macOS
   render inline players with an expand affordance.
-- iOS: typing indicator says "is typing…" even for agents; web + macOS show
-  "is thinking…" for an agent at work (History 2026-07-22). The string lives in
-  `ComposerView.swift`; the shared `AppState.agentIds` set is already populated
-  on iOS (it reuses the macOS core) — it's a view-only switch.
 - iOS: no member-profile popup at all — tapping another user's avatar does
   nothing (web + macOS open a profile card; macOS also shows an agent's
   "Sponsored by" row). Needs a new `MemberProfileSheet` on iOS plus avatar taps
   wired through `MessageListView`. `UserDTO.sponsorId` (shared) already carries
   the data.
-- macOS + iOS: no per-channel scroll-position memory across channel switches —
-  web only. macOS shipped a `.scrollPosition(id:)` implementation 2026-07-22
-  that never actually tracked anything (the modifier only reports a position
-  when the lazy stack is marked `.scrollTargetLayout()`, which it wasn't), so
-  the memory was always empty and every channel switch landed at the bottom;
-  the dead modifier was removed 2026-07-27 because it was blanking the
-  transcript. Re-doing it on either client means marking the target layout and
-  reconciling it with `.defaultScrollAnchor(.bottom)`, which owns the scroll
-  position today. The shared `MessageScrollMemory` store is still there.
 - iOS: the new channel drawer (2026-07-23) omits several sidebar affordances the
-  web + macOS sidebars carry — a "new DM" composer, the virtual agent rows under
-  Direct Messages (start a DM with a workspace agent that has no existing 1:1),
-  the workspace color picker, and the Invite People / Manage Users / Manage Apps
-  workspace-menu items. Channel context actions (mute/leave/archive, invite to
-  channel) are also not yet wired on iOS. The drawer's structure makes these
-  straightforward ports; none are backed on-device yet.
+  web + macOS sidebars carry — the workspace color picker and the Manage Users /
+  Manage Apps workspace-menu items. Channel context actions
+  (mute/leave/archive) are also not yet wired on iOS. The drawer's structure
+  makes these straightforward ports; none are backed on-device yet. (The "new
+  DM" composer was closed 2026-08-16, #257 — sidebar "+" and a profile-card
+  Message button. "Invite People" was closed 2026-08-18, #283 — which also
+  brought #85's join-link management to iOS. "Invite to channel" was closed
+  2026-08-21 — ⋯ menu item + drawer long-press. Virtual agent rows were closed
+  2026-08-25, #361 — the Agents section carries them on all three clients.)
 - macOS + iOS: message editing still uses an inline/dedicated edit field — web
   moved editing into the prompt editor (↑ and ✏️ load the body into the composer,
   Enter saves, Esc restores the draft; 2026-07-23 ui_nits). Both clients already
@@ -224,9 +306,164 @@ This file keeps two things:
 - iOS: no channel activity spinner (#137) — web and macOS spin a channel's
   sidebar row while an agent works there. Server API and the `channel.indicator`
   event are client-agnostic and `ChannelDTO.indicator` carries the initial
-  state, so this is a pure client port.
+  state, so this is a pure client port. The slot itself now exists on iOS: the
+  channel emoji (#396) draws there since #438, so closing this one also means
+  porting macOS's precedence rule — spinner while it is up, emoji back when it
+  clears, never both.
+
+- **APNs push notifications are iOS-only** (#249). The phone now registers a
+  device token, banners what it should, badges the icon and routes a tap; macOS
+  still posts local banners only while it is running, and web has none at all.
+  The server halves (registry, outbox, payload builder and — since #250 — the
+  real APNs driver) are client-agnostic, so macOS closes this with signing +
+  provisioning it doesn't have today (`PUSH_APNS.md` open question 4) and web
+  would need a Web Push seam that does not exist yet.
+  Two rules learned the hard way on iOS (#458) travel with this gap when macOS
+  closes it: a `UNUserNotificationCenterDelegate` completion handler must be
+  called *on the main thread* (the `async` bridge does not), and a tapped push
+  may only be routed once the app is signed in — bootstrap passes through
+  `.signedOut`, which clears the window's selection.
+- **Deep-linking a notification tap into a thread is iOS-only** (#476). Tapping
+  an APNs alert for a thread reply opens the thread scrolled to the reply;
+  macOS and web have no equivalent because neither receives a push at all yet
+  (the gap above), so this closes with their push support rather than
+  separately — both already open a thread from an *Activity* row.
 
 ### Deliberate divergences (ruled)
+- **Inline chat find (cmd-F) is web + macOS only** (#518, as specified). Both
+  clients open a find bar over the loaded transcript; iOS was scoped out because
+  there is no hardware find shortcut to hang it on. Nothing about the search is
+  desktop-specific — `Support/ChatSearch.swift` already compiles into the iOS
+  target — so closing it later is a bar and a way to summon it, not a new
+  engine.
+- **Side-panel keep-alive is web + macOS only** (#513). Both keep a link
+  artifact's frame mounted while another tab shows; iOS has nothing to keep —
+  its artifact viewer is a full-screen sheet, so dismissing it *is* closing the
+  artifact and there is no other tab to toggle to. Not a gap to close.
+- **Community email is web-only** (#481, #484, #486, #492, as specified).
+  Composing a broadcast is an admin desk job — a markdown editor with a preview
+  pane, a "Send test to me" button on the confirm step, and now image paste —
+  and the issues scoped it to web deliberately. Nothing about it is client-specific: the endpoints
+  (`POST /v1/workspaces/:id/email` and its `…/email/preview` and `…/email/test`
+  siblings) are plain REST, render server-side and would work unchanged from a
+  native composer, so this is a scope decision rather than a platform limit.
+  #492's image upload is the same shape — `POST …/email/images` adopts an
+  ordinary uploaded file, which every client already knows how to produce.
+  Not a gap to close unless someone asks to compose one from a phone.
+- The **hardened-runtime device entitlements** (#469) are a macOS packaging
+  concern with no counterpart elsewhere: only the macOS release signs with
+  `--options runtime`, so only it can be refused the mic and camera before TCC
+  is consulted. iOS grants capture through its usage strings and the App Store
+  signature; web goes through the browser's own permission model. The *client*
+  half of the same fix — `DeviceAccess.request(_:)`, which stops a refusal the
+  user never saw being reported as one they chose — is in shared code and so
+  lands on macOS and iOS together. Not a gap to close.
+- **"Keep banners on screen"** (`persistentBanners`) is a web-only toggle, and
+  stays that way after macOS gained its prefs pane (#464) and iOS gained its
+  screen (#251). The browser Notification API takes `requireInteraction`; on
+  macOS and iOS, banner-vs-alert is the user's own OS setting and no app can
+  override it, so a toggle there would be a lie. The key still round-trips
+  untouched through both native clients, so a web user's choice survives a flip
+  made on a phone. Not a gap to close.
+- The **frame-one channel switch** fix (#447) is macOS-only, and the other two
+  clients need nothing: web mounts `<ChannelView key={channelId}>` per channel
+  over React Query's synchronous cache, and iOS pushes `ChannelScreen`
+  `.id(channelId)`, so neither can render the channel it just left. macOS keeps
+  one view across channels on purpose — remounting it would reset
+  `MessageListView`, whose scroll-memory restore fires on the transcript
+  changing — so it re-keys the reads instead. Not a gap to close.
+- The **Directory's search field** is a plain text field on all three clients
+  (#432), rather than iOS's system `.searchable`. On iOS 26 the system field
+  only takes the navigation bar when the view also declares a toolbar item, and
+  otherwise drops to a floating bar at the bottom of the screen, over the last
+  card — three attempts to hold it in place (the `.navigationBarDrawer`
+  placement hint, modifier reordering, a safe-area inset) each moved it back.
+  Drawing the field explicitly gives all three clients the same search row and
+  the same pinned live count. Not a gap: nothing is missing on any client.
+- The **"Post to" picker in the schedule dialog** scrolls its preselected
+  destination into view on macOS and states it in one `.navigationLink` row on
+  iOS (#424); web leaves its list parked at the top. Opening the dialog from
+  the composer preselects the current conversation, which in a busy workspace
+  is far down the list — so on web the prefill is invisible and reads as "it
+  didn't prefill anything". The native fixes are an improvement web should
+  adopt, not a native quirk; small enough to fold into whatever next touches
+  `ScheduleMessageModal.tsx`.
+- The **workspace avatar in the sidebar header** was web-only and is now gone
+  (#422): web drew it beside the workspace name as well as in the left rail,
+  while macOS and iOS only ever drew it in the rail. Removing it aligns web
+  with the native clients — nothing to port. Not a gap to close.
+- The **workspace-colored channel banner** is iOS-only (#427). iOS replaced the
+  system navigation bar with a floating header pill (#298) and now fills it with
+  the workspace's `SidebarPalette` gradient; web and macOS draw their channel
+  header as ink on the base surface, with no colored fill to follow the setting.
+  Nothing to port. Not a gap to close.
+- **Channel visit history** with back/forward buttons (#386) is web + macOS
+  only. iOS was out of scope on purpose: the phone navigates a push/pop stack
+  that already has its own back affordance, so a second, differently-scoped
+  history in the header would compete with it rather than complete it. The
+  model (`NavHistory`) is 60 lines and would port, but only alongside a
+  decision about what "back" means on a stack — not a gap to close blindly.
+- The **hover ⋯ menu on sidebar rows** (#399) ships on web and macOS and not on
+  iOS, for the same reason as the topic tooltip below: a touch client has no
+  hover to reveal it on. iOS reaches channel options from the channel screen
+  instead (`ChannelOptionsSheet`), so nothing is out of reach; its sidebar
+  long-press stays the one-item Invite menu it is today. Not a gap to close.
+- The **channel topic tooltip** (#392) ships on web and macOS and not on iOS —
+  the issue scoped it that way, because a touch client has no hover to hang it
+  on. iOS already shows the topic under the channel name in the header, so
+  nothing is hidden there; a phone equivalent would be a different affordance
+  (tap-and-hold), not this one. Not a gap to close.
+- Mini apps open **inline on macOS and iOS, in a new tab on web** (#380). The
+  native clients load the app top-level in their co-browser web view, where the
+  guard's cookie is first-party; web's artifact pane is a cross-site iframe,
+  which WebKit blocks (see the frame gap above), so it keeps the #371 new-tab
+  hand-off. Not a gap to close on web until that guard-side change lands.
+- Co-browsing is suppressed for `isApp` artifacts on macOS and iOS (#380) and
+  has no meaning on web, which never framed an app. An app is opened, not
+  co-browsed: each viewer mints their own token into their own guard session, so
+  broadcasting one member's navigation — or the guard's 302 on every open —
+  would re-point the shared artifact for the whole channel. `MiniApp` holds the
+  rule for both native clients and its tests compile into both.
+- Clamping the side panel to the space available, and making image and video
+  attachment cards fit the transcript column (#354), are both macOS-only. Web
+  has the same fixed-width panel and the same card caps, but flexbox squeezes
+  where SwiftUI's `HStack` and fixed `frame`s clip, and below the `md`
+  breakpoint web's panel becomes a full-screen overlay instead — so neither
+  defect exists there. iOS pushes Files and threads full-screen and has no split
+  to break. If macOS ever wants web's behaviour at
+  its narrowest widths, that is a follow-up, not a gap this leaves open.
+- Workspace avatars (#336) are *managed* from web and macOS only; iOS displays
+  the mark but offers no upload or remove, as the issue specified. iOS has no
+  workspace-settings surface at all today — the sidebar colour isn't editable
+  there either — so this inherits that gap rather than adding a new one.
+- Scrolling the active channel into view on non-click navigation (#319) is web
+  + macOS only. iOS has no persistent channel list — its `SidebarDrawer` is
+  dismissed the moment you pick a channel, so there is no stale scroll position
+  to correct. If the drawer ever becomes persistent, the fix is the same
+  `ScrollViewReader` + nil anchor the macOS `SidebarView` now uses.
+- The floating pill header (#298) is iOS-only, by operator ruling. It answers a
+  phone problem — a full-screen conversation with no sidebar beside it to carry
+  the workspace colour. macOS and web both show the channel list next to the
+  transcript and already read as one surface.
+- Within iOS, the pill is on the channel screen only. The thread screen keeps
+  the system bar: hiding it costs the interactive edge-swipe pop, which
+  `ThreadNavTests` catches. Gap to close if the gesture can be kept.
+- Per-channel scroll-position memory (10-min TTL) is macOS-only, by operator
+  ruling: a desktop sidebar switch should return you to your back-scroll spot,
+  while a phone's full-screen channel change makes bottom-on-return the
+  expected behavior, so iOS deliberately skips it. Web has no equivalent
+  either; if it ever wants one, the model is `MessageScrollMemory` + the
+  top-visible-row preference in the macOS `MessageListView`.
+- The transcript's re-stick-on-shrink rule (#280) is iOS-only. macOS keeps
+  `.defaultScrollAnchor(.bottom)` in its all-roles form, so the framework
+  re-anchors on content size changes for free; iOS dropped the `.sizeChanges`
+  role in #159 because that free behaviour yanked short back-pulls to the
+  bottom, and `TranscriptFollow` is what replaces it. Web sets `scrollTop =
+  scrollHeight` against real DOM heights and never estimates, so it cannot
+  overshoot either. Not a gap.
+- The hand cursor over hyperlinks (#81, widened to table cells and the channel
+  topic in #276) is macOS-only: web gets it from the browser's own `cursor:
+  pointer`, and iOS has no pointer. Not a gap.
 - The version label shows the build number on iOS (`Version 2.0 (21)`) but not
   on macOS: every TestFlight build of a release shares one marketing version, so
   the number is what identifies which build a tester is running. macOS versions
@@ -246,6 +483,10 @@ This file keeps two things:
   Sign-In SDK posting the ID token directly) would need an iOS/macOS OAuth
   client id added to the accepted `aud` set; worth doing only if the browser
   round-trip proves unpopular.
+  Both clients share the browser's session on purpose (the iOS sheet sets
+  `prefersEphemeralWebBrowserSession = false`): #279 fixed the silent sign-in
+  in the handoff page itself, so the shared cookies now only mean Google's
+  account chooser opens already listing the device's accounts. Not a gap.
 - Copy message text: explicit "Copy" item in the message menu on iOS + macOS
   (their custom Text rows aren't natively selectable); web omits it because
   browser text selection + Cmd/Ctrl-C already copies message text.

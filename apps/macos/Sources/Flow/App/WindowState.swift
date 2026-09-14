@@ -14,13 +14,31 @@ final class WindowState: ObservableObject {
     @Published var openThreadRootId: String?
     /// Open artifact (phase 13) — when set, the right-hand side panel shows the
     /// artifact next to its channel (mutually exclusive with the thread panel).
-    @Published var selectedArtifactId: String?
+    @Published var selectedArtifactId: String? { didSet { refreshKeepAlive() } }
+    /// The link artifact whose web view the side panel keeps mounted while
+    /// another tab is showing (#513), so a Thread <-> app toggle doesn't reload
+    /// the page (and re-mint a token) every time. See `nextKeepAlive`.
+    @Published private(set) var keepAlive: KeepAlive?
+    /// Channel Files tab (#347) — another tab on the same side panel as the
+    /// thread and the artifacts. True means the Files tab is the visible one.
+    @Published var filesOpen: Bool = false
     /// Activity feed (phase 12) — covers the content pane; the selected channel
     /// stays put behind it so picking a channel returns to a conversation.
     @Published var showActivity: Bool = false
+    /// Scheduled panel (#424) — the same treatment as the Activity feed: it
+    /// covers the content pane, the channel stays selected behind it, and it is
+    /// workspace-wide rather than per-channel.
+    @Published var showScheduled: Bool = false
+    /// Directory (#432) — the workspace member grid, same treatment as the two
+    /// above: it covers the content pane while the channel selection stays put.
+    @Published var showDirectory: Bool = false
     /// Jump-to-message target (phase 12): a message id the channel/thread view
     /// should scroll to and flash after navigation. Cleared once reached.
     @Published var focusMessageId: String?
+    /// This session's visit history over the main pane (issue #386) — what the
+    /// header's back/forward buttons walk. Per-window, like the selection it
+    /// records, and reset on workspace switch and sign-out.
+    @Published private(set) var nav = NavHistory()
 
     /// channelId -> the thread that was open there (issue #89). The open thread
     /// lives in the single `openThreadRootId` slot, so switching channels would
@@ -38,49 +56,101 @@ final class WindowState: ObservableObject {
 
     // MARK: - Workspace
 
-    private static let activeWorkspaceKey = "activeWorkspaceId" + Profile.suffix
+    /// Navigation entries belong to the signed-in connection+identity (#540).
+    /// The migrated default connection resolves these to the exact keys an
+    /// existing install already has.
+    private var activeWorkspaceKey: String {
+        app.sessionScope.key("activeWorkspaceId")
+    }
 
     func selectWorkspace(_ id: String?) {
+        rememberNavigationTarget()
         selectedWorkspaceId = id
         selectedChannelId = nil
         openThreadRootId = nil
         openThreadByChannel.removeAll()
         selectedArtifactId = nil
+        filesOpen = false
         showActivity = false
+        showScheduled = false
+        showDirectory = false
+        nav = NavHistory() // the other workspace's channels aren't reachable from here
         // Active workspace survives relaunch (phase 3.5 fixes). Shared across
         // windows on purpose: the *last* pick is what a fresh window starts on.
         if let id {
-            UserDefaults.standard.set(id, forKey: Self.activeWorkspaceKey)
+            UserDefaults.standard.set(id, forKey: activeWorkspaceKey)
         } else {
-            UserDefaults.standard.removeObject(forKey: Self.activeWorkspaceKey)
+            UserDefaults.standard.removeObject(forKey: activeWorkspaceKey)
         }
+        restoreWorkspaceNavigation()
+        rememberNavigationTarget()
         if let id {
             let engine = self.engine
-            Task { await engine.selectWorkspace(id) }
+            let channel = selectedChannelId
+            let thread = openThreadRootId
+            Task {
+                await engine.selectWorkspace(id)
+                if let channel { await engine.selectChannel(channel) }
+                if let thread { await engine.openThread(rootId: thread) }
+            }
         }
+    }
+
+    /// Record where this connection+identity is parked, in the registry rather
+    /// than only in the two flat defaults keys above (#540). A `NavigationTarget`
+    /// carries the connection it belongs to, so a second connection's landing
+    /// spot cannot overwrite this one's.
+    private func rememberNavigationTarget() {
+        guard let workspaceId = selectedWorkspaceId,
+              let userId = app.currentUser?.id
+        else { return }
+        let target = NavigationTarget(
+            connectionId: app.connectionId,
+            userId: userId,
+            workspaceId: workspaceId,
+            channelId: selectedChannelId,
+            threadRootId: openThreadRootId,
+            artifactId: selectedArtifactId
+        )
+        if let data = try? JSONEncoder().encode(target) {
+            UserDefaults.standard.set(data, forKey: app.sessionScope.key("navigation:\(workspaceId)"))
+        }
+        app.connections.rememberNavigation(target)
+    }
+
+    private func restoreWorkspaceNavigation() {
+        guard let workspaceId = selectedWorkspaceId,
+              let data = UserDefaults.standard.data(forKey: app.sessionScope.key("navigation:\(workspaceId)")),
+              let saved = try? JSONDecoder().decode(NavigationTarget.self, from: data),
+              saved.connectionId == app.connectionId, saved.userId == app.currentUser?.id
+        else { return }
+        selectedChannelId = saved.channelId
+        openThreadRootId = saved.threadRootId
+        selectedArtifactId = saved.artifactId
+        if let channel = saved.channelId { openThreadByChannel[channel] = saved.threadRootId }
     }
 
     /// Restore the last active workspace when the window opens (validated by
     /// the caller against the workspace list once it loads).
     func restoreActiveWorkspace() {
         guard selectedWorkspaceId == nil,
-              let saved = UserDefaults.standard.string(forKey: Self.activeWorkspaceKey)
+              let saved = UserDefaults.standard.string(forKey: activeWorkspaceKey)
         else { return }
-        selectedWorkspaceId = saved
-        let engine = self.engine
-        Task { await engine.selectWorkspace(saved) }
+        selectWorkspace(saved)
     }
 
     // MARK: - Channel
 
-    private static let lastChannelKey = "lastChannelId" + Profile.suffix
+    private var lastChannelKey: String {
+        app.sessionScope.key("lastChannelId")
+    }
 
     /// The channel to reopen on the next launch, or nil if there isn't one.
     /// Written on every selection (so backgrounding needs no hook of its own)
     /// and cleared when the selection goes away — leaving, archiving, or
     /// signing out. Same storage shape as `activeWorkspaceKey` above, and
     /// shared across windows for the same reason: the *last* pick wins.
-    static var lastChannelId: String? {
+    var lastChannelId: String? {
         get { UserDefaults.standard.string(forKey: lastChannelKey) }
         set {
             if let newValue {
@@ -92,12 +162,101 @@ final class WindowState: ObservableObject {
     }
 
     func selectChannel(_ id: String?) {
-        // Selecting a channel always closes an open artifact panel or the
-        // activity feed — even when it's the same channel that's behind them.
-        selectedArtifactId = nil
-        showActivity = false
-        guard id != selectedChannelId else { return }
-        switchChannel(to: id)
+        guard let id else {
+            // Deselection only happens when the channel goes away — nothing to
+            // record, and `channelBecameUnavailable` clears its history entries.
+            selectedArtifactId = nil
+            filesOpen = false
+            showActivity = false
+            showScheduled = false
+            showDirectory = false
+            if selectedChannelId != nil { switchChannel(to: nil) }
+            return
+        }
+        // Picking a channel is a visit; back/forward replay one, so they go
+        // through `show(_:)` directly and record nothing (issue #386).
+        nav.record(.channel(id))
+        show(.channel(id))
+    }
+
+    /// Sidebar click or tap (#441): when this channel's oldest unread is a
+    /// thread reply, enter the channel *and* that thread, scrolled to the
+    /// reply — otherwise the badge points at a timeline showing nothing new and
+    /// the user has to hunt for the thread by hand. Same jump a tapped
+    /// notification performs, and the same rule web applies. Anything else is a
+    /// plain select — which, on the channel already showing, is now a read pass
+    /// rather than nothing at all (#533).
+    func openChannelFromSidebar(_ channel: Channel) {
+        guard let jump = channel.sidebarThreadJump else {
+            selectChannel(channel.id)
+            return
+        }
+        openNotification(
+            workspaceId: channel.workspaceId,
+            channelId: channel.id,
+            messageId: jump.replyId,
+            threadRootId: jump.rootId
+        )
+    }
+
+    /// Put a view on the main pane, without recording a visit.
+    private func show(_ view: NavView) {
+        switch view {
+        case .activity:
+            selectedArtifactId = nil
+            filesOpen = false
+            showScheduled = false
+            showDirectory = false
+            showActivity = true
+        case .scheduled:
+            selectedArtifactId = nil
+            filesOpen = false
+            showActivity = false
+            showDirectory = false
+            showScheduled = true
+        case .directory:
+            selectedArtifactId = nil
+            filesOpen = false
+            showActivity = false
+            showScheduled = false
+            showDirectory = true
+        case .channel(let id):
+            // Selecting a channel always closes an open artifact panel, the
+            // activity feed or the Scheduled panel — even when it's the same
+            // channel that's behind them.
+            selectedArtifactId = nil
+            // Files are per-channel: the tab doesn't follow you to the next one.
+            filesOpen = false
+            showActivity = false
+            showScheduled = false
+            showDirectory = false
+            guard id != selectedChannelId else {
+                // Picking the channel already on screen used to stop here, which
+                // made the gesture people reach for when a badge won't clear the
+                // one gesture that couldn't clear it (#533). The transcript is
+                // already right, so only the read pass re-runs.
+                let engine = self.engine
+                Task { await engine.revisitChannel(id) }
+                return
+            }
+            switchChannel(to: id)
+        }
+    }
+
+    // MARK: - Visit history (issue #386)
+
+    var canGoBack: Bool { nav.canGoBack }
+    var canGoForward: Bool { nav.canGoForward }
+
+    /// Return to the previously viewed channel or feed.
+    func goBack() { step(-1) }
+    /// Re-advance after a `goBack`.
+    func goForward() { step(1) }
+
+    private func step(_ delta: Int) {
+        guard let target = nav.target(delta) else { return }
+        nav.step(delta)
+        show(target)
     }
 
     /// Park the leaving channel's open thread, select `id`, and restore whatever
@@ -106,8 +265,10 @@ final class WindowState: ObservableObject {
     private func switchChannel(to id: String?) {
         rememberOpenThread()
         selectedChannelId = id
-        Self.lastChannelId = id
+        lastChannelId = id
+        refreshKeepAlive() // a held frame belongs to the channel we just left
         openThreadRootId = id.flatMap { openThreadByChannel[$0] }
+        rememberNavigationTarget()
         let restored = openThreadRootId
         // Local capture: the task must not retain the window (a closed one
         // should deallocate immediately, falling out of AppState's registry).
@@ -125,12 +286,23 @@ final class WindowState: ObservableObject {
     }
 
     /// Active channel was archived or left — drop the selection.
+    /// This window was showing a workspace we just left: move it to `landOn`
+    /// (the first workspace we still belong to) or to the chooser. Goes
+    /// through `selectWorkspace` so the persisted "active workspace" follows —
+    /// otherwise the next launch would restore the one we walked out of.
+    func workspaceBecameUnavailable(_ workspaceId: String, landOn: String?) {
+        guard selectedWorkspaceId == workspaceId else { return }
+        selectWorkspace(landOn)
+    }
+
     func channelBecameUnavailable(_ channelId: String) {
         openThreadByChannel.removeValue(forKey: channelId) // nothing to come back to
-        if Self.lastChannelId == channelId { Self.lastChannelId = nil } // don't reopen it next launch
+        nav.forget(.channel(channelId)) // and back must not walk into it either
+        if lastChannelId == channelId { lastChannelId = nil } // don't reopen it next launch
         if selectedChannelId == channelId {
             selectedChannelId = nil
             openThreadRootId = nil
+            filesOpen = false
         }
     }
 
@@ -142,8 +314,8 @@ final class WindowState: ObservableObject {
     /// `channels` is the caller's already-observed list rather than a fresh
     /// query, so restoring costs nothing beyond a lookup.
     func restorableLastChannel(from channels: [Channel]) -> String? {
-        guard selectedChannelId == nil, !showActivity,
-              let saved = Self.lastChannelId,
+        guard selectedChannelId == nil, !showActivity, !showScheduled, !showDirectory,
+              let saved = lastChannelId,
               let channel = channels.first(where: { $0.id == saved }),
               channel.isMember, channel.archivedAt == nil,
               channel.workspaceId == selectedWorkspaceId
@@ -154,8 +326,12 @@ final class WindowState: ObservableObject {
     // MARK: - Threads
 
     func openThread(_ rootId: String?) {
-        if rootId != nil { selectedArtifactId = nil } // shares the slot with the artifact panel (phase 13)
+        if rootId != nil {
+            selectedArtifactId = nil // shares the slot with the artifact panel (phase 13)
+            filesOpen = false
+        }
         openThreadRootId = rootId
+        rememberNavigationTarget()
         rememberOpenThread() // so leaving this channel and coming back restores it
         let engine = self.engine
         Task { await engine.openThread(rootId: rootId) }
@@ -164,11 +340,28 @@ final class WindowState: ObservableObject {
     /// Switch the side panel to the Thread tab (the thread stays open).
     func showThread() {
         selectedArtifactId = nil
+        filesOpen = false
+    }
+
+    // MARK: - Files
+
+    /// Open (or close) the channel Files tab (#347). It takes the panel the way
+    /// an artifact tab does; the thread, if any, stays open behind it.
+    func openFiles(_ open: Bool) {
+        filesOpen = open
+        if open {
+            selectedArtifactId = nil
+            showActivity = false
+            showScheduled = false
+            showDirectory = false
+        }
     }
 
     /// Close the whole side panel — clears the thread and the active artifact.
     func closeSidePanel() {
         selectedArtifactId = nil
+        keepAlive = nil // closing the panel is what drops a kept-alive frame (#513)
+        filesOpen = false
         if openThreadRootId != nil {
             openThreadRootId = nil
             rememberOpenThread() // an explicit close: don't restore it later
@@ -187,10 +380,14 @@ final class WindowState: ObservableObject {
     func selectArtifact(_ id: String?) {
         if let id {
             showActivity = false
+            showScheduled = false
+            showDirectory = false
+            filesOpen = false
             if let a = artifacts().first(where: { $0.id == id }), a.channelId != selectedChannelId {
                 // Same park-and-restore as an ordinary channel switch, or the
                 // Thread tab would keep showing the *previous* channel's thread
                 // over this channel's conversation (issue #89).
+                nav.record(.channel(a.channelId))
                 switchChannel(to: a.channelId)
             }
         }
@@ -215,6 +412,48 @@ final class WindowState: ObservableObject {
         }
     }
 
+    // MARK: - Side-panel keep-alive (#513)
+
+    /// A held frame and the channel it belongs to — a web view is only worth
+    /// keeping while you are still in the channel whose panel shows it.
+    struct KeepAlive: Equatable {
+        let channelId: String
+        let artifactId: String
+    }
+
+    /**
+     Which artifact's web view the side panel keeps mounted while another tab is
+     showing. Mirrors the web client's `nextKeepAlive` (SidePanel.tsx).
+
+     Only link artifacts qualify: rebuilding one costs a token mint and a full
+     load through the app tunnel, while an image/PDF viewer re-reads a cached
+     file. At most one is held — selecting another link replaces it — and it is
+     dropped when the channel changes, which caps what a hidden web view can
+     hold. Selecting a *non*-link artifact keeps the previous frame: that is the
+     point, it is what you are coming back to.
+     */
+    nonisolated static func nextKeepAlive(
+        prev: KeepAlive?, channelId: String?, selected: Artifact?
+    ) -> KeepAlive? {
+        if let channelId, let selected, selected.kind == "link" {
+            return KeepAlive(channelId: channelId, artifactId: selected.id)
+        }
+        return prev?.channelId == channelId ? prev : nil
+    }
+
+    /// Re-run the decision after anything that moves the panel's selection.
+    /// The lookup is channel-scoped the way the web client's is: mid-switch the
+    /// artifact selection can still name the channel we are leaving, and that
+    /// one is not a tab on the panel we are about to draw.
+    private func refreshKeepAlive() {
+        let selected = selectedArtifactId.flatMap { id in
+            artifacts().first { $0.id == id && $0.channelId == selectedChannelId }
+        }
+        keepAlive = Self.nextKeepAlive(
+            prev: keepAlive, channelId: selectedChannelId, selected: selected
+        )
+    }
+
     /// This window's workspace's visible artifacts (newest first).
     func artifacts() -> [Artifact] {
         app.artifacts(workspaceId: selectedWorkspaceId)
@@ -225,13 +464,61 @@ final class WindowState: ObservableObject {
         artifacts().filter { $0.channelId == channelId }
     }
 
+    /// This window's workspace's mini apps (#394), in server order.
+    func appArtifacts() -> [Artifact] {
+        app.appArtifacts(workspaceId: selectedWorkspaceId)
+    }
+
+    /// Open a channel *and* an artifact tab in it in one action (#394) — what
+    /// the Apps section does. `selectArtifact` can't serve here: it finds the
+    /// artifact's channel by looking it up in the member-artifact list, which by
+    /// definition does not hold an app from a channel this user has only just
+    /// joined (or is about to).
+    func openArtifact(_ artifactId: String, inChannel channelId: String) {
+        showActivity = false
+        showScheduled = false
+        showDirectory = false
+        filesOpen = false
+        if channelId != selectedChannelId { switchChannel(to: channelId) }
+        selectedArtifactId = artifactId
+    }
+
     // MARK: - Activity
 
     /// Show the Activity feed (phase 12). Like opening an artifact it covers the
     /// content pane while the channel selection stays put behind it.
     func showActivityFeed() {
-        selectedArtifactId = nil
-        showActivity = true
+        nav.record(.activity)
+        show(.activity)
+    }
+
+    // MARK: - Scheduled (#424)
+
+    /// Show the Scheduled panel — the workspace-wide list behind the sidebar
+    /// header's clock. Same shape as `showActivityFeed`: a recorded visit that
+    /// back/forward can walk.
+    func showScheduledPanel() {
+        nav.record(.scheduled)
+        show(.scheduled)
+    }
+
+    // MARK: - Directory (#432)
+
+    /// Show the Directory — the workspace member grid, reached from the sidebar
+    /// entry under Direct messages and from the workspace menu. Same shape as
+    /// the two panels above: a recorded visit that back/forward can walk.
+    func showDirectoryPanel() {
+        nav.record(.directory)
+        show(.directory)
+    }
+
+    /// Jump to a specific message in a channel of the current workspace — what
+    /// the Scheduled panel's "view output" does. The same navigation an
+    /// Activity row performs, minus the notification.
+    func jumpToMessage(channelId: String, messageId: String) {
+        selectChannel(channelId)
+        openThread(nil) // a scheduled message is always a top-level post
+        focusMessageId = messageId
     }
 
     /// Activity-feed navigation: jump to a notification's channel (and thread),
@@ -265,13 +552,17 @@ final class WindowState: ObservableObject {
     func clearForSignOut() {
         // The next person to sign in on this device gets their own landing
         // channel, not the last one this account was reading.
-        Self.lastChannelId = nil
+        lastChannelId = nil
         selectedWorkspaceId = nil
         selectedChannelId = nil
         openThreadRootId = nil
         openThreadByChannel.removeAll()
         selectedArtifactId = nil
+        filesOpen = false
         showActivity = false
+        showScheduled = false
+        showDirectory = false
         focusMessageId = nil
+        nav = NavHistory()
     }
 }

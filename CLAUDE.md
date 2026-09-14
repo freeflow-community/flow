@@ -63,12 +63,20 @@
   "this commit is live", and it names the commit, which no version file ever
   did. `apps/macos/VERSION` is now only a fallback for local `make-app.sh`
   builds; leave it alone.
+  **iOS works the same way now.** `apps/ios/tools/release-ios.sh` derives the
+  build number from `git rev-list --count HEAD`, passes it to `xcodebuild`, and
+  tags `ios-build-<n>` after the upload. `CURRENT_PROJECT_VERSION` in
+  `apps/ios/project.yml` is a fallback for local Xcode builds — do not bump it
+  per upload, and do not open a PR that does.
   (Why the old rule went: bumping in PRs recorded an intention rather than a
   fact, and it failed twice in one day — two PRs bumped to the same 2.2.24 and
   the second merged as a silent no-op, and that release actually carried three
-  PRs' worth of code. iOS had the mirror-image failure: `project.yml` said
-  build 12 while App Store Connect already held 13, so the upload was rejected.
-  A number in the repo cannot see the server that owns it.)
+  PRs' worth of code. iOS had the mirror-image failure five times in three
+  days: builds 23, 24, 25, 26 and 28 were uploaded while their bumps sat on
+  unmerged branches, so `main` claimed 23 when App Store Connect held 28 — and
+  the bookkeeping PRs, if merged in the wrong order, would have moved `main`
+  backwards into the next collision. A number in the repo cannot see the server
+  that owns it.)
 - **`flow-agent-bridge` publishes itself.** Never run `npm publish` by hand.
   `.github/workflows/publish-bridge.yml` fires on any push to `main` touching
   `packages/agent-bridge/**` and publishes via npm trusted publishing (OIDC —

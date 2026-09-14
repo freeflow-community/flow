@@ -1,22 +1,28 @@
+import AppKit
 import GRDB
 import SwiftUI
 
 /// Row model for the members section (member ⋈ user).
-struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable {
+struct MemberInfo: Decodable, FetchableRecord, Equatable, Sendable, Identifiable, WorkspaceRosterMember {
     var userId: String
     var displayName: String
     var role: String
     var statusEmoji: String?
     var statusText: String?
     var isAgent: Bool? // first-class AI agent → 🤖 badge
+    var isBot: Bool? // app/integration bot — like an agent, not a person (#340)
     var id: String { userId }
 }
+
+extension MemberInfo: SidebarAgentMemberInfo {}
 
 /// Design 3a column 2: violet gradient channel/DM list with the profile footer.
 struct SidebarView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
     @Environment(\.textZoom) private var textZoom
+    /// Raises the workspace/server switcher owned by `RootView` (#566).
+    @Environment(\.openConnections) private var openConnections
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
@@ -30,9 +36,15 @@ struct SidebarView: View {
     @State private var showColorPicker = false
     @State private var showFeatures = false
     @State private var showInviteAgent = false
+    @State private var confirmLeaveWorkspace = false
+    @State private var confirmDeleteWorkspace = false
     @State private var addMemberChannel: Channel?
     @State private var profileUserId: String?
     @State private var ensuredSelfDmWs: String?
+    /// Agents section collapsed? Remembered per device, like the web sidebar's.
+    @AppStorage("flow.sidebarAgentsCollapsed") private var agentsCollapsed = false
+    /// Apps section (#394) collapsed? Same per-device memory as Agents.
+    @AppStorage("flow.sidebarAppsCollapsed") private var appsCollapsed = false
 
     private var currentWorkspace: Workspace? {
         workspaces.value.first { $0.id == win.selectedWorkspaceId }
@@ -44,6 +56,17 @@ struct SidebarView: View {
 
     private var canEditWorkspace: Bool {
         currentWorkspace.map { $0.role == "owner" || $0.role == "admin" } ?? false
+    }
+
+
+    /// Which way out this workspace offers — see `WorkspaceExit`, which is
+    /// shared with iOS and holds the "empty roster means don't know" rule.
+    private var workspaceExit: WorkspaceExit {
+        WorkspaceExit.offered(
+            role: currentWorkspace?.role,
+            roster: members.value,
+            me: app.currentUser?.id
+        )
     }
 
     /// Ids of the DMs I'm in — a sub-channel of one of these belongs to that
@@ -72,6 +95,15 @@ struct SidebarView: View {
         )
     }
 
+    /// Agents (#361) and the DMs left over once their 1:1s move up with them.
+    private var agentSplit: (agents: [AgentSection.Entry<MemberInfo>], rest: [Channel]) {
+        AgentSection.split(
+            dms: channels.value.filter { $0.isMember && $0.isDM },
+            members: members.value,
+            currentUserId: app.currentUser?.id
+        )
+    }
+
     private var dmChannels: [Channel] {
         // Direct messages sort alphabetically by display title, case-insensitive
         // (ui_nits — matches web). The channels query orders by `name`, which is
@@ -83,8 +115,7 @@ struct SidebarView: View {
         func isSelf(_ c: Channel) -> Bool {
             c.kind == "dm" && (c.memberIds ?? []).allSatisfy { $0 == me }
         }
-        return channels.value
-            .filter { $0.isMember && $0.isDM }
+        return agentSplit.rest
             .sorted {
                 if isSelf($0) != isSelf($1) { return !isSelf($0) }
                 return $0.displayTitle(userNames: names, currentUserId: me)
@@ -92,6 +123,12 @@ struct SidebarView: View {
                         $1.displayTitle(userNames: names, currentUserId: me)
                     ) == .orderedAscending
             }
+    }
+
+    /// Mini apps (#394) paired with their host channels, in the server's order
+    /// (alphabetical by app name).
+    private var appEntries: [AppsSection.Entry] {
+        AppsSection.entries(apps: win.appArtifacts(), channels: channels.value)
     }
 
     private var browsableChannels: [Channel] {
@@ -102,18 +139,16 @@ struct SidebarView: View {
         Dictionary(uniqueKeysWithValues: members.value.map { ($0.userId, $0) })
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 14)
-                .padding(.top, 18)
-                .padding(.bottom, 6)
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    activityRow
-
-                    sectionHeader("Channels") {
+    /// The scrolling channel list. Extracted from `body` so the `ScrollViewReader`
+    /// that wraps it (#319) doesn't re-indent the whole thing, and so the body
+    /// stays cheap to type-check.
+    private var channelList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1) {
+                sectionHeader("Channels") {
+                    // Create / new DM / browse / agents / apps are Flow features
+                    // a provider may not offer (#546): absent, as on web.
+                    if app.can(.channelManagement) {
                         Button {
                             showCreateChannel = true
                         } label: {
@@ -124,13 +159,62 @@ struct SidebarView: View {
                         .buttonStyle(.plain)
                         .help("Create a channel")
                     }
-                    ForEach(joinedChannels, id: \.channel.id) { row in
-                        channelWithArtifacts(row.channel) {
-                            channelRow(row.channel, isNested: row.isNested)
+                }
+                ForEach(joinedChannels, id: \.channel.id) { row in
+                    channelWithArtifacts(row.channel) {
+                        channelRow(row.channel, isNested: row.isNested)
+                    }
+                }
+
+                // Apps (#394): every mini app in the workspace, including ones
+                // in public channels this user has not joined — clicking joins,
+                // then opens the app. Absent entirely when there is nothing to
+                // list, like Agents and Browse.
+                let apps = app.can(.apps) ? appEntries : []
+                if !apps.isEmpty {
+                    sectionHeader("Apps", collapsed: appsCollapsed) {
+                        appsCollapsed.toggle()
+                    } action: {
+                        EmptyView()
+                    }
+                    if !appsCollapsed {
+                        ForEach(apps) { entry in
+                            appRow(entry)
                         }
                     }
+                }
 
-                    sectionHeader("Direct messages") {
+                // Agents (#361): one row per workspace agent, between Channels
+                // and Direct messages, whether or not a DM exists yet. An agent
+                // with a DM brings it up here, so it is never listed twice.
+                let agents = app.can(.agents) ? agentSplit.agents : []
+                if !agents.isEmpty {
+                    sectionHeader("Agents", collapsed: agentsCollapsed) {
+                        agentsCollapsed.toggle()
+                    } action: {
+                        EmptyView()
+                    }
+                    if !agentsCollapsed {
+                        ForEach(agents) { entry in
+                            if let dm = entry.channel {
+                                // The agent's own DM, rendered as the agent: same
+                                // row as any DM, so unread badges, the
+                                // working-here spinner and sub-channels come too.
+                                channelWithArtifacts(dm) {
+                                    dmRow(dm, label: entry.member.displayName)
+                                }
+                                ForEach(dmChildren[dm.id] ?? []) { child in
+                                    channelWithArtifacts(child) { channelRow(child, isNested: true) }
+                                }
+                            } else {
+                                agentRow(entry.member)
+                            }
+                        }
+                    }
+                }
+
+                sectionHeader("Direct messages") {
+                    if app.can(.channelManagement) {
                         Button {
                             showNewDM = true
                         } label: {
@@ -142,26 +226,65 @@ struct SidebarView: View {
                         .help("New direct message")
                         .accessibilityIdentifier("sidebar.newDM")
                     }
-                    ForEach(dmChannels) { channel in
-                        channelWithArtifacts(channel) { dmRow(channel) }
-                        ForEach(dmChildren[channel.id] ?? []) { child in
-                            channelWithArtifacts(child) { channelRow(child, isNested: true) }
-                        }
-                    }
-
-                    if !browsableChannels.isEmpty {
-                        sectionHeader("Browse") {}
-                        ForEach(browsableChannels) { channel in
-                            browseRow(channel)
-                        }
-                    }
-
                 }
+                // Directory (#432): a nav entry, not a DM row — it highlights
+                // when active and opens the member grid rather than a
+                // conversation. Directly under the header, as on web.
+                directoryRow
+                ForEach(dmChannels) { channel in
+                    channelWithArtifacts(channel) { dmRow(channel) }
+                    ForEach(dmChildren[channel.id] ?? []) { child in
+                        channelWithArtifacts(child) { channelRow(child, isNested: true) }
+                    }
+                }
+
+                if !browsableChannels.isEmpty, app.can(.channelManagement) {
+                    sectionHeader("Browse") {}
+                    ForEach(browsableChannels) { channel in
+                        browseRow(channel)
+                    }
+                }
+
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
                 .padding(.horizontal, 14)
-                .padding(.bottom, 10)
+                .padding(.top, 18)
+                .padding(.bottom, 6)
+
+            ScrollViewReader { scroll in
+                channelList
+                    // Arriving at a channel by any route other than clicking it
+                    // here — a notification, a deep link, being added to a
+                    // channel — left the sidebar wherever it was, so the row you
+                    // just landed on could sit below the fold (#319). A nil
+                    // anchor is SwiftUI's minimal scroll: a row already on
+                    // screen does not move, which is why a plain sidebar click
+                    // still never jumps.
+                    //
+                    // The hop to the next runloop is for the invite case: the
+                    // new row and the new selection arrive in the same update,
+                    // and the row has to exist in the lazy stack before it can
+                    // be scrolled to.
+                    .onChange(of: win.selectedChannelId) { _, id in
+                        guard let id else { return }
+                        DispatchQueue.main.async {
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                scroll.scrollTo(AppState.sidebarRowID(id))
+                            }
+                        }
+                    }
             }
 
-            inviteAgentButton
+            if app.can(.agents) {
+                inviteAgentButton
+            }
 
             StatusFooterView(palette: palette)
         }
@@ -204,13 +327,19 @@ struct SidebarView: View {
                     .order(Column("name").collating(.nocase))
                     .fetchAll(db)
             }
+            // Fetch the roster directly rather than waiting for
+            // `selectWorkspace`'s channels → members → artifacts chain to reach
+            // it: the workspace menu decides between Leave and Delete from this
+            // list, and an NSMenu snapshots its contents when it opens
+            // (#340 follow-up).
+            Task { await app.engine.refreshMembers(workspaceId: wsId) }
             members.start(db: app.db, reset: []) { db in
                 try MemberInfo.fetchAll(
                     db,
                     sql: """
                         SELECT m.userId AS userId, u.displayName AS displayName, m.role AS role,
                                u.statusEmoji AS statusEmoji, u.statusText AS statusText,
-                               u.isAgent AS isAgent
+                               u.isAgent AS isAgent, u.isBot AS isBot
                         FROM member m JOIN user u ON u.id = m.userId
                         WHERE m.workspaceId = ?
                         ORDER BY u.displayName COLLATE NOCASE
@@ -242,6 +371,30 @@ struct SidebarView: View {
             }
         }
         .sheet(isPresented: $showFeatures) { FeaturesView() }
+        .confirmationDialog(
+            "Leave \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmLeaveWorkspace,
+            titleVisibility: .visible
+        ) {
+            Button("Leave Workspace", role: .destructive) { leaveWorkspace() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Leave as \(app.currentUser?.email ?? "this account") on \(app.serverOrigin). You'll lose access to all its channels. Your past messages will remain.")
+        }
+        .confirmationDialog(
+            "Delete \(currentWorkspace?.name ?? "workspace")?",
+            isPresented: $confirmDeleteWorkspace,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Workspace", role: .destructive) { deleteWorkspace() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "You're the only one left, so there's nobody to hand it to. "
+                    + "Deleting removes the workspace and every channel, message and file in it, "
+                    + "for good. This cannot be undone."
+            )
+        }
         .sheet(isPresented: $showInviteAgent) {
             if let wsId = win.selectedWorkspaceId {
                 InviteAgentSheetView(workspaceId: wsId)
@@ -260,11 +413,44 @@ struct SidebarView: View {
 
     // MARK: - Header
 
+    /// Title left, controls right. The title is the only view here that gives
+    /// ground (#456): it takes the leftover width and truncates, so the nav /
+    /// clock / bell cluster stays whole down to the 180pt minimum sidebar.
     private var header: some View {
-        HStack {
+        HStack(spacing: 2) {
             workspaceMenu
-            Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            navButton(back: true)
+            navButton(back: false)
+            if app.can(.scheduledMessages) { scheduledClock }
+            if app.can(.notifications) { activityBell }
         }
+    }
+
+    /// Back / forward over this session's channel visit history (#386). They sit
+    /// beside the Activity bell because both are window-level navigation rather
+    /// than rows in the channel list. Disabled — and dimmed — at whichever end
+    /// of the history they're at, which on a fresh session is both.
+    private func navButton(back: Bool) -> some View {
+        let enabled = back ? win.canGoBack : win.canGoForward
+        let label = back ? "Back" : "Forward"
+        return Button {
+            if back { win.goBack() } else { win.goForward() }
+        } label: {
+            Image(systemName: back ? "chevron.left" : "chevron.right")
+                .flowFont(size: 13, weight: .semibold)
+                .foregroundStyle(.white.opacity(enabled ? 0.7 : 0.25))
+                .frame(width: 20, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        // On the button rather than in a menu: it is per-window (each ⌘N window
+        // has its own history), and a disabled button swallows nothing.
+        .keyboardShortcut(back ? "[" : "]", modifiers: .command)
+        .help(back ? "Back (⌘[)" : "Forward (⌘])")
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(back ? "sidebar.navBack" : "sidebar.navForward")
     }
 
     /// Invite your Agent (phase 15, web parity): pinned above the profile
@@ -297,12 +483,37 @@ struct SidebarView: View {
         .accessibilityIdentifier("sidebar.inviteAgent")
     }
 
-    private func sectionHeader(_ label: String, @ViewBuilder action: () -> some View) -> some View {
+    /// A section title, optionally a collapse toggle (#361): pass `collapsed`
+    /// and `onToggle` and the label becomes a button with a disclosure chevron.
+    private func sectionHeader(
+        _ label: String,
+        collapsed: Bool? = nil,
+        onToggle: (() -> Void)? = nil,
+        @ViewBuilder action: () -> some View
+    ) -> some View {
         HStack {
-            Text(label.uppercased())
-                .flowFont(size: 11, weight: .semibold)
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.55))
+            if let collapsed, let onToggle {
+                Button(action: onToggle) {
+                    HStack(spacing: 3) {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                            .flowFont(size: 8, weight: .semibold)
+                        Text(label.uppercased())
+                            .flowFont(size: 11, weight: .semibold)
+                            .tracking(0.7)
+                    }
+                    .foregroundStyle(.white.opacity(0.55))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(collapsed ? "Show \(label)" : "Hide \(label)")
+                .accessibilityIdentifier("sidebar.section.\(label.lowercased())")
+                .accessibilityValue(collapsed ? "collapsed" : "expanded")
+            } else {
+                Text(label.uppercased())
+                    .flowFont(size: 11, weight: .semibold)
+                    .tracking(0.7)
+                    .foregroundStyle(.white.opacity(0.55))
+            }
             Spacer()
             action()
         }
@@ -341,172 +552,253 @@ struct SidebarView: View {
         }
     }
 
+    /// The one slot at the end of a channel label, and its two tenants (#396).
+    /// The spinner is a claim about right now, so it wins while it is up; the
+    /// channel's emoji is decoration and comes back the moment it clears. Never
+    /// both — together they'd read as one confused status.
+    @ViewBuilder
+    private func activitySlot(_ channel: Channel, active: Bool) -> some View {
+        if app.busyChannelIds.contains(channel.id) {
+            ActivitySpinner(active: active)
+        } else if let emoji = channel.emoji, !emoji.isEmpty {
+            Text(emoji)
+                .flowFont(size: 13)
+                .accessibilityHidden(true)
+        }
+    }
+
     private func rowBackground(_ active: Bool) -> some View {
         RoundedRectangle(cornerRadius: 8).fill(active ? Color.white : Color.clear)
     }
 
-    /// The always-present Activity feed row (phase 12) — a virtual, client-only
-    /// entry (no real channel). Carries the notification unread badge that used
-    /// to live on the toolbar bell.
-    private var activityRow: some View {
+    /// The Activity feed's bell (#385) — fixed in the workspace header rather
+    /// than sitting at the top of the channel list, so it can never scroll out
+    /// of view and the list holds only real channels. Carries the notification
+    /// unread badge and highlights while the feed is the open view.
+    private var activityBell: some View {
         let active = win.showActivity
         let unread = app.notificationUnread(workspaceId: win.selectedWorkspaceId)
         return Button {
             win.showActivityFeed()
         } label: {
-            HStack(spacing: 9) {
-                Image(systemName: unread > 0 ? "bell.badge" : "bell")
-                    .flowFont(size: 13)
-                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.6))
-                    .frame(width: 14)
-                Text("Activity")
-                    .flowFont(size: 14, weight: active || unread > 0 ? .semibold : .regular)
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(unread > 0 ? 1 : 0.82))
-                Spacer(minLength: 0)
-                if unread > 0 {
-                    unreadBadge(min(unread, 99))
+            Image(systemName: "bell")
+                .flowFont(size: 14)
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 24, height: 22)
+                .background(rowBackground(active))
+                .overlay(alignment: .topTrailing) {
+                    if unread > 0 {
+                        unreadBadge(min(unread, 99))
+                            .offset(x: 6, y: -6)
+                    }
                 }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("Activity")
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Activity")
         .accessibilityIdentifier("sidebar.activity")
         .accessibilityValue(unread > 0 ? "\(unread) unread" : "read")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// The Scheduled panel's entry point (#424) — a clock beside the Activity
+    /// bell, since both open a workspace-wide view rather than a channel. No
+    /// badge: a scheduled message that fired is already a message in a
+    /// conversation, and that is where it should be noticed.
+    private var scheduledClock: some View {
+        let active = win.showScheduled
+        return Button {
+            win.showScheduledPanel()
+        } label: {
+            Image(systemName: "clock")
+                .flowFont(size: 14)
+                .foregroundStyle(active ? MC.accentDeep.opacity(0.75) : .white.opacity(0.7))
+                .frame(width: 24, height: 22)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Scheduled messages")
+        .accessibilityLabel("Scheduled messages")
+        .accessibilityIdentifier("sidebar.scheduled")
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
-            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity
+            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
+            showScheduled: win.showScheduled, showDirectory: win.showDirectory
         )
-        return Button {
-            win.selectChannel(channel.id)
-        } label: {
-            HStack(spacing: 9) {
-                Group {
-                    if channel.isPrivate {
-                        Image(systemName: "lock")
-                    } else {
-                        Text("#")
+        return SidebarHoverRow { hovering in
+            Button {
+                win.openChannelFromSidebar(channel)
+            } label: {
+                HStack(spacing: 9) {
+                    Group {
+                        if channel.isPrivate {
+                            Image(systemName: "lock")
+                        } else {
+                            Text("#")
+                        }
                     }
+                    .flowFont(size: 14)
+                    .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
+                    .frame(width: 14)
+                    Text(channel.name ?? "")
+                        .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
+                        .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
+                    // An agent working here (#137), or the channel's own emoji
+                    // (#396) — DMs included: talking to an agent one-to-one is
+                    // the common case.
+                    activitySlot(channel, active: active)
+                    if channel.notifyLevel == 0 {
+                        Image(systemName: "bell.slash")
+                            .flowFont(.caption2)
+                            .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
+                    }
+                    Spacer(minLength: 0)
+                    // A number means "this needs you" — unread notifications, not
+                    // unread messages (operator ruling 2026-07-26). Messages only
+                    // embolden the row, above.
+                    if channel.unreadNotifications > 0 {
+                        unreadBadge(channel.unreadNotifications)
+                    }
+                    // Room for the hover ⋯ (#399), after the badge as on web.
+                    Color.clear.frame(width: SidebarRowMenuMetrics.width, height: 1)
                 }
-                .flowFont(size: 14)
-                .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
-                .frame(width: 14)
-                Text(channel.name ?? "")
-                    .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
-                // An agent working here (#137) — DMs included: talking to an
-                // agent one-to-one is the common case.
-                if app.busyChannelIds.contains(channel.id) {
-                    ActivitySpinner(active: active)
-                }
-                if channel.notifyLevel == 0 {
-                    Image(systemName: "bell.slash")
-                        .flowFont(.caption2)
-                        .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
-                }
-                Spacer(minLength: 0)
-                // A number means "this needs you" — unread notifications, not
-                // unread messages (operator ruling 2026-07-26). Messages only
-                // embolden the row, above.
-                if channel.unreadNotifications > 0 {
-                    unreadBadge(channel.unreadNotifications)
-                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            // #392: the topic on hover, so you can tell what a channel is for
+            // without opening it. No topic, no tooltip.
+            .topicHelp(channel.topic)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
+            .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
+            .accessibilityAddTraits(active ? [.isSelected] : [])
+            // #399: the same menu the row's right-click opens, on a button you
+            // can see. Overlaid rather than stacked in the HStack so the row
+            // stays one Button — clicking anywhere else still selects.
+            .overlay(alignment: .trailing) {
+                SidebarRowMenu(
+                    active: active,
+                    visible: hovering,
+                    identifier: "sidebar.channelMenu.\(channel.name ?? channel.id)"
+                ) {
+                    channelMenu(channel)
+                }
+                .padding(.trailing, 8)
+            }
+            // Indent outside the background so the pill insets with the row rather
+            // than the label sliding around inside a full-width pill.
+            .padding(.leading, isNested ? 12 : 0)
+            .contextMenu { channelMenu(channel) }
         }
-        .buttonStyle(.plain)
-        // Indent outside the background so the pill insets with the row rather
-        // than the label sliding around inside a full-width pill.
-        .padding(.leading, isNested ? 12 : 0)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("sidebar.channel.\(channel.name ?? channel.id)")
-        .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .contextMenu { channelMenu(channel) }
+        .id(AppState.sidebarRowID(channel.id))
     }
 
-    private func dmRow(_ channel: Channel) -> some View {
-        let title = channel.displayTitle(
+    /// `label` overrides the resolved DM title — the Agents section (#361)
+    /// passes the agent's plain name, since a 🤖 badge under a header that
+    /// already says AGENTS is noise.
+    private func dmRow(_ channel: Channel, label: String? = nil) -> some View {
+        let title = label ?? channel.displayTitle(
             userNames: userNames.value, currentUserId: app.currentUser?.id
         )
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
-            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity
+            selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
+            showScheduled: win.showScheduled, showDirectory: win.showDirectory
         )
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }
-        return Button {
-            win.selectChannel(channel.id)
-        } label: {
-            HStack(spacing: 9) {
-                if channel.kind == "dm" {
-                    // self-DM (no other member): online by definition
-                    presenceDot(online: otherId.map { app.presence[$0] == true } ?? true)
-                        .frame(width: 14)
-                } else {
-                    Image(systemName: "person.2")
-                        .flowFont(.caption)
-                        .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
-                        .frame(width: 14)
+        return SidebarHoverRow { hovering in
+            Button {
+                win.openChannelFromSidebar(channel)
+            } label: {
+                HStack(spacing: 9) {
+                    if channel.kind == "dm" {
+                        // self-DM (no other member): online by definition
+                        presenceDot(online: otherId.map { app.isOnline($0, in: win.selectedWorkspaceId) } ?? true)
+                            .frame(width: 14)
+                    } else {
+                        Image(systemName: "person.2")
+                            .flowFont(.caption)
+                            .foregroundStyle(active ? MC.accentDeep.opacity(0.6) : .white.opacity(0.6))
+                            .frame(width: 14)
+                    }
+                    Text(title)
+                        .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
+                        .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
+                        .lineLimit(1)
+                    if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
+                        Text(emoji)
+                            .flowFont(size: 14)
+                            .help(otherStatus?.statusText ?? "")
+                    }
+                    // An agent working here (#137), or the channel's own emoji
+                    // (#396) — DMs included: talking to an agent one-to-one is
+                    // the common case.
+                    activitySlot(channel, active: active)
+                    if channel.notifyLevel == 0 {
+                        Image(systemName: "bell.slash")
+                            .flowFont(.caption2)
+                            .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
+                    }
+                    Spacer(minLength: 0)
+                    // A number means "this needs you" — unread notifications, not
+                    // unread messages (operator ruling 2026-07-26). Messages only
+                    // embolden the row, above.
+                    if channel.unreadNotifications > 0 {
+                        unreadBadge(channel.unreadNotifications)
+                    }
+                    // Room for the hover ⋯ (#399), after the badge as on web.
+                    Color.clear.frame(width: SidebarRowMenuMetrics.width, height: 1)
                 }
-                Text(title)
-                    .flowFont(size: 14, weight: active || channel.unreadCount > 0 ? .semibold : .regular)
-                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(channel.unreadCount > 0 ? 1 : 0.82))
-                    .lineLimit(1)
-                if channel.kind == "dm", let emoji = otherStatus?.statusEmoji, !emoji.isEmpty {
-                    Text(emoji)
-                        .flowFont(size: 14)
-                        .help(otherStatus?.statusText ?? "")
-                }
-                // An agent working here (#137) — DMs included: talking to an
-                // agent one-to-one is the common case.
-                if app.busyChannelIds.contains(channel.id) {
-                    ActivitySpinner(active: active)
-                }
-                if channel.notifyLevel == 0 {
-                    Image(systemName: "bell.slash")
-                        .flowFont(.caption2)
-                        .foregroundStyle(active ? MC.accentDeep.opacity(0.5) : .white.opacity(0.5))
-                }
-                Spacer(minLength: 0)
-                // A number means "this needs you" — unread notifications, not
-                // unread messages (operator ruling 2026-07-26). Messages only
-                // embolden the row, above.
-                if channel.unreadNotifications > 0 {
-                    unreadBadge(channel.unreadNotifications)
-                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(rowBackground(active))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(rowBackground(active))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            // badge-free id: QA targets DMs by plain member names
+            .accessibilityIdentifier("sidebar.dm.\(title.replacingOccurrences(of: " 🤖", with: ""))")
+            .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
+            .accessibilityAddTraits(active ? [.isSelected] : [])
+            // #399: DMs get the ⋯ too, as on web.
+            .overlay(alignment: .trailing) {
+                SidebarRowMenu(
+                    active: active,
+                    visible: hovering,
+                    identifier: "sidebar.dmMenu.\(title.replacingOccurrences(of: " 🤖", with: ""))"
+                ) {
+                    dmMenu(channel, otherId: otherId)
+                }
+                .padding(.trailing, 8)
+            }
+            .contextMenu { dmMenu(channel, otherId: otherId) }
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        // badge-free id: QA targets DMs by plain member names
-        .accessibilityIdentifier("sidebar.dm.\(title.replacingOccurrences(of: " 🤖", with: ""))")
-        .accessibilityValue(channel.unreadCount > 0 ? "\(channel.unreadCount) unread" : "read")
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .contextMenu {
-            if channel.kind == "dm" {
-                Button("View Profile") {
-                    profileUserId = otherId ?? app.currentUser?.id
-                }
+        .id(AppState.sidebarRowID(channel.id))
+    }
+
+    /// The DM row's menu — right-click and the hover ⋯ (#399) both build it, so
+    /// the two entry points can never offer different items.
+    @ViewBuilder
+    private func dmMenu(_ channel: Channel, otherId: String?) -> some View {
+        if channel.kind == "dm" {
+            Button("View Profile") {
+                profileUserId = otherId ?? app.currentUser?.id
             }
-            notifyMenu(channel)
-            if channel.kind == "group_dm" {
-                Button("Leave Conversation", role: .destructive) { leave(channel) }
-            }
+        }
+        notifyMenu(channel)
+        if channel.kind == "group_dm", app.can(.channelManagement) {
+            Button("Leave Conversation", role: .destructive) { leave(channel) }
         }
     }
 
@@ -519,6 +811,63 @@ struct SidebarView: View {
         row()
         ForEach(win.artifacts(inChannel: channel.id)) { artifact in
             ArtifactSidebarRow(artifact: artifact)
+        }
+    }
+
+    /// An Apps-section row: the app's name over its host channel in muted text.
+    /// Two channels can host same-named apps, and for a channel you haven't
+    /// joined the channel *is* the context — so it is named, not implied.
+    private func appRow(_ entry: AppsSection.Entry) -> some View {
+        let label = AppsSection.channelLabel(
+            entry.channel, userNames: userNames.value, currentUserId: app.currentUser?.id
+        )
+        let active = win.selectedArtifactId == entry.artifact.id
+            && win.selectedChannelId == entry.channel.id
+        return Button {
+            openApp(entry)
+        } label: {
+            HStack(spacing: 9) {
+                Text("🧩")
+                    .flowFont(size: 12)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(entry.artifact.name)
+                        .flowFont(size: 14, weight: active ? .bold : .regular)
+                        .foregroundStyle(.white.opacity(active ? 1 : 0.82))
+                        .lineLimit(1)
+                    Text(label)
+                        .flowFont(size: 11)
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(entry.artifact.name) — \(label)")
+        .accessibilityIdentifier("sidebar.app.\(entry.artifact.name)")
+    }
+
+    /// One click = land in the app. A public channel we have not joined is
+    /// joined first, and we wait for the artifact refresh before opening: the
+    /// side panel builds its tabs from the *member* artifact list, so opening
+    /// early would show a panel with nothing in it.
+    private func openApp(_ entry: AppsSection.Entry) {
+        guard !entry.channel.isMember else {
+            win.openArtifact(entry.artifact.id, inChannel: entry.channel.id)
+            return
+        }
+        Task {
+            do {
+                let joined = try await app.engine.joinChannel(entry.channel.id)
+                await app.engine.refreshArtifacts(workspaceId: joined.workspaceId)
+                win.openArtifact(entry.artifact.id, inChannel: joined.id)
+            } catch {
+                app.showError(error.localizedDescription)
+            }
         }
     }
 
@@ -550,12 +899,79 @@ struct SidebarView: View {
         .padding(.vertical, 7)
     }
 
+    /// The Directory entry under the Direct messages header (#432) — the same
+    /// nav-item shape as a channel row, minus everything that belongs to a
+    /// conversation (unread badge, hover menu, context menu).
+    private var directoryRow: some View {
+        let active = win.showDirectory
+        return Button {
+            win.showDirectoryPanel()
+        } label: {
+            HStack(spacing: 9) {
+                Text("👥")
+                    .flowFont(size: 14)
+                    .opacity(active ? 0.7 : 0.6)
+                    .frame(width: 14)
+                Text("Directory")
+                    .flowFont(size: 14, weight: active ? .semibold : .regular)
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.82))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Browse everyone in this workspace")
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.directory")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// An agent with no DM yet (#361) — clicking creates one. Same shape as a
+    /// DM row minus the unread badge, which needs a channel to count.
+    private func agentRow(_ member: MemberInfo) -> some View {
+        let online = app.isOnline(member.userId, in: win.selectedWorkspaceId)
+        return Button {
+            openDm(with: member.userId)
+        } label: {
+            HStack(spacing: 9) {
+                presenceDot(online: online)
+                    .frame(width: 14)
+                Text(member.displayName)
+                    .flowFont(size: 14)
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                if let emoji = member.statusEmoji, !emoji.isEmpty {
+                    Text(emoji)
+                        .flowFont(size: 14)
+                        .help(member.statusText ?? "")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Start a direct message")
+        .accessibilityElement(children: .combine)
+        // Same id shape as a real DM row, so QA targets an agent by name
+        // whether or not the conversation exists yet.
+        .accessibilityIdentifier("sidebar.dm.\(member.displayName)")
+        .accessibilityValue(online ? "online" : "offline")
+        .contextMenu {
+            Button("View Profile") { profileUserId = member.userId }
+        }
+    }
+
     private func memberRow(_ member: MemberInfo) -> some View {
         Button {
             openDm(with: member.userId)
         } label: {
             HStack(spacing: 9) {
-                presenceDot(online: app.presence[member.userId] == true)
+                presenceDot(online: app.isOnline(member.userId, in: win.selectedWorkspaceId))
                 Text(member.displayName)
                     .flowFont(size: 14)
                     .foregroundStyle(.white.opacity(0.82))
@@ -587,7 +1003,7 @@ struct SidebarView: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.member.\(member.displayName)")
-        .accessibilityValue(app.presence[member.userId] == true ? "online" : "offline")
+        .accessibilityValue(app.isOnline(member.userId, in: win.selectedWorkspaceId) ? "online" : "offline")
         .contextMenu {
             Button("View Profile") { profileUserId = member.userId }
         }
@@ -614,6 +1030,9 @@ struct SidebarView: View {
                 Circle().strokeBorder(online ? Color.clear : .white.opacity(0.4), lineWidth: 1.5)
             )
             .frame(width: 8, height: 8)
+            // No presence from this provider (#546): the slot keeps its width
+            // so rows line up, but an "offline" ring would be a false claim.
+            .opacity(app.can(.presence) ? 1 : 0)
     }
 
     private func unreadBadge(_ n: Int) -> some View {
@@ -630,14 +1049,18 @@ struct SidebarView: View {
     @ViewBuilder
     private func channelMenu(_ channel: Channel) -> some View {
         notifyMenu(channel)
-        Divider()
-        Button("Invite to Channel…") { addMemberChannel = channel }
-        if channel.name != "general" {
-            Button("Leave Channel", role: .destructive) { leave(channel) }
-            Button("Archive Channel", role: .destructive) {
-                Task {
-                    do { try await app.engine.archiveChannel(channel.id) }
-                    catch { app.showError(error.localizedDescription) }
+        // Membership changes are channel management (#546): a provider that
+        // has none keeps only the notification levels, which stay local.
+        if app.can(.channelManagement) {
+            Divider()
+            Button("Invite to Channel…") { addMemberChannel = channel }
+            if channel.name != "general" {
+                Button("Leave Channel", role: .destructive) { leave(channel) }
+                Button("Archive Channel", role: .destructive) {
+                    Task {
+                        do { try await app.engine.archiveChannel(channel.id) }
+                        catch { app.showError(error.localizedDescription) }
+                    }
                 }
             }
         }
@@ -670,6 +1093,35 @@ struct SidebarView: View {
         }
     }
 
+    /// Confirmed departure (#340): the engine calls the endpoint, clears the
+    /// local mirror and reports where to land; `workspaceBecameUnavailable`
+    /// moves every window showing it, including this one.
+    private func leaveWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.leaveWorkspace(ws.id)
+                await app.workspaceBecameUnavailable(ws.id, landOn: next)
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Confirmed deletion (#340 follow-up). Same landing as leaving — the
+    /// workspace is gone for us either way.
+    private func deleteWorkspace() {
+        guard let ws = currentWorkspace else { return }
+        Task {
+            do {
+                let next = try await app.engine.deleteWorkspace(ws.id)
+                await app.workspaceBecameUnavailable(ws.id, landOn: next)
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
+    }
+
     private var workspaceMenu: some View {
         Menu {
             ForEach(workspaces.value) { ws in
@@ -684,14 +1136,50 @@ struct SidebarView: View {
                 }
             }
             Divider()
-            if canEditWorkspace {
-                Button("Workspace Color…") { showColorPicker = true }
+            // Workspace administration is Flow's (#546): on a provider
+            // connection the menu keeps switching, Directory and the build tag.
+            if canEditWorkspace, app.can(.admin) {
+                Button("Workspace Appearance…") { showColorPicker = true }
             }
-            Button("Create Workspace…") { showCreateWorkspace = true }
-            Button("Accept Invite…") { showAcceptInvite = true }
-            Button("Invite People…") { showInvite = true }
+            if app.can(.admin) {
+                Button("Create Workspace…") { showCreateWorkspace = true }
+                Button("Accept Invite…") { showAcceptInvite = true }
+            }
+            if app.can(.channelManagement) {
+                Button("Invite People…") { showInvite = true }
+            }
+            Button("Directory") { win.showDirectoryPanel() }
+                .disabled(win.selectedWorkspaceId == nil)
+                .accessibilityIdentifier("sidebar.directoryMenuItem")
             Divider()
             Button("All Workspaces") { win.selectWorkspace(nil) }
+            // Workspaces & servers (#566). Its old home was a button pinned to
+            // the bottom-right of the window, floating over the composer's send
+            // button; workspace-level navigation belongs with the rest of it,
+            // which is here. iOS (#563) and web (#565) made the same move.
+            Button {
+                openConnections()
+            } label: {
+                Label("Workspaces & servers…", systemImage: "server.rack")
+            }
+            .accessibilityIdentifier("sidebar.connections")
+            if currentWorkspace != nil, app.can(.admin) {
+                switch workspaceExit {
+                case .delete:
+                    Button("Delete Workspace…", role: .destructive) { confirmDeleteWorkspace = true }
+                        .accessibilityIdentifier("sidebar.deleteWorkspace")
+                case .leave, .transferFirst:
+                    // Destructive, and disabled for the owner with the reason in
+                    // the label — a macOS menu item has nowhere else to say it.
+                    let blocked = workspaceExit == .transferFirst
+                    Button(
+                        blocked ? "Leave Workspace — transfer ownership first" : "Leave Workspace…",
+                        role: .destructive
+                    ) { confirmLeaveWorkspace = true }
+                        .disabled(blocked)
+                        .accessibilityIdentifier("sidebar.leaveWorkspace")
+                }
+            }
             Divider()
             // Version tag (web parity): clicking it opens the "What's new" sheet.
             Button { showFeatures = true } label: {
@@ -707,15 +1195,20 @@ struct SidebarView: View {
                     .font(ZoomedFont.system(size: 16, weight: .bold, scale: textZoom))
                     .foregroundStyle(.white)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                // The switcher affordance never truncates with the name.
                 Image(systemName: "chevron.down")
                     .font(ZoomedFont.system(.caption, scale: textZoom))
                     .foregroundStyle(.white.opacity(0.55))
+                    .layoutPriority(1)
             }
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .fixedSize()
+        // No .fixedSize() (#456): it let a long workspace name claim its full
+        // intrinsic width and shove the header controls off the sidebar edge.
+        .help(currentWorkspace?.name ?? "Workspace")
         .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 }
@@ -936,15 +1429,18 @@ struct ProfileTarget: Identifiable {
     var id: String { userId }
 }
 
-/// Owner/admin picker for the workspace's sidebar color preset (ruling 3).
-/// Selecting a swatch PATCHes the workspace; the saved row + broadcast
-/// restyle every client live.
+/// Owner/admin workspace branding: the sidebar color preset (ruling 3) and the
+/// optional avatar image (#336). Either write PATCHes the workspace; the saved
+/// row + broadcast restyle every client live.
 struct WorkspaceColorSheet: View {
     let workspace: Workspace
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
+    /// Local mirror of the workspace's avatar so the preview updates in place —
+    /// the sheet holds a snapshot row, not a live query.
+    @State private var avatarUrl: String?
 
     private var currentId: String {
         SidebarPalette.palette(for: workspace.sidebarColor).id
@@ -954,10 +1450,13 @@ struct WorkspaceColorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Workspace Color").flowFont(.headline)
+            Text("Workspace Appearance").flowFont(.headline)
             Text("Applies to everyone in \(workspace.name).")
                 .flowFont(.caption)
                 .foregroundStyle(.secondary)
+            avatarSection
+            Divider()
+            Text("Color").flowFont(.caption).foregroundStyle(.secondary)
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(SidebarPalette.all) { palette in
                     swatch(palette)
@@ -974,6 +1473,76 @@ struct WorkspaceColorSheet: View {
         // ids in the AX tree (see status.picker).
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.colorSheet")
+        .onAppear { avatarUrl = workspace.avatarUrl }
+    }
+
+    private var avatarSection: some View {
+        HStack(spacing: 12) {
+            WorkspaceMark(
+                workspace: Workspace(
+                    id: workspace.id, slug: workspace.slug, name: workspace.name,
+                    createdBy: workspace.createdBy, createdAt: workspace.createdAt,
+                    role: workspace.role, sidebarColor: workspace.sidebarColor,
+                    avatarUrl: avatarUrl
+                ),
+                size: 48,
+                cornerRadius: 10
+            )
+            .background(RoundedRectangle(cornerRadius: 10).fill(MC.accent))
+            .id(avatarUrl ?? "none") // repaint when the key changes
+            VStack(alignment: .leading, spacing: 2) {
+                Button(avatarUrl == nil ? "Upload Image…" : "Replace Image…") { pickAvatar() }
+                    .buttonStyle(.link)
+                    .disabled(busy)
+                    .accessibilityIdentifier("workspace.avatar.upload")
+                if avatarUrl == nil {
+                    Text("PNG, JPEG, GIF or WebP — under 1MB.")
+                        .flowFont(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Remove") { clearAvatar() }
+                        .buttonStyle(.link)
+                        .disabled(busy)
+                        .accessibilityIdentifier("workspace.avatar.remove")
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func pickAvatar() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP]
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            busy = true
+            Task { @MainActor in
+                defer { busy = false }
+                do {
+                    let ws = try await app.engine.uploadWorkspaceAvatar(
+                        workspaceId: workspace.id, fileURL: url
+                    )
+                    avatarUrl = ws.avatarUrl
+                } catch {
+                    app.showError(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func clearAvatar() {
+        busy = true
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                _ = try await app.engine.clearWorkspaceAvatar(workspaceId: workspace.id)
+                avatarUrl = nil
+            } catch {
+                app.showError(error.localizedDescription)
+            }
+        }
     }
 
     private func swatch(_ palette: SidebarPalette) -> some View {

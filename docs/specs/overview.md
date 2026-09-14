@@ -26,8 +26,13 @@ Slack features we WILL NOT INCLUDE:
 - BlockKit support
 - External connections, guest users
 - Drafts
-- Huddles or any audio or video support
 - Message search
+
+Reversed non-goal: **voice huddles** (ambient, audio-only, channel-scoped)
+shipped in Phase 1 — see `docs/research/voice-huddle-livekit.md`,
+`docs/adr/0001-livekit-cloud-for-voice-huddle.md`, and `decision_log.md`
+(2026-08-20). Video/screenshare remain out of scope for now (tracked as
+Phase 2 in that doc, not yet built).
 
 The architecture plan and build phases are defined in the "phase<N>.md" docs in this folder.
 

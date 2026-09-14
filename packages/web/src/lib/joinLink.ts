@@ -9,6 +9,9 @@ export function parseJoinPath(pathname: string): string | null {
   return JOIN_PATH_RE.exec(pathname)?.[1] ?? null;
 }
 
+/** The pre-multi-server key, and still the one the migrated default connection
+ * uses. A second connection passes its own scoped key: a join token is minted
+ * by one server and means nothing on another. */
 export const PENDING_JOIN_KEY = 'flow.pendingJoinLink';
 
 /**
@@ -21,12 +24,12 @@ export const PENDING_JOIN_KEY = 'flow.pendingJoinLink';
 const STASH_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Hold a join token across the sign-in round trip, stamped so it can expire. */
-export function stashJoinToken(token: string, now = Date.now()): void {
-  localStorage.setItem(PENDING_JOIN_KEY, JSON.stringify({ token, at: now }));
+export function stashJoinToken(token: string, now = Date.now(), key = PENDING_JOIN_KEY): void {
+  localStorage.setItem(key, JSON.stringify({ token, at: now }));
 }
 
-export function clearJoinToken(): void {
-  localStorage.removeItem(PENDING_JOIN_KEY);
+export function clearJoinToken(key = PENDING_JOIN_KEY): void {
+  localStorage.removeItem(key);
 }
 
 /**
@@ -35,20 +38,20 @@ export function clearJoinToken(): void {
  * on every load. A bare string is the pre-expiry format: honour it once so
  * anyone mid-flow across the deploy still lands in their workspace.
  */
-export function readJoinToken(now = Date.now()): string | null {
-  const raw = localStorage.getItem(PENDING_JOIN_KEY);
+export function readJoinToken(now = Date.now(), key = PENDING_JOIN_KEY): string | null {
+  const raw = localStorage.getItem(key);
   if (!raw) return null;
   if (!raw.startsWith('{')) return raw;
   let parsed: { token?: unknown; at?: unknown };
   try {
     parsed = JSON.parse(raw) as { token?: unknown; at?: unknown };
   } catch {
-    clearJoinToken();
+    clearJoinToken(key);
     return null;
   }
   const { token, at } = parsed;
   if (typeof token !== 'string' || typeof at !== 'number' || now - at > STASH_TTL_MS) {
-    clearJoinToken();
+    clearJoinToken(key);
     return null;
   }
   return token;

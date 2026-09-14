@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Custom emoji management (#175). Owner/admin, web client — same shape as
 // Manage Apps/Agents. Uploading reuses the ordinary presigned file upload, then
 // registers the resulting file id under a shortcode.
@@ -12,6 +13,7 @@ import { Modal } from './modals';
 const MAX_EMOJI_BYTES = 256 * 1024; // mirrors the server's limit
 
 export function EmojiModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api, uploadFile } = useBoundApi();
   const qc = useQueryClient();
   const emoji = useWorkspaceEmoji(workspaceId);
   const [shortcode, setShortcode] = useState('');

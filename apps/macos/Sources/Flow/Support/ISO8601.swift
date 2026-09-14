@@ -20,8 +20,27 @@ enum ISO8601 {
         fractional.date(from: s) ?? plain.date(from: s)
     }
 
+    /// ISO-8601 with fractional seconds — the shape the server's zod
+    /// `datetime({ offset: true })` validators accept back (scheduled-message
+    /// recurrences send instants this way).
+    static func string(from date: Date) -> String {
+        fractional.string(from: date)
+    }
+
+    /// Decoding helper for a timestamp the payload promises is present, so a
+    /// malformed one surfaces as a decoding error naming the field rather than
+    /// a silently-nil date.
+    static func parseRequired(_ s: String) throws -> Date {
+        guard let date = parse(s) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "not an ISO-8601 timestamp: \(s)")
+            )
+        }
+        return date
+    }
+
     static func now() -> String {
-        fractional.string(from: Date())
+        string(from: Date())
     }
 
     /// Short human display: time for today, date + time otherwise.

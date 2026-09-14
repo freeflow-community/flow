@@ -32,6 +32,7 @@ import { isAllowed as robotsAllows } from './robots.js';
 import { SsrfError } from './ssrf.js';
 import { isAllowedByAllowlist, isDenied, UnfurlQueue } from './queue.js';
 import { CHANNEL_SUPPRESSION_MS, extractUrls, urlHash } from './urls.js';
+import { parseVideoEmbed } from './video.js';
 
 const queue = new UnfurlQueue();
 
@@ -74,7 +75,15 @@ export async function buildUnfurl(normalizedUrl: string): Promise<UnfurlDTO> {
     throw new FetchError('robots.txt disallows', 'robots');
   }
 
-  const res = await guardedFetch(normalizedUrl, { stopAt: '</head>', deadline });
+  // Recognized from the URL alone, before the fetch — a playable page gets the
+  // larger head budget (see LIMITS.maxVideoPageBytes).
+  let embed = parseVideoEmbed(normalizedUrl);
+
+  const res = await guardedFetch(normalizedUrl, {
+    stopAt: '</head>',
+    deadline,
+    ...(embed ? { maxBytes: LIMITS.maxVideoPageBytes } : {}),
+  });
   if (res.status === 404 || res.status === 410) throw new FetchError('gone', `http_${res.status}`, res.status);
   if (res.status === 401 || res.status === 403) throw new FetchError('denied', `http_${res.status}`, res.status);
   if (res.status >= 500) throw new FetchError(`upstream ${res.status}`, 'http_5xx', res.status);
@@ -104,6 +113,10 @@ export async function buildUnfurl(normalizedUrl: string): Promise<UnfurlDTO> {
   }
 
   let meta = extractHtmlMetadata(res.body, res.finalUrl);
+  // A shortener, or a host we don't match, is only recognizable once the
+  // redirects have played out.
+  embed ??= parseVideoEmbed(res.finalUrl) ?? parseVideoEmbed(meta.canonicalUrl);
+  const ogImageUrl = meta.imageUrl;
 
   // §5 tier 1: oEmbed outranks everything, but costs another round trip.
   // Fall back to a known endpoint for providers whose pages don't advertise
@@ -123,6 +136,12 @@ export async function buildUnfurl(normalizedUrl: string): Promise<UnfurlDTO> {
       /* oEmbed is an enhancement — never fail the card over it */
     }
   }
+
+  // Video oEmbed thumbnails are the small square-ish artwork (YouTube's is a
+  // 4:3 `hqdefault`, pillarboxed); og:image is the 16:9 master. A play card is
+  // mostly picture, so prefer the master where the page offered one — and fall
+  // back to oEmbed for providers that publish no og:image at all.
+  if (embed && ogImageUrl) meta = { ...meta, imageUrl: ogImageUrl };
 
   if (!hasRenderableContent(meta)) throw new FetchError('no renderable metadata', 'empty');
 
@@ -147,7 +166,17 @@ export async function buildUnfurl(normalizedUrl: string): Promise<UnfurlDTO> {
   return {
     ...base,
     canonicalUrl: meta.canonicalUrl ?? res.finalUrl,
-    layout,
+    // A playable page is a video card whatever its content type said, and it
+    // always renders large — a play badge on an 80px chip is unhittable.
+    ...(embed ? { type: 'video' as const, embed, layout: 'large_image' as const } : { layout }),
+    ...(meta.durationSec || embed
+      ? {
+          media: {
+            ...(embed ? { provider: embed.provider } : {}),
+            ...(meta.durationSec ? { durationSec: meta.durationSec } : {}),
+          },
+        }
+      : {}),
     ...(image
       ? {
           image: {

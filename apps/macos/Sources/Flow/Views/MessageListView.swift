@@ -1,85 +1,140 @@
 import AppKit
+import os
 import SwiftUI
+
+/// Scroll-memory decision log — release-visible on purpose (ids only, no
+/// content), so a "position wasn't remembered" report on a production build
+/// can be diagnosed after the fact with:
+///   log show --last 1h --predicate 'subsystem == "im.freeflow.follow"'
+/// Notice level, deliberately: info-level messages live only in the in-memory
+/// buffer and evaporate when the app exits, which made the first field report
+/// undiagnosable. Notice persists to the log store.
+private let memoryLog = Logger(subsystem: "im.freeflow.follow", category: "memory")
 
 struct MessageListView: View {
     let messages: [Message] // ascending by id
     let userNames: [String: String]
     var userStatuses: [String: String] = [:] // userId -> status emoji
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
+    /// Engine + per-user lookups for the rows, passed by value so rows don't
+    /// observe `AppState` (see `TranscriptContext`).
+    let context: TranscriptContext
     let hasMore: Bool
     /// The channel's history page is still in flight (#191, ported from iOS).
     /// Drives the loading states below — an empty transcript with no
     /// explanation reads as a lost conversation on a slow link.
     var isLoadingHistory: Bool = false
+    /// A provider asked for a wait before the next history page (#546): the
+    /// "Load earlier messages" button stays put but disabled until then.
+    var loadOlderRetryAt: Date? = nil
     let showThreadAffordances: Bool
+    /// Thread roots holding an unread notification for me (#270) — their reply
+    /// chips get a dot, so a reply that needs you is visible here and not only
+    /// in the sidebar badge.
+    var unreadThreadRootIds: Set<String> = []
     let onLoadOlder: () -> Void
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     /// Tapping a sender's avatar opens their profile (ui_nits).
     var onOpenProfile: (String) -> Void = { _ in }
-    /// Enables per-channel scroll-position memory (channels pass their id;
-    /// threads omit it and always open at the newest reply).
+    /// Identifies whose transcript this is (channels pass their id), so the
+    /// first load after a channel switch lands at the bottom exactly once —
+    /// a new message later must not re-trigger that landing.
     var scrollKey: String? = nil
     /// Jump-to-message target (phase 12): scroll it into view + flash it once
     /// it's in the list, then call onFocused. Nil in the normal case.
     var focusMessageId: String? = nil
     var onFocused: () -> Void = {}
+    /// Inline find (#518): the live query, empty when the bar is closed. Rows
+    /// paint every occurrence of it in their own body.
+    var searchQuery: String = ""
+    /// The one match the find bar's cursor is on — painted stronger, and
+    /// scrolled into view when it moves.
+    var searchCursor: ChatSearch.Match? = nil
 
+    /// Precomputed rows (grouping, day dividers, parsed markdown) rebuilt only
+    /// when the message array actually changes — never per render pass. A
+    /// plain class in `@State`: mutating it doesn't touch SwiftUI state, and
+    /// its identity is stable across body evaluations.
+    @State private var rowCache = TranscriptRowCache()
     /// The scrollKey we've already applied a restore/bottom decision for, so a
     /// new message in the *current* channel doesn't re-trigger a restore.
     @State private var appliedKey: String?
     /// The row currently flashing after a jump (fades out on a timer).
     @State private var flashId: String?
-    /// Bottom edge of the content and height of the viewport, both in the
-    /// scroll view's own space — their difference is how far we are above the
-    /// newest message (#111).
-    @State private var contentBottom: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
-    /// True while the follow is glued to the newest message. Ported from the
-    /// web client's fix: distance-from-bottom alone can't tell "the user
-    /// scrolled away" from "the content grew under us" — a tall message
-    /// landing (or a row sizing late) flipped `atBottom` false before the
-    /// follow scroll settled, latching the follow off with the jump pill up
-    /// while new output piled in below. Growth never moves the content's top
-    /// edge up, so only an upward scroll unpins; nearing the bottom re-pins.
-    @State private var pinned = true
+    /// The single owner of every follow/scroll decision (see
+    /// `TranscriptFollowModel` — the old `followDecision` rules live there
+    /// now, unchanged). All the drivers below feed it events and execute the
+    /// one command it returns — nothing else calls `scrollTo` toward the
+    /// bottom.
+    @State private var followBox = TranscriptFollowBox(style: .topEdge)
+    /// Mirror of `followBox.model.showJump`, written only when it changes — the one
+    /// follow-model output SwiftUI renders from (see TranscriptFollowBox).
+    @State private var jumpSignal = false
+    /// The jump pill, debounced: `followBox.model.showJump` must hold for a beat
+    /// before the pill mounts, so a transient measurement (a composer resize,
+    /// a glue scroll landing a few points short) can never flicker it up.
+    @State private var showPill = false
+    /// The first message on screen when "Load earlier messages" was clicked.
+    /// When the older page prepends, this row is put back at the top of the
+    /// viewport — without it the scroll offset stays top-relative and every
+    /// visible row shifts down by the height of the new content.
+    @State private var loadOlderAnchorId: String?
+    /// A scroll-memory restore in its settling window: the remembered row is
+    /// re-anchored to the top a few times while attachments above it size.
+    @State private var pendingRestoreId: String?
 
     private static let scrollSpace = "messageScroll"
-    /// Slack-style slack: within this much of the end still counts as "at the
-    /// bottom", so a part-scrolled last message doesn't raise the button.
-    private static let bottomSlack: CGFloat = 120
-    /// Within this much of the end, any scroll re-pins the follow (web parity).
-    static let repinSlack: CGFloat = 40
+    /// When to re-assert the bottom after a (re)landing, in nanoseconds from
+    /// the previous pass — the same cadence as iOS.
+    private static let settleDelays: [UInt64] = [50_000_000, 150_000_000, 400_000_000]
 
-    /// Purely geometric "near the end" — drives the jump pill, not the follow.
-    private var atBottom: Bool { contentBottom - viewportHeight <= Self.bottomSlack }
-    /// Raise the pill only when unpinned *and* visibly short of the end, so a
-    /// tall message landing while pinned doesn't flicker it up mid-glue.
-    private var showJump: Bool { !pinned && !atBottom }
-
-    /// What a content-frame change (in the scroll view's space) means for the
-    /// follow, in checking order. Pure so the tests can pin the semantics.
-    enum FollowDecision: Equatable {
-        case pin    // near the bottom → (re)pin the follow
-        case unpin  // the content's top edge moved down: an upward scroll
-        case glue   // content grew under a pinned reader → re-scroll to newest
-        case none
+    /// Executes a follow-model command. The one place this list scrolls to
+    /// its end.
+    /// Mirror the pill signal into SwiftUI state, only on change.
+    private func syncSignals() {
+        if followBox.model.showJump != jumpSignal { jumpSignal = followBox.model.showJump }
     }
 
-    static func followDecision(
-        pinned: Bool, old: CGRect, new: CGRect, viewportHeight: CGFloat
-    ) -> FollowDecision {
-        if new.maxY - viewportHeight <= repinSlack { return .pin }
-        if new.minY > old.minY + 1 { return .unpin }
-        if pinned && new.height > old.height + 1 { return .glue }
-        return .none
+    private func run(_ command: TranscriptFollowModel.Command, _ proxy: ScrollViewProxy) {
+        defer { syncSignals() }
+        guard case .stick(let animated) = command, let lastKey = messages.lastRowKey else { return }
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(lastKey, anchor: .bottom)
+            }
+        } else {
+            proxy.scrollTo(lastKey, anchor: .bottom)
+        }
+    }
+
+    /// Below this many messages the transcript renders eagerly (plain
+    /// VStack). LazyVStack's row-height *estimates* are the root of the
+    /// parked/blank-open family (#280 and descendants): in short channels of
+    /// tall messages they ran ~2x off, so the viewport could sit over phantom
+    /// estimate space — a blank screen — while the content frame measured as
+    /// perfectly bottom-aligned, and every corrective scroll just re-rolled
+    /// the estimates (the layout never settled). A fresh channel open loads
+    /// one ~50-message page, so eager covers every first paint; only deep
+    /// Load-earlier histories stay lazy.
+    private static let eagerRowLimit = 100
+
+    /// Eager below `eagerRowLimit`, lazy above (see the limit's comment).
+    @ViewBuilder
+    private func transcriptStack<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if messages.count <= Self.eagerRowLimit {
+            VStack(alignment: .leading, spacing: 0, content: content)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0, content: content)
+        }
     }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                transcriptStack {
                     // With something cached, the top of the list says the rest
                     // is still coming, instead of the transcript simply
                     // starting wherever the cache happens to end (#191). With
@@ -91,73 +146,109 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
-                            Button("Load earlier messages", action: onLoadOlder)
-                                .buttonStyle(.link)
-                                .flowFont(.callout)
-                                .pointingHandCursor()
+                            let waiting = loadOlderRetryAt.map { $0 > Date() } ?? false
+                            Button("Load earlier messages") {
+                                // Reading history is a decision to leave the
+                                // end: unpin, remember the current top row,
+                                // and restore it once the page lands.
+                                loadOlderAnchorId = messages.first?.id
+                                followBox.model.positionRestored(atBottom: false)
+                                onLoadOlder()
+                            }
+                            .buttonStyle(.link)
+                            .flowFont(.callout)
+                            .pointingHandCursor()
+                            .disabled(waiting)
+                            .help(waiting ? "Slack asked Flow to wait before loading older messages." : "")
+                            .accessibilityIdentifier("transcript.loadOlder")
                             Spacer()
                         }
                         .padding(.vertical, 8)
                     }
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                    // Keyed on clientMsgId, not TranscriptRow's message id:
+                    // the optimistic row and its server echo must be one
+                    // element with a changed value, not a delete + insert
+                    // sharing an `.id()` — see ThreadPanelView (#328).
+                    ForEach(rowCache.rows(for: messages), id: \.message.clientMsgId) { row in
                         VStack(alignment: .leading, spacing: 0) {
-                            if startsNewDay(at: index) {
-                                DayDividerView(iso: message.createdAt)
+                            if row.startsNewDay {
+                                DayDividerView(iso: row.message.createdAt)
                             }
-                            if message.systemKind != nil {
-                                SystemLineView(text: message.body)
+                            if row.message.systemKind != nil {
+                                SystemLineView(text: row.message.body)
                             } else {
                                 MessageRow(
-                                    message: message,
+                                    message: row.message,
+                                    segments: row.segments,
                                     userNames: userNames,
                                     userStatuses: userStatuses,
                                     currentUserId: currentUserId,
-                                    showHeader: showsHeader(at: index),
+                                    canPermanentlyDelete: canPermanentlyDelete,
+                                    context: context,
+                                    showHeader: row.showsHeader,
                                     showThreadAffordances: showThreadAffordances,
-                                    highlighted: message.id == flashId,
+                                    threadUnread: unreadThreadRootIds.contains(row.message.id),
+                                    highlighted: row.message.id == flashId,
+                                    search: searchQuery.isEmpty ? nil : ChatSearch.RowHighlight(
+                                        query: searchQuery,
+                                        currentOccurrence: searchCursor?.messageId == row.message.id
+                                            ? searchCursor?.occurrence : nil
+                                    ),
                                     onOpenThread: onOpenThread,
                                     onEdit: onEdit,
                                     onDelete: onDelete,
                                     onOpenProfile: onOpenProfile
                                 )
+                                // Skip the row's body when nothing it renders
+                                // changed — its == ignores the closures, which
+                                // are recreated on every list evaluation.
+                                .equatable()
                             }
                         }
-                        .id(message.id)
+                        // Keyed on clientMsgId, not id: the optimistic row and
+                        // its server echo share a clientMsgId but not an id,
+                        // so keying on id remounts the row (and its avatar
+                        // image) the moment the echo lands.
+                        .id(row.message.clientMsgId)
+                        // Scroll memory's recorder: each row reports itself
+                        // when it crosses the viewport top; only one does, so
+                        // the preference resolves to the top-visible message.
+                        // Passive — it observes geometry and never scrolls, so
+                        // it cannot become the second driver the NOTE below
+                        // warns about.
+                        .background(
+                            GeometryReader { geo in
+                                let f = geo.frame(in: .named(Self.scrollSpace))
+                                Color.clear.preference(
+                                    key: TopVisibleMessageKey.self,
+                                    // Probed just inside the list's top
+                                    // padding, so the first row still counts
+                                    // when scrolled all the way up.
+                                    value: f.minY <= 16 && f.maxY > 16 ? row.message.id : nil
+                                )
+                            }
+                        )
                     }
                 }
                 .padding(.vertical, 8)
-                // Scroll tracking (#111) + the pinned follow. The glue scroll
-                // below is the one sanctioned second driver: it only ever
-                // targets the same bottom edge as .defaultScrollAnchor, so the
-                // two can't disagree the way the removed scrollPosition(id:)
-                // did (see the note below).
+                // Scroll tracking (#111) + the pinned followBox.model. Every geometry
+                // change goes through the follow model, and its commands only
+                // ever target the same bottom edge as .defaultScrollAnchor, so
+                // the two can't disagree the way the removed
+                // scrollPosition(id:) did (see the note below).
                 .background(
                     GeometryReader { geo in
                         let frame = geo.frame(in: .named(Self.scrollSpace))
                         Color.clear
-                            .onAppear { contentBottom = frame.maxY }
-                            .onChange(of: frame) { old, new in
-                                switch Self.followDecision(
-                                    pinned: pinned, old: old, new: new,
-                                    viewportHeight: viewportHeight
-                                ) {
-                                case .pin: pinned = true
-                                case .unpin: pinned = false
-                                case .glue:
-                                    // Post-layout correction: the id-driven
-                                    // follow fires before the new row has a
-                                    // height (and not at all when an existing
-                                    // row grows — a late image, async markdown
-                                    // sizing), so re-glue here once geometry
-                                    // is real.
-                                    if focusMessageId == nil, let lastId = messages.last?.id {
-                                        withAnimation(.easeOut(duration: 0.15)) {
-                                            proxy.scrollTo(lastId, anchor: .bottom)
-                                        }
-                                    }
-                                case .none: break
-                                }
-                                contentBottom = new.maxY
+                            .onAppear { _ = followBox.model.contentChanged(to: frame) }
+                            .onChange(of: frame) { _, new in
+                                // Content moved or resized. The model decides:
+                                // re-pin near the bottom, unpin on an upward
+                                // scroll, glue after growth under a pinned
+                                // reader (the id-driven follow below fires
+                                // before a new row has a height, and not at
+                                // all when an existing row grows late).
+                                run(followBox.model.contentChanged(to: new), proxy)
                             }
                     }
                 )
@@ -166,61 +257,224 @@ struct MessageListView: View {
             .background(
                 GeometryReader { geo in
                     Color.clear
-                        .onAppear { viewportHeight = geo.size.height }
-                        .onChange(of: geo.size.height) { _, new in viewportHeight = new }
+                        .onAppear { _ = followBox.model.viewportChanged(to: geo.size.height) }
+                        .onChange(of: geo.size.height) { _, new in
+                            // The composer growing (a wrapping draft, the
+                            // attachment tray, the suggestion bar) shrinks
+                            // this viewport. A pinned reader is carried to
+                            // the newest message once the numbers are real —
+                            // the correction whose absence let the transcript
+                            // scroll into empty space and blank mid-typing.
+                            run(followBox.model.viewportChanged(to: new), proxy)
+                        }
                 }
             )
             .overlay { emptyTranscriptState }
             .overlay(alignment: .bottom) { jumpToLatest(proxy) }
-            .animation(.easeOut(duration: 0.15), value: showJump)
-            // NOTE (scroll-blanking fix): there used to be a
-            // `.scrollPosition(id: $topVisibleId, anchor: .top)` here feeding
-            // MessageScrollMemory. It never actually tracked anything —
-            // scrollPosition(id:) only reports a position when the lazy stack
-            // is marked `.scrollTargetLayout()`, which it isn't — so scroll
-            // memory was already inert. What it *did* do was install a second
-            // scroll driver alongside .defaultScrollAnchor(.bottom); when the
-            // composer changed height (attachment tray, a draft wrapping to a
-            // second line) the two disagreed, the content height ballooned and
-            // the list scrolled into empty space, blanking the transcript.
-            // Re-adding scroll memory means adding .scrollTargetLayout() and
-            // reconciling it with the bottom anchor — not just this modifier.
+            .animation(.easeOut(duration: 0.15), value: showPill)
+            // The pill mounts only after the model has wanted it for a beat.
+            .task(id: jumpSignal) {
+                if jumpSignal {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    if !Task.isCancelled { showPill = true }
+                } else {
+                    showPill = false
+                }
+            }
+            // NOTE (scroll-blanking fix): a `.scrollPosition(id:)` modifier
+            // used to sit here feeding MessageScrollMemory. It never tracked
+            // anything (no `scrollTargetLayout()`), and it installed a second
+            // scroll driver alongside .defaultScrollAnchor(.bottom) — when
+            // the composer changed height the two disagreed and the list
+            // scrolled into empty space, blanking the transcript. Scroll
+            // memory is back, built the way that note demanded: the recorder
+            // is a passive per-row preference (see the rows above), and the
+            // restore below goes through TranscriptFollowModel — there is
+            // still exactly one scroll driver.
+            .onPreferenceChange(TopVisibleMessageKey.self) { topId in
+                // Record only a *back-scrolled* position, in steady state —
+                // never mid-restore (appliedKey), never mid-jump. A reader at
+                // the bottom clears their entry: bottom is where a return
+                // lands by default, and restoring "newest at the top" would
+                // push them a viewport up from where they were.
+                guard let key = scrollKey, key == appliedKey, focusMessageId == nil else { return }
+                if followBox.model.pinned {
+                    memoryLog.notice("clear \(key, privacy: .public)")
+                    MessageScrollMemory.clear(key)
+                } else if let topId {
+                    memoryLog.notice("record \(key, privacy: .public) top=\(topId, privacy: .public)")
+                    MessageScrollMemory.record(key, topMessageId: topId)
+                } else if followBox.model.contentFrame.minY > -24, let firstId = messages.first?.id {
+                    // Parked at the very top: no row crosses the probe line —
+                    // the Load-earlier control sits there — so the reader's
+                    // final position was never captured, and returning to
+                    // this channel forgot "I was at the top" (the
+                    // #message-search report). The content's own top edge
+                    // being at the viewport top is that position.
+                    memoryLog.notice("record \(key, privacy: .public) top=first:\(firstId, privacy: .public)")
+                    MessageScrollMemory.record(key, topMessageId: firstId)
+                }
+            }
             .onChange(of: messages.last?.id) { _, newId in
                 // A pending jump owns the scroll position — skip both the
-                // scroll-memory restore and the follow-to-bottom (tryFocus
-                // handles the scroll, and marks appliedKey so this doesn't
-                // re-fire a restore once the target is cleared).
+                // restore/landing and the follow-to-bottom (tryFocus handles
+                // the scroll, and marks appliedKey so this doesn't re-land
+                // once the target is cleared).
                 guard focusMessageId == nil, let newId else { return }
                 if scrollKey != appliedKey {
-                    // The channel just (re)loaded: restore a remembered position
-                    // if it's fresh and still present, else land at the bottom.
+                    // The channel just (re)loaded: back to where the reader
+                    // left off if the memory is fresh (10 min) and the row is
+                    // still loaded, else land at the bottom.
                     appliedKey = scrollKey
-                    if let key = scrollKey, let remembered = MessageScrollMemory.fresh(key),
-                       messages.contains(where: { $0.id == remembered }) {
-                        pinned = false // mid-history: don't let the glue yank us down
-                        proxy.scrollTo(remembered, anchor: .top)
+                    let remembered = scrollKey.flatMap { MessageScrollMemory.fresh($0) }
+                    if let remembered, let rememberedKey = messages.rowKey(forMessageId: remembered) {
+                        // Mid-history: unpin so no glue fights the restore.
+                        memoryLog.notice("restore hit \(remembered, privacy: .public)")
+                        followBox.model.positionRestored(atBottom: false)
+                        followBox.model.landingIssued()
+                        proxy.scrollTo(rememberedKey, anchor: .top)
+                        // Re-anchored again below as attachments size — a row
+                        // above the target growing late pushes the whole
+                        // restore down a viewport (the storms-video effect).
+                        pendingRestoreId = remembered
+                    } else if remembered != nil, let firstId = messages.first?.id,
+                              let firstKey = messages.firstRowKey {
+                        // Remembered, but the row slid outside the message
+                        // window (a reader parked at the top is one new
+                        // message away from this). The top of the window is
+                        // the close approximation; the bottom is the worst.
+                        memoryLog.notice("restore miss -> window top \(firstId, privacy: .public)")
+                        followBox.model.positionRestored(atBottom: false)
+                        followBox.model.landingIssued()
+                        proxy.scrollTo(firstKey, anchor: .top)
+                        pendingRestoreId = firstId
                     } else {
-                        pinned = true
-                        proxy.scrollTo(newId, anchor: .bottom)
+                        memoryLog.notice("restore none -> bottom")
+                        followBox.model.positionRestored(atBottom: true)
+                        followBox.model.landingIssued()
+                        if let lastKey = messages.lastRowKey {
+                            proxy.scrollTo(lastKey, anchor: .bottom)
+                        }
                     }
-                } else if pinned {
-                    // A genuinely new message in the current channel → follow it
-                    // down, but only while pinned: someone reading back-scroll
-                    // keeps their place and gets the jump button instead (#111).
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(newId, anchor: .bottom)
-                    }
+                } else {
+                    // A genuinely new message in the current channel. The model
+                    // follows it down only while pinned — someone reading
+                    // back-scroll keeps their place and gets the jump button
+                    // instead (#111) — except my own message, which always
+                    // re-pins: I just pressed send (web/iOS parity).
+                    let own = currentUserId != nil && messages.last?.userId == currentUserId
+                    run(followBox.model.lastMessageChanged(isOwn: own), proxy)
+                }
+            }
+            // "Load earlier" landed: put the row the reader was looking at
+            // back at the top of the viewport. Consumed once — a later
+            // prepend from a reconnect backfill must not scroll anywhere.
+            .onChange(of: messages.first?.id) { _, _ in
+                guard let anchor = loadOlderAnchorId else { return }
+                loadOlderAnchorId = nil
+                if let anchorKey = messages.rowKey(forMessageId: anchor) {
+                    proxy.scrollTo(anchorKey, anchor: .top)
                 }
             }
             // First open must land on the newest message: scrollTo from
-            // onAppear runs before the lazy rows are laid out and
-            // under-scrolls, so anchor the scroll view at the bottom instead
-            // (also keeps the list pinned while attachments finish sizing).
-            .defaultScrollAnchor(.bottom)
-            .onChange(of: focusMessageId) { _, _ in tryFocus(proxy) }
+            // onAppear runs before the rows are laid out and under-scrolls,
+            // so anchor the scroll view at the bottom instead. On macOS 15+
+            // the anchor is scoped to initial offset + alignment, exactly as
+            // iOS did in #159: the all-roles form also re-anchors on *content
+            // size changes*, and an async image or video thumb finishing its
+            // load right after a scroll-memory restore yanked the reader back
+            // to the bottom — the restore visibly "not working" on any
+            // channel with attachments. Growth while pinned is the follow
+            // model's job (glue + lastMessageChanged), which respects the pin
+            // state; the anchor must not compete. macOS 14 has no role API
+            // and keeps the all-roles form.
+            .modifier(MacBottomAnchor())
+            // A jump target owns the scroll position for its whole lifetime —
+            // from set (possibly while older pages load in) to cleared.
+            .onChange(of: focusMessageId) { _, new in
+                followBox.model.focusActive = new != nil
+                tryFocus(proxy)
+            }
             // A jump target may arrive only after older history pages in.
             .onChange(of: messages.count) { _, _ in tryFocus(proxy) }
-            .onAppear { tryFocus(proxy) }
+            // The find cursor owns the scroll position exactly like a jump
+            // target does, for as long as it exists (#518).
+            .onChange(of: searchCursor) { _, new in
+                guard let new else {
+                    // Bar closed (or query cleared): hand the position back to
+                    // the follow model without moving anything.
+                    if searchQuery.isEmpty { followBox.model.focusActive = false }
+                    return
+                }
+                guard let key = messages.rowKey(forMessageId: new.messageId) else { return }
+                followBox.model.focusEngaged()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(key, anchor: .center)
+                }
+                appliedKey = scrollKey
+            }
+            .onAppear {
+                followBox.model.focusActive = focusMessageId != nil
+                tryFocus(proxy)
+            }
+            // The settle passes, ported from iOS: with the anchor's
+            // size-change role gone (MacBottomAnchor), landings are entirely
+            // the model's job, and a landing scroll issued before rows have
+            // real heights can come up short with nothing left to correct it.
+            // Re-assert the end a few times while layout settles. The model
+            // stands down the moment the reader owns the position (unpinned,
+            // restore, jump), so this can never fight a back-scroll.
+            .task(id: messages.first?.id) {
+                guard !messages.isEmpty else { return }
+                for delay in Self.settleDelays {
+                    try? await Task.sleep(nanoseconds: delay)
+                    let command = followBox.model.settleCommand()
+                    guard case .stick = command else { return }
+                    run(command, proxy)
+                }
+            }
+            // The arrival settle (#334): the follow above fires the instant a
+            // new message lands — before its row has a height — so the scroll
+            // comes up short and an incoming reply sits below the fold. The
+            // glue corrects that when the row sizes, but only if a geometry
+            // event actually arrives; this belt re-asserts the end across the
+            // settling window either way. Keyed on the row identity, not the
+            // message id, so an optimistic row reconciling with its echo
+            // doesn't re-run it (#312/#329). Gated entirely on the model —
+            // a back-scrolled, focused or mid-drag reader gets `.none`.
+            .task(id: messages.lastRowKey) {
+                guard !messages.isEmpty else { return }
+                for delay in Self.settleDelays {
+                    try? await Task.sleep(nanoseconds: delay)
+                    let command = followBox.model.arrivalSettleCommand()
+                    guard case .stick = command else { return }
+                    run(command, proxy)
+                }
+            }
+            // The restore's own settle: a scroll-memory restore is issued
+            // before attachments above the target have sized, and a late
+            // growth pushes the whole restore down a viewport. Re-anchor the
+            // remembered row through the settling window. Stops early if the
+            // reader takes over: scrolling back to the end re-pins, and a
+            // jump target owns the position outright.
+            .task(id: pendingRestoreId) {
+                guard let target = pendingRestoreId else { return }
+                for delay in Self.settleDelays + [800_000_000] {
+                    try? await Task.sleep(nanoseconds: delay)
+                    // Deliberately NOT gated on the pin state: the drift this
+                    // corrects can itself flip the pin (field trail: content
+                    // shrinking above the target slid the reader to within
+                    // the re-pin slack, and the old gate read that as
+                    // "reader took over" and quit). Only a jump target or
+                    // the row leaving the window stops the window.
+                    guard !followBox.model.focusActive,
+                          let targetKey = messages.rowKey(forMessageId: target) else { break }
+                    followBox.model.positionRestored(atBottom: false)
+                    followBox.model.landingIssued()
+                    proxy.scrollTo(targetKey, anchor: .top)
+                }
+                pendingRestoreId = nil
+            }
         }
     }
 
@@ -259,15 +513,14 @@ struct MessageListView: View {
     }
 
     /// Floating "Latest msgs ↓" pill, shown while the reader is above the end
-    /// of the transcript (#111). Tapping it returns to the newest message.
+    /// of the transcript (#111) — debounced through `showPill`, so it only
+    /// appears once the model has wanted it for a beat. Tapping it returns to
+    /// the newest message.
     @ViewBuilder
     private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
-        if showJump, let lastId = messages.last?.id {
+        if showPill, !messages.isEmpty {
             Button {
-                pinned = true
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(lastId, anchor: .bottom)
-                }
+                run(followBox.model.jumpTapped(), proxy)
             } label: {
                 Text("Latest msgs ↓")
                     .flowFont(size: 12, weight: .semibold)
@@ -288,10 +541,10 @@ struct MessageListView: View {
     /// Center + flash the jump target once it's actually in the list, then
     /// release the target (paging in ChannelView brings it in if it's old).
     private func tryFocus(_ proxy: ScrollViewProxy) {
-        guard let fid = focusMessageId, messages.contains(where: { $0.id == fid }) else { return }
-        pinned = false // stop the bottom-glue from fighting the centering scroll
+        guard let fid = focusMessageId, let key = messages.rowKey(forMessageId: fid) else { return }
+        followBox.model.focusEngaged() // stop the bottom-glue from fighting the centering scroll
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(fid, anchor: .center)
+            proxy.scrollTo(key, anchor: .center)
         }
         // The jump decided this channel's scroll position — mark it applied so
         // the scroll-memory restore doesn't yank away once focus is cleared.
@@ -305,30 +558,34 @@ struct MessageListView: View {
         }
     }
 
-    /// Slack-style grouping: show the author header when the sender changes
-    /// or more than 5 minutes passed since the previous message.
-    private func showsHeader(at index: Int) -> Bool {
-        guard index > 0 else { return true }
-        if startsNewDay(at: index) { return true }
-        let prev = messages[index - 1]
-        let cur = messages[index]
-        // A system line (join/leave) breaks a run — the next message re-shows its header.
-        if prev.systemKind != nil { return true }
-        if prev.userId != cur.userId { return true }
-        guard let prevDate = ISO8601.parse(prev.createdAt),
-              let curDate = ISO8601.parse(cur.createdAt) else { return true }
-        return curDate.timeIntervalSince(prevDate) > 300
-    }
-
-    private func startsNewDay(at index: Int) -> Bool {
-        guard index > 0 else { return true }
-        guard let prev = ISO8601.parse(messages[index - 1].createdAt),
-              let cur = ISO8601.parse(messages[index].createdAt) else { return false }
-        return !Calendar.current.isDate(prev, inSameDayAs: cur)
-    }
 }
 
 /// Centered "Today" / date pill between days (design 3a).
+/// Bottom scroll anchor with the size-change role removed on macOS 15+ (see
+/// the comment at the use site). The macOS twin of iOS's `BottomAnchor`.
+struct MacBottomAnchor: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .alignment)
+        } else {
+            content.defaultScrollAnchor(.bottom)
+        }
+    }
+}
+
+/// The message whose row crosses the viewport's top edge — scroll memory's
+/// recorder input. Exactly one row reports a non-nil id (its frame spans the
+/// probe line), so the reduction is a plain first-non-nil.
+private struct TopVisibleMessageKey: PreferenceKey {
+    static let defaultValue: String? = nil
+    static func reduce(value: inout String?, nextValue: () -> String?) {
+        value = value ?? nextValue()
+    }
+}
+
 struct DayDividerView: View {
     let iso: String
 
@@ -371,22 +628,52 @@ struct SystemLineView: View {
     }
 }
 
-struct MessageRow: View {
+struct MessageRow: View, @preconcurrency Equatable {
     let message: Message
+    /// Pre-parsed body blocks from the row model; nil (thread panel) falls
+    /// back to parsing in place.
+    var segments: [MarkdownBlocks.Segment]? = nil
     let userNames: [String: String]
     var userStatuses: [String: String] = [:]
     let currentUserId: String?
+    let canPermanentlyDelete: Bool
+    /// Engine + per-user lookups, passed by value: the row must not observe
+    /// `AppState`, or every publish re-renders every visible row.
+    let context: TranscriptContext
     let showHeader: Bool
     let showThreadAffordances: Bool
+    /// This thread holds an unread notification for me (#270).
+    var threadUnread: Bool = false
     /// Flashing after a jump-to-message (phase 12).
     var highlighted: Bool = false
+    /// Inline find (#518): the query to paint, and — when the find bar's
+    /// cursor is inside this row — which of its occurrences is the current one.
+    var search: ChatSearch.RowHighlight? = nil
     let onOpenThread: (String) -> Void
     let onEdit: (Message) -> Void
-    let onDelete: (Message) -> Void
+    let onDelete: (Message, Bool) -> Void
     var onOpenProfile: (String) -> Void = { _ in }
 
-    @EnvironmentObject private var app: AppState
-    @EnvironmentObject private var win: WindowState
+    /// Everything the row *renders* — and only that. Closures are recreated
+    /// on every parent evaluation and deliberately ignored (their behavior is
+    /// stable); `segments` is derived from `message.body`, so comparing the
+    /// message covers it. Combined with `.equatable()` at the use sites, this
+    /// is what stops a 200-row transcript re-running every row body whenever
+    /// the list's scroll-tracking state changes.
+    static func == (a: MessageRow, b: MessageRow) -> Bool {
+        a.message == b.message
+            && a.showHeader == b.showHeader
+            && a.showThreadAffordances == b.showThreadAffordances
+            && a.threadUnread == b.threadUnread
+            && a.highlighted == b.highlighted
+            && a.search == b.search
+            && a.currentUserId == b.currentUserId
+            && a.canPermanentlyDelete == b.canPermanentlyDelete
+            && a.userNames == b.userNames
+            && a.userStatuses == b.userStatuses
+            && a.context == b.context
+    }
+
     @Environment(\.textZoom) private var textZoom
     @State private var hovering = false
     @State private var showReactionPicker = false
@@ -397,8 +684,44 @@ struct MessageRow: View {
     private static let pendingDimDelay: TimeInterval = 3
     @State private var pendingSlow = false
 
+    /// "🕐 SCHEDULED" next to the author name (#424): the scheduler posted this
+    /// message rather than its author typing it just now. Deliberately a badge
+    /// on an otherwise ordinary message — the author, the mentions and the
+    /// notifications are all real, and only the timing was automatic. Clicking
+    /// it opens the Scheduled panel, where the row that posted it lives.
+    private var scheduledBadge: some View {
+        Button(action: context.onOpenScheduled) {
+            Text("🕐 SCHEDULED")
+                .flowFont(size: 10, weight: .bold)
+                .foregroundStyle(MC.accentDeep)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 4).fill(MC.accent.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .help("Posted automatically · runs as \(senderName) · click to open Scheduled")
+        .accessibilityIdentifier("message.scheduledBadge.\(message.id)")
+    }
+
     private var senderName: String { userNames[message.userId] ?? "Unknown" }
     private var isMine: Bool { message.userId == currentUserId }
+    private var deleteMode: MessageDeleteMode? {
+        // A provider that cannot delete gets no delete affordance at all (#546).
+        guard caps.canUse(.delete) else { return nil }
+        return MessageDeletePolicy.mode(
+            isMine: isMine,
+            isDeleted: message.isDeleted,
+            isSystem: message.systemKind != nil,
+            canPermanentlyDelete: canPermanentlyDelete
+        )
+    }
+    /// The backend's capabilities, from the context so rows never observe
+    /// `AppState` (#546). Hidden, not disabled, in the hover pill and context
+    /// menu — same as the web row.
+    private var caps: Capabilities { context.capabilities }
+    private var deleteLabel: String {
+        deleteMode == .permanent ? "Permanently Delete" : "Delete"
+    }
 
     /// Hover-menu hysteresis (ui_nits: menu "stutters"/blinks while hovering).
     /// The toolbar is an overlay pinned to the row's top-trailing edge, so the
@@ -452,6 +775,7 @@ struct MessageRow: View {
                         Text(ISO8601.displayTime(message.createdAt))
                             .flowFont(size: 11)
                             .foregroundStyle(MC.faint)
+                        if message.scheduled { scheduledBadge }
                     }
                 }
 
@@ -469,7 +793,9 @@ struct MessageRow: View {
                         .italic()
                         .foregroundStyle(.tertiary)
                 } else {
-                    let segments = MarkdownBlocks.segments(message.body)
+                    // Parsed once in the row model; the fallback is for the
+                    // thread panel, which builds rows directly.
+                    let segments = self.segments ?? MarkdownBlocks.segments(message.body)
                     if !segments.isEmpty {
                         bodyContent(segments)
                     } else if pendingSlow {
@@ -488,7 +814,7 @@ struct MessageRow: View {
                             canRemove: message.userId == currentUserId,
                             onRemove: {
                                 Task {
-                                    await app.engine.deleteUnfurl(
+                                    await context.engine.deleteUnfurl(
                                         messageId: message.id, urlHash: unfurl.urlHash)
                                 }
                             },
@@ -514,6 +840,16 @@ struct MessageRow: View {
                         onOpenThread(message.id)
                     } label: {
                         HStack(spacing: 6) {
+                            // A reply in here needs you (#270) — the sidebar
+                            // badge says the channel has something, this says
+                            // which thread.
+                            if threadUnread {
+                                Circle()
+                                    .fill(MC.unread)
+                                    .frame(width: 7, height: 7)
+                                    .accessibilityIdentifier("msg.threadUnread")
+                                    .accessibilityLabel("Unread reply")
+                            }
                             // First-4 reply-author avatars (phase 5 item 7).
                             if !message.replyParticipantUserIds.isEmpty {
                                 HStack(spacing: -6) {
@@ -521,7 +857,7 @@ struct MessageRow: View {
                                         AvatarChip(
                                             userId: uid,
                                             name: userNames[uid] ?? "Unknown",
-                                            avatarPath: app.avatarPaths[uid],
+                                            avatarPath: context.avatarPaths[uid],
                                             size: 20,
                                             radius: 6
                                         )
@@ -571,6 +907,10 @@ struct MessageRow: View {
         }
         .contentShape(Rectangle())
         .onHover { setHovering($0) }
+        // Confetti when a 🎉 lands (#524). On the whole row, so a message with
+        // no reactions yet is already "seen" by the time the first one arrives
+        // — the count-went-up rule itself lives in `CelebrationMemory`.
+        .celebrationBursts(messageId: message.id, reactions: message.reactions)
         // Hover menu (web parity, ui_nits items 2+3): react / reply-in-thread,
         // plus edit + delete on the author's own messages. The menu must stay
         // mounted while the picker is open: the react button is the popover's
@@ -579,33 +919,41 @@ struct MessageRow: View {
         // down (operator-reported bug at the item-6 checkpoint).
         .overlay(alignment: .topTrailing) {
             if hovering || showReactionPicker || showDeleteConfirm,
-               !message.isDeleted, !message.pending, !message.failed {
+               (!message.isDeleted || deleteMode == .permanent), !message.pending, !message.failed {
                 hoverMenu
                     .padding(.trailing, 22)
             }
         }
         .confirmationDialog(
-            "Delete this message?",
+            deleteMode == .permanent ? "Permanently delete this message?" : "Delete this message?",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) { onDelete(message) }
+            Button(deleteLabel, role: .destructive) {
+                onDelete(message, deleteMode == .permanent)
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This can't be undone.")
+            if deleteMode == .permanent, message.threadRootId == nil, message.replyCount > 0 {
+                Text("This will permanently delete the message and all \(message.replyCount) \(message.replyCount == 1 ? "reply" : "replies"). This can't be undone.")
+            } else if deleteMode == .permanent {
+                Text("This message will disappear for everyone. This can't be undone.")
+            } else {
+                Text("The message will be replaced by a deletion notice.")
+            }
         }
         .contextMenu {
-            if !message.isDeleted, !message.pending, !message.failed {
+            if !message.isDeleted, !message.pending, !message.failed, caps.canUse(.reactions) {
                 ForEach(Array(EmojiCatalog.quickReactions.prefix(6)), id: \.self) { emoji in
                     Button(emoji) {
-                        Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                        Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
                     }
                 }
                 Divider()
             }
             if message.failed {
-                Button("Retry Send") { Task { await app.engine.retrySend(message) } }
-                Button("Discard", role: .destructive) { Task { await app.engine.discardFailed(message) } }
+                Button("Retry Send") { Task { await context.engine.retrySend(message) } }
+                Button("Discard", role: .destructive) { Task { await context.engine.discardFailed(message) } }
                 Divider()
             }
             if showThreadAffordances, !message.failed {
@@ -619,17 +967,19 @@ struct MessageRow: View {
                     NSPasteboard.general.setString(message.body, forType: .string)
                 }
             }
-            if !message.isDeleted, !message.pending, !message.failed {
+            if !message.isDeleted, !message.pending, !message.failed, caps.canUse(.pins) {
                 Button(message.pinnedAt == nil ? "Pin Message" : "Unpin Message") {
-                    Task { await app.engine.togglePin(message) }
+                    Task { await context.engine.togglePin(message) }
                 }
             }
-            if !message.files.isEmpty, !message.isDeleted, !message.pending {
+            if !message.files.isEmpty, !message.isDeleted, !message.pending, caps.canUse(.artifacts) {
                 Button("Pin as Artifact") { pinAsArtifact() }
             }
-            if isMine, !message.isDeleted, !message.pending {
+            if isMine, !message.isDeleted, !message.pending, caps.canUse(.edit) {
                 Button("Edit…") { onEdit(message) }
-                Button("Delete", role: .destructive) { showDeleteConfirm = true }
+            }
+            if deleteMode != nil, !message.pending {
+                Button(deleteLabel, role: .destructive) { showDeleteConfirm = true }
             }
         }
     }
@@ -645,80 +995,95 @@ struct MessageRow: View {
     /// edit / delete gated by the same conditions.
     private var hoverMenu: some View {
         HStack(spacing: 2) {
-            ForEach(Self.quickReactions, id: \.self) { emoji in
-                MenuIconButton(help: "React \(emoji)") {
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
-                } label: {
-                    Text(emoji)
+            if !message.isDeleted {
+                if caps.canUse(.reactions) {
+                    ForEach(Self.quickReactions, id: \.self) { emoji in
+                        MenuIconButton(help: "React \(emoji)") {
+                            Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                        } label: {
+                            Text(emoji)
+                        }
+                        .accessibilityIdentifier("msg.quickReact.\(emoji)")
+                    }
+
+                    Rectangle()
+                        .fill(MC.hairline)
+                        .frame(width: 1, height: 22)
+                        .padding(.horizontal, 2)
+
+                    MenuIconButton(help: "Add reaction") {
+                        showReactionPicker = true
+                    } label: {
+                        Text("🙂")
+                    }
+                    .accessibilityIdentifier("msg.addReaction")
+                    .popover(isPresented: $showReactionPicker) {
+                        EmojiPickerView { emoji in
+                            showReactionPicker = false
+                            Task { await context.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                        }
+                    }
+                } else {
+                    // Web parity: the glyph stays, dimmed, and says why.
+                    Text("🙂")
+                        .opacity(0.4)
+                        .padding(.horizontal, 4)
+                        .help(caps[.reactions].reason ?? "Reactions are not available here.")
+                        .accessibilityIdentifier("msg.addReaction.unavailable")
                 }
-                .accessibilityIdentifier("msg.quickReact.\(emoji)")
-            }
 
-            Rectangle()
-                .fill(MC.hairline)
-                .frame(width: 1, height: 22)
-                .padding(.horizontal, 2)
+                if showThreadAffordances {
+                    MenuIconButton(help: "Reply in thread") {
+                        onOpenThread(message.threadRootId ?? message.id)
+                    } label: {
+                        Text("💬")
+                    }
+                    .accessibilityIdentifier("msg.replyInThread")
+                }
 
-            MenuIconButton(help: "Add reaction") {
-                showReactionPicker = true
-            } label: {
-                Text("🙂")
-            }
-            .accessibilityIdentifier("msg.addReaction")
-            .popover(isPresented: $showReactionPicker) {
-                EmojiPickerView { emoji in
-                    showReactionPicker = false
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: emoji) }
+                if !message.body.isEmpty {
+                    MenuIconButton(help: "Copy text") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.body, forType: .string)
+                    } label: {
+                        Text("📋")
+                    }
+                    .accessibilityIdentifier("msg.copy")
+                }
+
+                if caps.canUse(.pins) {
+                    MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
+                        Task { await context.engine.togglePin(message) }
+                    } label: {
+                        Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
+                    }
+                    .accessibilityIdentifier("msg.togglePin")
+                }
+
+                if !message.files.isEmpty, caps.canUse(.artifacts) {
+                    MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
+                        // Web draws this one as an inline SVG (box + leaving arrow);
+                        // the matching SF Symbol keeps the same open-external read.
+                        Image(systemName: "arrow.up.right.square")
+                            .flowFont(size: 15)
+                            .foregroundStyle(MC.inkSoft)
+                    }
+                    .accessibilityIdentifier("msg.saveArtifact")
+                }
+
+                if isMine, caps.canUse(.edit) {
+                    MenuIconButton(help: "Edit") {
+                        onEdit(message)
+                    } label: {
+                        Text("✏️")
+                    }
+                    .accessibilityIdentifier("msg.edit")
                 }
             }
-
-            if showThreadAffordances {
-                MenuIconButton(help: "Reply in thread") {
-                    onOpenThread(message.threadRootId ?? message.id)
-                } label: {
-                    Text("💬")
-                }
-                .accessibilityIdentifier("msg.replyInThread")
-            }
-
-            if !message.body.isEmpty {
-                MenuIconButton(help: "Copy text") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.body, forType: .string)
-                } label: {
-                    Text("📋")
-                }
-                .accessibilityIdentifier("msg.copy")
-            }
-
-            MenuIconButton(help: message.pinnedAt == nil ? "Pin message" : "Unpin message") {
-                Task { await app.engine.togglePin(message) }
-            } label: {
-                Image(systemName: message.pinnedAt == nil ? "pin" : "pin.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(message.pinnedAt == nil ? MC.inkSoft : MC.accentSoft)
-            }
-            .accessibilityIdentifier("msg.togglePin")
-
-            if !message.files.isEmpty {
-                MenuIconButton(help: "Pin as artifact", action: pinAsArtifact) {
-                    // Web draws this one as an inline SVG (box + leaving arrow);
-                    // the matching SF Symbol keeps the same open-external read.
-                    Image(systemName: "arrow.up.right.square")
-                        .flowFont(size: 15)
-                        .foregroundStyle(MC.inkSoft)
-                }
-                .accessibilityIdentifier("msg.saveArtifact")
-            }
-
-            if isMine {
-                MenuIconButton(help: "Edit") {
-                    onEdit(message)
-                } label: {
-                    Text("✏️")
-                }
-                .accessibilityIdentifier("msg.edit")
-                MenuIconButton(help: "Delete") {
+            if deleteMode != nil {
+                MenuIconButton(help: deleteLabel) {
                     showDeleteConfirm = true
                 } label: {
                     Text("🗑")
@@ -829,11 +1194,11 @@ struct MessageRow: View {
             do {
                 var last: Artifact?
                 for file in files {
-                    last = try await app.engine.createArtifact(channelId: channelId, fileId: file.id)
+                    last = try await context.engine.createArtifact(channelId: channelId, fileId: file.id)
                 }
-                if let last { win.selectArtifact(last.id) }
+                if let last { context.onSelectArtifact(last.id) }
             } catch {
-                app.showError("Couldn't pin artifact: \(error.localizedDescription)")
+                context.onError("Couldn't pin artifact: \(error.localizedDescription)")
             }
         }
     }
@@ -844,10 +1209,10 @@ struct MessageRow: View {
         let channelId = message.channelId
         Task {
             do {
-                let artifact = try await app.engine.createLinkArtifact(channelId: channelId, url: url)
-                win.selectArtifact(artifact.id)
+                let artifact = try await context.engine.createLinkArtifact(channelId: channelId, url: url)
+                context.onSelectArtifact(artifact.id)
             } catch {
-                app.showError("Couldn't pin link: \(error.localizedDescription)")
+                context.onError("Couldn't pin link: \(error.localizedDescription)")
             }
         }
     }
@@ -861,19 +1226,24 @@ struct MessageRow: View {
     /// pills or markdown inside code).
     @ViewBuilder
     private func bodyContent(_ segments: [MarkdownBlocks.Segment]) -> some View {
-        Group {
+        // Find matches are numbered per message (#518), so each block needs to
+        // know how many came before it to recognise the current one as its own.
+        let bases = search.map {
+            ChatSearch.segmentBases(segments, names: userNames, query: $0.query)
+        }
+        return Group {
             if segments.count == 1, case .paragraph(let text) = segments[0] {
                 // Fast path: single plain paragraph keeps the original inline
                 // layout (baseline-aligned edited/pending markers).
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    paragraphText(text)
+                    paragraphText(text, base: 0)
                     trailingMarkers
                 }
             } else {
                 HStack(alignment: .bottom, spacing: 4) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                            segmentView(segment)
+                    VStack(alignment: .leading, spacing: Self.blockSpacing * textZoom) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                            segmentView(segment, base: bases?[index] ?? 0)
                         }
                     }
                     trailingMarkers
@@ -893,10 +1263,10 @@ struct MessageRow: View {
     }
 
     @ViewBuilder
-    private func segmentView(_ segment: MarkdownBlocks.Segment) -> some View {
+    private func segmentView(_ segment: MarkdownBlocks.Segment, base: Int) -> some View {
         switch segment {
         case .paragraph(let text):
-            paragraphText(text)
+            paragraphText(text, base: base)
         case .quote(let text):
             // The accent bar is an overlay, not an HStack sibling (#195). A
             // Shape has no ideal height, so as a sibling it reported an
@@ -906,7 +1276,7 @@ struct MessageRow: View {
             // text's own size, so the text alone sets the block height and the
             // bar spans exactly the quote. Leading padding = bar width + the
             // old HStack spacing, so the text sits where it always did.
-            paragraphText(text)
+            paragraphText(text, base: base)
                 .foregroundStyle(MC.inkSoft)
                 .padding(.leading, 11)
                 .overlay(alignment: .leading) {
@@ -916,16 +1286,28 @@ struct MessageRow: View {
                 }
                 .accessibilityIdentifier("msg.quoteBlock")
         case .heading(let level, let text):
-            headingText(level: level, text: text)
+            headingText(level: level, text: text, base: base)
         case .code(let text):
-            Text(text.isEmpty ? " " : text)
+            // Trailing padding is wider than the leading side to leave the copy
+            // button (#260) a lane of its own, so it never lands on the code.
+            // Bottom rather than top: the row's hover menu is a `.topTrailing`
+            // overlay, and a button you reach for by hovering cannot sit under
+            // the toolbar that hovering summons.
+            // Code is drawn verbatim, so it is searched verbatim — the
+            // AttributedString carries only the find highlight; the font and
+            // colour still come from the modifiers below.
+            Text(highlighted(text.isEmpty ? " " : text, base: base))
                 .flowFont(size: 12, design: .monospaced)
                 .foregroundStyle(MC.ink)
                 .textSelection(.enabled)
-                .padding(.horizontal, 10)
+                .padding(.leading, 10)
+                .padding(.trailing, 36)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(MC.codeBg))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+                .overlay(alignment: .bottomTrailing) {
+                    CodeCopyButton(source: text).padding(4)
+                }
                 .accessibilityIdentifier("msg.codeBlock")
         case .mermaid(let source):
             MermaidDiagramView(source: source)
@@ -935,9 +1317,13 @@ struct MessageRow: View {
                 userNames: userNames, currentUserId: currentUserId
             )
         case .ulist(let items):
-            listView(items.map { (marker: "•", text: $0) })
+            listView(items.map { (marker: "•", text: $0) }, bulleted: true, base: base)
         case .olist(let start, let items):
-            listView(items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) })
+            listView(
+                items.enumerated().map { (marker: "\(start + $0.offset).", text: $0.element) },
+                bulleted: false,
+                base: base
+            )
         case .hr:
             Rectangle()
                 .fill(MC.hairline)
@@ -952,15 +1338,38 @@ struct MessageRow: View {
     /// normal inline pass on each item — mentions and `**bold**` still work
     /// inside items. Markers are right-aligned in a fixed column so multi-digit
     /// numbers keep their text edges lined up.
-    private func listView(_ items: [(marker: String, text: String)]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+    ///
+    /// Spacing and marker weight come from web (#387): a `list-disc` item is a
+    /// 21px line box with `space-y-0.5` between items — a 23px pitch on a 14px
+    /// font, which at our 13pt body is `bodyLineHeight + listSpacing`. The disc
+    /// is drawn **bold at body size**, not larger: the marker shares the row's
+    /// baseline alignment, so a bigger font would make the row itself taller
+    /// and leave bullet lists looser than numbered ones. Bold widens the glyph
+    /// to about web's disc without touching the line box. Markers take the text
+    /// colour, as web's `currentColor` ones do, instead of the softer ink.
+    private func listView(
+        _ items: [(marker: String, text: String)], bulleted: Bool, base: Int
+    ) -> some View {
+        // Each item is its own searchable string, so the running offset walks
+        // the list the same way the eye does (#518).
+        var running = base
+        let itemBases: [Int] = items.map { item in
+            let at = running
+            if let search {
+                running += ChatSearch.ranges(
+                    in: ChatSearch.renderedText(item.text, names: userNames), query: search.query
+                ).count
+            }
+            return at
+        }
+        return VStack(alignment: .leading, spacing: Self.listSpacing * textZoom) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(item.marker)
-                        .flowFont(.callout)
-                        .foregroundStyle(MC.inkSoft)
+                        .flowFont(.callout, weight: bulleted ? .bold : nil)
+                        .foregroundStyle(MC.ink)
                         .frame(minWidth: 14, alignment: .trailing)
-                    paragraphText(item.text)
+                    paragraphText(item.text, base: itemBases[index])
                 }
             }
         }
@@ -974,27 +1383,66 @@ struct MessageRow: View {
     /// distinguished by weight — which is what `HEADING_CLASS` does. Sizes go
     /// through `flowFont(size:)` so text zoom (#105) still applies, and the
     /// inline pass runs inside the heading so mentions and `**bold**` work.
-    private func headingText(level: Int, text: String) -> some View {
+    private func headingText(level: Int, text: String, base: Int) -> some View {
         let size: CGFloat = level == 1 ? 17 : (level == 2 ? 15.5 : 13)
-        let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId, scale: textZoom
-        )
+        let attributed = inlineText(text, base: base)
         return Text(attributed)
             .flowFont(size: size, weight: level <= 3 ? .bold : .semibold)
             .foregroundStyle(MC.ink)
             .textSelection(.enabled)
-            .linkCursor(attributed)
+            // Measured at the heading's own size, not body size (#276): an h1
+            // link is a third wider than the callout re-layout thinks.
+            .linkCursor(attributed, size: size)
             .padding(.top, level <= 2 ? 2 : 0) // web's mt-2 on h1/h2
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("msg.heading")
     }
 
-    private func paragraphText(_ text: String) -> some View {
-        let attributed = MentionRendering.attributed(
-            text, names: userNames, currentUserId: currentUserId, scale: textZoom
+    /// Body rhythm ported from web (#387), where the message body is
+    /// `text-sm leading-normal` — 14px text on a 1.5 line-height — and blocks
+    /// carry `my-1`. Our body is 13pt, so the same ratio wants ~19.5pt line
+    /// boxes against the ~16pt AppKit draws by default; `lineSpacing` makes up
+    /// the difference. Everything scales with the text zoom, like the fonts do.
+    static let lineSpacing: CGFloat = 3.5
+    static let listSpacing: CGFloat = 6
+    static let blockSpacing: CGFloat = 10
+
+    /// One inline span, rendered and then find-highlighted (#518). `base` is
+    /// how many of this message's matches came before this span, so the row can
+    /// tell which occurrence — if any — is the find bar's current one.
+    private func inlineText(_ text: String, base: Int) -> AttributedString {
+        var attributed = MentionRendering.attributed(
+            text, names: userNames, currentUserId: currentUserId,
+            scale: textZoom, codeChips: true
         )
+        if let search {
+            ChatSearch.paint(
+                &attributed,
+                query: search.query,
+                currentOccurrence: search.currentOccurrence.map { $0 - base }
+            )
+        }
+        return attributed
+    }
+
+    /// A verbatim run (a code block) with the find highlight applied.
+    private func highlighted(_ text: String, base: Int) -> AttributedString {
+        var attributed = AttributedString(text)
+        if let search {
+            ChatSearch.paint(
+                &attributed,
+                query: search.query,
+                currentOccurrence: search.currentOccurrence.map { $0 - base }
+            )
+        }
+        return attributed
+    }
+
+    private func paragraphText(_ text: String, base: Int) -> some View {
+        let attributed = inlineText(text, base: base)
         return Text(attributed)
             .flowFont(.callout)
+            .lineSpacing(Self.lineSpacing * textZoom)
             .textSelection(.enabled)
             // Hand cursor over hyperlinks (#81) — SwiftUI hit-tests nothing
             // inside a Text, so linkCursor re-lays the string to find them.
@@ -1021,11 +1469,11 @@ struct MessageRow: View {
             Label("Failed to send", systemImage: "exclamationmark.circle.fill")
                 .flowFont(.caption)
                 .foregroundStyle(MC.danger)
-            Button("Retry") { Task { await app.engine.retrySend(message) } }
+            Button("Retry") { Task { await context.engine.retrySend(message) } }
                 .buttonStyle(.link)
                 .flowFont(.caption, weight: .semibold)
                 .pointingHandCursor()
-            Button("Discard") { Task { await app.engine.discardFailed(message) } }
+            Button("Discard") { Task { await context.engine.discardFailed(message) } }
                 .buttonStyle(.link)
                 .flowFont(.caption)
                 .foregroundStyle(MC.muted)
@@ -1036,7 +1484,7 @@ struct MessageRow: View {
 
     /// An agent's live "thinking…" row carries its own stop control (#67).
     private var isThinkingRow: Bool {
-        app.agentIds.contains(message.userId) && AgentStatus.isThinkingRow(message.body)
+        context.agentIds.contains(message.userId) && AgentStatus.isThinkingRow(message.body)
     }
 
     /// True once we've asked: the reaction is already ours, so the bridge has
@@ -1050,7 +1498,7 @@ struct MessageRow: View {
     private var interruptButton: some View {
         Button {
             guard !stopping else { return }
-            Task { await app.engine.toggleReaction(messageId: message.id, emoji: AgentStatus.interruptEmoji) }
+            Task { await context.engine.toggleReaction(messageId: message.id, emoji: AgentStatus.interruptEmoji) }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "stop.circle")
@@ -1076,7 +1524,7 @@ struct MessageRow: View {
             ForEach(message.reactions, id: \.emoji) { agg in
                 let mine = currentUserId.map { agg.userIds.contains($0) } ?? false
                 Button {
-                    Task { await app.engine.toggleReaction(messageId: message.id, emoji: agg.emoji) }
+                    Task { await context.engine.toggleReaction(messageId: message.id, emoji: agg.emoji) }
                 } label: {
                     HStack(spacing: 3) {
                         Text(agg.emoji).flowFont(size: 12)
@@ -1097,22 +1545,30 @@ struct MessageRow: View {
                 .help((agg.userIds.compactMap { userNames[$0] }).joined(separator: ", "))
                 .accessibilityIdentifier("msg.reaction.\(agg.emoji)")
                 .accessibilityValue("\(agg.count)\(mine ? " including you" : "")")
+                // Where a 🎉 burst starts (#524) — the pill, not the row.
+                .confettiPill(messageId: message.id, emoji: agg.emoji)
             }
         }
         .padding(.top, 2)
+        .confettiReactionRow(messageId: message.id)
     }
 
     private var avatarPath: String? {
         // Avatar URLs are API-relative (/v1/avatars/<key>); cached user rows carry them.
-        app.avatarPaths[message.userId]
+        context.avatarPaths[message.userId]
     }
 }
 
 // MARK: - Attachments
 
 /// Collapsed-image state (phase 5 ruling): persisted per device, capped list.
+@MainActor
 enum CollapsedImages {
-    private static let key = "collapsedImages" + Profile.suffix
+    /// A read marker over one server's file ids — the same id on another
+    /// backend is a different file, so the key is per connection+identity.
+    private static var key: String {
+        ConnectionManager.shared.activeSessionScope.key("collapsedImages")
+    }
     private static let cap = 500
 
     static func contains(_ fileId: String) -> Bool {
@@ -1209,7 +1665,12 @@ struct AttachmentView: View {
                     .scaledToFit()
                 }
             }
-            .frame(width: displaySize.width, height: displaySize.height)
+            // `displaySize` is a ceiling, not a size: the card keeps the
+            // image's aspect ratio and shrinks to whatever the transcript
+            // column is, so opening the side panel narrows the picture instead
+            // of clipping it (#354).
+            .aspectRatio(displaySize.width / displaySize.height, contentMode: .fit)
+            .frame(maxWidth: displaySize.width, maxHeight: displaySize.height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
             .onTapGesture { showLightbox = true }

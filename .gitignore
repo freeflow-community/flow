@@ -10,6 +10,8 @@ dist/
 .env.local
 # local dev sealed data key lives outside git
 packages/server/.keys
+# throwaway QA stacks (pnpm qa:up) — state, logs, per-run scratch dirs
+/.qa/
 # swift / xcode
 .build/
 DerivedData/

@@ -2,14 +2,18 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { z, ZodTypeAny } from 'zod';
 import {
   AcceptInviteBody,
+  DeclineInviteBody,
+  WorkspaceInviteBody,
   AddChannelMemberBody,
   CreateChannelBody,
   CreateDmBody,
   CreateInviteBody,
   CreateWorkspaceBody,
   CreateWorkspaceEmojiBody,
+  DeviceTokenParam,
   EditMessageBody,
   EmojiParam,
+  ListChannelFilesQuery,
   ListMessagesQuery,
   ListNotificationsQuery,
   ListThreadQuery,
@@ -33,9 +37,17 @@ import {
   AgentLoginBody,
   RedeemAgentInviteBody,
   RedeemJoinLinkBody,
+  CreateScheduledMessageBody,
+  ListScheduledMessagesQuery,
+  UpdateScheduledMessageBody,
   SendMessageBody,
+  SendWorkspaceEmailBody,
+  PreviewWorkspaceEmailBody,
+  AdoptEmailImageBody,
+  SetChannelEmojiBody,
   SetChannelIndicatorBody,
   SetMemberRoleBody,
+  HuddleInviteReplyBody,
   SetNotifyLevelBody,
   UpdateAppBody,
   UpdateChannelBody,
@@ -44,6 +56,7 @@ import {
 } from '@flow/shared';
 import { ApiError, badRequest, notFound, unauthorized } from '../lib/errors.js';
 import { rateAllow } from '../lib/rateLimit.js';
+import { rateAllowDb } from '../lib/rateLimitDb.js';
 import { parseByteRange } from '../lib/httpRange.js';
 import { blobStore } from '../storage/index.js';
 
@@ -58,29 +71,40 @@ const UPDATE_MAC_PREFIX = 'downloads/mac/';
 const UPDATE_ASSET_RE = /^(appcast\.xml|Flow-[A-Za-z0-9._-]+\.zip|Flow[0-9]+-[0-9]+\.delta)$/;
 import { config } from '../config.js';
 import * as auth from '../services/auth.js';
+import * as handoff from '../services/handoff.js';
 import * as google from '../services/oauthGoogle.js';
 import * as apple from '../services/oauthApple.js';
 import { listIdentities } from '../services/oauthAccounts.js';
 import * as ws from '../services/workspaces.js';
 import * as ch from '../services/channels.js';
 import * as ci from '../services/channelIndicators.js';
+import * as ce from '../services/channelEmoji.js';
+import * as hd from '../services/huddles.js';
+import * as hi from '../services/huddleInvites.js';
 import * as msg from '../services/messages.js';
 import * as rx from '../services/reactions.js';
 import * as wse from '../services/workspaceEmoji.js';
 import * as fl from '../services/files.js';
+import * as dv from '../services/devices.js';
 import * as nt from '../services/notifications.js';
 import * as us from '../services/users.js';
+import * as cem from '../services/communityEmail.js';
 import { deleteMyAccount } from '../services/accountDeletion.js';
-import { disconnectUser } from '../gateway/index.js';
+import { detachUserFromWorkspace, disconnectUser } from '../gateway/index.js';
 import * as unfurl from '../services/unfurl/index.js';
 import * as ap from '../services/apps.js';
+import * as help from '../services/help.js';
 import * as ag from '../services/agents.js';
+import * as wi from '../services/workspaceInvites.js';
 import * as ar from '../services/artifacts.js';
+import * as sm from '../services/scheduledMessages.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     user: UserDTO;
     bearerToken: string;
+    /** How the bearer token authenticated — a client session or an agent/bot token (#415). */
+    authKind: auth.AuthKind;
   }
 }
 
@@ -98,7 +122,9 @@ async function requireAuth(req: FastifyRequest): Promise<void> {
   if (!header?.startsWith('Bearer ')) throw unauthorized('missing bearer token');
   const token = header.slice('Bearer '.length).trim();
   req.bearerToken = token;
-  req.user = await auth.authenticate(token);
+  const authed = await auth.authenticateWithKind(token);
+  req.user = authed.user;
+  req.authKind = authed.kind;
 }
 
 /** Read a single multipart file part into a buffer (20 MB cap enforced by the plugin). */
@@ -124,17 +150,63 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.status(500).send({ error: { code: 'internal', message: 'internal server error' } });
   });
 
+  app.get('/v1/client-info', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return {
+      protocolVersion: 1,
+      displayName: config.serverDisplayName,
+      authMethods: ['password', 'email-link', ...(config.googleEnabled ? ['google'] : []), ...(config.appleEnabled ? ['apple'] : [])],
+      registrationAvailable: config.registrationEnabled,
+      capabilities: {
+        browserConnections: true,
+        authHandoff: config.handoffReturnUrls.length > 0,
+        push: config.pushDriver === 'apns' && !!(config.apnsKey && config.apnsKeyId && config.apnsTeamId),
+        pushRouting: true,
+      },
+    };
+  });
+
   app.get('/healthz', async () => ({ ok: true }));
 
   // Public bootstrap payload: which auth options this deployment offers, so the
   // signed-out client knows without a failed round-trip. A Google OAuth *web*
   // client id is public by design — it ships in the page that calls Google.
+  // Built-in help docs (#383). Public like /v1/config and served raw: the
+  // content is documentation checked into the repo, and each client renders the
+  // markdown with its own pipeline. Lives under /v1 rather than /api because
+  // /api/* is the Slack-compat surface (it ends in a catch-all).
+  app.get('/v1/help/topics', async () => ({ topics: help.listTopics() }));
+
+  app.get('/v1/help/pages/:slug', async (req) => {
+    const { slug } = req.params as { slug: string };
+    return help.getPage(slug);
+  });
+
   app.get('/v1/config', async () => ({
     google: config.googleEnabled,
     googleClientId: config.googleClientId ?? null,
     apple: config.appleEnabled,
     maxFileBytes: config.maxFileBytes,
+    huddles: config.livekitEnabled,
   }));
+
+  // LiveKit webhook (Phase 1 voice huddle): the reconciliation safety net for
+  // a participant/room that vanished without a REST leave call. Not a Flow
+  // user — no requireAuth — `WebhookReceiver` verifies the request's own
+  // signed Authorization header instead. The body arrives as a raw Buffer via
+  // app.ts's catch-all content-type parser, which is exactly what
+  // WebhookReceiver.receive() wants (it parses the JSON itself post-verify).
+  app.post('/v1/livekit/webhook', async (req, reply) => {
+    const authHeader = req.headers.authorization ?? '';
+    const body = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
+    try {
+      await hd.handleLiveKitWebhook(body, authHeader);
+    } catch (err) {
+      req.log.warn({ err }, 'livekit webhook rejected');
+      return reply.status(400).send({ error: { code: 'invalid_webhook', message: 'invalid webhook' } });
+    }
+    return reply.status(200).send({ ok: true });
+  });
 
   // Public macOS app download (operator feature): 302 to a short-lived signed
   // URL for the notarized DMG in blob storage. No auth — it's linked from the
@@ -271,6 +343,23 @@ export function registerRoutes(app: FastifyInstance): void {
     return auth.exchangeAppLink(body.code, req.headers['user-agent']);
   });
 
+  // Bound handoff endpoints are separate so old app-link exchanges cannot downgrade PKCE.
+  app.post('/v1/auth/handoff/start', async (req, reply) => {
+    if (!await rateAllowDb(`handoff-start:${req.ip}`, 30, 10 * 60_000)) throw new ApiError(429, 'rate_limited', 'Too many handoff attempts');
+    reply.header('Cache-Control', 'no-store');
+    return reply.code(201).send(await handoff.startHandoff(parse(handoff.HandoffStart, req.body), req.headers.origin));
+  });
+  app.post('/v1/auth/handoff/approve', { preHandler: requireAuth }, async (req, reply) => {
+    if (req.authKind !== 'session' || req.user.isAgent) throw unauthorized('A human session is required');
+    reply.header('Cache-Control', 'no-store');
+    return handoff.approveHandoff(req.user.id, parse(handoff.HandoffApprove, req.body));
+  });
+  app.post('/v1/auth/handoff/exchange', async (req, reply) => {
+    if (!await rateAllowDb(`handoff-exchange:${req.ip}`, 60, 10 * 60_000)) throw new ApiError(429, 'rate_limited', 'Too many handoff attempts');
+    reply.header('Cache-Control', 'no-store');
+    return handoff.exchangeHandoff(parse(handoff.HandoffExchange, req.body), req.headers.origin, req.headers['user-agent']);
+  });
+
   // ---- me ------------------------------------------------------
   app.get('/v1/me', { preHandler: requireAuth }, async (req) => req.user);
 
@@ -288,7 +377,8 @@ export function registerRoutes(app: FastifyInstance): void {
   // Self-service account deletion (App Store 5.1.1(v)). The clients gate this
   // behind an explicit confirmation; the server just needs a valid session.
   app.delete('/v1/me', { preHandler: requireAuth }, async (req) => {
-    if (!rateAllow(`delete-me:${req.user.id}`, 3, 10 * 60_000)) {
+    // per-user key → DB-backed window, counted across replicas (phase 18 M1)
+    if (!(await rateAllowDb(`delete-me:${req.user.id}`, 3, 10 * 60_000))) {
       throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
     }
     await deleteMyAccount(req.user.id);
@@ -314,6 +404,23 @@ export function registerRoutes(app: FastifyInstance): void {
     const body = parse(MarkNotificationsReadBody, req.body);
     const { unreadCount } = await nt.markNotificationsRead(req.user.id, body);
     return { ok: true, unreadCount };
+  });
+
+  // ---- push devices (#245) -------------------------------------
+  // Registration is idempotent and called on every cold start; the upsert
+  // rebinds a token that has changed hands rather than duplicating it.
+  app.post('/v1/me/devices', { preHandler: requireAuth }, async (req) => {
+    const body = parse(dv.ConnectionDeviceBody, req.body);
+    return dv.registerDevice(req.user.id, body);
+  });
+
+  // Sign-out. The client must call this *before* it discards the session
+  // token — afterwards it cannot authenticate, the row leaks, and the next
+  // owner of the phone gets someone else's pushes until APNs 410s the token.
+  app.delete('/v1/me/devices/:token', { preHandler: requireAuth }, async (req) => {
+    const { token } = req.params as { token: string };
+    const { routingId } = parse(dv.UnregisterDeviceQuery, req.query);
+    return dv.unregisterDevice(req.user.id, parse(DeviceTokenParam, token), routingId);
   });
 
   // ---- users / avatars -----------------------------------------
@@ -362,6 +469,76 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = parse(UpdateWorkspaceBody, req.body);
     return ws.updateWorkspace(id, req.user.id, body);
+  });
+
+  // workspace avatar (#336): owner/admin sets or clears the image mark; both
+  // paths broadcast `workspace.updated` so every client restyles live.
+  app.post('/v1/workspaces/:id/avatar', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const { mimeType, data } = await readUpload(req);
+    return ws.setWorkspaceAvatar(id, req.user.id, data, mimeType);
+  });
+
+  app.delete('/v1/workspaces/:id/avatar', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ws.clearWorkspaceAvatar(id, req.user.id);
+  });
+
+  // ---- Community email (#481, owner/admin, web-only UI) ----
+  // Markdown in, sanitized HTML out — rendered by the same service function
+  // the preview route calls, so what the composer shows is what ships.
+  app.post('/v1/workspaces/:id/email', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SendWorkspaceEmailBody, req.body);
+    return cem.sendBroadcast(id, req.user.id, body.subject, body.markdown);
+  });
+
+  // "Send test to me" (#484): the same draft, to the author alone, on its own
+  // lighter rate limit — so checking the rendering never costs the broadcast.
+  app.post('/v1/workspaces/:id/email/test', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SendWorkspaceEmailBody, req.body);
+    return cem.sendTestBroadcast(id, req.user.id, body.subject, body.markdown);
+  });
+
+  app.post('/v1/workspaces/:id/email/preview', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(PreviewWorkspaceEmailBody, req.body);
+    return cem.previewBroadcast(id, req.user.id, body.markdown);
+  });
+
+  // The To chip's number, from the server that decides who is a recipient —
+  // the client filtering the roster itself would be a second implementation of
+  // the rule, free to drift.
+  app.get('/v1/workspaces/:id/email/recipients', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { recipientCount: await cem.countBroadcastRecipients(id, req.user.id) };
+  });
+
+  // Pasted images (#492): the bytes went up through the normal presign flow;
+  // this adopts one as a broadcast image and returns the public URL that goes
+  // into the markdown.
+  app.post('/v1/workspaces/:id/email/images', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(AdoptEmailImageBody, req.body);
+    return reply.status(201).send(await cem.adoptEmailImage(id, req.user.id, body.fileId));
+  });
+
+  // ...and the unauthenticated read. Deliberately no `requireAuth`: the thing
+  // fetching this is a mail client (or Gmail's image proxy) with no session,
+  // and the token in the path is the entire access check.
+  app.get('/v1/email-images/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    const img = await cem.getEmailImage(token);
+    if ('redirect' in img) return reply.redirect(img.redirect, 302);
+    return reply
+      .header('content-type', img.content.mimeType)
+      .header('content-disposition', 'inline')
+      // Immutable: the token names one file's bytes forever, and mail clients
+      // and image proxies re-fetch aggressively.
+      .header('cache-control', 'public, max-age=604800, immutable')
+      .header('x-content-type-options', 'nosniff')
+      .send(img.content.data);
   });
 
   // ---- Slack-compat app management (phase 4, owner/admin, web-only UI) ----
@@ -456,7 +633,44 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.post('/v1/invites/accept', { preHandler: requireAuth }, async (req) => {
     const body = parse(AcceptInviteBody, req.body);
-    return ws.acceptInvite(req.user.id, body.token);
+    return ws.acceptInvite(req.user.id, body);
+  });
+
+  // ---- "Invite to workspace" from a profile popup (#357 agents / #359 people)
+  // The picker's list: my workspaces this member isn't in yet. Same question
+  // for an agent and a person, so one route answers both.
+  app.get('/v1/users/:id/workspace-invites', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return wi.workspaceInviteTargets(id, req.user.id);
+  });
+
+  // Agents join on the spot — the inviter vouches for them and becomes their
+  // sponsor in the target workspace (#357).
+  app.post('/v1/agents/:id/workspace-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(WorkspaceInviteBody, req.body);
+    const res = await ag.inviteAgentToWorkspace(id, body.workspaceId, req.user.id);
+    return reply.status(201).send(res);
+  });
+
+  // People are asked, not added (#359): this creates a pending invitation they
+  // accept or decline. Repeating it returns the invitation already in flight.
+  app.post('/v1/users/:id/workspace-invites', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parse(WorkspaceInviteBody, req.body);
+    const res = await wi.inviteUserToWorkspace(id, body.workspaceId, req.user.id);
+    return reply.status(res.created ? 201 : 200).send(res);
+  });
+
+  // The invitee's side: their live invitations, and the "no thanks" that ends one.
+  app.get('/v1/me/workspace-invites', { preHandler: requireAuth }, async (req) => {
+    return { invites: await wi.listMyWorkspaceInvites(req.user.id) };
+  });
+
+  app.post('/v1/invites/decline', { preHandler: requireAuth }, async (req) => {
+    const body = parse(DeclineInviteBody, req.body);
+    await ws.declineInvite(req.user.id, body.inviteId);
+    return { ok: true };
   });
 
   // ---- Persistent workspace join link (issue #85): one live link per
@@ -492,7 +706,8 @@ export function registerRoutes(app: FastifyInstance): void {
   // Keyed by user, not IP: redeeming already costs an account, and an office
   // full of people joining off the same link shares one egress address.
   app.post('/v1/join-links/redeem', { preHandler: requireAuth }, async (req) => {
-    if (!rateAllow(`join-redeem:${req.user.id}`, 20, 10 * 60_000)) {
+    // per-user key → DB-backed window, counted across replicas (phase 18 M1)
+    if (!(await rateAllowDb(`join-redeem:${req.user.id}`, 20, 10 * 60_000))) {
       throw new ApiError(429, 'rate_limited', 'too many attempts — try again later');
     }
     const body = parse(RedeemJoinLinkBody, req.body);
@@ -502,6 +717,26 @@ export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/workspaces/:id/members', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return { members: await ws.listMembers(id, req.user.id) };
+  });
+
+  // The sole owner's only way out (#340 follow-up): they cannot leave a
+  // workspace with nobody to transfer it to, so they can end it instead.
+  app.delete('/v1/workspaces/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ws.deleteWorkspace(id, req.user.id);
+    detachUserFromWorkspace(req.user.id, id);
+    return { ok: true };
+  });
+
+  // Self-service departure (#340). Not under the admin block below: any
+  // member may leave, and the only one who may not is the owner.
+  app.post('/v1/workspaces/:id/leave', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await ws.leaveWorkspace(id, req.user.id);
+    // Sockets last: the service published member.left, and detaching writes it
+    // straight to this user's other clients before dropping the subscription.
+    detachUserFromWorkspace(req.user.id, id);
+    return { ok: true };
   });
 
   // ---- admin panel: manage users (owner/admin, web-only UI) ----
@@ -588,6 +823,59 @@ export function registerRoutes(app: FastifyInstance): void {
     return ci.setChannelIndicator(id, req.user.id, body.state, body.ttlSeconds);
   });
 
+  // Channel emoji (#396): a persistent glyph after the channel's name, drawn in
+  // the same sidebar slot as the indicator above and its opposite in kind — a
+  // column, not a TTL'd claim. `{ "emoji": null }` (or "") clears it.
+  app.put('/v1/channels/:id/emoji', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(SetChannelEmojiBody, req.body);
+    return ce.setChannelEmoji(id, req.user.id, body.emoji);
+  });
+
+  // Huddles (LiveKit Cloud): entity-scoped voice/video. Ambient in a channel,
+  // a ring in a DM or group DM (#436). See CONTEXT.md (Huddle, Huddle invite)
+  // and services/huddles.ts for the join/leave/webhook design. Join is
+  // idempotent — re-mints a fresh token, also the reconnect path — and in a DM
+  // it is what starts the ring.
+  app.post('/v1/channels/:id/huddle/join', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return hd.joinHuddle(id, req.user.id);
+  });
+
+  app.post('/v1/channels/:id/huddle/leave', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await hd.leaveHuddle(id, req.user.id);
+    return { ok: true };
+  });
+
+  // Answering a ring is joining: accept marks the target answered (so the
+  // user's other devices dismiss with "Answered on another device") and then
+  // takes the ordinary join path for the token — there is no second way in.
+  // Agent-token callers additionally get a short-lived speech-only grant;
+  // ordinary joins and all human clients never receive one.
+  app.post('/v1/huddle/invites/:id/accept', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(HuddleInviteReplyBody, req.body ?? {});
+    const invite = await hi.acceptInvite(id, req.user.id, body.sessionId);
+    if (!invite) throw new ApiError(404, 'invite_not_found', 'that huddle is no longer ringing');
+    return hd.joinHuddle(invite.channelId, req.user.id, { includeInferenceToken: req.authKind === 'agent' });
+  });
+
+  app.post('/v1/huddle/invites/:id/decline', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(HuddleInviteReplyBody, req.body ?? {});
+    await hi.declineInvite(id, req.user.id, body.sessionId);
+    return { ok: true };
+  });
+
+  // The caller giving up before anyone answered. Leaving the room does this
+  // too (the roster empties); this is the explicit "never mind" button.
+  app.post('/v1/huddle/invites/:id/cancel', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await hi.cancelInvite(id, req.user.id);
+    return { ok: true };
+  });
+
   app.put('/v1/channels/:id/notify', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(SetNotifyLevelBody, req.body);
@@ -609,6 +897,14 @@ export function registerRoutes(app: FastifyInstance): void {
     return msg.listMessages(id, req.user.id, q.before, q.limit);
   });
 
+  // Channel Files panel (#347): every file shared in the channel, sorted and
+  // cursor-paged. Membership is checked in the service, same as reading.
+  app.get('/v1/channels/:id/files', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    const q = parse(ListChannelFilesQuery, req.query);
+    return fl.listChannelFiles(id, req.user.id, q.sort, q.before, q.limit);
+  });
+
   app.get('/v1/channels/:id/pins', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return { messages: await msg.listPinnedMessages(id, req.user.id) };
@@ -625,6 +921,10 @@ export function registerRoutes(app: FastifyInstance): void {
       body.threadRootId,
       body.fileIds,
       body.mentions,
+      // #415: an API-posted `@Name` becomes a real mention. On by default for
+      // agent/bot tokens only — the composer resolves its own mentions, and a
+      // client session posting raw `@Name` meant it literally.
+      { expandMentions: body.expandMentions ?? req.authKind === 'agent' },
     );
     return reply.status(201).send(dto);
   });
@@ -639,7 +939,13 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     // ?purge=true fully removes the row (no tombstone); default is a soft delete.
     const { purge } = req.query as { purge?: string };
-    await msg.deleteMessage(id, req.user.id, { hard: purge === 'true' || purge === '1' });
+    await msg.deleteMessage(id, req.user.id, {
+      hard: purge === 'true' || purge === '1',
+      // The bridge's agent status row must vanish on completion. App bots use
+      // the separate Slack-compatible auth surface; session-authenticated
+      // human authors stay on the soft-delete path unless they are owner/admin.
+      allowOwnPermanentDelete: req.user.isAgent,
+    });
     return { ok: true };
   });
 
@@ -763,6 +1069,13 @@ export function registerRoutes(app: FastifyInstance): void {
     return fl.getStreamUrl(id, req.user.id);
   });
 
+  // Short-lived thumbnail URL for direct use by <img>. Keeping the presign in
+  // JSON avoids making a bearer-authenticated fetch cross the R2 redirect.
+  app.get('/v1/files/:id/thumb/url', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return fl.getThumbUrl(id, req.user.id);
+  });
+
   // ---- artifacts (phase 13: per-channel shared objects) ----
   app.post('/v1/artifacts', { preHandler: requireAuth }, async (req, reply) => {
     const body = parse(CreateArtifactBody, req.body);
@@ -771,13 +1084,39 @@ export function registerRoutes(app: FastifyInstance): void {
       url: body.url,
       name: body.name,
       ownsFile: body.ownsFile,
+      app: body.app,
     });
+    // With `app: true` this DTO carries `appSecret` — the only time it ever
+    // travels besides a rotation (MINI_APPS.md).
     return reply.status(201).send(dto);
+  });
+
+  // ---- mini apps (docs/design/MINI_APPS.md) ----
+  // Mint a 5-minute identity token for the caller; members only, same gate as
+  // every other artifact operation. The app's guard verifies it offline.
+  app.post('/v1/artifacts/:id/app-token', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.mintArtifactAppToken(id, req.user.id);
+  });
+
+  // Rotate the app's secret — returned once, and every token minted under the
+  // old one stops verifying. Creator or workspace admin.
+  app.post('/v1/artifacts/:id/app-secret', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return ar.rotateArtifactAppSecret(id, req.user.id);
   });
 
   app.get('/v1/workspaces/:id/artifacts', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
     return { artifacts: await ar.listArtifacts(id, req.user.id) };
+  });
+
+  // Mini apps across the workspace (#394) — the sidebar's "Apps" section. Wider
+  // than the list above: apps in *public* channels are listed whether or not the
+  // caller has joined one, which is what makes them discoverable.
+  app.get('/v1/workspaces/:id/app-artifacts', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return { artifacts: await ar.listAppArtifacts(id, req.user.id) };
   });
 
   // rename and/or re-point at a new file (the agent "update" path)
@@ -791,6 +1130,51 @@ export function registerRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     await ar.deleteArtifact(id, req.user.id);
     return { ok: true };
+  });
+
+  // ---- scheduled messages (#419) ----
+  // A scheduled message is a pending message, so these are message-shaped
+  // endpoints, not job endpoints: create/edit/delete, plus the two verbs a
+  // schedule needs that a message doesn't (pause/resume, run now).
+  app.post('/v1/scheduled-messages', { preHandler: requireAuth }, async (req, reply) => {
+    const body = parse(CreateScheduledMessageBody, req.body);
+    return reply.status(201).send(await sm.createScheduledMessage(req.user.id, body));
+  });
+
+  // Visibility-scoped: rows you authored, plus rows destined for a channel you
+  // are in. `mine=true` is the panel's "Owned by me" filter.
+  app.get('/v1/scheduled-messages', { preHandler: requireAuth }, async (req) => {
+    const q = parse(ListScheduledMessagesQuery, req.query);
+    const scheduledMessages = await sm.listScheduledMessages(q.workspaceId, req.user.id, q.mine === 'true');
+    return { scheduledMessages };
+  });
+
+  app.patch('/v1/scheduled-messages/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.updateScheduledMessage(id, req.user.id, parse(UpdateScheduledMessageBody, req.body));
+  });
+
+  app.delete('/v1/scheduled-messages/:id', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    await sm.deleteScheduledMessage(id, req.user.id);
+    return { ok: true };
+  });
+
+  app.post('/v1/scheduled-messages/:id/pause', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.setScheduledMessageEnabled(id, req.user.id, false);
+  });
+
+  app.post('/v1/scheduled-messages/:id/resume', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.setScheduledMessageEnabled(id, req.user.id, true);
+  });
+
+  // Post it now, out of band. The cadence is untouched — this is "send it
+  // again", not "reschedule".
+  app.post('/v1/scheduled-messages/:id/run', { preHandler: requireAuth }, async (req) => {
+    const { id } = req.params as { id: string };
+    return sm.runScheduledMessageNow(id, req.user.id);
   });
 
   app.get('/v1/files/:id/thumb', { preHandler: requireAuth }, async (req, reply) => {

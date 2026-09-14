@@ -24,8 +24,28 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     // text with significant newlines, never markdown.
     var website: String?
     var bio: String?
+    /// One-line role shown under the name on Directory and profile cards
+    /// (#434). Optional for the same reason as the two above; "" = unset, and
+    /// an unset title draws no line at all.
+    var title: String?
+    /// Per-user alert prefs (#251). Only `/v1/me` carries them — nil on every
+    /// other user's row, and on a cached row written before this column
+    /// existed, which reads as "all defaults" exactly like an absent key does
+    /// server-side. Stored as JSON in the `user` table (GRDB encodes a nested
+    /// Codable that way).
+    var notificationPrefs: NotificationPrefs?
     var isAgent: Bool? // first-class AI agent (AGENTS_DESIGN.md)
+    // App/integration bot. Like `isAgent` it means "not a person", which is
+    // what the sole-human check behind Delete workspace turns on (#340).
+    var isBot: Bool?
     var sponsorId: String? // agents only: the human member who sponsored them
+    /// #489: this member asked to be hidden — their email is redacted server-side
+    /// and the Directory leaves them out. Not a secret (every client needs it to
+    /// know whom to omit), and only the account owner can set it, via
+    /// `PATCH /v1/me`. Optional like the two above: a server predating the field
+    /// omits it, and so does a row cached before the column existed — both read
+    /// as "not hiding".
+    var privacyMode: Bool?
     var createdAt: String?
 
     /// Display-only name: agents carry the 🤖 badge (mention resolution uses
@@ -33,6 +53,51 @@ struct User: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Persis
     var displayNameWithBadge: String {
         isAgent == true ? "\(displayName) 🤖" : displayName
     }
+
+    /// A person, as opposed to an agent or an app bot (#340).
+    var isHuman: Bool { isAgent != true && isBot != true }
+
+    /// The prefs as the settings screen wants to read them: absent = on.
+    var prefs: NotificationPrefs { notificationPrefs ?? NotificationPrefs() }
+}
+
+/// Per-user notification preferences (phase 10, extended by #251).
+///
+/// Every key is optional and **absent means on** — the same three-state shape
+/// the server stores, so a client that has never written a pref sends nothing
+/// and a server that gains a new key doesn't need this struct to know about it.
+/// `PATCH /v1/me` shallow-merges, so one flip sends one key.
+struct NotificationPrefs: Codable, Sendable, Equatable {
+    var dm: Bool?
+    var mention: Bool?
+    var groupMention: Bool?
+    var threadReply: Bool?
+    var reaction: Bool?
+    var channelInvite: Bool?
+    /// Web-only presentation pref, carried so a round trip through this client
+    /// can't drop it.
+    var persistentBanners: Bool?
+    /// #251: play a sound with an alert. Off still banners — it is presentation,
+    /// not routing.
+    var sound: Bool?
+
+    init(
+        dm: Bool? = nil, mention: Bool? = nil, groupMention: Bool? = nil,
+        threadReply: Bool? = nil, reaction: Bool? = nil, channelInvite: Bool? = nil,
+        persistentBanners: Bool? = nil, sound: Bool? = nil
+    ) {
+        self.dm = dm
+        self.mention = mention
+        self.groupMention = groupMention
+        self.threadReply = threadReply
+        self.reaction = reaction
+        self.channelInvite = channelInvite
+        self.persistentBanners = persistentBanners
+        self.sound = sound
+    }
+
+    /// Absent = on, which is what every toggle in the UI binds to.
+    func isOn(_ key: KeyPath<NotificationPrefs, Bool?>) -> Bool { self[keyPath: key] != false }
 }
 
 struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
@@ -45,14 +110,23 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
     var createdAt: String
     var role: String?
     var sidebarColor: String? // preset id (see SidebarPalette); nil = default
+    /// Workspace avatar (#336): a `/v1/avatars/<key>` path, or nil for the
+    /// color/initial mark every workspace drew before.
+    var avatarUrl: String?
+    /// Unread messages across the channels I'm in here (#345) — the rail badge.
+    /// Only `/v1/me/workspaces` computes it; nil on a row that arrived any
+    /// other way means "unknown", which is why the cached value is kept rather
+    /// than overwritten (see `saveWorkspacePreservingRole`).
+    var unreadCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, slug, name, createdBy, createdAt, role, sidebarColor
+        case id, slug, name, createdBy, createdAt, role, sidebarColor, avatarUrl, unreadCount
     }
 
     init(
         id: String, slug: String, name: String, createdBy: String, createdAt: String,
-        role: String? = nil, sidebarColor: String? = nil
+        role: String? = nil, sidebarColor: String? = nil, avatarUrl: String? = nil,
+        unreadCount: Int? = nil
     ) {
         self.id = id
         self.slug = slug
@@ -61,6 +135,8 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         self.createdAt = createdAt
         self.role = role
         self.sidebarColor = sidebarColor
+        self.avatarUrl = avatarUrl
+        self.unreadCount = unreadCount
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +148,8 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
         createdAt = try c.decode(String.self, forKey: .createdAt)
         role = try c.decodeIfPresent(String.self, forKey: .role)
         sidebarColor = try c.decodeIfPresent(String.self, forKey: .sidebarColor)
+        avatarUrl = try c.decodeIfPresent(String.self, forKey: .avatarUrl)
+        unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount)
     }
 }
 
@@ -108,6 +186,22 @@ struct Unfurl: Codable, Sendable, Equatable, Identifiable {
         var alt: String?
     }
 
+    struct Media: Codable, Sendable, Equatable {
+        var provider: String?
+        var durationSec: Int?
+    }
+
+    /// Present when the link is a video Flow can play. `playerUrl` is built by
+    /// the server from `videoId` — the provider's own oEmbed markup never
+    /// reaches a client — and is only loaded once the viewer taps play.
+    struct Embed: Codable, Sendable, Equatable {
+        var provider: String
+        var videoId: String
+        var playerUrl: String
+        var width: Int?
+        var height: Int?
+    }
+
     var url: String
     var urlHash: String
     var canonicalUrl: String?
@@ -121,8 +215,19 @@ struct Unfurl: Codable, Sendable, Equatable, Identifiable {
     var author: String?
     var publishedAt: String?
     var image: Image?
+    var media: Media?
+    var embed: Embed?
 
     var id: String { urlHash }
+
+    /// Runtime as `m:ss` (or `h:mm:ss`), when the server knew it.
+    var durationLabel: String? {
+        guard let seconds = media?.durationSec, seconds > 0 else { return nil }
+        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%d:%02d", m, s)
+    }
 
     /// The page this card points at — canonical when the server resolved one.
     var target: String { canonicalUrl ?? url }
@@ -263,6 +368,14 @@ extension FileAttachment {
     }
 }
 
+/// Where a channel's oldest unread lives when it is a thread reply (#327) —
+/// the pair the sidebar needs to land inside the thread on the right reply.
+/// Stored on the cached channel row as JSON, like `unreadThreadRootIds`.
+struct ThreadReplyRef: Codable, Sendable, Equatable {
+    var rootId: String
+    var replyId: String
+}
+
 struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "channel"
 
@@ -283,13 +396,35 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// Unread *notifications* raised in this channel — the number the sidebar
     /// badge shows. Mentions, thread replies, reactions; every message in a DM.
     var unreadNotifications: Int
+    /// Thread roots here holding an unread notification for me (#270) — the
+    /// root's "N replies" chip draws a dot, so a reply that needs you is
+    /// visible in the transcript and not only in the sidebar badge.
+    var unreadThreadRootIds: [String]?
+    /// Auto-open target (#327): set only when this channel's oldest unread is a
+    /// thread reply, so tapping the channel in the sidebar can land inside that
+    /// thread instead of on a timeline that shows nothing new. Nil when the
+    /// oldest unread is top-level, when there are no unreads, and on a cached
+    /// row until the next channel list arrives — all of which mean "no jump".
+    var oldestUnreadThreadReply: ThreadReplyRef?
     var notifyLevel: Int // 0=mute 1=mentions 2=all
     /// Parent channel (#118) — set at creation, one level deep. The sidebar
     /// draws this channel indented under it. nil for a top-level channel.
     var parentId: String?
     var memberIds: [String]? // dm/group_dm only
+    /// Channel emoji (#396) — the persistent glyph drawn after the name in the
+    /// sidebar. Unlike the activity spinner it shares that slot with, this one
+    /// belongs on the cached row: it is a server column, so a relaunch showing
+    /// yesterday's emoji is showing the truth. nil = none.
+    var emoji: String?
 
     var isDM: Bool { kind != "standard" }
+
+    /// The persistent "notes to self" DM — a `dm` channel whose only member is
+    /// you. It is the destination behind the Scheduled panel's "🔒 Just me"
+    /// (#424), and the sidebar's own "Just me" row.
+    func isSelfDm(me: String?) -> Bool {
+        kind == "dm" && (memberIds ?? []).allSatisfy { $0 == me }
+    }
 
     /// Sidebar/header title. DMs render member display names, not `name`.
     func displayTitle(userNames: [String: String], currentUserId: String?) -> String {
@@ -299,17 +434,30 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         return others.map { userNames[$0] ?? "Unknown" }.sorted().joined(separator: ", ")
     }
 
+    /// The secondary half of a thread's title (#417) — what follows the word
+    /// "Thread": `in #channel`, or `with <names>` for a DM or group DM.
+    func threadParentLabel(
+        userNames: [String: String], currentUserId: String?
+    ) -> (connector: String, name: String) {
+        isDM
+            ? ("with", displayTitle(userNames: userNames, currentUserId: currentUserId))
+            : ("in", "#\(name ?? "")")
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, name, kind, topic, isPrivate, createdBy, createdAt
         case archivedAt, isMember, lastReadMsgId, unreadCount, unreadNotifications
-        case notifyLevel, parentId, memberIds
+        case unreadThreadRootIds, oldestUnreadThreadReply, notifyLevel, parentId, memberIds, emoji
     }
 
     init(
         id: String, workspaceId: String, name: String?, kind: String = "standard", topic: String?,
         isPrivate: Bool, createdBy: String, createdAt: String, archivedAt: String?,
         isMember: Bool, lastReadMsgId: String?, unreadCount: Int, unreadNotifications: Int = 0,
-        notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil
+        unreadThreadRootIds: [String]? = nil,
+        oldestUnreadThreadReply: ThreadReplyRef? = nil,
+        notifyLevel: Int = 1, parentId: String? = nil, memberIds: [String]? = nil,
+        emoji: String? = nil
     ) {
         self.id = id
         self.workspaceId = workspaceId
@@ -324,9 +472,12 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.lastReadMsgId = lastReadMsgId
         self.unreadCount = unreadCount
         self.unreadNotifications = unreadNotifications
+        self.unreadThreadRootIds = unreadThreadRootIds
+        self.oldestUnreadThreadReply = oldestUnreadThreadReply
         self.notifyLevel = notifyLevel
         self.parentId = parentId
         self.memberIds = memberIds
+        self.emoji = emoji
     }
 
     init(from decoder: Decoder) throws {
@@ -344,10 +495,33 @@ struct Channel: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         lastReadMsgId = try c.decodeIfPresent(String.self, forKey: .lastReadMsgId)
         unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         unreadNotifications = try c.decodeIfPresent(Int.self, forKey: .unreadNotifications) ?? 0
+        unreadThreadRootIds = try c.decodeIfPresent([String].self, forKey: .unreadThreadRootIds)
+        oldestUnreadThreadReply = try c.decodeIfPresent(
+            ThreadReplyRef.self, forKey: .oldestUnreadThreadReply
+        )
         notifyLevel = try c.decodeIfPresent(Int.self, forKey: .notifyLevel) ?? 1
         parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
         memberIds = try c.decodeIfPresent([String].self, forKey: .memberIds)
+        emoji = try c.decodeIfPresent(String.self, forKey: .emoji)
     }
+}
+
+extension Channel {
+    /// The sidebar tap target (#441, matching web's `openChannelFromSidebar`):
+    /// the reply to land on when this channel's oldest unread lives inside a
+    /// thread. Nil means an ordinary channel select.
+    ///
+    /// This used to fire only on the way *into* a different channel, so that a
+    /// re-tap of the channel already on screen couldn't yank the user back into
+    /// the thread they had just left. It applies to the selected channel too
+    /// now (#533): entering a channel reads its thread rows, so the field is
+    /// already nil by the time a second tap could act on it, and the one case
+    /// where it isn't — a reply that landed while the user sat in the channel —
+    /// is a badge they just clicked and would want taking them somewhere.
+    ///
+    /// Only ever called from a tap handler, never from render, so no re-render
+    /// can reopen a thread on its own.
+    var sidebarThreadJump: ThreadReplyRef? { oldestUnreadThreadReply }
 }
 
 extension Channel {
@@ -411,6 +585,10 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     /// message; `body` is the pre-rendered sentence. Rendered as a centered
     /// muted notice with no avatar/header (ui_nits).
     var systemKind: String?
+    /// True when the scheduler posted this row rather than a person typing it
+    /// (#419). Everything else about the message is ordinary — same author,
+    /// same mentions, same notifications; the clients draw a "SCHEDULED" badge.
+    var scheduled: Bool
     /// Local-only: true for optimistic rows not yet confirmed by the server.
     var pending: Bool
     /// Local-only: true once an optimistic row's POST errored out. The row
@@ -422,7 +600,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
     enum CodingKeys: String, CodingKey {
         case id, channelId, userId, threadRootId, clientMsgId, body
         case createdAt, editedAt, deletedAt, pinnedAt, pinnedBy, replyCount, lastReplyAt
-        case replyParticipantUserIds, reactions, files, unfurls, systemKind, pending, failed
+        case replyParticipantUserIds, reactions, files, unfurls, systemKind, scheduled, pending, failed
     }
 
     init(
@@ -432,7 +610,8 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         replyCount: Int, lastReplyAt: String?,
         replyParticipantUserIds: [String] = [],
         reactions: [ReactionAgg] = [], files: [FileAttachment] = [],
-        unfurls: [Unfurl] = [], systemKind: String? = nil, pending: Bool, failed: Bool = false
+        unfurls: [Unfurl] = [], systemKind: String? = nil, scheduled: Bool = false,
+        pending: Bool, failed: Bool = false
     ) {
         self.id = id
         self.channelId = channelId
@@ -452,6 +631,7 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         self.files = files
         self.unfurls = unfurls
         self.systemKind = systemKind
+        self.scheduled = scheduled
         self.pending = pending
         self.failed = failed
     }
@@ -476,8 +656,29 @@ struct Message: Codable, Sendable, Equatable, Identifiable, FetchableRecord, Per
         files = try c.decodeIfPresent([FileAttachment].self, forKey: .files) ?? []
         unfurls = try c.decodeIfPresent([Unfurl].self, forKey: .unfurls) ?? []
         systemKind = try c.decodeIfPresent(String.self, forKey: .systemKind)
+        scheduled = try c.decodeIfPresent(Bool.self, forKey: .scheduled) ?? false
         pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false
         failed = try c.decodeIfPresent(Bool.self, forKey: .failed) ?? false
+    }
+}
+
+enum MessageDeleteMode: Equatable {
+    case soft
+    case permanent
+}
+
+/// Shared macOS/iOS affordance policy. The server remains authoritative.
+enum MessageDeletePolicy {
+    static func mode(
+        isMine: Bool,
+        isDeleted: Bool,
+        isSystem: Bool,
+        canPermanentlyDelete: Bool
+    ) -> MessageDeleteMode? {
+        if isSystem { return nil }
+        if canPermanentlyDelete { return .permanent }
+        if isMine && !isDeleted { return .soft }
+        return nil
     }
 }
 
@@ -500,15 +701,24 @@ struct Artifact: Decodable, Sendable, Equatable, Identifiable {
     /// content via the Flow MCP rather than a human pinning a message file.
     /// Drives auto-opening agent-created artifacts for the requester.
     let ownsFile: Bool
+    /// Mini apps (`docs/design/MINI_APPS.md`): true when this link artifact is a
+    /// Flow app — the server sets it whenever the artifact carries an app
+    /// secret. Opening one mints a short-lived identity token first, so the
+    /// app's guard lets the viewer in already signed in.
+    /// Optional so a client pointed at a server predating the field decodes —
+    /// a non-optional `Bool` fails the whole artifacts payload, not just this
+    /// key. Test with `isApp == true`.
+    let isApp: Bool?
     let createdAt: String
     let updatedAt: String
     let file: FileAttachment? // null for link artifacts
 
     var isLink: Bool { kind == "link" }
 
-    /// Sidebar/tab glyph: the backing file's kind glyph, or a link glyph for
-    /// link artifacts (which have no file).
-    var glyph: String { file?.artifactGlyph ?? "🔗" }
+    /// Sidebar/tab glyph: a puzzle piece for a mini app (#394), otherwise the
+    /// backing file's kind glyph, or a link glyph for plain link artifacts
+    /// (which have no file).
+    var glyph: String { isApp == true ? "🧩" : (file?.artifactGlyph ?? "🔗") }
 }
 
 /// Workspace membership (local cache of GET /workspaces/:id/members).
@@ -536,6 +746,28 @@ struct PublicConfig: Decodable, Sendable {
     let apple: Bool?
 }
 
+/// One built-in help topic (#383/#384): a markdown file in the repo's
+/// `docs/help/`, listed by GET /v1/help/topics in sidebar order. The list is
+/// derived from the directory server-side, so a new file is a new topic with
+/// no client change — never hardcode it here.
+struct HelpTopic: Decodable, Sendable, Identifiable, Equatable {
+    var id: String { slug }
+    let slug: String
+    let title: String
+    let order: Int
+}
+
+struct HelpTopicsResponse: Decodable, Sendable {
+    let topics: [HelpTopic]
+}
+
+/// GET /v1/help/pages/:slug — one page's raw markdown, front-matter stripped.
+struct HelpPage: Decodable, Sendable, Equatable {
+    let slug: String
+    let title: String
+    let markdown: String
+}
+
 struct MemberDTO: Decodable, Sendable {
     let userId: String
     let displayName: String
@@ -543,7 +775,19 @@ struct MemberDTO: Decodable, Sendable {
     let avatarUrl: String?
     let statusEmoji: String?
     let statusText: String?
+    /// One-line title (#434), carried on the roster so a Directory card draws
+    /// it without a fetch per member.
+    let title: String?
     let isAgent: Bool?
+    /// Optional so a client pointed at a server predating the field decodes.
+    let isBot: Bool?
+    /// Agents only: the human member who sponsored them (#432). Carried on the
+    /// roster so the Directory can name a sponsor without a fetch per card.
+    let sponsorId: String?
+    /// #489: carried on the roster because Directory exclusion is a client-side
+    /// rule — the endpoint must keep returning every member, since mentions,
+    /// DMs and channel membership all read the same list.
+    let privacyMode: Bool?
     let role: String
     let joinedAt: String?
 }
@@ -556,8 +800,16 @@ struct ChannelsResponse: Decodable, Sendable {
     /// on disk, and a spinner must never survive a relaunch — it's a claim
     /// about what an agent is doing this second.
     let busyChannelIds: Set<String>
+    /// channelId -> live voice-huddle roster (Phase 1). Same reasoning as
+    /// busyChannelIds — LiveKit is the source of truth, not this cache
+    /// (decision log 2026-08-20), so it must never survive a relaunch either.
+    let huddleRosters: [String: [HuddleParticipant]]
 
-    private struct IndicatorRow: Decodable { let id: String; let indicator: String? }
+    private struct IndicatorRow: Decodable {
+        let id: String
+        let indicator: String?
+        let huddleParticipants: [HuddleParticipant]?
+    }
     private enum CodingKeys: String, CodingKey { case channels }
 
     init(from decoder: Decoder) throws {
@@ -565,6 +817,11 @@ struct ChannelsResponse: Decodable, Sendable {
         channels = try c.decode([Channel].self, forKey: .channels)
         let rows = try c.decode([IndicatorRow].self, forKey: .channels)
         busyChannelIds = Set(rows.filter { $0.indicator != nil }.map(\.id))
+        var rosters: [String: [HuddleParticipant]] = [:]
+        for row in rows where !(row.huddleParticipants ?? []).isEmpty {
+            rosters[row.id] = row.huddleParticipants
+        }
+        huddleRosters = rosters
     }
 }
 
@@ -574,6 +831,101 @@ struct ChannelIndicatorData: Decodable, Sendable {
     let channelId: String
     let state: String?
 }
+
+/// `channel.emoji` payload (#396): the channel's emoji after a change, nil when
+/// it was cleared. Sent only on a real change.
+struct ChannelEmojiData: Decodable, Sendable {
+    let channelId: String
+    let emoji: String?
+}
+
+/// One participant in an entity's live huddle.
+struct HuddleParticipant: Codable, Sendable, Equatable {
+    let userId: String
+    let joinedAt: String
+}
+
+/// A DM huddle invite's lifecycle (#436). `ringing` while the caller waits;
+/// `active` from the first accept; then one terminal state. Decoded from a
+/// plain string with an `unknown` fallback, so a status added server-side
+/// later can't fail the whole event.
+enum HuddleInviteStatus: String, Codable, Sendable {
+    case ringing, active, ended, declined, missed, cancelled, unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = HuddleInviteStatus(rawValue: raw) ?? .unknown
+    }
+}
+
+/// One person rung by an invite. `unavailable` is the instant miss — no live
+/// socket, DND, muted DM, or busy in another DM huddle.
+enum HuddleInviteTargetStatus: String, Codable, Sendable {
+    case ringing, accepted, declined, missed, unavailable, unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = HuddleInviteTargetStatus(rawValue: raw) ?? .unknown
+    }
+}
+
+struct HuddleInviteTarget: Codable, Sendable, Equatable, Identifiable {
+    let userId: String
+    let status: HuddleInviteTargetStatus
+    let respondedAt: String?
+
+    var id: String { userId }
+}
+
+/// The ring (#436) — "X is calling you", plus everything needed to decide
+/// whether *this* device should show it (see `ringEffect` in HuddleRing.swift).
+struct HuddleInvite: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let workspaceId: String
+    let channelId: String
+    let startedBy: String
+    let status: HuddleInviteStatus
+    let startedAt: String
+    let answeredAt: String?
+    let endedAt: String?
+    let targets: [HuddleInviteTarget]
+}
+
+/// `huddle.invite` payload. One event type for both directions: the callee's
+/// ring and the caller's "still ringing / they weren't available".
+struct HuddleInviteData: Decodable, Sendable {
+    let invite: HuddleInvite
+    /// The WS session that answered — so the device that did stays quiet while
+    /// its siblings say "Answered on another device".
+    let answeredBySessionId: String?
+    /// Names nobody could reach. Sent only to the caller.
+    let unavailable: [String]?
+}
+
+/// `huddle.updated` payload: the channel's aggregate roster after a change —
+/// like ChannelIndicatorData, not one joiner/leaver. Empty means the huddle
+/// ended.
+struct HuddleUpdatedData: Decodable, Sendable {
+    let channelId: String
+    let participants: [HuddleParticipant]
+}
+
+/// POST /v1/channels/:id/huddle/join response: a LiveKit access token scoped
+/// to that entity's room, and the server URL to connect to. In a DM the same
+/// call starts the ring, so it also carries the invite and the names it could
+/// not reach; both are absent for an ambient channel huddle (and on a server
+/// that predates #436, which is why they decode optionally).
+struct HuddleJoinResponse: Decodable, Sendable {
+    let token: String
+    let url: String
+    let invite: HuddleInvite?
+    let unavailable: [String]?
+}
+
+/// Body for accept/decline: which device is answering (#436 multi-device).
+struct HuddleInviteReplyBody: Encodable, Sendable {
+    let sessionId: String?
+}
 struct MembersResponse: Decodable, Sendable { let members: [MemberDTO] }
 struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
 
@@ -582,6 +934,14 @@ struct ChannelMembersResponse: Decodable, Sendable { let userIds: [String] }
 struct MentionMiss: Identifiable, Hashable, Sendable {
     let id: String // userId
     let name: String
+}
+/// The durable identity and delivery outcome of one optimistic send. Most
+/// composers only need mention misses; call-like flows also need the exact
+/// message boundary that a later reply must follow.
+struct MessageSendReceipt: Sendable {
+    let messageId: String
+    let delivered: Bool
+    let mentionMisses: [MentionMiss]
 }
 struct MessagesResponse: Decodable, Sendable {
     let messages: [Message] // newest first
@@ -617,6 +977,14 @@ struct OkResponse: Decodable, Sendable { let ok: Bool }
 struct ReactionsResponse: Decodable, Sendable { let reactions: [ReactionAgg] }
 struct ArtifactsResponse: Decodable, Sendable { let artifacts: [Artifact] } // newest first
 
+/// POST /v1/artifacts/:id/app-token — a 5-minute identity token for the caller
+/// against an `isApp` artifact. Never stored: it goes straight onto the url
+/// being opened, and the next open mints a fresh one.
+struct AppTokenResponse: Decodable, Sendable {
+    let token: String
+    let expiresAt: String
+}
+
 /// Server NotificationDTO: an in-app notification with its triggering message.
 struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
     let id: String
@@ -642,6 +1010,26 @@ struct NotificationItem: Decodable, Sendable, Equatable, Identifiable {
     var actorUserId: String { actorId ?? message.userId }
     /// Whether this notification may raise an OS banner.
     var alerts: Bool { suppressAlert != true }
+
+    /// Activity-row title (#267). `channelName` names where it happened —
+    /// omitted on DM rows, which already say so, and when the channel isn't
+    /// known locally. Shared by the macOS and iOS feeds so they read alike.
+    func headline(sender: String, channelName: String?) -> String {
+        let suffix = channelName.map { " in #\($0)" } ?? ""
+        switch kind {
+        case 1: return "\(sender) sent you a direct message"
+        case 2: return "\(sender) replied in a thread\(suffix)"
+        case 3: return "\(sender) posted\(suffix)"
+        case 4: return "\(sender) reacted \(reactionEmoji ?? "") to your message\(suffix)"
+            .replacingOccurrences(of: "  ", with: " ")
+        case 5:
+            // #303. The channel is the point here, so name it or say nothing —
+            // "added you in #x" would read as the wrong preposition.
+            return channelName.map { "\(sender) added you to #\($0)" }
+                ?? "\(sender) added you to a channel"
+        default: return "\(sender) mentioned you\(suffix)"
+        }
+    }
 }
 
 /// `notification.read` payload (issue #63): rows this user just read, in this
@@ -714,7 +1102,43 @@ struct UpdateChannelBody: Encodable, Sendable {
     let topic: String?
 }
 struct CreateInviteBody: Encodable, Sendable { let email: String }
-struct AcceptInviteBody: Encodable, Sendable { let token: String }
+/// POST /v1/invites/accept — an emailed invite carries the raw `token`; an
+/// in-app workspace invitation (#359) carries its `inviteId`, since its token
+/// was minted, hashed and shown to nobody. Exactly one is ever set.
+struct AcceptInviteBody: Encodable, Sendable {
+    var token: String?
+    var inviteId: String?
+}
+struct DeclineInviteBody: Encodable, Sendable { let inviteId: String }
+
+/// POST /v1/{agents,users}/:id/workspace-invites (#357 / #359) — "bring this
+/// member into that workspace of mine". Same body for both; agents join on the
+/// spot, people get an invitation.
+struct WorkspaceInviteBody: Encodable, Sendable { let workspaceId: String }
+
+/// A workspace invitation addressed to me in-app (#359) — the Accept/Decline card.
+struct PendingWorkspaceInvite: Decodable, Sendable, Identifiable, Equatable {
+    let id: String
+    let workspaceId: String
+    let workspaceName: String
+    let workspaceSlug: String
+    let workspaceAvatarUrl: String?
+    let inviterId: String
+    let inviterName: String
+    let createdAt: String
+    let expiresAt: String
+}
+
+struct WorkspaceInvitesResponse: Decodable, Sendable { let invites: [PendingWorkspaceInvite] }
+/// `created` is false when an identical invitation was already pending — the
+/// endpoint is idempotent, so that reads as "already invited", not a re-send.
+struct WorkspaceInviteResponse: Decodable, Sendable {
+    let invite: PendingWorkspaceInvite
+    let created: Bool
+}
+/// GET /v1/users/:id/workspace-invites — my workspaces this member isn't in yet.
+struct WorkspaceInviteTargetsResponse: Decodable, Sendable { let workspaces: [Workspace] }
+struct AgentWorkspaceInviteResponse: Decodable, Sendable { let workspace: Workspace }
 struct SendMessageBody: Encodable, Sendable {
     let clientMsgId: String
     let body: String
@@ -756,12 +1180,23 @@ struct PatchMeBody: Encodable, Sendable {
     /// an absolute http(s) URL, so the sheets check before they send.
     let website: String?
     let bio: String?
+    /// #434: "" clears it. The server trims and caps at PROFILE_TITLE_MAX, and
+    /// the editors cap as they type so Save can't be rejected for length.
+    let title: String?
+    /// #251: shallow-merged server-side, so send only the key that changed.
+    let notificationPrefs: NotificationPrefs?
+    /// #489: the only write path for privacy mode, and it writes the caller's
+    /// own row — which is what makes "settable only by the user themselves"
+    /// true by construction rather than by a check.
+    let privacyMode: Bool?
 
     init(
         displayName: String? = nil, timezone: String? = nil,
         statusEmoji: String? = nil, statusText: String? = nil,
         statusSuppressAlerts: Bool? = nil,
-        website: String? = nil, bio: String? = nil
+        website: String? = nil, bio: String? = nil, title: String? = nil,
+        notificationPrefs: NotificationPrefs? = nil,
+        privacyMode: Bool? = nil
     ) {
         self.displayName = displayName
         self.timezone = timezone
@@ -770,6 +1205,9 @@ struct PatchMeBody: Encodable, Sendable {
         self.statusSuppressAlerts = statusSuppressAlerts
         self.website = website
         self.bio = bio
+        self.title = title
+        self.notificationPrefs = notificationPrefs
+        self.privacyMode = privacyMode
     }
 }
 /// POST /v1/me/notifications/read — a cursor (`upToId`, opening the Activity
@@ -780,6 +1218,21 @@ struct MarkNotificationsReadBody: Encodable, Sendable {
     /// Keeps an `upToId` sweep inside one workspace (the cursor is a plain id
     /// comparison server-side). Ignored alongside `id`.
     var workspaceId: String?
+}
+/// POST /v1/me/devices — this device's APNs token (#249). Sent on every cold
+/// start, not only when the token changes: APNs rotates tokens silently on
+/// restore-from-backup and reinstall, and the endpoint upserts.
+struct RegisterDeviceBody: Encodable, Sendable {
+    var routingId: String? = nil
+    var badgeMode: String? = nil
+    let token: String
+    /// `ios` today; macOS joins the server's enum when it registers for push.
+    let platform: String
+    /// `sandbox` | `production` — must match the build's `aps-environment`
+    /// entitlement, or APNs answers every send with BadDeviceToken.
+    let environment: String
+    /// The APNs topic, i.e. the bundle id.
+    let bundleId: String
 }
 struct UpdateWorkspaceColorBody: Encodable, Sendable { let sidebarColor: String }
 /// POST /v1/artifacts — pin a file as a shared artifact in a channel. nil name
@@ -839,6 +1292,9 @@ enum EventPayload: Sendable {
     case typing(TypingData)
     case presence(PresenceData)
     case channelIndicator(ChannelIndicatorData)
+    case channelEmoji(ChannelEmojiData)
+    case huddleUpdated(HuddleUpdatedData)
+    case huddleInvite(HuddleInviteData)
     case channel(Channel)
     case channelUpdated(Channel)
     case channelArchived(Channel)
@@ -883,6 +1339,12 @@ struct EventDTO: Decodable, Sendable {
             payload = .presence(try c.decode(PresenceData.self, forKey: .data))
         case "channel.indicator":
             payload = .channelIndicator(try c.decode(ChannelIndicatorData.self, forKey: .data))
+        case "channel.emoji":
+            payload = .channelEmoji(try c.decode(ChannelEmojiData.self, forKey: .data))
+        case "huddle.updated":
+            payload = .huddleUpdated(try c.decode(HuddleUpdatedData.self, forKey: .data))
+        case "huddle.invite":
+            payload = .huddleInvite(try c.decode(HuddleInviteData.self, forKey: .data))
         case "channel.created":
             payload = .channel(try c.decode(Channel.self, forKey: .data))
         case "channel.updated":

@@ -22,7 +22,7 @@ import { ArrowRight, Check, Github, Icon } from "@/components/icons";
 export const metadata: Metadata = {
   title: "Agents that live in your channels",
   description:
-    "Freeflow is AI-native team chat. Agents are members, not apps — they read the thread, run against your repos, and answer where the question was asked.",
+    "Freeflow is AI-native team chat. Agents are members, not apps. They read the thread, run against your repos, and answer where the question was asked.",
 };
 
 const outOfTheBox = [
@@ -66,7 +66,7 @@ const ideas = [
 const whyHere = [
   {
     title: "It already has the context",
-    body: "The agent lives in the thread where the incident is being argued about. It doesn't need a summary of what's happening — it read it.",
+    body: "The agent lives in the thread where the incident is being argued about. It doesn't need a summary of what's happening because it read it.",
   },
   {
     title: "Nothing gets installed",
@@ -78,7 +78,7 @@ const whyHere = [
   },
   {
     title: "The audit trail is the transcript",
-    body: "Every action lands in the channel as a message. Who asked, what it did, what came back — scrollable by anyone, forever.",
+    body: "Every action lands in the channel as a message. Who asked, what it did, and what came back are scrollable by anyone, forever.",
   },
 ];
 
@@ -95,7 +95,7 @@ export default function AgentsPage() {
             <em className="serif-accent text-accent">do</em> things.
           </>
         }
-        body="Chat is where your team decides everything and where your team does nothing. Freeflow closes that gap. Agents here aren't apps you install — they're members you describe, working in the thread that already holds the context."
+        body="Chat is where your team decides everything and where your team does nothing. Freeflow closes that gap. Agents here aren't apps you install. They're members you describe, working in the thread that already holds the context."
         actions={
           <>
             <Button
@@ -119,7 +119,7 @@ export default function AgentsPage() {
             <Reveal>
               <AgentConsole />
               <p className="mt-4 text-[13px] text-muted">
-                Type your own or pick one. Responses are scripted — the shape of
+                Type your own or pick one. Responses are scripted. The shape of
                 the interaction is not.
               </p>
             </Reveal>
@@ -198,7 +198,7 @@ export default function AgentsPage() {
                     want more.
                   </>
                 }
-                body="Most agents never need a file. When one does — a custom tool, a private data source, a rule that only makes sense at your company — it's ordinary TypeScript running on your own machines."
+                body="Most agents never need a file. When one does, such as a custom tool, a private data source, or a rule that only makes sense at your company, it's ordinary TypeScript running on your own machines."
               />
 
               <div className="mt-8">

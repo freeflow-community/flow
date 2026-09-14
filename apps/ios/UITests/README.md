@@ -34,6 +34,26 @@ operator's screen, so they're safe to run any time.
    The scroll test wants a transcript long enough to actually scroll — seed a
    fresh channel with a few dozen messages rather than reusing `#general`.
 
+   `AgentCallTests` additionally needs `FLOW_TEST_DM` set to a one-to-one DM
+   between Alice and an agent. It injects speech through a DEBUG-only hook, so
+   simulator microphone input is not required.
+
+   **If `TEST_RUNNER_…` is ignored** (seen on Xcode 17.4 / iOS 26.5 — the
+   runner keeps the in-code 8787 default and every test fails with "never
+   signed in"), inject the variable into the `.xctestrun` instead. This always
+   works, because it is the file the runner is actually launched from:
+
+   ```sh
+   xcodebuild build-for-testing -project FlowiOS.xcodeproj -scheme Flow \
+     -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+     -derivedDataPath .build CODE_SIGNING_ALLOWED=NO
+   R=.build/Build/Products/Flow_iphonesimulator*.xctestrun
+   /usr/libexec/PlistBuddy -c \
+     "Add :FlowUITests:EnvironmentVariables:FLOW_TEST_SERVER_URL string http://127.0.0.1:8791" $R
+   xcodebuild test-without-building -xctestrun $R \
+     -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+   ```
+
 2. **Software keyboard on.** Keyboard tests need the on-screen keyboard, which
    the simulator hides while a hardware keyboard is connected:
 
@@ -59,6 +79,9 @@ checks")`, the simulator is wedged from a previous run:
 
 ## Tests
 
+- `AgentCallTests` — starts an ongoing agent call, records the listening UI,
+  minimizes it to the persistent bar, reopens it, and ends it explicitly. Five
+  screenshots are attached to the xcresult.
 - `KeyboardDismissTests` — #69/#139: the keyboard goes down when the drawer
   opens, and on any tap or scroll of the chat area. Verified red before each
   fix, green after.
@@ -112,6 +135,38 @@ checks")`, the simulator is wedged from a previous run:
   with neither (override the channel with `FLOW_TEST_PROFILE_CHANNEL`).
   Attaches the screenshots. Note SwiftUI's `Link` is a **button** to
   XCUITest, not a link.
+
+- `NewDmTests` — #257, starting a DM: the sidebar "+", search, a 1:1, the
+  same person twice (which must reuse the conversation, not duplicate it), a
+  group DM, and the profile card's Message button. Fixtures are plain
+  `qa-seed.mjs` — Bob and Scott (override with `FLOW_TEST_DM_PERSON` /
+  `FLOW_TEST_DM_PERSON_2`). Two things these tests have to work around and any
+  new sidebar test will too: the Direct Messages section sits below the fold
+  once a workspace has many channels, and **XCUITest does not scroll to an
+  element for you**; and both the sidebar and the picker are lazy, so an
+  off-screen row does not merely fail to be hittable — it does not exist to
+  query. Hence `openDrawerAtDms` and picking people by searching first.
+
+- `ScrollToMessageTests` — #332, the three jumps that used to go nowhere on
+  iOS: a reply you send in a thread scrolls into view, an Activity jump lands
+  on the message in the channel transcript, and a pinned reply opened from the
+  pins sheet lands in the thread screen. Fixtures come from
+  `node packages/server/scripts/qa-seed-scroll332.mjs` after `qa-seed.mjs`
+  (channel `scroll332`; override with `FLOW_TEST_SCROLL332_CHANNEL`). Attaches
+  the PR screenshots. Two notes for anyone extending it: the thread's composer
+  carries its *own* identifiers (`thread.composer.input` / `.send`), not the
+  channel's; and the assertions are on `isHittable` plus the frame, not
+  `exists`, because a transcript of 100 rows or fewer renders eagerly — an
+  off-screen row is in the accessibility tree either way, which is exactly how
+  this bug hid.
+
+- `NewChannelFirstVisitTests` — #269: a channel that appears while the app is
+  running must show its transcript on the *first* visit. Needs only
+  `qa-seed.mjs`: the test itself plays the agent over REST (Bob creates a
+  channel, invites Alice, posts), because the channel has to arrive into an
+  already-running app. Three variants — app in the foreground, backgrounded,
+  and not running. Note the first tap after a resume can be swallowed, hence
+  the drawer helper that confirms the backdrop and retries.
 
 These suites read `FLOW_TEST_*` overrides from the *runner's* environment, so
 they need the `TEST_RUNNER_` prefix **exported into xcodebuild's environment** —

@@ -6,13 +6,18 @@ free-forever team chat you run yourself.
 ## Run it
 
 ```bash
-npm install
-npm run dev
+pnpm install --ignore-workspace
+pnpm dev
 ```
+
+The `--ignore-workspace` flag matters: this site is standalone, not part of the
+repo's pnpm workspace, and the flag is what keeps `pnpm-lock.yaml` local. That
+lockfile is the one the deploy installs from — use pnpm, not npm, so it stays
+in step with `package.json`.
 
 Open <http://localhost:3000>.
 
-Other scripts: `npm run build`, `npm start`, `npm run typecheck`.
+Other scripts: `pnpm build`, `pnpm start`, `pnpm typecheck`.
 
 ## Stack
 
@@ -20,7 +25,7 @@ Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS v4.
 
 No component library, no icon package, no animation library — icons are inline
 SVG in `components/icons.tsx` and motion is CSS plus one IntersectionObserver
-hook. `npm install` pulls four packages and nothing else.
+hook. The dependencies are Next, React, and three self-hosted font packages.
 
 ## Change the links
 

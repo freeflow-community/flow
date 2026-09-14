@@ -9,6 +9,9 @@ const nextConfig = {
   // Static export: the site has no server features, and Cloudflare Pages
   // serves the resulting `out/` directory.
   output: "export",
+  images: {
+    unoptimized: true,
+  },
   // Pin the workspace root to this folder so Next/Turbopack never walks up
   // into Downloads and tries to compile stray files (e.g. a leftover
   // middleware.ts from another project).

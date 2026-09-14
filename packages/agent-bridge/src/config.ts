@@ -15,10 +15,39 @@ export type ProgressMode = 'thinking' | 'typing' | 'silent';
 export type EventScope = 'mentions' | 'all';
 export type RuntimeKind = 'claude' | 'codex' | 'demo';
 
+export interface VoiceConfig {
+  /** Answer DM huddle invites as this agent. */
+  enabled: boolean;
+  /** LiveKit Inference speech-to-text model. */
+  sttModel: string;
+  /** LiveKit Inference text-to-speech model. */
+  ttsModel: string;
+  /** Voice understood by the selected text-to-speech model. */
+  ttsVoice: string;
+  /** LiveKit Cloud agent inference gateway. */
+  inferenceUrl: string;
+  /** Hard ceiling for one live call. */
+  maxSessionMinutes: number;
+  /** Extra voice-only persona or conversational guidance. */
+  instructions?: string | undefined;
+}
+
+export function defaultVoiceConfig(): VoiceConfig {
+  return {
+    enabled: true,
+    sttModel: process.env.FLOW_VOICE_STT_MODEL?.trim() || 'deepgram/flux-general-en',
+    ttsModel: process.env.FLOW_VOICE_TTS_MODEL?.trim() || 'inworld/inworld-tts-2',
+    ttsVoice: process.env.FLOW_VOICE_TTS_VOICE?.trim() || 'Ashley',
+    inferenceUrl:
+      process.env.FLOW_VOICE_INFERENCE_URL?.trim() || 'https://agent-gateway.livekit.cloud/v1',
+    maxSessionMinutes: 60,
+  };
+}
+
 export interface RuntimeConfig {
   /**
    * 'claude' (rich: sessions, stream-json thinking steps, MCP),
-   * 'codex' (stub: baseline stdout contract), or
+   * 'codex' (baseline stdout contract; voice supplies transcript continuity), or
    * 'demo' (no CLI at all — always replies "Your message was received";
    * exercises the full event→reply pipeline for local testing).
    */
@@ -44,6 +73,19 @@ export interface RuntimeConfig {
   timeoutSec: number;
   /** Kill a run after this many seconds with no output of any kind. */
   idleTimeoutSec: number;
+  /**
+   * Persistent sessions (#519): end a conversation's CLI process after this
+   * many seconds with no turn running *and* no background task open. The next
+   * message respawns it with `--resume`, so reaping costs context nothing —
+   * only the background work it was holding, which is why a pending task holds
+   * the reaper off (up to sessionHardCapSec).
+   */
+  sessionIdleSec: number;
+  /**
+   * …and the ceiling on that reprieve, counted from the end of the last turn:
+   * a background task that never finishes cannot pin a session open forever.
+   */
+  sessionHardCapSec: number;
   /** MCP rich mode: expose the flow MCP server to the runtime (claude only). */
   mcp: boolean;
   /** Extra text appended to the Flow system prompt. */
@@ -53,6 +95,18 @@ export interface RuntimeConfig {
 export interface BridgeConfig {
   serverUrl: string;
   agentToken: string;
+  /**
+   * Which workspace this process serves, by slug (#357). Agents can belong to
+   * several workspaces now, and one bridge process serves exactly one: events
+   * from anywhere else are ignored and the MCP tools are scoped to it.
+   *
+   * Optional, and only meaningful when the agent is in more than one workspace
+   * — a single-workspace agent needs no config edit and behaves as it always
+   * did. Several configs may name different workspaces while sharing the same
+   * credentials (username + key + token); only `login` mints and revokes
+   * tokens, so starting a second process never disturbs the first.
+   */
+  workspace: string | null;
   /**
    * Log file (every line the daemon prints, same timestamped format).
    * Default: <config name>.log next to the config (agent.json → agent.log).
@@ -64,6 +118,20 @@ export interface BridgeConfig {
   eventScope: EventScope;
   /** Never respond to other agents (loop safety). Default false. */
   respondToAgents: boolean;
+  /**
+   * With respondToAgents on: an agent-authored message must @-mention me
+   * (<@userId>) to trigger a run — even in DMs and group DMs, where every
+   * message is otherwise in scope. Stops two agents' stray final replies from
+   * ping-ponging. Default false.
+   */
+  agentMentionsOnly: boolean;
+  /**
+   * Circuit breaker: after this many consecutive agent-authored messages in a
+   * channel with no human speaking, stop responding there until a human posts.
+   * Instructions ask agents not to loop; this makes a loop mechanically
+   * impossible to sustain. 0 disables. Default 6.
+   */
+  agentChainLimit: number;
   /** Max conversations processed concurrently (serial within one conversation). */
   concurrency: number;
   progress: ProgressMode;
@@ -74,18 +142,25 @@ export interface BridgeConfig {
    * definition. Set false for the pre-#162 quiet turn (tool status row only).
    */
   relayText: boolean;
+  /** Live audio in the existing Flow Huddle. Optional for source-level
+   * callers that construct BridgeConfig directly; loadConfig always fills it. */
+  voice?: VoiceConfig | undefined;
 }
 
 interface RawConfig {
   serverUrl?: string;
   agentToken?: string;
+  workspace?: string;
   logFile?: string | null;
   runtime?: Partial<RuntimeConfig> & { kind?: string };
   eventScope?: string;
   respondToAgents?: boolean;
+  agentMentionsOnly?: boolean;
+  agentChainLimit?: number;
   concurrency?: number;
   progress?: string;
   relayText?: boolean;
+  voice?: Partial<VoiceConfig>;
 }
 
 export function loadConfig(configPath: string): BridgeConfig {
@@ -124,12 +199,17 @@ export function loadConfig(configPath: string): BridgeConfig {
     // an absolute runaway backstop, set far above any healthy turn.
     idleTimeoutSec: r.idleTimeoutSec ?? 120,
     timeoutSec: r.timeoutSec ?? 3600,
+    // Ten minutes of true quiet is plenty: a resumed session is indistinguishable
+    // from one that never stopped, so the only cost of reaping early is losing
+    // background work — and that is exactly what the pending check prevents.
+    sessionIdleSec: r.sessionIdleSec ?? 600,
+    sessionHardCapSec: r.sessionHardCapSec ?? 3600,
     mcp: r.mcp ?? (kind === 'claude'),
     systemPromptExtra: r.systemPromptExtra,
   };
 
   // Zero or negative would expire every run the instant it starts.
-  for (const k of ['timeoutSec', 'idleTimeoutSec'] as const) {
+  for (const k of ['timeoutSec', 'idleTimeoutSec', 'sessionIdleSec', 'sessionHardCapSec'] as const) {
     if (!(runtime[k] > 0)) throw new Error(`config: runtime.${k} must be a positive number`);
   }
 
@@ -151,15 +231,67 @@ export function loadConfig(configPath: string): BridgeConfig {
         ? path.resolve(path.dirname(abs), expandHome(raw.logFile))
         : abs.replace(/\.json$/i, '') + '.log';
 
+  const voiceDefaults = defaultVoiceConfig();
+  const voice: VoiceConfig = {
+    enabled: raw.voice?.enabled ?? voiceDefaults.enabled,
+    sttModel: raw.voice?.sttModel?.trim() || voiceDefaults.sttModel,
+    ttsModel: raw.voice?.ttsModel?.trim() || voiceDefaults.ttsModel,
+    ttsVoice: raw.voice?.ttsVoice?.trim() || voiceDefaults.ttsVoice,
+    inferenceUrl: raw.voice?.inferenceUrl?.trim() || voiceDefaults.inferenceUrl,
+    maxSessionMinutes: raw.voice?.maxSessionMinutes ?? voiceDefaults.maxSessionMinutes,
+    instructions: raw.voice?.instructions?.trim() || undefined,
+  };
+  if (!(voice.maxSessionMinutes > 0)) {
+    throw new Error('config: voice.maxSessionMinutes must be a positive number');
+  }
+
   return {
     serverUrl,
     agentToken,
+    workspace: raw.workspace?.trim() || null,
     logFile,
     runtime,
     eventScope,
     respondToAgents: raw.respondToAgents ?? false,
+    agentMentionsOnly: raw.agentMentionsOnly ?? false,
+    agentChainLimit: Math.max(0, raw.agentChainLimit ?? 6),
     concurrency: Math.max(1, raw.concurrency ?? 4),
     progress,
     relayText: raw.relayText ?? true,
+    voice,
   };
+}
+
+/** The minimum a workspace must expose for `resolveWorkspace` to pick between them. */
+export interface WorkspaceChoice {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+/**
+ * Which of the agent's workspaces this process serves (#357).
+ *
+ * One workspace: that one, config field or not — the overwhelmingly common
+ * case, and it must keep working with no config edit. More than one: the
+ * `workspace` slug decides, and its absence is a startup error that lists the
+ * slugs, because silently picking the first would have the agent answering in
+ * a room its operator never pointed it at.
+ */
+export function resolveWorkspace<T extends WorkspaceChoice>(all: T[], slug: string | null): T {
+  if (all.length === 0) throw new Error('agent belongs to no workspace');
+  if (slug) {
+    const want = slug.toLowerCase();
+    const found = all.find((w) => w.slug.toLowerCase() === want);
+    if (found) return found;
+    throw new Error(
+      `config: workspace "${slug}" is not one this agent belongs to — ` +
+        `available: ${all.map((w) => w.slug).join(', ')}`,
+    );
+  }
+  if (all.length === 1) return all[0]!;
+  throw new Error(
+    `this agent belongs to ${all.length} workspaces — set "workspace" in agent.json to one of: ` +
+      `${all.map((w) => w.slug).join(', ')} (one bridge process per workspace)`,
+  );
 }

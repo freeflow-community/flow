@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useRef, useState } from 'react';
 import type {
   AuthResponse,
@@ -6,9 +7,10 @@ import type {
   RegisterPendingResponse,
   WorkspaceDTO,
 } from '@flow/shared';
-import { api } from '../lib/api';
+import { api, scopedStorageKey } from '../lib/api';
 import { loadGoogleIdentity, publicConfig } from '../lib/google';
 import { MAC_DOWNLOAD_URL } from './OpenInApp';
+import { openServerConnections } from './ServerConnections';
 
 type Mode =
   | 'signin'
@@ -38,6 +40,7 @@ export function GoogleButton({
   onSignedIn: (r: GoogleAuthResponse) => void;
   showDivider: boolean;
 }) {
+  const { api } = useBoundApi();
   const slot = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<PublicConfigDTO | null>(null);
@@ -122,11 +125,13 @@ export default function AuthScreen({
    * the card says what the visitor is signing in *for* (issue #85). */
   joinWorkspace?: string | null;
 }) {
+  const { api, scopedStorageKey } = useBoundApi();
   // A pending workspace invite means the visitor most likely has no account
   // yet — default them to Register (email-first) rather than Sign In. Explicit
   // email-link tokens still win (they target a specific existing flow).
   const invited =
-    !!joinWorkspace || (typeof localStorage !== 'undefined' && !!localStorage.getItem('flow.pendingInvite'));
+    !!joinWorkspace
+    || (typeof localStorage !== 'undefined' && !!localStorage.getItem(scopedStorageKey('pendingInvite')));
   const [mode, setMode] = useState<Mode>(
     signinToken ? 'signin-link'
       : signupToken ? 'complete'
@@ -465,6 +470,17 @@ export default function AuthScreen({
         )}
         {body}
       </div>
+      {/* The sign-in screen has no sidebar, so without this a signed-out
+          connection could not reach any other server at all (#565, mirroring
+          what #562 did for the iOS AuthView). */}
+      <button
+        type="button"
+        data-testid="auth-connections"
+        className="text-sm text-muted hover:text-ink"
+        onClick={openServerConnections}
+      >
+        Workspaces &amp; servers…
+      </button>
       <a
         data-testid="download-mac-app"
         href={MAC_DOWNLOAD_URL}

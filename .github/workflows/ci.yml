@@ -44,8 +44,10 @@ jobs:
     # and runs the migrations in beforeAll — but they all expect the dev
     # cluster's credentials on port 5442 (packages/infra/docker-compose.yml).
     # Reproducing that exactly is what lets `pnpm test` run unmodified and
-    # unnarrowed here. NATS is deliberately absent: publishEvent is a no-op
-    # without a bus, which the tests rely on.
+    # unnarrowed here. Most test files never connect the bus (publishEvent is
+    # a no-op without one, which they rely on); the phase-18 M3 routing tests
+    # DO connect, so a NATS service runs alongside (they skip themselves when
+    # it is unreachable, e.g. on a dev machine without docker).
     services:
       postgres:
         image: postgres:16-alpine
@@ -60,6 +62,10 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      nats:
+        image: nats:2-alpine
+        ports:
+          - 4222:4222
 
     steps:
       - uses: actions/checkout@v4

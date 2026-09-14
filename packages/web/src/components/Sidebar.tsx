@@ -1,17 +1,42 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sidebarColor } from '@flow/shared';
 import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api } from '../lib/api';
-import { fileGlyph } from '../lib/fileKind';
-import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
-import { useArtifacts, useChannels, useDisplayNameMap, useMemberMap, useMembers, useNameMap, useWorkspaces } from '../hooks';
-import { ChannelMenu, CreateChannelModal, InviteModal, NewDmModal, WorkspaceColorModal } from './modals';
+import { artifactGlyph } from '../lib/fileKind';
+import { dmTitle, isSelfDm as isSelfDmChannel } from '../lib/channelTitle';
+import { workspaceExit } from '../lib/workspaceExit';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
+import type { Selection } from '../state';
+import { useCapabilities } from '../lib/backend';
+import {
+  useAppArtifacts,
+  useArtifacts,
+  useChannels,
+  useDisplayNameMap,
+  useMarkRead,
+  useMemberMap,
+  useMembers,
+  useNameMap,
+  useWorkspaces,
+} from '../hooks';
+import {
+  ChannelMenu,
+  CreateChannelModal,
+  DeleteWorkspaceModal,
+  InviteModal,
+  LeaveWorkspaceModal,
+  NewDmModal,
+  WorkspaceColorModal,
+} from './modals';
 import { AppsModal } from './AppsModal';
 import { AgentsModal } from './AgentsModal';
 import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
+import { openServerConnections } from './ServerConnections';
 import { FeaturesModal } from './FeaturesModal';
+import { useHoverTooltip } from './HoverTooltip';
 import StatusFooter from './StatusPicker';
 
 // Sidebar width (phase 3.5 ruling 5): local per-device preference.
@@ -50,6 +75,36 @@ export function nestChannels(list: ChannelDTO[]): { channel: ChannelDTO; nested:
   ]);
 }
 
+/**
+ * Minimal scroll (#319): how far the sidebar must move to bring a row into
+ * view, in scrollTop pixels. Zero when the row is already fully visible — that
+ * is what keeps clicking a channel in the sidebar from jumping the list.
+ *
+ * All three arguments are relative to the scroll viewport: `rowTop` is the
+ * row's top edge measured from the viewport's top edge (negative = above the
+ * fold). A row taller than the viewport aligns to its top rather than its
+ * bottom, so you see the start of it.
+ */
+export function nearestScrollDelta(rowTop: number, rowHeight: number, viewHeight: number): number {
+  if (rowTop < 0 || rowHeight > viewHeight) return rowTop;
+  const overshoot = rowTop + rowHeight - viewHeight;
+  return overshoot > 0 ? overshoot : 0;
+}
+
+/**
+ * Scroll a sidebar row into view within the sidebar's own scroller. Deliberately
+ * not `Element.scrollIntoView`, which also scrolls every scrollable ancestor —
+ * here only the channel list should move.
+ */
+function scrollRowIntoView(row: HTMLElement) {
+  const view = row.closest('[data-sidebar-scroll]') as HTMLElement | null;
+  if (!view) return;
+  const r = row.getBoundingClientRect();
+  const v = view.getBoundingClientRect();
+  const delta = nearestScrollDelta(r.top - v.top, r.height, v.height);
+  if (delta !== 0) view.scrollTop += delta;
+}
+
 const WIDTH_KEY = 'flow.sidebarWidth';
 const DEFAULT_WIDTH = 240;
 const clampWidth = (w: number) => Math.min(360, Math.max(180, w));
@@ -58,13 +113,72 @@ function storedWidth(): number {
   return Number.isFinite(w) && w > 0 ? clampWidth(w) : DEFAULT_WIDTH;
 }
 
-export function dmTitle(c: ChannelDTO, names: Record<string, string>, me: string): string {
-  const others = (c.memberIds ?? []).filter((id) => id !== me);
-  if (others.length === 0) return `${names[me] ?? 'You'} (you)`; // persistent self-DM
-  return others.map((id) => names[id] ?? 'Unknown').sort().join(', ');
+export { dmTitle };
+
+/** Agents section: collapsed or not, remembered per device (like the width). */
+const AGENTS_COLLAPSED_KEY = 'flow.sidebarAgentsCollapsed';
+/** Apps section (#394): same per-device collapse memory as Agents. */
+const APPS_COLLAPSED_KEY = 'flow.sidebarAppsCollapsed';
+
+/** A row in the Apps section: the app plus the channel that hosts it. */
+export type AppEntry = { artifact: ArtifactDTO; channel: ChannelDTO };
+
+/**
+ * The Apps section (#394): every mini app in the workspace the server let us
+ * see — apps in public channels count whether or not we've joined them, which
+ * is the whole point (a Task Board in #factory is discoverable from anywhere).
+ *
+ * The server already applied the visibility rule, so all this does is attach
+ * each app to its host channel for the label. An app whose channel isn't in the
+ * local list is dropped rather than rendered channel-less: without the channel
+ * there is nothing to join and nowhere to open.
+ */
+export function appEntries(apps: ArtifactDTO[], channels: ChannelDTO[]): AppEntry[] {
+  const byId = new Map(channels.map((c) => [c.id, c]));
+  return apps.flatMap((artifact) => {
+    const channel = byId.get(artifact.channelId);
+    return channel ? [{ artifact, channel }] : [];
+  });
+}
+
+export type AgentEntry = { member: WorkspaceMemberDTO; channel?: ChannelDTO };
+
+/**
+ * The Agents section (#361): every agent in the workspace gets a row between
+ * Channels and Direct messages, whether or not a DM with it exists yet. The
+ * agent's 1:1 DM moves up here with it — an agent is listed once, never twice.
+ *
+ * A *group* DM that happens to include an agent stays under Direct messages:
+ * it's a conversation with several people, not a way to reach the agent. So is
+ * the self-DM, even if you are yourself an agent.
+ */
+export function splitAgents(
+  dms: ChannelDTO[],
+  members: WorkspaceMemberDTO[],
+  me: string,
+): { agents: AgentEntry[]; rest: ChannelDTO[] } {
+  const agentIds = new Set(members.filter((m) => m.isAgent && m.userId !== me).map((m) => m.userId));
+  const dmWith = new Map<string, ChannelDTO>();
+  const rest: ChannelDTO[] = [];
+  for (const c of dms) {
+    const others = (c.memberIds ?? []).filter((id) => id !== me);
+    const only = others.length === 1 ? others[0] : undefined;
+    const agentId = c.kind === 'dm' && only && agentIds.has(only) ? only : null;
+    // Duplicate 1:1 rows shouldn't exist (the server dedupes by member set),
+    // but if one ever does, the extra stays under Direct messages rather than
+    // vanishing.
+    if (agentId && !dmWith.has(agentId)) dmWith.set(agentId, c);
+    else rest.push(c);
+  }
+  const agents = members
+    .filter((m) => agentIds.has(m.userId))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }))
+    .map((member) => ({ member, channel: dmWith.get(member.userId) }));
+  return { agents, rest };
 }
 
 export default function Sidebar() {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const live = useLive();
@@ -72,6 +186,7 @@ export default function Sidebar() {
   const workspaces = useWorkspaces();
   const channels = useChannels(sel.workspaceId);
   const artifacts = useArtifacts(sel.workspaceId);
+  const appArtifacts = useAppArtifacts(sel.workspaceId);
   const members = useMembers(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
@@ -81,6 +196,8 @@ export default function Sidebar() {
   const [showInvite, setShowInvite] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showColor, setShowColor] = useState(false);
+  const [showLeave, setShowLeave] = useState(false);
+  const [showDeleteWs, setShowDeleteWs] = useState(false);
   const [showApps, setShowApps] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
@@ -88,6 +205,12 @@ export default function Sidebar() {
   const [showFeatures, setShowFeatures] = useState(false);
   const [menuChannel, setMenuChannel] = useState<ChannelDTO | null>(null);
   const [width, setWidth] = useState(storedWidth);
+  const [agentsCollapsed, setAgentsCollapsed] = useState(
+    () => localStorage.getItem(AGENTS_COLLAPSED_KEY) === '1',
+  );
+  const [appsCollapsed, setAppsCollapsed] = useState(
+    () => localStorage.getItem(APPS_COLLAPSED_KEY) === '1',
+  );
   const dragRef = useRef<{ x: number; w: number } | null>(null);
   const wsMenuRef = useRef<HTMLDivElement>(null);
   // Inside the mobile drawer the sidebar fills whatever the rail leaves, so
@@ -112,8 +235,27 @@ export default function Sidebar() {
     };
   }, [wsMenuOpen]);
 
+  // Cmd/Ctrl+[ and Cmd/Ctrl+] mirror the header's back/forward buttons (#386).
+  // Skipped while the caret is in a composer or any other text field, where
+  // the browser's own bracket handling belongs to the person typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if (e.key !== '[' && e.key !== ']') return;
+      if (isTextEntry(e.target)) return;
+      e.preventDefault();
+      if (e.key === '[') sel.goBack();
+      else sel.goForward();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [sel]);
+
   const ws = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const isAdmin = ws?.role === 'owner' || ws?.role === 'admin';
+  // Which way out this workspace offers — see lib/workspaceExit, which is
+  // mirrored in Swift and holds the "roster not loaded yet" rule.
+  const exit = workspaceExit(ws?.role, members.data, auth.user.id);
   const color = sidebarColor(ws?.sidebarColor);
 
   // Restored-workspace guard + default channel: a stale persisted workspace id
@@ -134,10 +276,15 @@ export default function Sidebar() {
 
   // Persistent self-DM: ensure "<Name> (you)" always exists under Direct
   // Messages (upsert — the server dedupes by dm_key, so this is idempotent).
+  // Capability gating (#545): Flow-only controls are not rendered in a
+  // workspace whose backend cannot do them, and never fall through to a Flow
+  // mutation. The reasons come from the backend, not from guesses here.
+  const caps = useCapabilities();
+  const canManage = caps.channelManagement.state !== 'unavailable';
   const ensuredSelfDm = useRef<string | null>(null);
   useEffect(() => {
     const wsId = sel.workspaceId;
-    if (!wsId || !channels.data || ensuredSelfDm.current === wsId) return;
+    if (!wsId || !channels.data || ensuredSelfDm.current === wsId || !canManage) return;
     const haveSelf = channels.data.some(
       (c) => c.kind === 'dm' && (c.memberIds ?? []).every((id) => id === auth.user.id),
     );
@@ -146,7 +293,7 @@ export default function Sidebar() {
     void api('POST', `/v1/workspaces/${wsId}/dms`, { userIds: [auth.user.id] })
       .then(() => qc.invalidateQueries({ queryKey: ['channels', wsId] }))
       .catch(() => { ensuredSelfDm.current = null; });
-  }, [sel.workspaceId, channels.data, auth.user.id, qc]);
+  }, [sel.workspaceId, channels.data, auth.user.id, qc, canManage]);
 
   const openDm = async (userId: string) => {
     if (!sel.workspaceId) return;
@@ -171,8 +318,7 @@ export default function Sidebar() {
   );
   // The self-DM ("<you> (you)") is a personal scratchpad — it never carries an
   // unread badge (ui_nits): you can't have unread messages from yourself.
-  const isSelfDm = (c: ChannelDTO) =>
-    c.kind === 'dm' && (c.memberIds ?? []).every((id) => id === auth.user.id);
+  const isSelfDm = (c: ChannelDTO) => isSelfDmChannel(c, auth.user.id);
   // Phase 13: artifacts nest under their channel. Group the (newest-first) list
   // by channelId so each channel row can render its pinned artifacts beneath it.
   const artifactsByChannel = new Map<string, ArtifactDTO[]>();
@@ -182,32 +328,42 @@ export default function Sidebar() {
     else artifactsByChannel.set(a.channelId, [a]);
   }
   const browsable = all.filter((c) => !c.isMember && !c.isPrivate && c.kind === 'standard');
-  // Agents are always reachable under Direct Messages: workspace agents with
-  // no existing 1:1 DM get a virtual row; clicking creates/opens the DM.
-  const dmPartnerIds = new Set(dms.flatMap((c) => (c.kind === 'dm' ? c.memberIds ?? [] : [])));
-  const agentRows = Object.values(memberMap).filter((m) => m.isAgent && !dmPartnerIds.has(m.userId));
-  // The Direct messages list is ONE alphabetically-sorted list (ui_nits) that
-  // interleaves real DM channels with virtual agent rows (agents with no
-  // existing 1:1 DM). Sorting the two lists separately left agent rows stranded
-  // at the bottom, out of order — so merge them, then sort by display title.
-  // The self-DM ("<you> (you)") is always pinned last: it's a personal
-  // scratchpad, not a conversation, so it sinks below everyone else.
-  type DmItem =
-    | { kind: 'channel'; title: string; self: boolean; channel: ChannelDTO }
-    | { kind: 'agent'; title: string; self: false; member: WorkspaceMemberDTO };
-  const dmItems: DmItem[] = [
-    ...dms.map((c): DmItem => ({
-      kind: 'channel',
-      title: dmTitle(c, displayNames, auth.user.id),
-      self: isSelfDm(c),
-      channel: c,
-    })),
-    ...agentRows.map((m): DmItem => ({ kind: 'agent', title: m.displayName, self: false, member: m })),
-  ].sort((a, b) =>
-    a.self !== b.self
-      ? Number(a.self) - Number(b.self)
-      : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
-  );
+  // Apps (#394): workspace-wide mini-app discovery. Server-ordered by name.
+  const apps = appEntries(appArtifacts.data ?? [], all);
+  /**
+   * One click = land in the app. A public channel we haven't joined is joined
+   * first, and we wait for the refetch before switching: the side panel builds
+   * its tabs from the *member* artifact list, so opening early would show a
+   * panel with nothing in it and immediately close itself again.
+   */
+  const openApp = async ({ artifact, channel }: AppEntry) => {
+    if (!channel.isMember) {
+      try {
+        await api('POST', `/v1/channels/${channel.id}/join`);
+      } catch {
+        return; // the channel went private/archived under us — leave the user put
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] }),
+        qc.invalidateQueries({ queryKey: ['artifacts', sel.workspaceId] }),
+      ]);
+    }
+    sel.openArtifactIn(channel.id, artifact.id);
+  };
+  // Agents live in their own section between Channels and Direct messages
+  // (#361) — every workspace agent, with or without an existing DM. The ones
+  // that have a DM take it with them, so nobody is listed twice.
+  const { agents, rest: dmList } = splitAgents(dms, Object.values(memberMap), auth.user.id);
+  // Direct messages is ONE alphabetically-sorted list (ui_nits). The self-DM
+  // ("<you> (you)") is always pinned last: it's a personal scratchpad, not a
+  // conversation, so it sinks below everyone else.
+  const dmItems = dmList
+    .map((c) => ({ title: dmTitle(c, displayNames, auth.user.id), self: isSelfDm(c), channel: c }))
+    .sort((a, b) =>
+      a.self !== b.self
+        ? Number(a.self) - Number(b.self)
+        : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
+    );
 
   return (
     <aside
@@ -218,14 +374,7 @@ export default function Sidebar() {
       }}
     >
       <div ref={wsMenuRef} className="relative flex items-center justify-between px-3.5 pt-5 pb-2">
-        <button
-          data-testid="workspace-menu"
-          className="flex min-w-0 items-center gap-1 rounded px-1 text-left text-base font-bold hover:bg-white/10"
-          onClick={() => setWsMenuOpen((v) => !v)}
-        >
-          <span className="truncate">{ws?.name ?? 'Workspace'}</span>
-          <span className="text-xs text-white/55">▾</span>
-        </button>
+        <WorkspaceTitle name={ws?.name} onClick={() => setWsMenuOpen((v) => !v)} />
         {wsMenuOpen && (
           <div className="absolute top-12 left-3 right-3 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
             {(workspaces.data ?? []).map((w) => (
@@ -234,18 +383,21 @@ export default function Sidebar() {
               </MenuItem>
             ))}
             <hr className="my-1 border-hairline3" />
-            <MenuItem testid="menu-invite" onClick={() => { setWsMenuOpen(false); setShowInvite(true); }}>
+            {canManage && <MenuItem testid="menu-invite" onClick={() => { setWsMenuOpen(false); setShowInvite(true); }}>
               Invite People…
+            </MenuItem>}
+            <MenuItem testid="menu-directory" onClick={() => { setWsMenuOpen(false); sel.selectChannel(DIRECTORY_VIEW_ID); }}>
+              Directory
             </MenuItem>
             {/* any member can sponsor agents (AGENT_MEMBERS.md) — the modal
                 explains registration and lets sponsors remove their own */}
-            <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
+            {caps.agents.state !== 'unavailable' && <MenuItem testid="menu-agents" onClick={() => { setWsMenuOpen(false); setShowAgents(true); }}>
               Agents…
-            </MenuItem>
-            {isAdmin && (
+            </MenuItem>}
+            {isAdmin && caps.admin.state !== 'unavailable' && (
               <>
                 <MenuItem testid="menu-workspace-color" onClick={() => { setWsMenuOpen(false); setShowColor(true); }}>
-                  Workspace color…
+                  Workspace appearance…
                 </MenuItem>
                 <MenuItem testid="menu-emoji" onClick={() => { setWsMenuOpen(false); setShowEmoji(true); }}>
                   Custom Emoji…
@@ -261,6 +413,37 @@ export default function Sidebar() {
             <MenuItem onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(null); }}>
               All Workspaces
             </MenuItem>
+            {/* Workspace/nav-level actions live in this menu (#563, #565) —
+                the switcher used to be a button floating over the composer. */}
+            <MenuItem testid="menu-connections" onClick={() => { setWsMenuOpen(false); openServerConnections(); }}>
+              Workspaces &amp; servers…
+            </MenuItem>
+            {/* Leaving is self-service for everyone but the owner (#340). An
+                owner with company has to hand the workspace over first; an
+                owner on their own has nobody to hand it to, so they get to end
+                it instead of staring at a permanently disabled row. */}
+            {!canManage ? null : exit === 'delete' ? (
+              <MenuItem
+                testid="menu-delete-workspace"
+                destructive
+                onClick={() => { setWsMenuOpen(false); setShowDeleteWs(true); }}
+              >
+                Delete workspace…
+              </MenuItem>
+            ) : (
+              <MenuItem
+                testid="menu-leave-workspace"
+                destructive
+                disabled={exit === 'transferFirst'}
+                title={exit === 'transferFirst' ? 'Transfer ownership first' : undefined}
+                onClick={() => { setWsMenuOpen(false); setShowLeave(true); }}
+              >
+                Leave workspace
+                {exit === 'transferFirst' && (
+                  <span className="ml-1 text-ink/35">— transfer ownership first</span>
+                )}
+              </MenuItem>
+            )}
             <hr className="my-1 border-hairline3" />
             <button
               data-testid="build-number"
@@ -272,16 +455,26 @@ export default function Sidebar() {
             </button>
           </div>
         )}
+        <div className="flex shrink-0 items-center">
+          <NavButton dir="back" enabled={sel.canGoBack} onClick={() => sel.goBack()} />
+          <NavButton dir="forward" enabled={sel.canGoForward} onClick={() => sel.goForward()} />
+          {caps.scheduledMessages.state !== 'unavailable' && <ScheduledClock
+            active={sel.channelId === SCHEDULED_VIEW_ID}
+            onOpen={() => sel.selectChannel(SCHEDULED_VIEW_ID)}
+          />}
+          {caps.notifications.state !== 'unavailable' && <ActivityBell
+            active={sel.channelId === ACTIVITY_VIEW_ID}
+            unread={live.notificationUnread}
+            onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
+          />}
+        </div>
       </div>
 
-      <div className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm">
-        <ActivityRow
-          active={sel.channelId === ACTIVITY_VIEW_ID}
-          unread={live.notificationUnread}
-          onOpen={() => sel.selectChannel(ACTIVITY_VIEW_ID)}
-        />
-
-        {isAdmin && sel.adminPanelOpen && (
+      <div
+        data-sidebar-scroll
+        className="mc-scroll mc-scroll-dark min-h-0 flex-1 overflow-y-auto px-3.5 pb-2 text-sm"
+      >
+        {isAdmin && sel.adminPanelOpen && caps.admin.state !== 'unavailable' && (
           <AdminRow
             active={sel.channelId === ADMIN_VIEW_ID}
             onOpen={() => sel.selectChannel(ADMIN_VIEW_ID)}
@@ -291,12 +484,12 @@ export default function Sidebar() {
 
         <SectionHeader
           label="Channels"
-          action={{
+          action={canManage ? {
             label: '+',
             testid: 'sidebar-create-channel',
             title: 'Create a channel',
             onClick: () => setShowCreateChannel(true),
-          }}
+          } : undefined}
         />
         {joined.map(({ channel: c, nested }) => (
           <div key={c.id}>
@@ -307,33 +500,106 @@ export default function Sidebar() {
           </div>
         ))}
 
+        {/* Apps (#394): every mini app in the workspace, including ones in public
+            channels this user hasn't joined — clicking joins, then opens the app.
+            Collapsible, and absent entirely when there is nothing to list. */}
+        {apps.length > 0 && (
+          <>
+            <SectionHeader
+              label="Apps"
+              collapsed={appsCollapsed}
+              onToggle={() => {
+                const next = !appsCollapsed;
+                setAppsCollapsed(next);
+                localStorage.setItem(APPS_COLLAPSED_KEY, next ? '1' : '0');
+              }}
+            />
+            {!appsCollapsed &&
+              apps.map((entry) => (
+                <AppRow
+                  key={entry.artifact.id}
+                  entry={entry}
+                  channelLabel={channelLabel(entry.channel, displayNames, auth.user.id)}
+                  onOpen={() => void openApp(entry)}
+                />
+              ))}
+          </>
+        )}
+
+        {/* Agents (#361): one row per workspace agent, above Direct messages.
+            Collapsible, and hidden entirely in a workspace with no agents. */}
+        {agents.length > 0 && (
+          <>
+            <SectionHeader
+              label="Agents"
+              collapsed={agentsCollapsed}
+              onToggle={() => {
+                const next = !agentsCollapsed;
+                setAgentsCollapsed(next);
+                localStorage.setItem(AGENTS_COLLAPSED_KEY, next ? '1' : '0');
+              }}
+            />
+            {!agentsCollapsed &&
+              agents.map(({ member: a, channel: c }) =>
+                c ? (
+                  // The agent's DM, rendered as the agent: same row as any DM,
+                  // so unread badges, the working-here spinner and its
+                  // sub-channels all come along.
+                  <div key={c.id}>
+                    <ChannelRow
+                      channel={c}
+                      testid={`sidebar-agent-${a.displayName}`}
+                      label={a.displayName}
+                      statusEmoji={a.statusEmoji}
+                      statusTitle={a.statusText}
+                      leading={<PresenceDot online={live.isOnline(a.userId)} />}
+                      onMenu={() => setMenuChannel(c)}
+                    />
+                    {(artifactsByChannel.get(c.id) ?? []).map((x) => (
+                      <ArtifactRow key={x.id} artifact={x} />
+                    ))}
+                    {(dmChildren.get(c.id) ?? []).map((k) => (
+                      <div key={k.id}>
+                        <ChannelRow channel={k} label={k.name ?? ''} nested onMenu={() => setMenuChannel(k)} />
+                        {(artifactsByChannel.get(k.id) ?? []).map((x) => (
+                          <ArtifactRow key={x.id} artifact={x} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  // No DM yet — a virtual row; clicking creates one.
+                  <button
+                    key={`agent-${a.userId}`}
+                    data-testid={`sidebar-agent-${a.displayName}`}
+                    title="Start a direct message"
+                    className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
+                    onClick={() => void openDm(a.userId)}
+                  >
+                    <PresenceDot online={live.isOnline(a.userId)} />
+                    <span className="truncate">{a.displayName}</span>
+                  </button>
+                ),
+              )}
+          </>
+        )}
+
         <SectionHeader
           label="Direct messages"
-          action={{
+          action={canManage ? {
             label: '+',
             testid: 'sidebar-new-dm',
             title: 'New direct message',
             onClick: () => setShowNewDm(true),
-          }}
+          } : undefined}
+        />
+        {/* Directory (#430): a nav entry, not a DM row — it highlights when
+            active and opens the member grid rather than a conversation. */}
+        <DirectoryRow
+          active={sel.channelId === DIRECTORY_VIEW_ID}
+          onOpen={() => sel.selectChannel(DIRECTORY_VIEW_ID)}
         />
         {dmItems.map((item) => {
-          if (item.kind === 'agent') {
-            const a = item.member;
-            return (
-              <button
-                key={`agent-${a.userId}`}
-                data-testid={`sidebar-agent-${a.displayName}`}
-                title="Start a direct message"
-                className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-white/80 hover:bg-white/10"
-                onClick={() => void openDm(a.userId)}
-              >
-                <PresenceDot online={!!live.presence[a.userId]} />
-                <span className="truncate">
-                  {a.displayName} <span title="AI agent">🤖</span>
-                </span>
-              </button>
-            );
-          }
           const c = item.channel;
           const title = dmTitle(c, names, auth.user.id);
           const otherId = (c.memberIds ?? []).find((id) => id !== auth.user.id);
@@ -350,7 +616,7 @@ export default function Sidebar() {
                 leading={
                   c.kind === 'dm' ? (
                     // self-DM: you're online by definition (this client is connected)
-                    <PresenceDot online={otherId ? !!live.presence[otherId] : true} />
+                    <PresenceDot online={otherId ? live.isOnline(otherId) : true} />
                   ) : (
                     <span className="text-xs text-white/60">👥</span>
                   )
@@ -372,7 +638,7 @@ export default function Sidebar() {
           );
         })}
 
-        {browsable.length > 0 && (
+        {browsable.length > 0 && canManage && (
           <>
             <SectionHeader label="Browse" />
             {browsable.map((c) => (
@@ -397,7 +663,7 @@ export default function Sidebar() {
 
       {/* Invite your Agent (phase 15): pinned above the profile footer — a
           slightly raised translucent CTA, noticeable without shouting. */}
-      <div className="px-3.5 pt-2 pb-1.5">
+      {caps.agents.state !== 'unavailable' && <div className="px-3.5 pt-2 pb-1.5">
         <button
           data-testid="invite-agent-button"
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/35 bg-white/[0.18] px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-white/25"
@@ -406,7 +672,7 @@ export default function Sidebar() {
           <span aria-hidden>🤖</span>
           Invite your Agent
         </button>
-      </div>
+      </div>}
 
       <StatusFooter />
 
@@ -442,6 +708,12 @@ export default function Sidebar() {
       {showInvite && sel.workspaceId && <InviteModal workspaceId={sel.workspaceId} onClose={() => setShowInvite(false)} />}
       {showNewDm && sel.workspaceId && <NewDmModal workspaceId={sel.workspaceId} onClose={() => setShowNewDm(false)} />}
       {showColor && sel.workspaceId && <WorkspaceColorModal workspaceId={sel.workspaceId} onClose={() => setShowColor(false)} />}
+      {showLeave && sel.workspaceId && (
+        <LeaveWorkspaceModal workspaceId={sel.workspaceId} onClose={() => setShowLeave(false)} />
+      )}
+      {showDeleteWs && sel.workspaceId && (
+        <DeleteWorkspaceModal workspaceId={sel.workspaceId} onClose={() => setShowDeleteWs(false)} />
+      )}
       {showApps && sel.workspaceId && <AppsModal workspaceId={sel.workspaceId} onClose={() => setShowApps(false)} />}
       {showEmoji && sel.workspaceId && <EmojiModal workspaceId={sel.workspaceId} onClose={() => setShowEmoji(false)} />}
       {showAgents && sel.workspaceId && <AgentsModal workspaceId={sel.workspaceId} onClose={() => setShowAgents(false)} />}
@@ -454,12 +726,114 @@ export default function Sidebar() {
   );
 }
 
+/** Is the keyboard event aimed at somewhere a person is typing? */
+function isTextEntry(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  return (
+    el.tagName === 'INPUT' ||
+    el.tagName === 'TEXTAREA' ||
+    el.tagName === 'SELECT' ||
+    el.isContentEditable
+  );
+}
+
 /**
- * The Activity feed's pinned sidebar row (phase 12) — an always-present,
- * virtual client-only entry (no real channel). Selectable like a channel;
- * carries the notification unread badge that used to live on the bell.
+ * One of the workspace header's visit-history buttons (#386). Disabled — dimmed
+ * and non-interactive — at whichever end of the history it sits at, which on a
+ * fresh session is both of them.
  */
-function ActivityRow({
+/**
+ * The workspace name + switcher affordance. It is the only thing in the header
+ * that gives ground (#456): `min-w-0` lets it shrink below its text width and
+ * `truncate` ellipsises what is left, so the nav/clock/bell cluster beside it —
+ * all `shrink-0` — stays whole down to the 180px minimum sidebar. The full name
+ * stays reachable as the hover tooltip.
+ */
+export function WorkspaceTitle({ name, onClick }: { name?: string; onClick: () => void }) {
+  const label = name ?? 'Workspace';
+  return (
+    <button
+      data-testid="workspace-menu"
+      title={label}
+      className="flex min-w-0 items-center gap-1 rounded px-1 text-left text-base font-bold hover:bg-white/10"
+      onClick={onClick}
+    >
+      <span className="truncate">{label}</span>
+      <span className="shrink-0 text-xs text-white/55">▾</span>
+    </button>
+  );
+}
+
+export function NavButton({
+  dir,
+  enabled,
+  onClick,
+}: {
+  dir: 'back' | 'forward';
+  enabled: boolean;
+  onClick: () => void;
+}) {
+  const label = dir === 'back' ? 'Back' : 'Forward';
+  return (
+    <button
+      data-testid={`nav-${dir}`}
+      title={label}
+      aria-label={label}
+      disabled={!enabled}
+      className={`shrink-0 rounded-lg px-1 py-1.5 leading-none ${
+        enabled ? 'text-white/75 hover:bg-white/10' : 'cursor-default text-white/25'
+      }`}
+      onClick={onClick}
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points={dir === 'back' ? '15 18 9 12 15 6' : '9 18 15 12 9 6'} />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * The Activity feed's bell (#385) — fixed in the workspace header rather than
+ * sitting at the top of the channel list, so it can never scroll out of view
+ * and the list holds only real channels. Carries the notification unread badge
+ * and shows a selected state while the Activity feed is the open view.
+ */
+/**
+ * The Scheduled panel's entry point (#420) — a clock sitting next to the
+ * Activity bell, because both open a global per-user view rather than a
+ * channel. No badge: a scheduled message that fired is already a message in a
+ * channel, so there is nothing here left unread.
+ */
+export function ScheduledClock({ active, onOpen }: { active: boolean; onOpen: () => void }) {
+  return (
+    <button
+      data-testid="sidebar-scheduled"
+      data-active={active ? 'true' : 'false'}
+      title="Scheduled messages"
+      aria-label="Scheduled messages"
+      aria-current={active ? 'page' : undefined}
+      className={`relative ml-1 shrink-0 rounded-lg px-1.5 py-1 text-base leading-none ${
+        active ? 'bg-white' : 'hover:bg-white/10'
+      }`}
+      onClick={onOpen}
+    >
+      <span className={active ? 'opacity-70' : 'opacity-75'}>🕐</span>
+    </button>
+  );
+}
+
+export function ActivityBell({
   active,
   unread,
   onOpen,
@@ -469,28 +843,25 @@ function ActivityRow({
   onOpen: () => void;
 }) {
   return (
-    <div
-      className={`mt-1 flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${
-        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+    <button
+      data-testid="sidebar-activity"
+      data-unread={unread}
+      data-active={active ? 'true' : 'false'}
+      title="Activity"
+      aria-label="Activity"
+      aria-current={active ? 'page' : undefined}
+      className={`relative ml-1 shrink-0 rounded-lg px-1.5 py-1 text-base leading-none ${
+        active ? 'bg-white' : 'hover:bg-white/10'
       }`}
+      onClick={onOpen}
     >
-      <button
-        data-testid="sidebar-activity"
-        data-unread={unread}
-        className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
-        onClick={onOpen}
-      >
-        <span className={active ? 'opacity-70' : 'text-white/60'}>🔔</span>
-        <span className={`truncate ${active ? 'font-[650]' : unread > 0 ? 'font-[650] text-white' : 'text-white/82'}`}>
-          Activity
+      <span className={active ? 'opacity-70' : 'opacity-75'}>🔔</span>
+      {unread > 0 && (
+        <span className="absolute -top-1 -right-1 rounded-[9px] bg-unread px-[5px] py-px text-[10px] font-bold text-white">
+          {Math.min(unread, 99)}
         </span>
-        {unread > 0 && (
-          <span className="ml-auto rounded-[9px] bg-unread px-[7px] py-px text-[11px] font-bold text-white">
-            {Math.min(unread, 99)}
-          </span>
-        )}
-      </button>
-    </div>
+      )}
+    </button>
   );
 }
 
@@ -499,6 +870,24 @@ function ActivityRow({
  * channel). Selectable like a channel; the hover × closes it (pure UI hide,
  * reopen from the workspace menu). Only rendered for admins.
  */
+/** The Directory entry under the Direct messages header (#430) — same nav-item
+ * shape as the admin row, minus the dismiss button (it is always offered). */
+function DirectoryRow({ active, onOpen }: { active: boolean; onOpen: () => void }) {
+  return (
+    <button
+      data-testid="sidebar-directory"
+      title="Browse everyone in this workspace"
+      className={`flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left ${
+        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+      }`}
+      onClick={onOpen}
+    >
+      <span className={active ? 'opacity-70' : 'text-white/60'}>👥</span>
+      <span className={`truncate ${active ? 'font-[650]' : 'text-white/82'}`}>Directory</span>
+    </button>
+  );
+}
+
 function AdminRow({
   active,
   onOpen,
@@ -542,7 +931,48 @@ function AdminRow({
 /** An artifact row (phase 13): nested under its channel; selectable opens the
  * side panel; hover ✕ DELETES the shared artifact (and its own file, if the
  * artifact owns it — server-side). */
+/** How an app row names its host channel: `#name` for a channel, the member
+ * names for a DM (an app can be pinned in one). */
+export function channelLabel(c: ChannelDTO, names: Record<string, string>, me: string): string {
+  return c.kind === 'standard' ? `#${c.name ?? ''}` : dmTitle(c, names, me);
+}
+
+/**
+ * An Apps-section row: the app's name over its host channel in muted text —
+ * two channels can host same-named apps, and for a channel you haven't joined
+ * the channel *is* the context. Not nested like an artifact row: this list is
+ * flat, and the channel is named rather than implied by indentation.
+ */
+function AppRow({
+  entry,
+  channelLabel: channelName,
+  onOpen,
+}: {
+  entry: AppEntry;
+  channelLabel: string;
+  onOpen: () => void;
+}) {
+  const sel = useSelection();
+  const { artifact, channel } = entry;
+  const active = sel.artifactId === artifact.id && sel.channelId === channel.id;
+  return (
+    <button
+      data-testid={`sidebar-app-${artifact.name}`}
+      title={`${artifact.name} — ${channelName}`}
+      className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[5px] text-left hover:bg-white/10"
+      onClick={onOpen}
+    >
+      <span className={active ? 'text-white' : 'text-white/60'}>🧩</span>
+      <span className="flex min-w-0 flex-col leading-tight">
+        <span className={`truncate ${active ? 'font-bold text-white' : 'text-white/82'}`}>{artifact.name}</span>
+        <span className="truncate text-[11px] text-white/45">{channelName}</span>
+      </span>
+    </button>
+  );
+}
+
 function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
+  const { api } = useBoundApi();
   const sel = useSelection();
   const qc = useQueryClient();
   const active = sel.artifactId === artifact.id;
@@ -555,7 +985,7 @@ function ArtifactRow({ artifact }: { artifact: ArtifactDTO }) {
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
         onClick={() => sel.selectArtifact(artifact.id)}
       >
-        <span className={active ? 'text-white' : 'text-white/60'}>{fileGlyph(artifact.file)}</span>
+        <span className={active ? 'text-white' : 'text-white/60'}>{artifactGlyph(artifact)}</span>
         <span className={`truncate ${active ? 'font-bold text-white' : 'text-white/82'}`}>{artifact.name}</span>
       </button>
       <button
@@ -587,13 +1017,30 @@ function PresenceDot({ online }: { online: boolean }) {
 function SectionHeader({
   label,
   action,
+  collapsed,
+  onToggle,
 }: {
   label: string;
   action?: { label: string; testid: string; title: string; onClick: () => void };
+  /** Collapsible section (#361): the label becomes a toggle with a caret. */
+  collapsed?: boolean;
+  onToggle?: () => void;
 }) {
   return (
     <div className="mt-4 mb-1 flex items-center justify-between px-2 first:mt-1">
-      <span className="text-[11px] font-semibold tracking-[.06em] text-white/55 uppercase">{label}</span>
+      {onToggle ? (
+        <button
+          data-testid={`sidebar-section-${label.toLowerCase()}`}
+          aria-expanded={!collapsed}
+          className="flex items-center gap-1 rounded text-[11px] font-semibold tracking-[.06em] text-white/55 uppercase hover:text-white/80"
+          onClick={onToggle}
+        >
+          <span className="text-[9px]" aria-hidden>{collapsed ? '▸' : '▾'}</span>
+          {label}
+        </button>
+      ) : (
+        <span className="text-[11px] font-semibold tracking-[.06em] text-white/55 uppercase">{label}</span>
+      )}
       {action && (
         <button
           data-testid={action.testid}
@@ -624,6 +1071,52 @@ export function ActivitySpinner({ active }: { active: boolean }) {
       }`}
     />
   );
+}
+
+/**
+ * Opening a channel from the sidebar (#327). A channel whose unreads all live
+ * inside a thread looks unchanged when you click it — the main timeline has
+ * nothing new in it — so when the server says the oldest unread is a reply,
+ * open the channel *and* that thread, landing on the first unread reply.
+ * Everything else is the plain channel switch it has always been.
+ *
+ * Deliberately tied to the click and not to render: replies arriving while you
+ * sit in a channel must not yank the thread panel open under you.
+ *
+ * Clicking the row of the channel already on screen used to do nothing at all,
+ * which made the gesture people reach for when a badge won't clear the one
+ * gesture that couldn't clear it (#533). `revisit` re-runs the read pass —
+ * ChannelView's own effect fires on the newest message changing, so sitting
+ * still in the channel never triggers it again.
+ */
+/**
+ * The read pass for the channel already on screen (#533): re-send its cursor,
+ * which is what makes the server sweep the channel's notification rows —
+ * thread replies included. Nothing else re-runs it, because ChannelView marks
+ * read off the newest *message* changing and sitting still changes nothing.
+ *
+ * The cursor comes from the channel row itself, so this can only ever repeat a
+ * read the server already recorded; the server refuses to move a cursor
+ * backwards, so a stale row cannot un-read the timeline.
+ */
+export function useChannelRevisit(): (channel: ChannelDTO) => void {
+  const markRead = useMarkRead();
+  return (channel) => {
+    if (channel.lastReadMsgId) {
+      markRead.mutate({ channelId: channel.id, lastReadMsgId: channel.lastReadMsgId });
+    }
+  };
+}
+
+export function openChannelFromSidebar(
+  sel: Selection,
+  channel: ChannelDTO,
+  revisit?: (channel: ChannelDTO) => void,
+): void {
+  if (sel.channelId === channel.id) revisit?.(channel);
+  const jump = channel.oldestUnreadThreadReply;
+  if (jump) sel.jumpToMessage(channel.id, jump.replyId, jump.rootId);
+  else sel.selectChannel(channel.id);
 }
 
 function ChannelRow({
@@ -658,8 +1151,31 @@ function ChannelRow({
   // reactions; every message in a DM) and nothing else.
   const unread = channel.unreadCount > 0 && !hideUnread;
   const notifications = hideUnread ? 0 : channel.unreadNotifications;
+  // Arriving at a channel by any route other than clicking it here — a
+  // notification, a deep link, the switcher, being added to a channel — left the
+  // sidebar wherever it was, so the row you just landed on could sit below the
+  // fold (#319). Scroll it back into view, by the minimum needed: a row that is
+  // already visible does not move, which is why a plain sidebar click still
+  // never jumps.
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (active && rowRef.current) scrollRowIntoView(rowRef.current);
+  }, [active]);
+  // #392: the topic on hover, so you can tell what a channel is for without
+  // opening it. The hover target is the whole row, not the few dozen pixels the
+  // name occupies — pointing at a channel means the row, and anchoring to the
+  // row is also what keeps the bubble clear of it. No topic, no tooltip and no
+  // handlers; DMs never have one, so they're inert here.
+  const topicTip = useHoverTooltip(channel.topic, `channel-topic-tooltip-${channel.name ?? channel.id}`);
+  const { ref: tipRef, ...tipHandlers } = topicTip.anchorProps;
+  const revisit = useChannelRevisit();
   return (
     <div
+      ref={(el) => {
+        rowRef.current = el;
+        tipRef(el);
+      }}
+      {...tipHandlers}
       data-nested={nested ? 'true' : undefined}
       className={`group flex items-center gap-[9px] rounded-lg px-2 py-[7px] ${nested ? 'ml-3' : ''} ${
         active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
@@ -670,7 +1186,7 @@ function ChannelRow({
         data-unread={channel.unreadCount}
         data-notifications={notifications}
         className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
-        onClick={() => sel.selectChannel(channel.id)}
+        onClick={() => openChannelFromSidebar(sel, channel, revisit)}
       >
         {leading ?? (
           <span className={active ? 'opacity-60' : 'text-white/60'}>{channel.isPrivate ? '🔒' : '#'}</span>
@@ -682,7 +1198,18 @@ function ChannelRow({
         >
           {label}
         </span>
-        {channel.indicator && <ActivitySpinner active={active} />}
+        {/* One slot, two tenants (#396): the spinner is a claim about right now,
+            so it wins while it's up; the emoji is decoration and comes back the
+            moment it clears. Never both — they'd read as one confused status. */}
+        {channel.indicator ? (
+          <ActivitySpinner active={active} />
+        ) : (
+          channel.emoji && (
+            <span data-testid="channel-emoji" className="shrink-0 text-sm leading-none">
+              {channel.emoji}
+            </span>
+          )
+        )}
         {statusEmoji && (
           <span className="ml-0.5 shrink-0 text-sm" title={statusTitle}>{statusEmoji}</span>
         )}
@@ -702,6 +1229,7 @@ function ChannelRow({
       >
         ⋯
       </button>
+      {topicTip.tooltip}
     </div>
   );
 }
@@ -710,15 +1238,28 @@ function MenuItem({
   children,
   onClick,
   testid,
+  destructive,
+  disabled,
+  title,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   testid?: string;
+  destructive?: boolean;
+  disabled?: boolean;
+  /** Hover hint — how a disabled item explains itself. */
+  title?: string;
 }) {
   return (
     <button
       data-testid={testid}
-      className="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent/10"
+      title={title}
+      disabled={disabled}
+      className={`block w-full px-3 py-1.5 text-left text-sm ${
+        disabled
+          ? 'cursor-default text-ink/35'
+          : `${destructive ? 'text-red-600 hover:bg-red-50' : ''} hover:bg-accent/10`
+      }`}
       onClick={onClick}
     >
       {children}

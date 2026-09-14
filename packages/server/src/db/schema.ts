@@ -17,6 +17,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+import type { Recurrence, ScheduledRunStatus } from '@flow/shared';
 
 const citext = customType<{ data: string }>({ dataType: () => 'citext' });
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
@@ -33,8 +34,13 @@ export const users = pgTable('users', {
   // Agents only (AGENT_MEMBERS.md): the human member responsible for the agent,
   // and the agent's durable credentials (username + argon2 key hash) — nulled
   // on removal so a removed agent can never log back in.
+  // The agent's *original* sponsor. Per-workspace sponsorship lives on
+  // `workspace_members.sponsorUserId` (#357) — this stays as the identity-level
+  // answer to "whose agent is this" outside any workspace.
   sponsorUserId: uuid('sponsor_user_id').references((): AnyPgColumn => users.id),
-  agentUsername: citext('agent_username').unique(),
+  // #357: unique *per workspace*, not globally — identity is username + key,
+  // and the collision check runs when a membership is created.
+  agentUsername: citext('agent_username'),
   agentKeyHash: text('agent_key_hash'),
   statusEmoji: text('status_emoji').notNull().default(''),
   statusText: text('status_text').notNull().default(''),
@@ -42,13 +48,19 @@ export const users = pgTable('users', {
   // PatchMeBody, the only write path); `bio` is plain text, newlines kept.
   website: text('website').notNull().default(''),
   bio: text('bio').notNull().default(''),
+  // #434: one-line title shown under the name on Directory and profile cards.
+  title: text('title').notNull().default(''),
   // Phase 10: per-user notification prefs ({dm, mention, groupMention,
-  // threadReply, persistentBanners} — absent key = default) and the
+  // threadReply, reaction, channelInvite, persistentBanners} — absent key =
+  // default) and the
   // status-driven "suppress all alerts" flag (DND-family statuses).
   notificationPrefs: jsonb('notification_prefs').$type<Record<string, boolean>>().notNull().default({}),
   statusSuppressAlerts: boolean('status_suppress_alerts').notNull().default(false),
   // Phase 11 §10: don't unfurl links in my own messages.
   unfurlOwnLinks: boolean('unfurl_own_links').notNull().default(true),
+  // #489: hide my email from every API response and keep me out of the
+  // Directory. Written only by the owner of the row (PatchMeBody).
+  privacyMode: boolean('privacy_mode').notNull().default(false),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   // Tombstone: set when a human is removed from their last workspace. The row is
   // kept for message authorship; the service vacates `email` so it frees up.
@@ -115,11 +127,29 @@ export const appLinkCodes = pgTable('app_link_codes', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
 
+/** Pending client-initiated PKCE operations; separate from unbound legacy codes. */
+export const authHandoffs = pgTable('auth_handoffs', {
+  requestHash: bytea('request_hash').primaryKey(),
+  connectionId: text('connection_id').notNull(),
+  operationId: text('operation_id').notNull(),
+  state: text('state').notNull(),
+  serverOrigin: text('server_origin').notNull(),
+  clientOrigin: text('client_origin'),
+  returnUrl: text('return_url').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  codeHash: bytea('code_hash').unique(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey(),
   slug: citext('slug').notNull().unique(),
   name: text('name').notNull(),
   sidebarColor: text('sidebar_color').notNull().default('violet'), // preset id (phase 3.5)
+  // #336: optional image mark, a `/v1/avatars/<key>` path like users.avatar_url;
+  // null = the color/initial mark clients have always drawn.
+  avatarUrl: text('avatar_url'),
   // Phase 11 §10: workspace switch, plus optional allowlist mode for regulated
   // deployments (null = allow all domains).
   unfurlEnabled: boolean('unfurl_enabled').notNull().default(true),
@@ -139,6 +169,10 @@ export const workspaceMembers = pgTable(
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     role: memberRole('role').notNull().default('member'),
+    // Agents only (#357): the human who vouched for this agent *in this
+    // workspace* — the inviter. Sponsorship is per-membership because an agent
+    // can be sponsored by different people in different workspaces.
+    sponsorUserId: uuid('sponsor_user_id').references(() => users.id, { onDelete: 'set null' }),
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.workspaceId, t.userId] }), index().on(t.userId)],
@@ -155,9 +189,22 @@ export const invites = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    // #359: set when the invite was addressed to an existing Flow user from
+    // their profile popup rather than emailed to an address. Such an invite is
+    // accepted/declined in-app by id; no email is ever sent.
+    invitedUserId: uuid('invited_user_id').references(() => users.id, { onDelete: 'cascade' }),
+    // #359: "no thanks" — terminal like acceptedAt, and it frees the pending slot.
+    declinedAt: timestamp('declined_at', { withTimezone: true }),
   },
-  // one PENDING invite per email; accepted invites are history, not locks
-  (t) => [uniqueIndex('invites_pending_unique').on(t.workspaceId, t.email).where(sql`accepted_at IS NULL`)],
+  // one PENDING invite per email; accepted/declined invites are history, not locks
+  (t) => [
+    uniqueIndex('invites_pending_unique')
+      .on(t.workspaceId, t.email)
+      .where(sql`accepted_at IS NULL AND declined_at IS NULL`),
+    index('invites_invited_user_idx')
+      .on(t.invitedUserId)
+      .where(sql`accepted_at IS NULL AND declined_at IS NULL`),
+  ],
 );
 
 /**
@@ -193,6 +240,10 @@ export const channels = pgTable(
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     // Sub-channels (#118) — one level deep, enforced in the service.
     parentId: uuid('parent_id').references((): AnyPgColumn => channels.id, { onDelete: 'set null' }),
+    // Channel emoji (#396) — one persistent glyph drawn after the name in the
+    // sidebar. Null = none. Unlike the activity indicator it shares that slot
+    // with, this is a column: it outlives the process that set it.
+    emoji: text('emoji'),
   },
   (t) => [
     uniqueIndex().on(t.workspaceId, t.name),
@@ -218,7 +269,7 @@ export const messages = pgTable(
     id: uuid('id').primaryKey(),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
     userId: uuid('user_id').notNull().references(() => users.id),
-    threadRootId: uuid('thread_root_id'),
+    threadRootId: uuid('thread_root_id').references((): AnyPgColumn => messages.id, { onDelete: 'cascade' }),
     clientMsgId: uuid('client_msg_id').notNull(),
     body: bytea('body').notNull(),
     bodyNonce: bytea('body_nonce').notNull(),
@@ -232,6 +283,9 @@ export const messages = pgTable(
     // Non-null marks a channel event line (join/leave); null = a user message.
     // Excluded from unread counts and never notifies.
     systemKind: text('system_kind'),
+    // #419: posted by a scheduled message rather than typed. Nothing else about
+    // the row differs — clients draw a badge off this.
+    scheduled: boolean('scheduled').notNull().default(false),
   },
   (t) => [
     uniqueIndex().on(t.channelId, t.clientMsgId),
@@ -299,7 +353,11 @@ export const messageFiles = pgTable(
   'message_files',
   {
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
-    fileId: uuid('file_id').notNull().references(() => files.id),
+    // Cascade (migration 0031): workspace deletion reaches files down two FK
+    // paths at once (workspaces→files, workspaces→…→messages→message_files);
+    // without ON DELETE CASCADE here the files leg can fire first and trip
+    // this constraint mid-cascade (23503), 500ing the whole delete.
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
   },
   (t) => [primaryKey({ columns: [t.messageId, t.fileId] }), index('message_files_file_idx').on(t.fileId)],
 );
@@ -323,6 +381,14 @@ export const artifacts = pgTable(
     url: text('url'),
     ownsFile: boolean('owns_file').notNull().default(false),
     name: text('name').notNull(),
+    // Mini apps (MINI_APPS.md): a link artifact marked as an app owns a secret
+    // used to HMAC short-lived member identity tokens. Encrypted at rest with
+    // the message-body envelope; all four columns are NULL together, and a
+    // non-null app_secret is what `isApp` means.
+    appSecret: bytea('app_secret'),
+    appSecretNonce: bytea('app_secret_nonce'),
+    appEncKeyId: text('app_enc_key_id'),
+    appEncScheme: smallint('app_enc_scheme'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -343,10 +409,12 @@ export const notifications = pgTable(
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
     channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
-    kind: smallint('kind').notNull(), // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction
+    // 0=mention 1=dm 2=thread_reply 3=channel activity 4=reaction 5=channel invite
+    kind: smallint('kind').notNull(),
     // phase 10: for kind 0 — 'mention' | 'here' | 'channel'; NULL otherwise
     subkind: text('subkind'),
-    // issue #63: who caused it — message author (kinds 0-3) or reactor (kind 4).
+    // issue #63: who caused it — message author (kinds 0-3), reactor (kind 4)
+    // or the inviter (kind 5, #303).
     // Nullable only for rows written before the column existed.
     actorId: uuid('actor_id').references(() => users.id, { onDelete: 'cascade' }),
     reactionEmoji: text('reaction_emoji'), // kind 4 only
@@ -486,3 +554,180 @@ export const unfurlDomainDenylist = pgTable('unfurl_domain_denylist', {
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Scheduled messages (#419) — a pending message with a recurrence rule. The
+ * body carries the same envelope encryption as `messages`; firing a row means
+ * calling the ordinary send path as `authorUserId`, so the result is an
+ * ordinary message with `scheduled = true`.
+ */
+export const scheduledMessages = pgTable(
+  'scheduled_messages',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    authorUserId: uuid('author_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    body: bytea('body').notNull(),
+    bodyNonce: bytea('body_nonce').notNull(),
+    encKeyId: text('enc_key_id').notNull(),
+    encScheme: smallint('enc_scheme').notNull().default(1),
+    recurrence: jsonb('recurrence').$type<Recurrence>().notNull(),
+    timezone: text('timezone').notNull().default('UTC'),
+    // Null once a one-shot has fired — the row stays for its run history.
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+    enabled: boolean('enabled').notNull().default(true),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+    lastRunStatus: text('last_run_status').$type<ScheduledRunStatus>(),
+    lastMessageId: uuid('last_message_id').references(() => messages.id, { onDelete: 'set null' }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('scheduled_messages_due_idx').on(t.nextRunAt).where(sql`enabled AND next_run_at IS NOT NULL`),
+    index('scheduled_messages_workspace_idx').on(t.workspaceId, t.createdAt.desc()),
+    index('scheduled_messages_author_idx').on(t.authorUserId),
+  ],
+);
+
+/** Phase 18 M1: fixed-window rate-limit counters shared across replicas —
+ * only the per-user limiter keys live here (see lib/rateLimitDb.ts). */
+export const rateLimitWindows = pgTable('rate_limit_windows', {
+  key: text('key').primaryKey(),
+  windowStart: timestamp('window_start', { withTimezone: true }).notNull().defaultNow(),
+  count: integer('count').notNull().default(1),
+});
+
+/** Phase 18 M3: one-time Socket Mode connection tickets, DB-backed so mint
+ * and redeem may happen on different replicas (see gateway/socketMode.ts). */
+export const appSocketTickets = pgTable('app_socket_tickets', {
+  tokenHash: bytea('token_hash').primaryKey(),
+  appId: uuid('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+/**
+ * APNs device tokens (#245, PUSH_APNS.md). Registered on every cold start —
+ * tokens rotate silently on restore-from-backup or reinstall, so "register
+ * every launch" is the cheapest correctness policy.
+ *
+ * `token` is unique globally rather than per user: a phone handed to someone
+ * else re-registers under the new account and the upsert rebinds `userId`,
+ * so the previous owner's pushes stop arriving on a phone that is not theirs.
+ */
+export const deviceTokens = pgTable(
+  'device_tokens',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(), // APNs device token, hex
+    routingId: text('routing_id'), // null is the legacy absolute-badge contract
+    platform: text('platform').notNull(), // 'ios' (macOS later)
+    // Narrowed at the type level so the sender seam's PushDevice takes a row
+    // straight through with no adapter — the API's zod schema is what enforces
+    // it at the boundary (#247).
+    environment: text('environment').$type<'sandbox' | 'production'>().notNull(),
+    bundleId: text('bundle_id').notNull(), // APNs topic
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Set when APNs answers 410 Unregistered — kept, not deleted, so a
+     * re-register can revive the row instead of racing the sender. */
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  },
+  (t) => [index('device_tokens_user_idx').on(t.userId).where(sql`disabled_at IS NULL`)],
+);
+
+/**
+ * APNs delivery outbox (#247, PUSH_APNS.md § "Delivery: outbox, not
+ * fire-and-forget"). Same shape as `pendingAppEvents` — same reason: push is
+ * not loss-tolerant the way WS publish is, because a phone with no socket has
+ * nothing to backfill from, so rows land in the notification's own transaction
+ * and an in-process worker drains them at least once.
+ *
+ * One row per *notification*, not per device: the worker resolves the user's
+ * live devices at send time (they change between commit and delivery) and
+ * computes the badge count once per row rather than once per phone.
+ */
+export const pendingPush = pgTable(
+  'pending_push',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    notificationId: uuid('notification_id')
+      .notNull()
+      .references(() => notifications.id, { onDelete: 'cascade' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('pending_push_due').on(t.nextAttemptAt).where(sql`delivered_at IS NULL AND failed_at IS NULL`),
+    index('pending_push_user_idx').on(t.userId, t.id.desc()),
+  ],
+);
+
+/**
+ * DM huddle invites (#436, migration 0042) — the ring and its outcome.
+ * Channel huddles are ambient and leave no rows at all; a DM huddle rings, and
+ * a ring nobody answered has to still be there tomorrow, which no in-memory
+ * roster can promise. `huddleInvites` is the call, `huddleInviteTargets` is
+ * one row per person rung (a 1:1 call is the one-target case).
+ */
+export const huddleInvites = pgTable(
+  'huddle_invites',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    startedBy: uuid('started_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    /** 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'cancelled' */
+    status: text('status').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The first accept — the moment the call became real. Null = unanswered. */
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    durationSeconds: integer('duration_seconds'),
+    /** The transcript line posted into the DM ("Call ended · 4 min"). */
+    systemMessageId: uuid('system_message_id').references(() => messages.id, { onDelete: 'set null' }),
+  },
+  (t) => [
+    index('huddle_invites_channel_idx').on(t.channelId, t.startedAt.desc()),
+    index('huddle_invites_ringing_idx').on(t.status).where(sql`status IN ('ringing', 'active')`),
+  ],
+);
+
+export const huddleInviteTargets = pgTable(
+  'huddle_invite_targets',
+  {
+    inviteId: uuid('invite_id').notNull().references(() => huddleInvites.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    /** 'ringing' | 'accepted' | 'declined' | 'missed' | 'unavailable' */
+    status: text('status').notNull(),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.inviteId, t.userId] }), index('huddle_invite_targets_user_idx').on(t.userId)],
+);
+
+/**
+ * Images pasted into a community email (#492, migration 0044).
+ *
+ * The row is a capability, not a copy: the bytes stay in `files`, uploaded
+ * through the ordinary presign flow, and this table's `token` is what lets an
+ * unauthenticated mail client fetch them. It doubles as the sweeper's proof
+ * that an image nobody attached to a message is still load-bearing.
+ */
+export const workspaceEmailImages = pgTable(
+  'workspace_email_images',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+    fileId: uuid('file_id').notNull().references(() => files.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('workspace_email_images_file_idx').on(t.fileId)],
+);

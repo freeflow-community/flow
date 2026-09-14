@@ -13,6 +13,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import type { ArtifactDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { FlowApi, FlowApiError } from './api.js';
 import { attachmentFilename, formatAttachments } from './attachments.js';
 
@@ -27,22 +28,74 @@ interface JsonRpcRequest {
 const channelLabel = (c: { name: string | null; kind: string }): string =>
   c.name ? `#${c.name}` : `(${c.kind})`;
 
+/** One member as a `list_users` line. The email is member-visible data the
+ * members API already returns to anyone in the workspace (#488) — carrying it
+ * here is what lets an agent email a colleague without falling back to raw
+ * HTTP. Agents' synthetic addresses print as-is.
+ *
+ * A member in privacy mode (#489) arrives with no address at all: the server
+ * has already emptied the field, so the line simply omits that column rather
+ * than printing a gap an agent might read as a name. Their id and name stay —
+ * privacy mode hides an address, it does not hide a person. */
+export const memberLine = (m: WorkspaceMemberDTO): string =>
+  [
+    m.userId,
+    `${m.displayName}${m.isAgent ? ' 🤖' : ''}`,
+    ...(m.email ? [m.email] : []),
+    `[${m.role}]${m.statusText ? ` — ${m.statusText}` : ''}`,
+  ].join('  ');
+
 /** Lease for an indicator set by hand via set_channel_indicator (#137). Longer
  * than the per-turn one, because nothing refreshes this one — but still bounded,
  * so an agent that forgets to clear it doesn't leave a channel spinning. */
 const MANUAL_INDICATOR_TTL_SECONDS = 300;
 
+/** Where a messaging tool call lands (#320).
+ *
+ * The ambient conversation — the channel, plus the thread when the agent was
+ * asked inside one — is inherited only by a call that names no channel of its
+ * own. Naming `channelId` means "post there, top-level", even when it is the
+ * very channel the ambient thread lives in: an agent conversing in a thread
+ * has to be able to reach the channel itself (dispatching another agent, say),
+ * and before this it could not. A thread is joined only by asking for it — a
+ * non-empty `threadRootId`. The empty string is an explicit "top-level", never
+ * a silent fall back to the ambient thread. */
+export function resolveMessageTarget(
+  args: { channelId?: unknown; threadRootId?: unknown },
+  ambient: { channelId: string; threadRootId: string | undefined },
+): { channelId: string; threadRootId: string | undefined } {
+  const channelId = typeof args.channelId === 'string' ? args.channelId.trim() : '';
+  const threadGiven = typeof args.threadRootId === 'string';
+  const threadRootId = threadGiven ? (args.threadRootId as string).trim() : '';
+  if (threadRootId) return { channelId: channelId || ambient.channelId, threadRootId };
+  if (threadGiven || channelId) return { channelId: channelId || ambient.channelId, threadRootId: undefined };
+  return { channelId: ambient.channelId, threadRootId: ambient.threadRootId };
+}
+
 const TOOLS = [
   {
     name: 'send_message',
     description:
-      'Send a message to a Flow channel or thread immediately. Defaults to the current conversation. Mention users as <@userId>.',
+      'Send a message to a Flow channel or thread immediately. With no channelId it replies in the current ' +
+      'conversation — inside the current thread, when you were asked in one. Passing channelId posts TOP-LEVEL in ' +
+      'that channel (this is how you reach a channel from inside a thread); add threadRootId to reply into a ' +
+      'specific thread instead. Mention users as <@userId>.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Message body (markdown).' },
-        channelId: { type: 'string', description: 'Target channel id (default: current conversation).' },
-        threadRootId: { type: 'string', description: 'Thread root message id (default: current thread, if any).' },
+        channelId: {
+          type: 'string',
+          description:
+            'Target channel id. Omit for the current conversation; naming one posts top-level there unless ' +
+            'threadRootId is also given.',
+        },
+        threadRootId: {
+          type: 'string',
+          description:
+            'Reply into this thread. Omitting it inherits the current thread only when channelId is omitted too; ' +
+            'pass an empty string to force top-level.',
+        },
       },
       required: ['text'],
     },
@@ -61,13 +114,25 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: 'Upload a local file and post it to a Flow channel (defaults to the current conversation).',
+    description:
+      'Upload a local file and post it to a Flow channel. Targeting works exactly like send_message: no channelId ' +
+      'posts in the current conversation (and current thread), naming a channelId posts top-level there.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Path to the file on disk.' },
-        channelId: { type: 'string', description: 'Target channel id (default: current conversation).' },
-        threadRootId: { type: 'string', description: 'Thread root message id (default: current thread, if any).' },
+        channelId: {
+          type: 'string',
+          description:
+            'Target channel id. Omit for the current conversation; naming one posts top-level there unless ' +
+            'threadRootId is also given.',
+        },
+        threadRootId: {
+          type: 'string',
+          description:
+            'Reply into this thread. Omitting it inherits the current thread only when channelId is omitted too; ' +
+            'pass an empty string to force top-level.',
+        },
         comment: { type: 'string', description: 'Optional message text to accompany the file.' },
       },
       required: ['path'],
@@ -93,7 +158,8 @@ const TOOLS = [
   },
   {
     name: 'list_users',
-    description: 'List workspace members (id, display name, role; 🤖 marks agents). Use the ids in <@userId> mentions.',
+    description:
+      'List workspace members (id, display name, email, role; 🤖 marks agents). Use the ids in <@userId> mentions, and the emails to reach people outside Flow. Some members keep their address private — their line simply has no email, and there is no other way to get it.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -119,6 +185,25 @@ const TOOLS = [
         channelId: { type: 'string', description: 'Channel id (default: current conversation).' },
       },
       required: ['state'],
+    },
+  },
+  {
+    name: 'set_channel_emoji',
+    description:
+      "Set the small emoji shown after a channel's name in the sidebar — a persistent status glyph (🚧 building, " +
+      '✅ done, 🔥 incident) that stays until someone changes or clears it. This is decoration, not activity: ' +
+      'it is NOT the temporary spinner set_channel_indicator shows while you work, and it does not lapse on its own. ' +
+      'Pass an empty emoji (or omit it) to clear. You must be a member of the channel.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        emoji: {
+          type: 'string',
+          description: 'One emoji, e.g. "🔥". Empty string clears it. Anything but a single emoji is rejected.',
+        },
+        channelId: { type: 'string', description: 'Channel id (default: current conversation).' },
+      },
+      required: [],
     },
   },
   {
@@ -197,23 +282,29 @@ const TOOLS = [
   {
     name: 'create_artifact',
     description:
-      'Create an artifact — a named file pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Provide the content inline, or a local file path, or the id of an already-uploaded file. Returns the artifact id (use it with update_artifact).',
+      'Create an artifact — a named object pinned to a channel and shared with everyone in it. It opens in the side panel and nests under the channel in the sidebar. Two kinds: a FILE artifact (provide the content inline, or a local file path, or the id of an already-uploaded file) or a LINK artifact (provide a url — members get the live page, not a file). Returns the artifact id (use it with update_artifact). A link artifact can also be registered as an APP (app: true) — see the app parameter.',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'Display name for the artifact (defaults to the file name).' },
+        name: { type: 'string', description: 'Display name for the artifact (defaults to the file name, or to a name derived from the url).' },
         content: { type: 'string', description: 'Inline file content to upload (use with name; mimeType recommended).' },
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML artifacts).' },
         path: { type: 'string', description: 'Path to a local file to upload instead of inline content.' },
         fileId: { type: 'string', description: 'Id of a file already uploaded/shared in Flow to pin as-is.' },
+        url: { type: 'string', description: 'http(s) URL to pin as a link artifact instead of a file. Mutually exclusive with content/path/fileId.' },
         channelId: { type: 'string', description: 'Channel to pin the artifact in (default: the current conversation).' },
+        app: {
+          type: 'boolean',
+          description:
+            'Register this url as an app (url only): only members of the channel can reach it. The response carries a secret, returned ONCE — run `FLOW_APP_SECRET=<secret> npx flow-agent-bridge app-guard --upstream <your local app> --port 8788` and tunnel 8788 instead of the app. The guard authenticates viewers offline and passes their identity to your app in X-Flow-User-Id / X-Flow-User-Name headers.',
+        },
       },
     },
   },
   {
     name: 'update_artifact',
     description:
-      'Update an existing artifact in place — rename it and/or replace its content. Everyone viewing it sees the new version. Provide new content inline, a local file path, or the id of an already-uploaded file to replace the backing file; and/or a new name.',
+      'Update an existing artifact in place — rename it and/or replace its content. Everyone viewing it sees the new version. For a file artifact provide new content inline, a local file path, or the id of an already-uploaded file; for a link artifact provide a new url; and/or a new name for either kind.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -223,8 +314,32 @@ const TOOLS = [
         mimeType: { type: 'string', description: 'Mime type for inline content (default text/plain; use text/html for HTML).' },
         path: { type: 'string', description: 'Path to a local file whose contents replace the artifact.' },
         fileId: { type: 'string', description: 'Id of an already-uploaded file to point the artifact at.' },
+        url: { type: 'string', description: 'New http(s) URL for a link artifact. Mutually exclusive with content/path/fileId; rejected on file artifacts.' },
       },
       required: ['artifactId'],
+    },
+  },
+  {
+    name: 'delete_artifact',
+    description:
+      'Delete an artifact: it is unpinned from its channel for everyone and is gone for good — there is no undo, so prefer update_artifact when you only want to replace the content. Works for file, link and app artifacts. Find ids with list_artifacts (or keep the one create_artifact returned).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        artifactId: { type: 'string', description: 'Id of the artifact to delete (from create_artifact or list_artifacts).' },
+      },
+      required: ['artifactId'],
+    },
+  },
+  {
+    name: 'list_artifacts',
+    description:
+      'List the artifacts pinned in a channel (default: the current conversation) — id, kind (file or link), name, url or file info, and when each was last updated. Use the ids with update_artifact, or download_file with a file artifact’s fileId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channelId: { type: 'string', description: 'Channel whose artifacts to list (default: current conversation).' },
+      },
     },
   },
   {
@@ -286,6 +401,67 @@ function inviteErrorText(err: unknown): string {
     return 'channel not found, or it is private and you are not a member (only members can invite to a private channel)';
   }
   return err.message;
+}
+
+/** The slice of FlowApi that `deleteArtifactTool` uses — narrow so a test can
+ * stand in for it without a server. */
+interface ArtifactDeleteApi {
+  listArtifacts(workspaceId: string): Promise<ArtifactDTO[]>;
+  deleteArtifact(artifactId: string): Promise<void>;
+}
+
+/** How an artifact is described back to the agent — the same three words
+ * list_artifacts tags its rows with. */
+const artifactKindLabel = (a: ArtifactDTO): string => (a.kind === 'link' ? (a.isApp ? 'app' : 'link') : 'file');
+
+/**
+ * delete_artifact (#393). The id is resolved against the caller's visible
+ * artifacts *before* the DELETE, for two reasons: the confirmation can then
+ * name what it removed, and an unknown id becomes a clear error instead of a
+ * false success — the server's delete is deliberately idempotent, so it answers
+ * `ok` for an artifact that never existed. The lookup is membership-scoped, so
+ * an artifact in a channel this agent is not in reads as not-found here, which
+ * is the same gate the DELETE would have applied a moment later.
+ */
+export async function deleteArtifactTool(
+  api: ArtifactDeleteApi,
+  workspaceId: string,
+  artifactId: string,
+): Promise<{ text: string; isError: boolean }> {
+  if (!artifactId) {
+    return { text: 'delete_artifact needs an artifactId (get one from list_artifacts)', isError: true };
+  }
+  if (!workspaceId) {
+    return { text: 'delete_artifact needs a workspace (FLOW_WORKSPACE_ID is not set)', isError: true };
+  }
+  let visible: ArtifactDTO[];
+  try {
+    visible = await api.listArtifacts(workspaceId);
+  } catch (err) {
+    return { text: `delete_artifact could not reach the Flow server: ${(err as Error).message}`, isError: true };
+  }
+  const target = visible.find((a) => a.id === artifactId);
+  if (!target) {
+    return {
+      text:
+        `no artifact ${artifactId} — it may already be deleted, or it may live in a channel you are not a member of. ` +
+        'Run list_artifacts to see the ids you can delete.',
+      isError: true,
+    };
+  }
+  try {
+    await api.deleteArtifact(artifactId);
+  } catch (err) {
+    const detail =
+      err instanceof FlowApiError && err.status === 403
+        ? 'you are not a member of its channel'
+        : (err as Error).message;
+    return { text: `could not delete "${target.name}" (id ${artifactId}): ${detail}`, isError: true };
+  }
+  return {
+    text: `${artifactKindLabel(target)} artifact "${target.name}" (id ${artifactId}) deleted — unpinned from its channel for everyone.`,
+    isError: false,
+  };
 }
 
 /** POST JSON to the bridge daemon over its local task socket (FLOW_BRIDGE_SOCK). */
@@ -367,8 +543,10 @@ export async function runMcpServer(): Promise<void> {
   }
 
   async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const channelId = (args.channelId as string | undefined) || defaultChannelId;
-    const threadRootId = (args.threadRootId as string | undefined) || defaultThreadRootId;
+    const { channelId, threadRootId } = resolveMessageTarget(args, {
+      channelId: defaultChannelId,
+      threadRootId: defaultThreadRootId,
+    });
     switch (name) {
       case 'send_message': {
         const msg = await api.sendMessage(channelId, String(args.text ?? ''), threadRootId);
@@ -414,10 +592,7 @@ export async function runMcpServer(): Promise<void> {
       }
       case 'list_users': {
         const members = await api.listMembers(workspaceId);
-        const lines = members.map(
-          (m) => `${m.userId}  ${m.displayName}${m.isAgent ? ' 🤖' : ''}  [${m.role}]${m.statusText ? ` — ${m.statusText}` : ''}`,
-        );
-        return toolText(lines.join('\n'));
+        return toolText(members.map(memberLine).join('\n'));
       }
       case 'join_channel': {
         await api.joinChannel(String(args.channelId ?? ''));
@@ -437,6 +612,13 @@ export async function runMcpServer(): Promise<void> {
         // than the per-turn one the reporter keeps alive.
         await api.setChannelIndicator(target, state, MANUAL_INDICATOR_TTL_SECONDS);
         return toolText(state === 'busy' ? 'channel marked busy' : 'channel indicator cleared');
+      }
+      case 'set_channel_emoji': {
+        const target = args.channelId ? String(args.channelId) : channelId;
+        const emoji = typeof args.emoji === 'string' ? args.emoji.trim() : '';
+        // Empty means clear, so it goes over the wire as null rather than ''.
+        const res = await api.setChannelEmoji(target, emoji || null);
+        return toolText(res.emoji ? `channel emoji set to ${res.emoji}` : 'channel emoji cleared');
       }
       case 'create_channel': {
         const name = String(args.name ?? '').trim();
@@ -542,22 +724,61 @@ export async function runMcpServer(): Promise<void> {
         if (!channelId) {
           return toolText('create_artifact needs a channelId (no conversation context to infer the channel)', true);
         }
+        const artifactName = (args.name as string | undefined) || undefined;
+        const url = (args.url as string | undefined) || undefined;
+        const hasFileSource = Boolean(args.fileId || args.path || typeof args.content === 'string');
+        if (url && hasFileSource) {
+          return toolText('create_artifact takes either url (link artifact) or one file source (content/path/fileId), not both', true);
+        }
+        const asApp = args.app === true;
+        if (asApp && !url) return toolText('create_artifact: app is only valid with url', true);
+        if (url) {
+          if (!/^https?:\/\//i.test(url)) return toolText('url must be http(s)', true);
+          const created = await api.createArtifact(channelId, { url, name: artifactName, app: asApp });
+          if (!asApp) return toolText(`link artifact "${created.name}" created (id ${created.id})`);
+          // The secret exists in this one response and nowhere else — Flow
+          // cannot show it again (docs/design/MINI_APPS.md), so hand it to the
+          // agent with the exact command it is for.
+          if (!created.appSecret) {
+            return toolText(
+              `app artifact "${created.name}" created (id ${created.id}) but the server returned no secret — this Flow server may predate mini apps`,
+              true,
+            );
+          }
+          return toolText(
+            `app artifact "${created.name}" created (id ${created.id}).\n` +
+              'Only members of this channel can reach it. Put the guard in front of your local app and tunnel the GUARD\'s port:\n' +
+              `  FLOW_APP_SECRET=${created.appSecret} npx flow-agent-bridge app-guard --upstream http://localhost:3000 --port 8788\n` +
+              'This secret is shown once and is not stored in Flow — keep it if you need to restart the guard. ' +
+              'Your app receives each viewer as X-Flow-User-Id / X-Flow-User-Name / X-Flow-Is-Agent headers.',
+          );
+        }
         // resolve a file id: pin an existing file, or upload path/content (owned)
-        const resolved = await resolveArtifactFile(args, (args.name as string | undefined) || undefined);
-        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, or fileId`, true);
-        const created = await api.createArtifact(channelId, resolved.fileId, resolved.label, resolved.ownsFile);
+        const resolved = await resolveArtifactFile(args, artifactName);
+        if ('error' in resolved) return toolText(`create_artifact needs one of: content, path, fileId, or url`, true);
+        const created = await api.createArtifact(channelId, {
+          fileId: resolved.fileId,
+          name: resolved.label,
+          ownsFile: resolved.ownsFile,
+        });
         return toolText(`artifact "${created.name}" created (id ${created.id})`);
       }
       case 'update_artifact': {
         const artifactId = (args.artifactId as string | undefined) || '';
         if (!artifactId) return toolText('update_artifact needs an artifactId', true);
         const name = (args.name as string | undefined) || undefined;
+        const url = (args.url as string | undefined) || undefined;
         const hasNewContent = args.fileId || args.path || typeof args.content === 'string';
-        if (!name && !hasNewContent) {
-          return toolText('update_artifact needs a name and/or new content (content, path, or fileId)', true);
+        if (url && hasNewContent) {
+          return toolText('update_artifact takes either url (link artifact) or new file content, not both', true);
         }
-        const patch: { name?: string; fileId?: string; ownsFile?: boolean } = {};
+        if (url && !/^https?:\/\//i.test(url)) return toolText('url must be http(s)', true);
+        if (!name && !hasNewContent && !url) {
+          return toolText('update_artifact needs a name, a url (link artifacts), and/or new content (content, path, or fileId)', true);
+        }
+        const patch: { name?: string; fileId?: string; ownsFile?: boolean; url?: string } = {};
         if (name) patch.name = name;
+        if (url) patch.url = url;
         if (hasNewContent) {
           const resolved = await resolveArtifactFile(args, name);
           if ('error' in resolved) return toolText('update_artifact could not read the new content', true);
@@ -566,6 +787,24 @@ export async function runMcpServer(): Promise<void> {
         }
         const updated = await api.updateArtifact(artifactId, patch);
         return toolText(`artifact "${updated.name}" updated`);
+      }
+      case 'delete_artifact': {
+        const result = await deleteArtifactTool(api, workspaceId, (args.artifactId as string | undefined) || '');
+        return toolText(result.text, result.isError);
+      }
+      case 'list_artifacts': {
+        if (!channelId) {
+          return toolText('list_artifacts needs a channelId (no conversation context to infer the channel)', true);
+        }
+        const all = await api.listArtifacts(workspaceId);
+        const rows = all.filter((a) => a.channelId === channelId);
+        if (rows.length === 0) return toolText('no artifacts in this channel');
+        const lines = rows.map((a) =>
+          a.kind === 'link'
+            ? `[${a.isApp ? 'app' : 'link'}] "${a.name}" (id ${a.id}) → ${a.url} — updated ${a.updatedAt}`
+            : `[file] "${a.name}" (id ${a.id}) — fileId ${a.fileId}${a.file ? `, ${a.file.mimeType}, ${a.file.sizeBytes} bytes` : ''} — updated ${a.updatedAt}`,
+        );
+        return toolText(lines.join('\n'));
       }
       case 'read_messages': {
         const limit = Math.min(Math.max(Number(args.limit ?? 25), 1), 200);

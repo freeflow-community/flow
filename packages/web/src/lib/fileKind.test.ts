@@ -37,6 +37,11 @@ describe('isMarkdownFile (#569)', () => {
     expect(isMarkdownFile(file('data.json', 'application/json'))).toBe(false);
   });
 
+  it('accepts a lighter row than a full FileDTO (the channel Files panel)', () => {
+    expect(isMarkdownFile({ name: 'notes.md', mimeType: '' })).toBe(true);
+    expect(isMarkdownFile({ name: 'photo.png', mimeType: 'image/png' })).toBe(false);
+  });
+
   it('is a SUBSET of isTextFile — every router must test markdown first', () => {
     // This is the trap the two call sites have a comment about: if the text
     // branch runs first it swallows every markdown file and the viewer never

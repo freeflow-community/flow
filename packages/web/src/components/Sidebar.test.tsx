@@ -1,7 +1,19 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ChannelDTO } from '@flow/shared';
-import { ActivitySpinner, nestChannels } from './Sidebar';
+import type { ArtifactDTO, ChannelDTO, WorkspaceMemberDTO } from '@flow/shared';
+import {
+  ActivityBell,
+  ActivitySpinner,
+  appEntries,
+  channelLabel,
+  NavButton,
+  nearestScrollDelta,
+  nestChannels,
+  openChannelFromSidebar,
+  splitAgents,
+  WorkspaceTitle,
+} from './Sidebar';
+import type { Selection } from '../state';
 
 // Sub-channel display order (#118). The rule that matters is the fallback: a
 // child whose parent isn't in the list must still be rendered, or you lose a
@@ -20,6 +32,7 @@ const chan = (id: string, parentId: string | null = null): ChannelDTO => ({
   lastReadMsgId: null,
   unreadCount: 0,
   unreadNotifications: 0,
+  unreadThreadRootIds: [],
   notifyLevel: 1,
   parentId,
 });
@@ -87,5 +100,306 @@ describe('ActivitySpinner', () => {
     // It sits after a truncating label — without shrink-0 the ring is what
     // collapses when a long channel name fills the row.
     expect(renderToStaticMarkup(<ActivitySpinner active />)).toContain('shrink-0');
+  });
+});
+
+// Scrolling the active channel into view (#319). Coordinates are relative to
+// the sidebar's scroll viewport; the result is a scrollTop delta.
+describe('nearestScrollDelta', () => {
+  const ROW = 30;
+  const VIEW = 300;
+
+  it('does not move a row that is already fully visible', () => {
+    // The sidebar-click case: any scroll here would be a visible jump.
+    expect(nearestScrollDelta(0, ROW, VIEW)).toBe(0);
+    expect(nearestScrollDelta(120, ROW, VIEW)).toBe(0);
+    expect(nearestScrollDelta(VIEW - ROW, ROW, VIEW)).toBe(0);
+  });
+
+  it('scrolls down by just enough for a row below the fold', () => {
+    // The reported bug: click a notification for a channel low in the list.
+    expect(nearestScrollDelta(400, ROW, VIEW)).toBe(130);
+    expect(nearestScrollDelta(VIEW, ROW, VIEW)).toBe(ROW);
+  });
+
+  it('scrolls up by just enough for a row above the fold', () => {
+    expect(nearestScrollDelta(-50, ROW, VIEW)).toBe(-50);
+  });
+
+  it('brings a partly-cut row the rest of the way in', () => {
+    expect(nearestScrollDelta(VIEW - 10, ROW, VIEW)).toBe(20);
+    expect(nearestScrollDelta(-1, ROW, VIEW)).toBe(-1);
+  });
+
+  it('aligns a row taller than the viewport to its top', () => {
+    // Bottom-aligning it would push the start of the row off-screen.
+    expect(nearestScrollDelta(40, 500, VIEW)).toBe(40);
+  });
+});
+
+
+// The Agents section (#361): agents are pulled out of Direct messages into
+// their own list, DM and all, so nobody is listed twice.
+const ME = 'me';
+const member = (userId: string, displayName: string, isAgent: boolean): WorkspaceMemberDTO => ({
+  userId,
+  displayName,
+  email: `${userId}@example.com`,
+  privacyMode: false,
+  avatarUrl: null,
+  statusEmoji: '',
+  statusText: '',
+  title: '',
+  isAgent,
+  isBot: false,
+  sponsorId: null,
+  role: 'member',
+  joinedAt: '2026-08-25T00:00:00Z',
+});
+const dm = (id: string, memberIds: string[], kind: ChannelDTO['kind'] = 'dm'): ChannelDTO => ({
+  ...chan(id),
+  name: null,
+  kind,
+  memberIds,
+});
+
+describe('splitAgents', () => {
+  const prism = member('a1', 'Prism', true);
+  const builder = member('a2', 'builder', true);
+  const scott = member('u1', 'Scott', false);
+
+  it('lists an agent that has no DM yet', () => {
+    const { agents, rest } = splitAgents([], [prism, scott], ME);
+    expect(agents.map((a) => a.member.userId)).toEqual(['a1']);
+    expect(agents[0]!.channel).toBeUndefined();
+    expect(rest).toEqual([]);
+  });
+
+  it('moves an agent DM out of the DM list and onto the agent row', () => {
+    const agentDm = dm('d1', [ME, 'a1']);
+    const humanDm = dm('d2', [ME, 'u1']);
+    const { agents, rest } = splitAgents([agentDm, humanDm], [prism, scott], ME);
+    expect(agents[0]!.channel?.id).toBe('d1'); // unread badges ride along with it
+    expect(rest.map((c) => c.id)).toEqual(['d2']);
+  });
+
+  it('sorts agents alphabetically, ignoring case', () => {
+    const { agents } = splitAgents([], [prism, builder], ME);
+    expect(agents.map((a) => a.member.displayName)).toEqual(['builder', 'Prism']);
+  });
+
+  it('leaves a group DM alone even when an agent is in it', () => {
+    // Several people talking is a conversation, not a way to reach the agent.
+    const group = dm('g1', [ME, 'a1', 'u1'], 'group_dm');
+    const { agents, rest } = splitAgents([group], [prism, scott], ME);
+    expect(rest.map((c) => c.id)).toEqual(['g1']);
+    expect(agents[0]!.channel).toBeUndefined();
+  });
+
+  it('leaves the self-DM under Direct messages', () => {
+    const self = dm('s1', [ME]);
+    const { rest } = splitAgents([self], [member(ME, 'Me', true), prism], ME);
+    expect(rest.map((c) => c.id)).toEqual(['s1']);
+  });
+
+  it('finds no agents in a workspace of humans — the section hides itself', () => {
+    const { agents, rest } = splitAgents([dm('d2', [ME, 'u1'])], [scott], ME);
+    expect(agents).toEqual([]);
+    expect(rest).toHaveLength(1);
+  });
+});
+
+// Activity moved from a channel-list row to a header bell (#385). What the
+// tests pin is what the row used to carry: the unread badge and the selected
+// state — the parts that would silently vanish in the move.
+describe('ActivityBell', () => {
+  it('is labelled "Activity", not a bare glyph', () => {
+    const html = renderToStaticMarkup(<ActivityBell active={false} unread={0} onOpen={() => {}} />);
+    expect(html).toContain('aria-label="Activity"');
+    expect(html).toContain('title="Activity"');
+  });
+
+  it('badges the unread count, and caps it at 99', () => {
+    expect(renderToStaticMarkup(<ActivityBell active={false} unread={3} onOpen={() => {}} />)).toContain('>3<');
+    expect(renderToStaticMarkup(<ActivityBell active={false} unread={500} onOpen={() => {}} />)).toContain('>99<');
+  });
+
+  it('shows no badge when everything is read', () => {
+    expect(renderToStaticMarkup(<ActivityBell active={false} unread={0} onOpen={() => {}} />)).not.toContain('bg-unread');
+  });
+
+  it('reads as current while the Activity feed is open', () => {
+    const html = renderToStaticMarkup(<ActivityBell active unread={0} onOpen={() => {}} />);
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain('bg-white');
+  });
+});
+
+// A long workspace name used to shove the header controls off the sidebar edge
+// (#456). The title is the element that yields: it shrinks and ellipsises, and
+// the full name is still readable on hover.
+describe('WorkspaceTitle', () => {
+  it('can shrink below its text and ellipsises what is left', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle name="Flow Home Team" onClick={() => {}} />);
+    expect(html).toContain('min-w-0');
+    expect(html).toContain('truncate');
+  });
+
+  it('keeps the full name reachable on hover', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle name="Flow Home Team" onClick={() => {}} />);
+    expect(html).toContain('title="Flow Home Team"');
+  });
+
+  it('never truncates the switcher chevron along with the name', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle name="Flow Home Team" onClick={() => {}} />);
+    expect(html).toContain('shrink-0');
+    expect(html).toContain('▾');
+  });
+
+  it('falls back to "Workspace" before one is loaded', () => {
+    const html = renderToStaticMarkup(<WorkspaceTitle onClick={() => {}} />);
+    expect(html).toContain('Workspace');
+    expect(html).toContain('title="Workspace"');
+  });
+});
+
+describe('NavButton', () => {
+  it('is labelled Back / Forward rather than a bare chevron', () => {
+    const back = renderToStaticMarkup(<NavButton dir="back" enabled onClick={() => {}} />);
+    expect(back).toContain('aria-label="Back"');
+    expect(back).toContain('title="Back"');
+    const fwd = renderToStaticMarkup(<NavButton dir="forward" enabled onClick={() => {}} />);
+    expect(fwd).toContain('aria-label="Forward"');
+    expect(fwd).toContain('title="Forward"');
+  });
+
+  it('points the chevron the way it navigates', () => {
+    expect(renderToStaticMarkup(<NavButton dir="back" enabled onClick={() => {}} />)).toContain('15 18 9 12 15 6');
+    expect(renderToStaticMarkup(<NavButton dir="forward" enabled onClick={() => {}} />)).toContain('9 18 15 12 9 6');
+  });
+
+  it('is dimmed and non-interactive at the end of the history', () => {
+    const html = renderToStaticMarkup(<NavButton dir="back" enabled={false} onClick={() => {}} />);
+    expect(html).toContain('disabled');
+    expect(html).toContain('text-white/25');
+  });
+
+  it('is live and hoverable when there is somewhere to go', () => {
+    const html = renderToStaticMarkup(<NavButton dir="forward" enabled onClick={() => {}} />);
+    expect(html).not.toContain('disabled');
+    expect(html).toContain('hover:bg-white/10');
+  });
+});
+
+// Apps section (#394): the sidebar attaches each app the server returned to its
+// host channel, which is where the row's muted secondary label comes from.
+const app = (id: string, name: string, channelId: string): ArtifactDTO => ({
+  id,
+  workspaceId: 'w1',
+  channelId,
+  kind: 'link',
+  fileId: null,
+  url: 'https://app.example.com/',
+  name,
+  ownsFile: false,
+  isApp: true,
+  createdAt: '2026-08-27T00:00:00Z',
+  updatedAt: '2026-08-27T00:00:00Z',
+  file: null,
+});
+
+describe('appEntries', () => {
+  it('pairs each app with its host channel, keeping the server order', () => {
+    const channels = [chan('factory'), chan('general')];
+    const entries = appEntries([app('a1', 'Task Board', 'factory'), app('a2', 'Zoo', 'general')], channels);
+    expect(entries.map((e) => [e.artifact.name, e.channel.id])).toEqual([
+      ['Task Board', 'factory'],
+      ['Zoo', 'general'],
+    ]);
+  });
+
+  it('lists an app from a public channel this user has not joined', () => {
+    // The whole point of the section: #factory is public and unjoined, and its
+    // Task Board still shows up (clicking it joins).
+    const unjoined = { ...chan('factory'), isMember: false };
+    const entries = appEntries([app('a1', 'Task Board', 'factory')], [unjoined]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.channel.isMember).toBe(false);
+  });
+
+  it('drops an app whose channel is not in the local list', () => {
+    // No channel means nothing to join and nowhere to open — a channel-less row
+    // would be a dead end, so it is left out rather than rendered.
+    expect(appEntries([app('a1', 'Ghost', 'gone')], [chan('general')])).toEqual([]);
+  });
+});
+
+describe('channelLabel', () => {
+  it('names a channel with a hash and a DM by its members', () => {
+    expect(channelLabel(chan('factory'), {}, 'me')).toBe('#factory');
+    const dm: ChannelDTO = { ...chan('d1'), kind: 'dm', name: null, memberIds: ['me', 'u2'] };
+    expect(channelLabel(dm, { u2: 'Prism' }, 'me')).toBe('Prism');
+  });
+});
+
+
+// #327: a channel whose unreads are all inside a thread looks unchanged when
+// you click it, so clicking opens the thread too.
+describe('openChannelFromSidebar', () => {
+  const selection = (channelId: string | null) => {
+    const calls: string[] = [];
+    const sel = {
+      channelId,
+      selectChannel: (id: string | null) => calls.push(`select:${id}`),
+      jumpToMessage: (c: string, m: string, root?: string | null) => calls.push(`jump:${c}:${m}:${root}`),
+    } as unknown as Selection;
+    const revisit = (c: ChannelDTO) => calls.push(`revisit:${c.id}`);
+    return { sel, calls, revisit };
+  };
+  const withUnreadThread = (id: string): ChannelDTO => ({
+    ...chan(id),
+    unreadNotifications: 2,
+    unreadThreadRootIds: ['root1'],
+    oldestUnreadThreadReply: { rootId: 'root1', replyId: 'reply1' },
+  });
+
+  it('opens the thread holding the oldest unread reply', () => {
+    const { sel, calls } = selection('other');
+    openChannelFromSidebar(sel, withUnreadThread('alpha'));
+    expect(calls).toEqual(['jump:alpha:reply1:root1']);
+  });
+
+  it('is a plain channel switch when the oldest unread is top-level', () => {
+    const { sel, calls } = selection('other');
+    openChannelFromSidebar(sel, { ...chan('alpha'), unreadCount: 3 });
+    expect(calls).toEqual(['select:alpha']);
+  });
+
+  it('is a plain channel switch with no unreads at all', () => {
+    const { sel, calls } = selection('other');
+    openChannelFromSidebar(sel, chan('alpha'));
+    expect(calls).toEqual(['select:alpha']);
+  });
+
+  // #533: clicking the row of the channel you are already in used to do
+  // nothing, which is exactly the gesture someone makes when a badge won't go
+  // away. It re-runs the read pass now — and follows the auto-open target,
+  // since a badge you just clicked should take you to what it counts.
+  it('re-runs the read pass when you click the channel you are already in', () => {
+    const { sel, calls, revisit } = selection('alpha');
+    openChannelFromSidebar(sel, chan('alpha'), revisit);
+    expect(calls).toEqual(['revisit:alpha', 'select:alpha']);
+  });
+
+  it('re-reads and opens the waiting thread on a re-click', () => {
+    const { sel, calls, revisit } = selection('alpha');
+    openChannelFromSidebar(sel, withUnreadThread('alpha'), revisit);
+    expect(calls).toEqual(['revisit:alpha', 'jump:alpha:reply1:root1']);
+  });
+
+  it('does not re-read a channel you are switching into', () => {
+    const { sel, calls, revisit } = selection('other');
+    openChannelFromSidebar(sel, chan('alpha'), revisit);
+    expect(calls).toEqual(['select:alpha']); // entering it marks it read already
   });
 });

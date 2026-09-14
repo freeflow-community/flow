@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash .claude/skills/work-project-tasks/next-batch.sh)",
+      "Bash(bash .claude/skills/work-project-tasks/set-status.sh:*)",
+      "Bash(bash .claude/skills/work-project-tasks/task-lock.sh:*)",
+      "Bash(bash /Users/rentamac/flow/.claude/skills/work-project-tasks/next-batch.sh)",
+      "Bash(bash /Users/rentamac/flow/.claude/skills/work-project-tasks/set-status.sh:*)",
+      "Bash(bash /Users/rentamac/flow/.claude/skills/work-project-tasks/task-lock.sh:*)",
+      "Bash(gh auth status)",
+      "Bash(gh project item-list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr comment:*)"
+    ]
+  }
+}

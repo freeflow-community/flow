@@ -30,6 +30,9 @@ async function broadcastUserUpdated(user: typeof users.$inferSelect): Promise<vo
       type: 'user.updated',
       workspaceId: r.workspaceId,
       ts,
+      // No viewer: this goes to every member of the workspace, so a
+      // privacy-mode address is redacted for all of them. The owner's own
+      // clients refetch /v1/me on this event and get their real address back.
       data: toUserDTO(user),
     });
   }
@@ -44,9 +47,11 @@ export async function patchMe(
     statusText?: string | undefined;
     website?: string | undefined;
     bio?: string | undefined;
+    title?: string | undefined;
     notificationPrefs?: NotificationPrefs | undefined;
     statusSuppressAlerts?: boolean | undefined;
     unfurlOwnLinks?: boolean | undefined;
+    privacyMode?: boolean | undefined;
   },
 ): Promise<UserDTO> {
   const set: Partial<{
@@ -56,10 +61,14 @@ export async function patchMe(
     statusText: string;
     website: string;
     bio: string;
+    title: string;
     statusSuppressAlerts: boolean;
     unfurlOwnLinks: boolean;
+    privacyMode: boolean;
     notificationPrefs: SQL;
   }> = {};
+  // #489: only ever the caller's own row — `userId` is the session's user.
+  if (patch.privacyMode !== undefined) set.privacyMode = patch.privacyMode;
   if (patch.unfurlOwnLinks !== undefined) set.unfurlOwnLinks = patch.unfurlOwnLinks;
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.timezone !== undefined) set.timezone = patch.timezone;
@@ -67,6 +76,7 @@ export async function patchMe(
   if (patch.statusText !== undefined) set.statusText = patch.statusText;
   if (patch.website !== undefined) set.website = patch.website;
   if (patch.bio !== undefined) set.bio = patch.bio;
+  if (patch.title !== undefined) set.title = patch.title;
   if (patch.statusSuppressAlerts !== undefined) set.statusSuppressAlerts = patch.statusSuppressAlerts;
   // shallow-merge over the stored prefs: only the keys sent change
   if (patch.notificationPrefs !== undefined) {
@@ -75,7 +85,7 @@ export async function patchMe(
   const updated = await db.update(users).set(set).where(eq(users.id, userId)).returning();
   if (!updated[0]) throw notFound('user not found');
   await broadcastUserUpdated(updated[0]);
-  return toUserDTO(updated[0]);
+  return toUserDTO(updated[0], userId);
 }
 
 /** Square-crop to 512px webp (phase2.md §6), store unencrypted, update avatar_url. */
@@ -111,7 +121,7 @@ export async function setAvatar(userId: string, data: Buffer, mimeType: string):
   }
 
   await broadcastUserUpdated(updated[0]!);
-  return toUserDTO(updated[0]!);
+  return toUserDTO(updated[0]!, userId);
 }
 
 /** Serve an avatar blob. Requires auth (any signed-in user); immutable-cacheable. */
@@ -145,5 +155,5 @@ export async function getUser(targetId: string, requesterId: string): Promise<Us
         : [];
     if (shared.length === 0) throw notFound('user not found'); // don't leak existence
   }
-  return toUserDTO(user);
+  return toUserDTO(user, requesterId);
 }

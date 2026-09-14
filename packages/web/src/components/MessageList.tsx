@@ -1,19 +1,25 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
-import { useAuth, useSelection } from '../state';
-import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
-import type { LocalMessage } from '../lib/messageCache';
-import { Avatar, AuthImg } from './Avatar';
+import { burstConfetti, celebrationsAdded } from '../lib/confetti';
+import { SCHEDULED_VIEW_ID, useAuth, useSelection } from '../state';
+import { useDeleteMessage, useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
+import { useCapabilities } from '../lib/backend';
+import type { BackendMessage } from '@flow/shared';
+import { removeMessageFromCache, type LocalMessage } from '../lib/messageCache';
+import { messageDeleteConfirmation, messageDeleteMode } from '../lib/messagePermissions';
+import { Avatar } from './Avatar';
+import { useFileImageSource, type FileImageSource } from './FileImage';
 import { LightboxButton, LightboxShell } from './Lightbox';
 import { EmojiGlyph } from './CustomEmoji';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
 import { UnfurlCard } from './UnfurlCard';
+import { HoverTooltip } from './HoverTooltip';
 import { MarkdownDocBody } from './MarkdownDoc';
 
 /** Remembered scroll position per channel, so switching away and back lands
@@ -55,7 +61,8 @@ export default function MessageList({
   hasMore,
   onLoadOlder,
   showThreadAffordances,
-  scrollKey,
+  unreadThreadRootIds = [],
+  scrollKey: unscopedScrollKey,
   focusMessageId = null,
   onFocused,
 }: {
@@ -65,6 +72,10 @@ export default function MessageList({
   hasMore: boolean;
   onLoadOlder: () => void;
   showThreadAffordances: boolean;
+  /** Thread roots with an unread notification for me (#270) — their reply
+   * chips get a dot, so a reply that needs you is visible here and not only
+   * in the sidebar badge. */
+  unreadThreadRootIds?: string[];
   /** Enables per-view scroll-position memory (channels pass their id; threads omit it). */
   scrollKey?: string;
   /** Jump-to-message target (phase 12): scroll it into view + flash it once
@@ -72,6 +83,8 @@ export default function MessageList({
   focusMessageId?: string | null;
   onFocused?: () => void;
 }) {
+  const { scopedStorageKey } = useBoundApi();
+  const scrollKey = unscopedScrollKey ? scopedStorageKey(`scroll:${unscopedScrollKey}`) : undefined;
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -208,7 +221,10 @@ export default function MessageList({
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={m.id}>
+            // Keyed on clientMsgId, not id: the optimistic row and its server
+            // echo share a clientMsgId but not an id, so keying on id
+            // remounts the row (and re-flashes its avatar) on reconcile.
+            <div key={m.clientMsgId || m.id}>
               {startsNewDay(messages, i) && <DayDivider iso={m.createdAt} />}
               {m.systemKind ? (
                 <SystemLine message={m} />
@@ -219,6 +235,7 @@ export default function MessageList({
                   membersById={membersById}
                   showHeader={showsHeader(messages, i)}
                   showThreadAffordances={showThreadAffordances}
+                  threadUnread={unreadThreadRootIds.includes(m.id)}
                 />
               )}
             </div>
@@ -241,7 +258,7 @@ export default function MessageList({
   );
 }
 
-function showsHeader(messages: MessageDTO[], index: number): boolean {
+export function showsHeader(messages: MessageDTO[], index: number): boolean {
   if (index === 0) return true;
   if (startsNewDay(messages, index)) return true;
   const prev = messages[index - 1]!;
@@ -250,6 +267,10 @@ function showsHeader(messages: MessageDTO[], index: number): boolean {
   // re-shows its author header rather than merging into the pre-notice group.
   if (prev.systemKind) return true;
   if (prev.userId !== cur.userId) return true;
+  // A scheduled message always starts its own group (#420). Merged into the
+  // author's own preceding message it would inherit that header — and lose the
+  // badge, which is the one thing saying nobody typed this just now.
+  if (prev.scheduled !== cur.scheduled) return true;
   return new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime() > 300_000;
 }
 
@@ -346,18 +367,27 @@ function MessageRow({
   membersById,
   showHeader,
   showThreadAffordances,
+  threadUnread = false,
 }: {
   message: MessageDTO;
   names: Record<string, string>;
   membersById: Record<string, WorkspaceMemberDTO>;
   showHeader: boolean;
   showThreadAffordances: boolean;
+  /** This thread holds an unread notification for me (#270). */
+  threadUnread?: boolean;
 }) {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
   const toggle = useToggleReaction();
   const togglePin = useTogglePin();
+  const remove = useDeleteMessage();
+  // Capability gating (#545): every control below renders only when its
+  // capability is usable, so a Slack message never reaches a Flow mutation.
+  const caps = useCapabilities();
+  const provenance = (message as BackendMessage).provenance;
   // Shared query cache, so this is one fetch per workspace however many rows
   // are mounted (#175).
   const customEmoji = useWorkspaceEmojiMap(sel.workspaceId);
@@ -369,7 +399,13 @@ function MessageRow({
   // menu while it's the one loaded in the composer.
   const editing = sel.editingMessageId === message.id;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const mine = message.userId === auth.user.id;
+  const deleteMode = messageDeleteMode(message, auth.user.id, membersById[auth.user.id]?.role);
+  const deleteConfirmation = deleteMode
+    ? messageDeleteConfirmation(deleteMode, message.threadRootId, message.replyCount)
+    : null;
   const sender = names[message.userId] ?? 'Unknown';
   const member = membersById[message.userId];
   // Optimistic row awaiting the server echo: actions suppressed. It renders
@@ -385,6 +421,51 @@ function MessageRow({
   const stopping = message.reactions.some(
     (r) => r.emoji === INTERRUPT_EMOJI && r.userIds.includes(auth.user.id),
   );
+
+  // Confetti when a 🎉 lands (#514). This runs after commit, so the reaction
+  // row it fires from is already on screen — and `celebrationsAdded` is what
+  // keeps it to genuine additions rather than every render of history.
+  const reactionRowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const added = celebrationsAdded(message.id, message.reactions);
+    const row = reactionRowRef.current;
+    if (added.length === 0 || !row) return;
+    for (const emoji of added) {
+      // From the pill that just changed, not the middle of the row — the row is
+      // as wide as the message, so its centre is nowhere near the reaction.
+      const pill = row.querySelector(`[data-testid="reaction-${emoji}"]`) ?? row;
+      const rect = pill.getBoundingClientRect();
+      burstConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    }
+  }, [message.id, message.reactions]);
+
+  const deleteSelectedMessage = async () => {
+    if (!deleteMode || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await remove.mutateAsync({ message, purge: deleteMode === 'permanent' });
+      if (message.threadRootId === null && sel.threadRootId === message.id && (deleteMode === 'permanent' || provenance)) sel.openThread(null);
+      // A hard delete on Flow refetches what the server now says. Another
+      // provider's row was already removed from the cache by the hook, and a
+      // refetch there would spend its history budget for nothing.
+      if (deleteMode === 'permanent' && !provenance) {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ['messages', message.channelId] }),
+          qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] }),
+          qc.invalidateQueries({ queryKey: ['pins', message.channelId] }),
+          qc.invalidateQueries({ queryKey: ['channelFiles', message.channelId] }),
+          qc.invalidateQueries({ queryKey: ['notifications'] }),
+          qc.invalidateQueries({ queryKey: ['workspaces'] }),
+        ]);
+      }
+      setConfirmDelete(false);
+    } catch (err) {
+      setDeleteError((err as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // Pin the message's file(s) as shared artifacts in this channel (phase 13);
   // the new artifact opens in the side panel automatically.
@@ -440,6 +521,7 @@ function MessageRow({
                 </span>
               )}
             </span>
+            {message.scheduled && <ScheduledBadge author={sender} />}
             <span className="text-[11px] text-faint">{displayTime(message.createdAt)}</span>
           </div>
         )}
@@ -459,11 +541,19 @@ function MessageRow({
               </div>
             )}
             {message.body.trim() && (
-              <div className="text-sm leading-normal break-words whitespace-pre-wrap">
+              // data-search-body marks what the cmd-F find bar searches (#518):
+              // the rendered body only, so a query never matches chrome. The
+              // "(edited)" marker sits inside it, hence the skip flag.
+              <div
+                data-search-body=""
+                className="text-sm leading-normal break-words whitespace-pre-wrap"
+              >
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url) }}>
                   {renderBlocks(message.body, names, auth.user.id)}
                 </InlineLinkContext.Provider>
-                {message.editedAt && <span className="ml-1 text-xs text-faint">(edited)</span>}
+                {message.editedAt && (
+                  <span data-search-skip="" className="ml-1 text-xs text-faint">(edited)</span>
+                )}
               </div>
             )}
             {thinking && (
@@ -485,8 +575,14 @@ function MessageRow({
               </div>
             )}
             {message.files.map((f) => (
-              <Attachment key={f.id} file={f} names={names} currentUserId={auth.user.id} />
+              provenance ? <ExternalAttachment key={f.id} file={f} openUrl={provenance.openUrl} provider={provenance.provider} /> : <Attachment key={f.id} file={f} names={names} currentUserId={auth.user.id} />
             ))}
+            {provenance?.degraded && (
+              <p data-testid={`degraded-${message.id}`} className="mt-1 text-xs text-muted">
+                Some of this message can only be shown in Slack.
+                {provenance.openUrl && <> <a className="text-accent-soft underline" href={provenance.openUrl} target="_blank" rel="noreferrer">Open in Slack</a></>}
+              </p>
+            )}
             {failed && (
               <div
                 data-testid={`send-failed-${(message as LocalMessage).clientMsgId}`}
@@ -525,7 +621,7 @@ function MessageRow({
               />
             ))}
             {message.reactions.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1">
+              <div ref={reactionRowRef} className="mt-1 flex flex-wrap gap-1">
                 {message.reactions.map((r) => {
                   const mineR = r.userIds.includes(auth.user.id);
                   return (
@@ -553,9 +649,21 @@ function MessageRow({
         {showThreadAffordances && message.replyCount > 0 && (
           <button
             data-testid={`thread-open-${message.id}`}
-            className="mt-1 flex cursor-pointer items-center gap-2 rounded-[10px] border border-hairline bg-white py-[5px] pr-2.5 pl-1.5 text-xs hover:border-hairline2"
+            data-thread-unread={threadUnread ? 'true' : undefined}
+            className={`mt-1 flex cursor-pointer items-center gap-2 rounded-[10px] border bg-white py-[5px] pr-2.5 pl-1.5 text-xs ${
+              threadUnread ? 'border-unread/45 hover:border-unread' : 'border-hairline hover:border-hairline2'
+            }`}
             onClick={() => sel.openThread(message.id)}
           >
+            {/* A reply in here needs you (#270) — the sidebar badge says the
+                channel has something, this says which thread. */}
+            {threadUnread && (
+              <span
+                data-testid={`thread-unread-${message.id}`}
+                title="Unread reply"
+                className="size-[7px] shrink-0 rounded-full bg-unread"
+              />
+            )}
             {(message.replyParticipantUserIds ?? []).length > 0 && (
               <span className="flex -space-x-1.5" data-testid={`thread-participants-${message.id}`}>
                 {message.replyParticipantUserIds.map((id) => (
@@ -579,110 +687,132 @@ function MessageRow({
         )}
       </div>
 
-      {!message.deletedAt && !editing && !pending && !failed && (
+      {!editing && !pending && !failed && (!message.deletedAt || deleteMode === 'permanent') && (
         <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
-          {QUICK_REACTIONS.map((emoji) => {
-            const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
-            return (
-              <button
-                key={emoji}
-                data-testid={`quick-react-${emoji}-${message.id}`}
-                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-                title={`React ${emoji}`}
-                onClick={() => toggle.mutate({ message, emoji, mine: mineR })}
-              >
-                {emoji}
-              </button>
-            );
-          })}
-          <div className="mx-0.5 h-6 w-px self-center bg-hairline" />
-          <button
-            data-testid={`add-reaction-${message.id}`}
-            className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-            title="Add reaction"
-            onClick={() => setShowPicker(true)}
-          >
-            🙂
-          </button>
-          {showThreadAffordances && (
-            <button
-              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title="Reply in thread"
-              onClick={() => sel.openThread(message.threadRootId ?? message.id)}
-            >
-              💬
-            </button>
-          )}
-          {message.body && (
-            <button
-              data-testid={`copy-message-${message.id}`}
-              className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title="Copy text"
-              onClick={() => void navigator.clipboard?.writeText(message.body)}
-            >
-              📋
-            </button>
-          )}
-          <button
-            data-testid={`toggle-pin-${message.id}`}
-            className={`flex items-center rounded-md px-1.5 py-1 leading-none hover:bg-daypill ${
-              message.pinnedAt ? 'text-accent-soft' : 'text-ink'
-            }`}
-            title={message.pinnedAt ? 'Unpin message' : 'Pin message'}
-            onClick={() => togglePin.mutate(message)}
-          >
-            <PinIcon filled={!!message.pinnedAt} />
-          </button>
-          {message.files.length > 0 && (
-            <button
-              data-testid={`pin-artifact-${message.id}`}
-              className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-              title="Pin as artifact"
-              onClick={() => void pinFiles()}
-            >
-              <ExternalLinkIcon />
-            </button>
-          )}
-          {mine && (
+          {!message.deletedAt && (
             <>
-              <button
-                data-testid={`edit-message-${message.id}`}
-                className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-                title="Edit"
-                onClick={() => sel.setEditingMessage(message.id)}
+              {caps.reactions.state !== 'unavailable' && QUICK_REACTIONS.map((emoji) => {
+                const mineR = message.reactions.find((r) => r.emoji === emoji)?.userIds.includes(auth.user.id) ?? false;
+                return (
+                  <button
+                    key={emoji}
+                    data-testid={`quick-react-${emoji}-${message.id}`}
+                    className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                    title={`React ${emoji}`}
+                    onClick={() => toggle.mutate({ message, emoji, mine: mineR })}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+              <div className="mx-0.5 h-6 w-px self-center bg-hairline" />
+              {caps.reactions.state !== 'unavailable' ? (
+                <button
+                  data-testid={`add-reaction-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Add reaction"
+                  onClick={() => setShowPicker(true)}
+                >
+                  🙂
+                </button>
+              ) : (
+                <span data-testid={`add-reaction-unavailable-${message.id}`} className="cursor-not-allowed px-1.5 py-1 text-lg leading-none opacity-40" title={caps.reactions.reason}>🙂</span>
+              )}
+              {provenance?.openUrl && (
+                <a
+                  data-testid={`open-in-provider-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-xs font-semibold leading-none text-accent-soft hover:bg-daypill"
+                  title="Open in Slack"
+                  href={provenance.openUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Slack ↗
+                </a>
+              )}
+              {showThreadAffordances && (
+                <button
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Reply in thread"
+                  onClick={() => sel.openThread(message.threadRootId ?? message.id)}
+                >
+                  💬
+                </button>
+              )}
+              {message.body && (
+                <button
+                  data-testid={`copy-message-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Copy text"
+                  onClick={() => void navigator.clipboard?.writeText(message.body)}
+                >
+                  📋
+                </button>
+              )}
+              {caps.pins.state !== 'unavailable' && <button
+                data-testid={`toggle-pin-${message.id}`}
+                className={`flex items-center rounded-md px-1.5 py-1 leading-none hover:bg-daypill ${
+                  message.pinnedAt ? 'text-accent-soft' : 'text-ink'
+                }`}
+                title={message.pinnedAt ? 'Unpin message' : 'Pin message'}
+                onClick={() => togglePin.mutate(message)}
               >
-                ✏️
-              </button>
+                <PinIcon filled={!!message.pinnedAt} />
+              </button>}
+              {message.files.length > 0 && caps.artifacts.state !== 'unavailable' && (
+                <button
+                  data-testid={`pin-artifact-${message.id}`}
+                  className="flex items-center rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Pin as artifact"
+                  onClick={() => void pinFiles()}
+                >
+                  <ExternalLinkIcon />
+                </button>
+              )}
+              {mine && caps.edit.state !== 'unavailable' && (
+                <button
+                  data-testid={`edit-message-${message.id}`}
+                  className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
+                  title="Edit"
+                  onClick={() => sel.setEditingMessage(message.id)}
+                >
+                  ✏️
+                </button>
+              )}
+            </>
+          )}
+          {deleteMode && caps.delete.state !== 'unavailable' && (
               <button
                 data-testid={`delete-message-${message.id}`}
                 className="rounded-md px-1.5 py-1 text-lg leading-none hover:bg-daypill"
-                title="Delete"
-                onClick={() => setConfirmDelete(true)}
+                title={deleteMode === 'permanent' ? 'Permanently delete' : 'Delete'}
+                onClick={() => {
+                  setDeleteError(null);
+                  setConfirmDelete(true);
+                }}
               >
                 🗑
               </button>
-            </>
           )}
         </div>
       )}
 
       {showCard && <UserCard userId={message.userId} onClose={() => setShowCard(false)} />}
 
-      {confirmDelete && (
+      {confirmDelete && deleteConfirmation && (
         <Modal onClose={() => setConfirmDelete(false)} testid="delete-confirm-modal">
-          <h3 className="mb-2 font-bold">Delete message?</h3>
-          <p className="mb-3 text-sm text-muted">This can't be undone.</p>
+          <h3 className="mb-2 font-bold">{deleteConfirmation.title}</h3>
+          <p className="mb-3 text-sm text-muted">{deleteConfirmation.body}</p>
+          {deleteError && <p className="mb-3 text-sm text-red-600">{deleteError}</p>}
           <div className="flex justify-end gap-2">
-            <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={() => setConfirmDelete(false)}>Cancel</button>
+            <button disabled={deleting} className="px-3 py-1.5 text-sm text-ink-soft" onClick={() => setConfirmDelete(false)}>Cancel</button>
             <button
               data-testid="delete-confirm"
+              disabled={deleting}
               className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white"
-              onClick={() => {
-                setConfirmDelete(false);
-                void api('DELETE', `/v1/messages/${message.id}`);
-              }}
+              onClick={() => void deleteSelectedMessage()}
             >
-              Delete
+              {deleting ? 'Deleting…' : deleteConfirmation.confirmLabel}
             </button>
           </div>
         </Modal>
@@ -706,36 +836,40 @@ function MessageRow({
 }
 
 // Collapsed-image state (phase 5 ruling): persisted per device, capped list.
-const COLLAPSE_KEY = 'flow.collapsedImages';
+// The file ids are one server's, so the key is per connection+identity — the
+// same id on another backend is a different file.
 const COLLAPSE_CAP = 500;
-function collapsedIds(): string[] {
+function collapsedIds(key: string): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]');
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]');
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
   } catch {
     return [];
   }
 }
-function persistCollapsed(fileId: string, collapsed: boolean): void {
-  const ids = collapsedIds().filter((id) => id !== fileId);
+function persistCollapsed(key: string, fileId: string, collapsed: boolean): void {
+  const ids = collapsedIds(key).filter((id) => id !== fileId);
   if (collapsed) ids.push(fileId);
-  localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids.slice(-COLLAPSE_CAP)));
+  localStorage.setItem(key, JSON.stringify(ids.slice(-COLLAPSE_CAP)));
 }
 
 const TEXT_PREVIEW_LINES = 10;
 const TEXT_EXPAND_MAX = 100_000; // chars shown when expanded (phase 6 ruling)
 
 function useCollapsed(fileId: string): [boolean, () => void] {
-  const [collapsed, setCollapsed] = useState(() => collapsedIds().includes(fileId));
+  const { scopedStorageKey } = useBoundApi();
+  const key = scopedStorageKey('collapsedImages');
+  const [collapsed, setCollapsed] = useState(() => collapsedIds(key).includes(fileId));
   const toggle = () =>
     setCollapsed((c) => {
-      persistCollapsed(fileId, !c);
+      persistCollapsed(key, fileId, !c);
       return !c;
     });
   return [collapsed, toggle];
 }
 
 function useDownload(file: FileDTO): () => Promise<void> {
+  const { blobUrl } = useBoundApi();
   return async () => {
     const url = await blobUrl(`/v1/files/${file.id}`);
     const a = document.createElement('a');
@@ -804,24 +938,110 @@ function ImageAttachment({ file }: { file: FileDTO }) {
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [lightbox, setLightbox] = useState(false);
   const download = useDownload(file);
+  const variant = file.mimeType === 'image/gif' ? 'original' : 'thumbnail';
+  const image = useFileImageSource(file.id, variant, !collapsed);
 
-  // GIFs skip the static webp thumb and render the original so they animate.
-  const imgPath = file.mimeType === 'image/gif' ? `/v1/files/${file.id}` : `/v1/files/${file.id}/thumb`;
   return (
     <div className="mt-1">
       <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
       {!collapsed && (
-        <div className="group/att relative mt-0.5 w-fit">
-          <button data-testid={`file-${file.name}`} className="block" onClick={() => setLightbox(true)} title={file.name}>
-            {/* ~2x preview (ui_nits item 1). Thumbs cap at 512px, so an img
-                never stretches past its intrinsic size — large images land at
-                512 CSS px (soft on retina; noted at review). */}
-            <AuthImg path={imgPath} alt={file.name} className="max-h-[480px] max-w-[min(576px,100%)] rounded-lg border border-hairline" />
-          </button>
-          <DownloadHoverButton file={file} onDownload={download} />
-        </div>
+        <AttachmentImagePreview
+          file={file}
+          image={image}
+          onOpen={() => setLightbox(true)}
+          onDownload={download}
+        />
       )}
       {lightbox && <ImageLightbox file={file} onClose={() => setLightbox(false)} onDownload={download} />}
+    </div>
+  );
+}
+
+const IMAGE_PREVIEW_MAX_WIDTH = 512;
+const IMAGE_PREVIEW_MAX_HEIGHT = 480;
+const IMAGE_PREVIEW_FALLBACK_WIDTH = 320;
+const IMAGE_PREVIEW_FALLBACK_HEIGHT = 240;
+const IMAGE_PREVIEW_MIN_EDGE = 96;
+
+/** Definite outer geometry keeps loading and failed previews visible and
+ * removes the fit-content/percentage-width cycle that is fragile on phones. */
+export function attachmentPreviewStyle(file: Pick<FileDTO, 'width' | 'height'>): React.CSSProperties {
+  const sourceWidth = file.width && file.width > 0 ? file.width : IMAGE_PREVIEW_FALLBACK_WIDTH;
+  const sourceHeight = file.height && file.height > 0 ? file.height : IMAGE_PREVIEW_FALLBACK_HEIGHT;
+  const scale = Math.min(1, IMAGE_PREVIEW_MAX_WIDTH / sourceWidth, IMAGE_PREVIEW_MAX_HEIGHT / sourceHeight);
+  return {
+    width: Math.max(IMAGE_PREVIEW_MIN_EDGE, Math.round(sourceWidth * scale)),
+    maxWidth: '100%',
+    minHeight: IMAGE_PREVIEW_MIN_EDGE,
+    aspectRatio: `${sourceWidth} / ${sourceHeight}`,
+  };
+}
+
+/** Presentational seam kept separate from loading so all states can be
+ * regression-tested without a browser or network. */
+export function AttachmentImagePreview({
+  file,
+  image,
+  onOpen,
+  onDownload,
+}: {
+  file: FileDTO;
+  image: FileImageSource;
+  onOpen: () => void;
+  onDownload: () => Promise<void>;
+}) {
+  return (
+    <div
+      data-testid={`file-image-frame-${file.name}`}
+      className="group/att relative mt-0.5 max-w-full min-w-0 overflow-hidden rounded-lg border border-hairline bg-daypill"
+      style={attachmentPreviewStyle(file)}
+    >
+      {image.src && image.status !== 'failed' && (
+        <button
+          type="button"
+          data-testid={`file-${file.name}`}
+          className={`absolute inset-0 block h-full w-full ${image.status === 'loaded' ? '' : 'opacity-0'}`}
+          onClick={onOpen}
+          title={file.name}
+        >
+          <img
+            src={image.src}
+            alt={file.name}
+            className="h-full w-full object-contain"
+            onLoad={image.onLoad}
+            onError={image.onError}
+          />
+        </button>
+      )}
+      {image.status === 'loading' && (
+        <div role="status" className="absolute inset-0 flex items-center justify-center text-xs text-faint">
+          Loading preview…
+        </div>
+      )}
+      {image.status === 'failed' && (
+        <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center text-xs text-faint">
+          <span>Preview unavailable</span>
+          <span className="flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              data-testid={`file-retry-${file.name}`}
+              className="rounded-md border border-hairline bg-white px-2 py-1 font-semibold text-ink hover:border-hairline2"
+              onClick={image.retry}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              data-testid={`file-error-download-${file.name}`}
+              className="rounded-md border border-hairline bg-white px-2 py-1 font-semibold text-ink hover:border-hairline2"
+              onClick={() => void onDownload()}
+            >
+              Download
+            </button>
+          </span>
+        </div>
+      )}
+      {image.status === 'loaded' && <DownloadHoverButton file={file} onDownload={onDownload} />}
     </div>
   );
 }
@@ -834,6 +1054,7 @@ function ImageAttachment({ file }: { file: FileDTO }) {
  * legacy rows). On error with a streamed URL we re-mint once — the TTL may
  * simply have expired in a long-open tab. */
 function VideoAttachment({ file }: { file: FileDTO }) {
+  const { blobUrl, fileStreamUrl } = useBoundApi();
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [url, setUrl] = useState<string | null>(null);
   const [streamed, setStreamed] = useState(false);
@@ -877,18 +1098,18 @@ function VideoAttachment({ file }: { file: FileDTO }) {
     <div className="mt-1">
       <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
       {!collapsed && (
-        <div className="group/att relative mt-0.5 w-fit">
+        <div className="group/att relative mt-0.5 w-[min(576px,100%)]">
           {url ? (
             <video
               data-testid={`file-video-${file.name}`}
               src={url}
               controls
               preload="metadata"
-              className="max-h-[480px] max-w-[min(576px,100%)] rounded-lg border border-hairline bg-black"
+              className="block h-auto max-h-[480px] w-full rounded-lg border border-hairline bg-black"
               onError={onVideoError}
             />
           ) : (
-            <div className="flex h-[240px] w-[min(426px,100%)] items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">
+            <div className="flex h-[240px] w-full items-center justify-center rounded-lg border border-hairline bg-daypill text-2xl text-faint">
               ▶
             </div>
           )}
@@ -941,6 +1162,7 @@ function VideoLightbox({
 /** Inline monospace preview for text-ish files (phase 6): first lines +
  * Expand, expanded output capped with a visible truncation notice. */
 function TextAttachment({ file }: { file: FileDTO }) {
+  const { fileText } = useBoundApi();
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState<string | null>(null);
@@ -1015,6 +1237,7 @@ function MarkdownAttachment({
   names: Record<string, string>;
   currentUserId: string;
 }) {
+  const { fileText } = useBoundApi();
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [expanded, setExpanded] = useState(false);
   const [source, setSource] = useState(false);
@@ -1098,6 +1321,7 @@ function MarkdownAttachment({
 /** Mid-size PDF preview via the browser's native renderer (phase 6 ruling:
  * no pdf.js dependency); click opens the in-app full reader. */
 function PdfAttachment({ file }: { file: FileDTO }) {
+  const { blobUrl } = useBoundApi();
   const [collapsed, toggleCollapsed] = useCollapsed(file.id);
   const [url, setUrl] = useState<string | null>(null);
   const [reader, setReader] = useState(false);
@@ -1238,12 +1462,7 @@ function ImageLightbox({
   onClose: () => void;
   onDownload: () => Promise<void>;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void blobUrl(`/v1/files/${file.id}`).then((u) => { if (alive) setUrl(u); }).catch(() => {});
-    return () => { alive = false; };
-  }, [file.id]);
+  const image = useFileImageSource(file.id, 'original');
   return (
     <LightboxShell
       testId="lightbox"
@@ -1254,7 +1473,7 @@ function ImageLightbox({
           <LightboxButton
             testId="lightbox-open-external"
             title="Open external"
-            onClick={() => { if (url) window.open(url, '_blank'); }}
+            onClick={() => { if (image.src) window.open(image.src, '_blank'); }}
           >
             ↗
           </LightboxButton>
@@ -1264,11 +1483,66 @@ function ImageLightbox({
         </>
       }
     >
-      {url ? (
-        <img src={url} alt={file.name} className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain" />
+      {image.src && image.status !== 'failed' ? (
+        <img
+          src={image.src}
+          alt={file.name}
+          className="max-h-[85vh] max-w-[88vw] rounded-lg object-contain"
+          onLoad={image.onLoad}
+          onError={image.onError}
+        />
+      ) : image.status === 'failed' ? (
+        <div role="alert" className="flex flex-col items-center gap-2 text-sm text-white/70">
+          <span>Preview unavailable</span>
+          <button
+            type="button"
+            className="rounded-md border border-white/30 px-3 py-1.5 font-semibold text-white hover:bg-white/10"
+            onClick={image.retry}
+          >
+            Retry
+          </button>
+        </div>
       ) : (
         <span className="text-sm text-white/70">Loading…</span>
       )}
     </LightboxShell>
+  );
+}
+
+/**
+ * "🕐 SCHEDULED" next to the author name (#420): this message was posted by
+ * one of their scheduled messages rather than typed just now. It is
+ * deliberately a badge on an otherwise ordinary message — the author, the
+ * mentions and the notifications are all real, and only the timing was
+ * automatic. Clicking it opens the Scheduled panel, where the row that posted
+ * it lives.
+ */
+function ScheduledBadge({ author }: { author: string }) {
+  const sel = useSelection();
+  return (
+    <HoverTooltip text={`Posted automatically · runs as ${author} · click to open Scheduled`}>
+      <button
+        type="button"
+        data-testid="scheduled-badge"
+        className="cursor-pointer rounded bg-accent/10 px-1.5 py-px text-[10px] font-bold tracking-wide text-accent-deep uppercase"
+        onClick={() => sel.selectChannel(SCHEDULED_VIEW_ID)}
+      >
+        🕐 Scheduled
+      </button>
+    </HoverTooltip>
+  );
+}
+
+/** A file that lives with another provider (#545): no bytes flow through Flow,
+ * so the card names the file and opens it where it is. */
+function ExternalAttachment({ file, openUrl, provider }: { file: FileDTO; openUrl: string | null; provider: string }) {
+  const label = provider === 'slack' ? 'Open in Slack' : 'Open';
+  return (
+    <div data-testid={`external-attachment-${file.id}`} className="mt-1.5 inline-flex max-w-full items-center gap-2 rounded-lg border border-hairline bg-white px-3 py-2 text-sm">
+      <span aria-hidden>📎</span>
+      <span className="truncate">{file.name}</span>
+      {file.sizeBytes > 0 && <span className="shrink-0 text-xs text-faint">{Math.max(1, Math.round(file.sizeBytes / 1024))} KB</span>}
+      {openUrl && <a className="shrink-0 text-xs font-semibold text-accent-soft hover:underline" href={openUrl} target="_blank" rel="noreferrer">{label} ↗</a>}
+    </div>
   );
 }

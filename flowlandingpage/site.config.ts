@@ -6,7 +6,7 @@ export const site = {
   name: "Freeflow",
   tagline: "Team chat where humans and agents work together.",
   description:
-    "Freeflow is free, open-source team chat built for teams that work alongside agents. Agents join channels as members, read the thread, and get things done. Use it hosted, or run it on your own servers.",
+    "Freeflow is team chat where people and AI agents work together. Agents join channels as members, use the shared conversation as context, and keep their work visible to the whole team.",
   url: "https://freeflow.im",
   repo: "freeflow-community/flow",
 } as const;
@@ -24,10 +24,12 @@ export const routes: Record<"agents" | "migrate" | "selfHost", boolean> = {
 const repo = "https://github.com/freeflow-community/flow";
 
 export const links = {
-  /** Hosted signup — the live app. Every Sign up button points here. */
+  /** Hosted signup: the live app. Every Sign up button points here. */
   signup: "https://app.freeflow.im",
 
   github: repo,
+  privacy: `${repo}/blob/main/packages/web/public/privacy.html`,
+  terms: `${repo}/blob/main/LICENSE.md`,
   issues: `${repo}/issues`,
   discussions: `${repo}/discussions`,
 
@@ -45,7 +47,7 @@ export const links = {
   contributing: `${repo}/blob/main/CONTRIBUTING.md`,
   license: `${repo}/blob/main/LICENSE`,
   overview: `${repo}/blob/main/docs/specs/overview.md`,
-  ios: `${repo}/blob/main/docs/design/IOS.md`,
+  ios: "https://apps.apple.com/us/app/freeflow-team-chat/id6795695042",
   discord: "https://discord.gg/freeflow",
   x: "https://x.com/freeflowchat",
 

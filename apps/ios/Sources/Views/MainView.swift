@@ -13,13 +13,30 @@ struct MainView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var allChannels = DBObserved<[Channel]>(initial: [])
+    @StateObject private var agentCall = AgentCallCoordinator()
     @State private var drawerOpen = false
 
     var body: some View {
         GeometryReader { geo in
             let drawerWidth = min(geo.size.width * 0.86, 320)
             ZStack(alignment: .leading) {
-                content
+                VStack(spacing: 0) {
+                    content
+                    // Only mounts once someone turns on a camera or a share
+                    // (#435); an audio-only huddle is the bar alone, as before.
+                    HuddleGridView()
+                    HuddleBar()
+                    AgentCallBar()
+                }
+                // The ring floats over everything — it is the one thing that
+                // has to be answerable from wherever you are looking (#436).
+                .overlay(alignment: .bottom) {
+                    IncomingHuddleView().padding(.bottom, 90)
+                }
+
+                // Zero-sized: it owns the automatic voice loop while the call
+                // sheet is minimized or another channel is on screen.
+                AgentCallRuntimeView()
 
                 if drawerOpen {
                     Color.black.opacity(0.4)
@@ -49,16 +66,19 @@ struct MainView: View {
             if ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_DRAWER"] == "1" {
                 drawerOpen = true
             }
-            // QA: FLOW_DEBUG_SHOW_ACTIVITY=1 lands on the Activity feed, same
-            // screenshot-without-a-tap-tool rationale as the hooks above.
-            if ProcessInfo.processInfo.environment["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" {
-                app.showActivity = true
-            }
+            debugShowPanel()
             #endif
         }
         .onChange(of: workspaces.value) { _, list in
             if app.selectedWorkspaceId == nil, let first = list.first {
                 app.selectWorkspace(first.id)
+                // Picking a workspace clears every panel flag (it is a move to
+                // somewhere else entirely), so a launch hook set before the
+                // first workspace arrived — which is every first launch after
+                // an install — has to be re-applied here or it is silently lost.
+                #if DEBUG
+                debugShowPanel()
+                #endif
             }
         }
         .onChange(of: allChannels.value) { _, list in
@@ -68,7 +88,21 @@ struct MainView: View {
         // The workspace and the cached channel rows arrive in either order on a
         // cold launch, and the restore needs both — so try again from this side.
         .onChange(of: app.selectedWorkspaceId) { _, _ in restoreLastChannel(allChannels.value) }
+        // A LiveKit huddle and an agent call both own the microphone. Joining
+        // the former always releases the latter, including from an incoming ring.
+        .onChange(of: app.activeHuddleChannelId) { _, channelId in
+            if channelId != nil { agentCall.end() }
+        }
+        .onDisappear { agentCall.end() }
+        .sheet(isPresented: $agentCall.showingCall) {
+            if let call = agentCall.activeCall {
+                AgentCallView(call: call, session: agentCall.session)
+                    .environmentObject(app)
+                    .environmentObject(agentCall)
+            }
+        }
         .environmentObject(app)
+        .environmentObject(agentCall)
     }
 
     /// The full-screen conversation pane. A `NavigationStack` so a channel can
@@ -79,14 +113,20 @@ struct MainView: View {
             Group {
                 if app.showActivity {
                     ActivityFeedView(onOpenChannel: { app.selectChannel($0) })
+                } else if app.showScheduled {
+                    // Scheduled list (#424) — same treatment as the feed above.
+                    ScheduledListView(onOpenChannel: { app.selectChannel($0) })
+                } else if app.showDirectory {
+                    // Directory (#432) — the workspace member grid, same again.
+                    DirectoryScreen()
                 } else if let channelId = app.selectedChannelId {
-                    ChannelScreen(channelId: channelId)
+                    ChannelScreen(channelId: channelId, onOpenDrawer: { openDrawer() })
                         .id(channelId)
                 } else {
                     emptyState
                 }
             }
-            .toolbar {
+            .flowBarToolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         openDrawer()
@@ -127,6 +167,18 @@ struct MainView: View {
     /// first pass that has a usable row wins, and the rest no-op.
     ///
     /// It only ever fills an *empty* selection (the guard lives in
+    #if DEBUG
+    /// QA: the `FLOW_DEBUG_SHOW_*` hooks land the app on a panel at launch, so
+    /// the simulator can be screenshot-verified without a tap tool. Compiled
+    /// out of release.
+    private func debugShowPanel() {
+        let env = ProcessInfo.processInfo.environment
+        if env["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" { app.showActivity = true }
+        if env["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" { app.showScheduled = true }
+        if env["FLOW_DEBUG_SHOW_DIRECTORY"] == "1" { app.showDirectory = true }
+    }
+    #endif
+
     /// `restorableLastChannel`), which is what keeps the priority order right:
     /// a deep link, a tapped notification or the debug hook has already put
     /// something on screen, so restoring is skipped — and if one of those
@@ -138,6 +190,8 @@ struct MainView: View {
         let env = ProcessInfo.processInfo.environment
         if let key = env["FLOW_DEBUG_OPEN_CHANNEL"], !key.isEmpty { return }
         if env["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" { return }
+        if env["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" { return }
+        if env["FLOW_DEBUG_SHOW_DIRECTORY"] == "1" { return }
         #endif
         guard let id = app.window.restorableLastChannel(from: channels) else { return }
         app.selectChannel(id)
@@ -149,7 +203,8 @@ struct MainView: View {
     // conversations, which is where the interrupt affordance lives, are DMs.
     private func debugAutoOpen(_ channels: [Channel]) {
         #if DEBUG
-        guard app.selectedChannelId == nil, !app.showActivity,
+        guard app.selectedChannelId == nil, !app.showActivity, !app.showScheduled,
+              !app.showDirectory,
               let key = ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_CHANNEL"], !key.isEmpty,
               let ch = channels.first(where: {
                   ($0.name == key || $0.id == key) && $0.workspaceId == app.selectedWorkspaceId

@@ -1,3 +1,6 @@
+// Static rendering tests stub the view-bound transport; no browser registry is needed.
+vi.mock('../lib/useBoundApi', async () => ({ useBoundApi: () => apiModule }));
+import * as apiModule from '../lib/api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';

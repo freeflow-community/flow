@@ -7,15 +7,29 @@ struct AppDatabase: Sendable {
     let writer: any DatabaseWriter
     var reader: any DatabaseReader { writer }
 
-    static func open() throws -> AppDatabase {
+    /// The cache belongs to one connection+identity (#540). The migrated
+    /// default connection resolves to `Flow<Profile.suffix>` — the directory an
+    /// existing install already has — so an upgrade re-downloads nothing.
+    static func directory(for scope: StorageScope) throws -> URL {
         let fm = FileManager.default
         let support = try fm.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: true
         )
-        let dir = support.appendingPathComponent(
-            "Flow" + Profile.suffix, isDirectory: true
-        )
+        return support.appendingPathComponent(scope.databaseDirectoryName, isDirectory: true)
+    }
+
+    /// Delete a scope's cache outright. Used when a connection is removed or
+    /// its identity changes: cached rows whose ownership we can no longer
+    /// establish are discarded and refetched, never handed to another user.
+    static func destroy(scope: StorageScope) {
+        guard let dir = try? directory(for: scope) else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    static func open(scope: StorageScope = .legacy) throws -> AppDatabase {
+        let fm = FileManager.default
+        let dir = try directory(for: scope)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let pool = try DatabasePool(path: dir.appendingPathComponent("flow.sqlite").path)
         let db = AppDatabase(writer: pool)
@@ -218,6 +232,92 @@ struct AppDatabase: Sendable {
                 t.add(column: "bio", .text)
             }
         }
+        // Which threads are waiting on you (#270). JSON array, same shape as
+        // memberIds; nil on a cached row until the next channel list arrives,
+        // which just means no dot yet — never a wrong one.
+        migrator.registerMigration("v15") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "unreadThreadRootIds", .text)
+            }
+        }
+        // Workspace avatar (#336): the optional image mark, nil until one is set.
+        migrator.registerMigration("v16") { db in
+            try db.alter(table: "workspace") { t in
+                t.add(column: "avatarUrl", .text)
+            }
+        }
+        // Sole-human check behind Delete workspace (#340): the roster has to be
+        // able to tell an app bot from a person, not just an agent from one.
+        migrator.registerMigration("v17") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "isBot", .boolean)
+            }
+        }
+        // Per-workspace unread total (#345), the sidebar rail badge. Nil on a
+        // cached row until the next workspace list arrives — no badge yet,
+        // never a wrong one.
+        migrator.registerMigration("v18") { db in
+            try db.alter(table: "workspace") { t in
+                t.add(column: "unreadCount", .integer)
+            }
+        }
+        // Channel emoji (#396): the persistent glyph after a channel's name.
+        // Cached like any other server column — unlike the activity spinner it
+        // shares that sidebar slot with, which is deliberately never persisted.
+        // Nil on a cached row until the next channel list or event arrives.
+        migrator.registerMigration("v19") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "emoji", .text)
+            }
+        }
+        // Scheduled messages (#424): the badge has to survive a relaunch, so
+        // the flag belongs on the cached row like any other server column.
+        // Defaults false — every message already cached was typed by a person.
+        migrator.registerMigration("v20") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "scheduled", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        // One-line profile title (#434), shown under the name on a Directory
+        // card. Nil on every cached row until the next roster or profile
+        // fetch, which just means no line yet — never a wrong one.
+        migrator.registerMigration("v21") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "title", .text)
+            }
+        }
+
+        // Auto-open target (#327 parity, #441): where a channel's oldest unread
+        // lives when it is a thread reply. JSON, same shape as
+        // unreadThreadRootIds; nil on a cached row until the next channel list
+        // arrives, which just means no jump yet — never a wrong one.
+        migrator.registerMigration("v22") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "oldestUnreadThreadReply", .text)
+            }
+        }
+
+        // Per-user notification prefs (#251), so the settings screens can render
+        // the toggles from the cached user instead of blocking on a fetch. JSON,
+        // nil on every cached row until the next `/v1/me` — which reads as "all
+        // defaults", the same thing an absent key means server-side.
+        migrator.registerMigration("v23") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "notificationPrefs", .text)
+            }
+        }
+
+        // Privacy mode (#489/#490): carried on the roster, so the Directory can
+        // leave a member out without a fetch per card. Nullable — a row cached
+        // before this column existed reads as nil, which means "not hiding",
+        // the same thing the field's absence means on an older server.
+        migrator.registerMigration("v24") { db in
+            try db.alter(table: "user") { t in
+                t.add(column: "privacyMode", .boolean)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

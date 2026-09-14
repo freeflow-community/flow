@@ -167,7 +167,9 @@ function toSlackUser(u: UserRow, teamId: string): Record<string, unknown> {
     profile: {
       real_name: u.displayName,
       display_name: u.displayName,
-      email: u.email,
+      // #489: Slack-compat is app-facing — an app is never "the user
+      // themselves", so a privacy-mode address is hidden here unconditionally.
+      email: u.privacyMode ? '' : u.email,
       status_emoji: u.statusEmoji,
       status_text: u.statusText,
     },
@@ -222,7 +224,10 @@ async function chatPostMessage({ auth, args }: MethodCtx): Promise<Record<string
   if (text.trim() === '' && !threadTs) throw new SlackApiError('no_text');
   let threadRootId: string | undefined;
   if (threadTs) threadRootId = await requireMessageId(channelId, threadTs, 'message_not_found');
-  const dto = await msg.sendMessage(channelId, auth.botUser.id, newId(), mrkdwnToMarkdown(text), threadRootId);
+  // bot auth, so `@Name` in the text expands to a real mention (#415)
+  const dto = await msg.sendMessage(channelId, auth.botUser.id, newId(), mrkdwnToMarkdown(text), threadRootId, undefined, undefined, {
+    expandMentions: true,
+  });
   return { channel: channelId, ts: tsFromUuid(dto.id), message: toSlackMessage(dto) };
 }
 

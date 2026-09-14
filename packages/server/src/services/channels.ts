@@ -1,5 +1,6 @@
-import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
-import type { ChannelDTO, ChannelIndicatorState, ChannelKind, NotifyLevel } from '@flow/shared';
+import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { HUDDLE_SYSTEM_KINDS } from '@flow/shared';
+import type { ChannelDTO, ChannelIndicatorState, ChannelKind, HuddleParticipantDTO, NotifyLevel } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -11,9 +12,11 @@ import {
   clearChannelNotificationsForAll,
   markChannelNotificationsRead,
   markThreadNotificationsRead,
+  notifyChannelInvite,
 } from './notifications.js';
 import { publishEvent, subjectMeta } from '../bus.js';
 import { channelIndicators } from '../indicators.js';
+import { huddleParticipantsMany, toParticipantDTOs } from '../huddles.js';
 
 const { channels, channelMembers, messages, notifications, workspaceMembers } = schema;
 
@@ -26,9 +29,12 @@ export function toChannelDTO(
     lastReadMsgId?: string | null | undefined;
     unreadCount?: number | undefined;
     unreadNotifications?: number | undefined;
+    unreadThreadRootIds?: string[] | undefined;
+    oldestUnreadThreadReply?: { rootId: string; replyId: string } | null | undefined;
     notifyLevel?: number | undefined;
     memberIds?: string[] | undefined;
     indicator?: ChannelIndicatorState | null | undefined;
+    huddleParticipants?: HuddleParticipantDTO[] | undefined;
   },
 ): ChannelDTO {
   const dto: ChannelDTO = {
@@ -45,13 +51,23 @@ export function toChannelDTO(
     lastReadMsgId: opts.lastReadMsgId ?? null,
     unreadCount: opts.unreadCount ?? 0,
     unreadNotifications: opts.unreadNotifications ?? 0,
+    unreadThreadRootIds: opts.unreadThreadRootIds ?? [],
     notifyLevel: (opts.notifyLevel ?? 1) as NotifyLevel,
     parentId: c.parentId,
   };
+  // Read straight off the row, unlike indicator/huddle below: the emoji (#396)
+  // is a column, so every DTO path already has it and no caller has to pass it.
+  // Only sent when there is actually a thread to open (#327): absent means
+  // "the main timeline is where the unreads are", which is every other path.
+  if (opts.oldestUnreadThreadReply) dto.oldestUnreadThreadReply = opts.oldestUnreadThreadReply;
+  if (c.emoji) dto.emoji = c.emoji;
   if (opts.memberIds) dto.memberIds = opts.memberIds;
   // Only sent when something is actually showing: absent means "no spinner",
   // and every other DTO path (create, patch, join…) leaves it out entirely.
   if (opts.indicator) dto.indicator = opts.indicator;
+  // Same absent-means-quiet convention as indicator, for the same reason:
+  // every other DTO path (create, patch, join…) leaves this out entirely.
+  if (opts.huddleParticipants?.length) dto.huddleParticipants = opts.huddleParticipants;
   return dto;
 }
 
@@ -296,39 +312,94 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     .groupBy(notifications.channelId);
   const notifByChannel = new Map(notifRows.map((r) => [r.channelId, r.n]));
 
+  // Which threads are waiting on this user (#270) — the reply chip draws an
+  // unread dot from this, so a thread reply that needs you is visible in the
+  // transcript and not only in the sidebar number. One grouped query over the
+  // same unread rows; thread notifications are few, so the lists stay short.
+  // The reply id rides along (#327) so the same rows answer "which thread holds
+  // the oldest unread reply" — ids are UUIDv7, so oldest-first is id order.
+  const threadRootRows = await db
+    .select({ channelId: notifications.channelId, rootId: messages.threadRootId, replyId: messages.id })
+    .from(notifications)
+    .innerJoin(messages, eq(messages.id, notifications.messageId))
+    .where(
+      and(
+        eq(notifications.userId, userId),
+        isNull(notifications.readAt),
+        sql`${messages.threadRootId} IS NOT NULL`,
+      ),
+    )
+    .orderBy(asc(messages.id));
+  const threadRootsByChannel = new Map<string, string[]>();
+  const oldestUnreadReplyByChannel = new Map<string, { rootId: string; replyId: string }>();
+  for (const r of threadRootRows) {
+    if (!r.rootId) continue;
+    const seen = threadRootsByChannel.get(r.channelId) ?? [];
+    if (!seen.includes(r.rootId)) threadRootsByChannel.set(r.channelId, [...seen, r.rootId]);
+    if (!oldestUnreadReplyByChannel.has(r.channelId)) {
+      oldestUnreadReplyByChannel.set(r.channelId, { rootId: r.rootId, replyId: r.replyId });
+    }
+  }
+
   // Live activity spinners (#137) — in-memory, so this is a map lookup, not a
   // query. Riding the channel list means a client that just loaded (or came
   // back from a refresh) starts in the right state without a second call.
   const indicators = channelIndicators(visible.map((r) => r.c.id));
+  // Live huddle rosters (Phase 1) — same reasoning: a map lookup, not a query,
+  // so a client that just loaded shows an already-active huddle immediately.
+  const huddles = huddleParticipantsMany(visible.map((r) => r.c.id));
 
   const result: ChannelDTO[] = [];
   for (const r of visible) {
     let unreadCount = 0;
+    let oldestUnreadTopLevel: string | null = null;
     if (r.isMember) {
-      // System lines (join/leave) never contribute to unread — they're courtesy
-      // notices, not messages you need to catch up on. Neither do your own
-      // messages: you can't have unread mail from yourself, and the read cursor
+      // Membership lines (join/leave) never contribute to unread — they're
+      // courtesy notices, not messages you need to catch up on. A *huddle*
+      // line is the opposite (#436): "Missed huddle" is the only trace a call
+      // you weren't there for leaves, and a missed call that doesn't mark the
+      // DM unread is one you never find out about. So the exclusion is by
+      // kind, not by "is it a system message". Neither do your own messages
+      // count: you can't have unread mail from yourself, and the read cursor
       // may not have caught up if you sent from another client (#71).
       const base = and(
         eq(messages.channelId, r.c.id),
         isNull(messages.threadRootId),
         isNull(messages.deletedAt),
-        isNull(messages.systemKind),
+        or(isNull(messages.systemKind), inArray(messages.systemKind, [...HUDDLE_SYSTEM_KINDS])),
         ne(messages.userId, userId),
       );
       const cond = r.lastReadMsgId ? and(base, gt(messages.id, r.lastReadMsgId)) : base;
-      const cnt = await db.select({ n: sql<number>`count(*)::int` }).from(messages).where(cond);
+      const cnt = await db
+        // min() has no uuid overload, so the id goes through text — the hex
+        // representation sorts the same way the uuid does.
+        .select({ n: sql<number>`count(*)::int`, oldest: sql<string | null>`min(${messages.id}::text)` })
+        .from(messages)
+        .where(cond);
       unreadCount = cnt[0]?.n ?? 0;
+      oldestUnreadTopLevel = cnt[0]?.oldest ?? null;
     }
+    // Auto-open target (#327): only when the channel's oldest unread is a reply.
+    // An older unread top-level message means the main timeline already shows
+    // the user what they missed, so the thread waits its turn (its chip keeps
+    // the unread dot either way).
+    const oldestReply = r.isMember ? (oldestUnreadReplyByChannel.get(r.c.id) ?? null) : null;
+    const oldestUnreadThreadReply =
+      oldestReply && (!oldestUnreadTopLevel || oldestReply.replyId < oldestUnreadTopLevel)
+        ? oldestReply
+        : null;
     result.push(
       toChannelDTO(r.c, {
         isMember: r.isMember,
         lastReadMsgId: r.lastReadMsgId,
         unreadCount,
         unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
+        unreadThreadRootIds: r.isMember ? (threadRootsByChannel.get(r.c.id) ?? []) : [],
+        oldestUnreadThreadReply,
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
         indicator: indicators.get(r.c.id) ?? null,
+        huddleParticipants: toParticipantDTOs(huddles.get(r.c.id) ?? []),
       }),
     );
   }
@@ -420,7 +491,10 @@ export async function addMember(channelId: string, actorId: string, targetUserId
       ts: new Date().toISOString(),
       data: { userId: targetUserId, channelId, workspaceId: chan.workspaceId },
     });
-    await postSystemMessage(chan, targetUserId, 'member_joined');
+    // #303: the join line is the notification's anchor and its tap
+    // destination, so the notification follows it rather than racing it.
+    const line = await postSystemMessage(chan, targetUserId, 'member_joined');
+    if (line) await notifyChannelInvite(chan, line, targetUserId, actorId);
   }
 }
 
@@ -562,9 +636,18 @@ export async function markRead(
     await markThreadNotificationsRead(userId, chan, threadRootId);
     return;
   }
+  // Forward only. A revisit (#533) re-sends the cursor the client already has,
+  // which on a stale channel row can be older than the one the server holds —
+  // and rewinding it would un-read messages the user has demonstrably seen.
   await db
     .update(channelMembers)
     .set({ lastReadMsgId })
-    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)));
+    .where(
+      and(
+        eq(channelMembers.channelId, channelId),
+        eq(channelMembers.userId, userId),
+        or(isNull(channelMembers.lastReadMsgId), lt(channelMembers.lastReadMsgId, lastReadMsgId)),
+      ),
+    );
   await markChannelNotificationsRead(userId, chan, lastReadMsgId);
 }

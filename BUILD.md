@@ -14,7 +14,7 @@ If you only want to run Flow locally, you want
 |---|---|---|---|
 | Server + web client | `pnpm build` | `git push origin main` | **Yes** — Railway builds every push to `main` |
 | macOS app | `apps/macos/tools/make-app.sh` | `apps/macos/tools/release-macos.sh` | No — run locally, needs signing credentials |
-| iOS app | `xcodegen generate` + Xcode | archive + `xcodebuild -exportArchive` (see below) | No — run locally, needs the signing account |
+| iOS app | `xcodegen generate` + Xcode | `apps/ios/tools/release-ios.sh` | No — run locally, needs the signing account |
 | `flow-agent-bridge` (npm) | `pnpm --filter flow-agent-bridge build` | bump `version`, merge to `main` | **Yes** — GitHub Actions publishes |
 | Marketing site (`flowlandingpage/`) | `pnpm build` (in `flowlandingpage/`) | merge to `main` | **Yes** — GitHub Actions deploys to Cloudflare Pages |
 
@@ -185,25 +185,43 @@ xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
 
 ### Release (TestFlight / App Store)
 
-Signing team is `RP5QYMYA4Z`, bundle id `im.freeflow.app` — both live in
-`project.yml` so they survive `xcodegen generate`. Bump
-`CURRENT_PROJECT_VERSION` in `project.yml` first (App Store Connect rejects a
-re-used build number), regenerate, then from `apps/ios`:
+One command, from the repo root:
 
 ```sh
-xcodebuild -project FlowiOS.xcodeproj -scheme Flow \
-  -destination 'generic/platform=iOS' -archivePath build/Flow.xcarchive \
-  -derivedDataPath .build archive -allowProvisioningUpdates
-xcodebuild -exportArchive -archivePath build/Flow.xcarchive \
-  -exportOptionsPlist ExportOptions.plist -allowProvisioningUpdates
+apps/ios/tools/release-ios.sh              # archive + upload
+apps/ios/tools/release-ios.sh --dry-run    # print the plan, build nothing
+apps/ios/tools/release-ios.sh 412          # explicit build number (escape hatch)
 ```
+
+Signing team is `RP5QYMYA4Z`, bundle id `im.freeflow.app` — both live in
+`project.yml` so they survive `xcodegen generate`.
+
+**The build number is derived, not authored.** The script uses
+`git rev-list --count HEAD` and passes it to `xcodebuild` as a command-line
+build setting, which outranks the project and reaches both the app and its
+share extension — they must match or the archive is rejected. This is the same
+mechanism `apps/macos/tools/make-app.sh` already uses for the macOS
+`CFBundleVersion`. `CURRENT_PROJECT_VERSION` in `project.yml` is a fallback for
+local Xcode builds; **do not bump it per upload.**
+
+Why: bumping a number in the repo records an intention, not a fact. Builds 23,
+24, 25, 26 and 28 were all uploaded while their bump commits sat on unmerged
+branches, so `main` claimed 23 when App Store Connect already held 28. Each
+drift ended in a rejected upload or a bookkeeping PR that would have moved
+`main` *backwards*. A number in the repo cannot see the server that owns it;
+the commit count can only go up. If App Store Connect still rejects the number,
+the script bumps and retries.
+
+The script tags `ios-build-<n>` **after** a successful upload, so a tag always
+means "this commit is on App Store Connect" and names the commit — which no
+version file ever did.
 
 The archive needs **Node on `PATH`**: a "Bundle FEATURES.md" build phase runs
 `scripts/build-features.mjs` and copies the result into the app, so the
 "What's new" screen ships the notes of that exact build. The phase fails the
 build with a clear message if it can't find `node`.
 
-The second command signs with an auto-provisioned Apple Distribution
+The export step signs with an auto-provisioned Apple Distribution
 cert/profile and **uploads straight to App Store Connect** (that's the
 `destination: upload` in `ExportOptions.plist`); the build lands in TestFlight
 after a few minutes of processing. Auth rides the Apple ID session in Xcode →

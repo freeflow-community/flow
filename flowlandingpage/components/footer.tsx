@@ -8,36 +8,46 @@ export function Footer() {
 
   return (
     <footer className="border-t border-line bg-paper">
-      <Container className="py-12">
-        <div className="flex flex-col gap-8 sm:flex-row sm:items-center sm:justify-between">
+      <Container className="py-6">
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <Link href="/" className="flex items-center gap-2.5">
-            <Logo className="size-7 text-ink" />
-            <span className="text-[17px] font-semibold tracking-tight text-ink">
+            <Logo className="size-6 text-ink" />
+            <span className="text-[15px] font-semibold tracking-tight text-ink">
               Freeflow
             </span>
           </Link>
 
-          <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-7 gap-y-3">
+          <p className="text-[12px] text-muted sm:absolute sm:left-1/2 sm:-translate-x-1/2">
+            © {year} {site.name}. Free and open source.
+          </p>
+
+          <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-6 gap-y-3">
             <a
               href={links.github}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-2 text-[15px] text-body transition-colors hover:text-ink"
+              className="inline-flex items-center gap-2 text-[12px] text-muted transition-colors hover:text-ink"
             >
-              <Github className="size-[17px]" />
+              <Github className="size-[14px]" />
               GitHub
             </a>
+            <a
+              href={links.privacy}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-[12px] text-muted transition-colors hover:text-ink"
+            >
+              Privacy
+            </a>
+            <a
+              href={links.terms}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-[12px] text-muted transition-colors hover:text-ink"
+            >
+              Terms
+            </a>
           </nav>
-        </div>
-
-        <div className="mt-10 flex flex-col gap-2 border-t border-line pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13.5px] text-muted">
-            © {year} {site.name}. Free and open source.
-          </p>
-          <p className="text-[13.5px] text-muted">
-            An independent project. Not affiliated with Slack Technologies or
-            Discord Inc.
-          </p>
         </div>
       </Container>
     </footer>

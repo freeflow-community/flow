@@ -29,6 +29,8 @@ function runtimeConfig(over: Partial<RuntimeConfig> = {}): RuntimeConfig {
     maxTurns: 10,
     timeoutSec: 30,
     idleTimeoutSec: 10,
+    sessionIdleSec: 600,
+    sessionHardCapSec: 3600,
     mcp: false,
     ...over,
   } as RuntimeConfig;

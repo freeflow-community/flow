@@ -1,4 +1,5 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import sharp from 'sharp';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import {
   SIDEBAR_COLOR_IDS,
   emailDomain,
@@ -15,9 +16,12 @@ import { newId } from '../lib/ids.js';
 import { hashToken, newLinkToken, newToken } from '../lib/tokens.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { config } from '../config.js';
-import { publishEvent, subjectMeta, subjectUserMeta } from '../bus.js';
+import { blobStore } from '../storage/index.js';
+import { publishEvent, subjectMeta, subjectUserMeta, subjectUserNotify } from '../bus.js';
 import { emailSender } from '../email/index.js';
+import { visibleEmail } from './auth.js';
 import { killAgentCredentials, removeMemberDeep, removeSponsoredAgents, tombstoneUser } from './memberRemoval.js';
+import { postSystemMessage } from './messages.js';
 
 const {
   workspaces,
@@ -26,21 +30,29 @@ const {
   invites,
   channels,
   channelMembers,
+  notifications,
+  files,
   users,
   oauthIdentities,
 } = schema;
 
-export function toWorkspaceDTO(w: typeof workspaces.$inferSelect, role?: MemberRole): WorkspaceDTO {
+export function toWorkspaceDTO(
+  w: typeof workspaces.$inferSelect,
+  role?: MemberRole,
+  unreadCount?: number,
+): WorkspaceDTO {
   const dto: WorkspaceDTO = {
     id: w.id,
     slug: w.slug,
     name: w.name,
     sidebarColor: w.sidebarColor,
+    avatarUrl: w.avatarUrl,
     googleSelfRegisterDomain: w.googleSelfRegisterDomain,
     createdBy: w.createdBy,
     createdAt: w.createdAt.toISOString(),
   };
   if (role) dto.role = role;
+  if (unreadCount !== undefined) dto.unreadCount = unreadCount;
   return dto;
 }
 
@@ -87,8 +99,7 @@ export async function updateWorkspace(
     googleSelfRegisterDomain?: string | null | undefined;
   },
 ): Promise<WorkspaceDTO> {
-  const m = await requireMembership(workspaceId, actorId);
-  if (m.role !== 'owner' && m.role !== 'admin') throw forbidden('only owners and admins can change workspace settings');
+  const m = await requireWorkspaceAdmin(workspaceId, actorId);
   const set: Partial<{
     sidebarColor: string;
     unfurlEnabled: boolean;
@@ -130,6 +141,97 @@ export async function updateWorkspace(
     data: dto,
   });
   return toWorkspaceDTO(updated[0], m.role);
+}
+
+/**
+ * Workspace avatar (#336). Deliberately the *user* avatar pipeline, not the
+ * custom-emoji one: the bytes are square-cropped to a small webp and stored
+ * under the same `avatars/` blob prefix, so the DTO carries a plain
+ * `/v1/avatars/<key>` path that every client already knows how to fetch with
+ * its auth header. A file id would have meant new URL plumbing in three
+ * clients for an image that renders at 20-40px.
+ */
+const WORKSPACE_AVATAR_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Same rationale as the custom-emoji cap: this is a 20-40px mark, and the
+ * cost of a fat one is paid by every client on every render. */
+const MAX_WORKSPACE_AVATAR_BYTES = 1024 * 1024;
+
+const WORKSPACE_AVATAR_KEY_RE = /^[0-9a-f-]{36}-\d+\.webp$/;
+
+async function requireWorkspaceAdmin(workspaceId: string, actorId: string) {
+  const m = await requireMembership(workspaceId, actorId);
+  if (m.role !== 'owner' && m.role !== 'admin') {
+    throw forbidden('only owners and admins can change workspace settings');
+  }
+  return m;
+}
+
+/** Best-effort removal of the blob a replaced/cleared avatar pointed at. */
+async function dropAvatarBlob(url: string | null): Promise<void> {
+  if (!url?.startsWith('/v1/avatars/')) return;
+  const key = url.slice('/v1/avatars/'.length);
+  if (WORKSPACE_AVATAR_KEY_RE.test(key)) await blobStore().delete(`avatars/${key}`).catch(() => {});
+}
+
+async function saveWorkspaceAvatar(
+  workspaceId: string,
+  role: MemberRole,
+  avatarUrl: string | null,
+): Promise<WorkspaceDTO> {
+  const before = (await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1))[0];
+  if (!before) throw notFound('workspace not found');
+  const updated = await db
+    .update(workspaces)
+    .set({ avatarUrl })
+    .where(eq(workspaces.id, workspaceId))
+    .returning();
+  if (!updated[0]) throw notFound('workspace not found');
+  await dropAvatarBlob(before.avatarUrl);
+  const dto = toWorkspaceDTO(updated[0]);
+  // Same broadcast the color picker uses, so every connected client restyles
+  // its workspace mark live without a refresh.
+  publishEvent(subjectMeta(workspaceId), {
+    type: 'workspace.updated',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: dto,
+  });
+  return toWorkspaceDTO(updated[0], role);
+}
+
+export async function setWorkspaceAvatar(
+  workspaceId: string,
+  actorId: string,
+  data: Buffer,
+  mimeType: string,
+): Promise<WorkspaceDTO> {
+  const m = await requireWorkspaceAdmin(workspaceId, actorId);
+  if (!WORKSPACE_AVATAR_MIMES.has(mimeType)) {
+    throw badRequest('bad_image', 'workspace avatar must be a PNG, JPEG, GIF or WebP image');
+  }
+  if (data.length > MAX_WORKSPACE_AVATAR_BYTES) {
+    throw badRequest('file_too_large', `workspace avatar must be under ${MAX_WORKSPACE_AVATAR_BYTES / 1024}KB`);
+  }
+  let webp: Buffer;
+  try {
+    webp = await sharp(data)
+      .resize({ width: config.avatarPx, height: config.avatarPx, fit: 'cover' }) // square crop
+      .webp({ quality: 85 })
+      .toBuffer();
+  } catch {
+    throw badRequest('bad_image', 'could not decode image');
+  }
+  const key = `${workspaceId}-${Date.now()}.webp`;
+  await blobStore().put(`avatars/${key}`, webp);
+  return saveWorkspaceAvatar(workspaceId, m.role, `/v1/avatars/${key}`);
+}
+
+/** Remove: back to the color/initial mark, exactly what a workspace that never
+ * had an avatar renders. */
+export async function clearWorkspaceAvatar(workspaceId: string, actorId: string): Promise<WorkspaceDTO> {
+  const m = await requireWorkspaceAdmin(workspaceId, actorId);
+  return saveWorkspaceAvatar(workspaceId, m.role, null);
 }
 
 export async function requireMembership(workspaceId: string, userId: string) {
@@ -192,6 +294,24 @@ export async function getWorkspace(workspaceId: string, userId: string): Promise
   return toWorkspaceDTO(rows[0], m.role);
 }
 
+/**
+ * Unread notifications per workspace for one user (#345) — the number the
+ * sidebar rail badge shows. It counts the same unread rows the Activity feed
+ * and the per-channel sidebar numbers count (operator ruling 2026-07-26: a
+ * rendered count means "this needs you" — notifications, never raw unread
+ * messages), so opening the Activity feed drains it and the three surfaces
+ * always agree. One grouped query, served by notifications_unread_channel_idx.
+ */
+async function unreadByWorkspace(userId: string): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ workspaceId: channels.workspaceId, n: sql<number>`count(*)::int` })
+    .from(notifications)
+    .innerJoin(channels, eq(channels.id, notifications.channelId))
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+    .groupBy(channels.workspaceId);
+  return new Map(rows.map((r) => [r.workspaceId, r.n]));
+}
+
 export async function myWorkspaces(userId: string): Promise<WorkspaceDTO[]> {
   const rows = await db
     .select({ w: workspaces, role: workspaceMembers.role })
@@ -199,7 +319,8 @@ export async function myWorkspaces(userId: string): Promise<WorkspaceDTO[]> {
     .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
     .where(eq(workspaceMembers.userId, userId))
     .orderBy(workspaceMembers.joinedAt);
-  return rows.map((r) => toWorkspaceDTO(r.w, r.role));
+  const unread = await unreadByWorkspace(userId);
+  return rows.map((r) => toWorkspaceDTO(r.w, r.role, unread.get(r.w.id) ?? 0));
 }
 
 export async function listMembers(workspaceId: string, userId: string): Promise<WorkspaceMemberDTO[]> {
@@ -213,18 +334,32 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
   return rows.map((r) => ({
     userId: r.u.id,
     displayName: r.u.displayName,
-    email: r.u.email,
+    // #489: everyone stays on the roster (mentions, DMs, channel membership
+    // all read it) — a privacy-mode member just travels without their address,
+    // and carries the flag so the Directory knows to leave them out.
+    email: visibleEmail(r.u, userId),
+    privacyMode: r.u.privacyMode,
     avatarUrl: r.u.avatarUrl,
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
+    title: r.u.title,
     isAgent: r.u.isAgent,
-    sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
+    isBot: r.u.isBot,
+    // #357: the sponsor who vouched for this agent HERE; pre-#357 rows fall
+    // back to the account-level sponsor.
+    sponsorId: r.u.isAgent ? r.m.sponsorUserId ?? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   }));
 }
 
-export async function toMemberDTO(workspaceId: string, userId: string): Promise<WorkspaceMemberDTO> {
+/** `viewerId` is who will read the DTO — omitted where it goes to a whole
+ * workspace (member.joined / member.updated events), which redacts. */
+export async function toMemberDTO(
+  workspaceId: string,
+  userId: string,
+  viewerId?: string,
+): Promise<WorkspaceMemberDTO> {
   const rows = await db
     .select({ m: workspaceMembers, u: users })
     .from(workspaceMembers)
@@ -236,12 +371,17 @@ export async function toMemberDTO(workspaceId: string, userId: string): Promise<
   return {
     userId: r.u.id,
     displayName: r.u.displayName,
-    email: r.u.email,
+    email: visibleEmail(r.u, viewerId),
+    privacyMode: r.u.privacyMode,
     avatarUrl: r.u.avatarUrl,
     statusEmoji: r.u.statusEmoji,
     statusText: r.u.statusText,
+    title: r.u.title,
     isAgent: r.u.isAgent,
-    sponsorId: r.u.isAgent ? r.u.sponsorUserId : null,
+    isBot: r.u.isBot,
+    // #357: the sponsor who vouched for this agent HERE; pre-#357 rows fall
+    // back to the account-level sponsor.
+    sponsorId: r.u.isAgent ? r.m.sponsorUserId ?? r.u.sponsorUserId : null,
     role: r.m.role,
     joinedAt: r.m.joinedAt.toISOString(),
   };
@@ -305,10 +445,6 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
   const tombstoneEligible = !!u && !u.isBot && !u.isAgent;
   // Sponsor-departure cascade (AGENT_MEMBERS.md): their agents go with them.
   if (tombstoneEligible) await removeSponsoredAgents(workspaceId, targetId);
-  // Removing an agent here (admin panel) must mean the same as the Agents
-  // modal: revoke tokens + kill username/key, or the daemon lingers as an
-  // authenticated zombie with no memberships.
-  if (u?.isAgent) await killAgentCredentials(targetId);
   await removeMemberDeep(workspaceId, targetId, async (tx) => {
     // removeMemberDeep has already deleted the target's row for THIS workspace
     // before `also` runs, so any remaining row means they're still elsewhere.
@@ -321,6 +457,148 @@ export async function removeMember(workspaceId: string, actorId: string, targetI
     if (stillMember.length > 0) return;
     await tombstoneUser(tx, targetId, u.email);
   });
+  // Removing an agent here (admin panel) must mean the same as the Agents
+  // modal: revoke tokens + kill username/key, or the daemon lingers as an
+  // authenticated zombie. Since #357 that is only true once its LAST membership
+  // is gone — an agent that still belongs elsewhere keeps working there.
+  if (u?.isAgent) {
+    const stillMember = await db
+      .select({ one: sql`1` })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, targetId))
+      .limit(1);
+    if (stillMember.length === 0) await killAgentCredentials(targetId);
+  }
+}
+
+/**
+ * Delete a workspace outright (#340 follow-up). Owner only, and only when they
+ * are the **last human** in it — the sole owner would otherwise be stuck: they
+ * cannot leave (nobody to transfer to) and nothing else can end the workspace.
+ * Anyone with company still has to hand ownership over or clear the room first,
+ * which keeps this from becoming a way to delete other people's history.
+ *
+ * Agents and bots do not count as company. They are the owner's own tooling,
+ * and making someone remove their own bot before they can close an empty
+ * workspace is busywork — but they must be *torn down*, not merely cascaded
+ * away: `killAgentCredentials` and the app-row delete are what stop a daemon
+ * re-authenticating against a workspace that no longer exists.
+ *
+ * Everything else rides the `workspaces` row's ON DELETE CASCADE (channels,
+ * messages, members, invites, join links, emoji, artifacts, files, apps).
+ * Blobs have no cascade, so uploaded files, their thumbnails and the workspace
+ * avatar are swept first, best-effort — a failed blob delete must not leave the
+ * workspace half-deleted.
+ */
+export async function deleteWorkspace(workspaceId: string, actorId: string): Promise<void> {
+  const m = await requireMembership(workspaceId, actorId);
+  if (m.role !== 'owner') throw forbidden('only the workspace owner can delete a workspace');
+
+  const others = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        ne(workspaceMembers.userId, actorId),
+        eq(users.isBot, false),
+        eq(users.isAgent, false),
+      ),
+    )
+    .limit(1);
+  if (others.length > 0) {
+    throw conflict(
+      'workspace_not_empty',
+      'other members are still in this workspace — remove them or transfer ownership first',
+    );
+  }
+
+  const [w] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+  if (!w) throw notFound('workspace not found');
+
+  // Machine members first: revoke what they authenticate with while their
+  // rows still exist. The cascade would drop the memberships but leave live
+  // agent tokens pointing at nothing.
+  const machines = await db
+    .select({ userId: workspaceMembers.userId, isAgent: users.isAgent })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), ne(workspaceMembers.userId, actorId)));
+  for (const machine of machines) {
+    if (!machine.isAgent) continue;
+    // #357: only the agent's last workspace kills its credentials. One that
+    // also serves another workspace must survive this one's deletion.
+    const elsewhere = await db
+      .select({ one: sql`1` })
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.userId, machine.userId), ne(workspaceMembers.workspaceId, workspaceId)))
+      .limit(1);
+    if (elsewhere.length === 0) await killAgentCredentials(machine.userId);
+  }
+
+  // Blobs, before the rows that name them disappear.
+  const blobs = await db
+    .select({ storageKey: files.storageKey, thumbKey: files.thumbKey })
+    .from(files)
+    .where(eq(files.workspaceId, workspaceId));
+  const store = blobStore();
+  for (const b of blobs) {
+    await store.delete(b.storageKey).catch(() => {});
+    if (b.thumbKey) await store.delete(b.thumbKey).catch(() => {});
+  }
+  await dropAvatarBlob(w.avatarUrl);
+
+  await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+
+  // Reuse the departure event rather than minting a new type: to every client
+  // "this workspace is gone for me" is the same fact whether it was left or
+  // deleted, and that path is already handled on web, macOS and iOS.
+  publishEvent(subjectMeta(workspaceId), {
+    type: 'member.left',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: { userId: actorId, workspaceId },
+  });
+}
+
+/**
+ * Self-service departure (#340): the caller removes themselves from
+ * `workspaceId`. Same cascade as the admin path — `removeMemberDeep` revokes
+ * every channel membership, cleans up dead 1:1 DMs, retires the unread signal
+ * and publishes `member.left` — and their messages stay, still attributed.
+ *
+ * Two deliberate differences from `removeMember` and from `deleteMyAccount`:
+ *
+ *  - **No tombstone.** Admin removal tombstones a member whose last workspace
+ *    this was (decision_log 2026-07-21) — reasonable when someone else is
+ *    ending your relationship with the product, wrong when you are only
+ *    leaving one room. Leaving your last workspace must not silently delete
+ *    your account; the account survives and the client lands on the empty
+ *    state.
+ *  - **No ownership transfer.** `deleteMyAccount` hands a departing owner's
+ *    workspace to the longest-standing admin, because deletion has to be
+ *    completable in-app. Leaving does not: the owner is refused and told to
+ *    transfer ownership first (#340 leaves that flow for later).
+ *
+ * The sponsor-departure cascade still applies — the agents you sponsor here go
+ * with you (AGENT_MEMBERS.md), same as every other way of leaving.
+ */
+export async function leaveWorkspace(workspaceId: string, userId: string): Promise<void> {
+  const m = await requireMembership(workspaceId, userId);
+  if (m.role === 'owner') {
+    throw forbidden('the workspace owner cannot leave — transfer ownership first');
+  }
+  const [u] = await db
+    .select({ isBot: users.isBot, isAgent: users.isAgent })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (u?.isBot || u?.isAgent) {
+    throw forbidden('agent accounts are removed by their sponsor or a workspace admin');
+  }
+  await removeSponsoredAgents(workspaceId, userId);
+  await removeMemberDeep(workspaceId, userId);
 }
 
 /** Owner/admin only (spec permission rules). Returns invite URL with raw token (shown once). */
@@ -389,23 +667,72 @@ export async function createInvite(workspaceId: string, inviterId: string, email
   };
 }
 
-/** Accept invite by raw token → join workspace + auto-join #general. */
-export async function acceptInvite(userId: string, token: string): Promise<WorkspaceDTO> {
-  const tokenHash = hashToken(token);
-  const rows = await db.select().from(invites).where(eq(invites.tokenHash, tokenHash)).limit(1);
-  const inv = rows[0];
+/**
+ * Accept an invite → join the workspace + auto-join #general.
+ *
+ * Two ways in, one row and one code path (#359): the emailed link carries the
+ * raw `token`, while an in-app invitation addressed to a known user carries its
+ * `inviteId` — its token was minted and hashed but never shown to anyone, so id
+ * is the only handle the invitee has. An id only opens the invite addressed to
+ * the caller; anything else reads as "not found".
+ */
+export async function acceptInvite(
+  userId: string,
+  by: { token?: string | undefined; inviteId?: string | undefined },
+): Promise<WorkspaceDTO> {
+  const inv = await findInvite(userId, by);
   if (!inv) throw notFound('invite not found');
   if (inv.acceptedAt) throw conflict('invite_used', 'invite already accepted');
+  if (inv.declinedAt) throw conflict('invite_declined', 'invite was declined');
   if (inv.expiresAt < new Date()) throw badRequest('invite_expired', 'invite has expired');
 
-  await db.transaction(async (tx) => {
+  const joined = await db.transaction(async (tx) => {
     await tx.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, inv.id));
-    await enrollInWorkspace(tx, inv.workspaceId, userId);
+    return enrollInWorkspace(tx, inv.workspaceId, userId);
   });
 
-  await announceJoin(inv.workspaceId, userId);
+  if (joined) await announceJoin(inv.workspaceId, userId);
+  if (inv.invitedUserId) publishInviteEnded(userId, inv.workspaceId, inv.id);
   const ws = await db.select().from(workspaces).where(eq(workspaces.id, inv.workspaceId)).limit(1);
   return toWorkspaceDTO(ws[0]!, 'member');
+}
+
+/**
+ * Decline an in-app workspace invitation (#359). Quiet by design: no membership,
+ * no announcement, nothing said to the inviter — declining is not a message.
+ * The row stays as history and stops blocking a future invite.
+ */
+export async function declineInvite(userId: string, inviteId: string): Promise<void> {
+  const inv = await findInvite(userId, { inviteId });
+  if (!inv) throw notFound('invite not found');
+  if (inv.acceptedAt) throw conflict('invite_used', 'invite already accepted');
+  if (inv.declinedAt) return; // idempotent
+  await db.update(invites).set({ declinedAt: new Date() }).where(eq(invites.id, inv.id));
+  publishInviteEnded(userId, inv.workspaceId, inv.id);
+}
+
+async function findInvite(userId: string, by: { token?: string | undefined; inviteId?: string | undefined }) {
+  if (by.token !== undefined) {
+    return (await db.select().from(invites).where(eq(invites.tokenHash, hashToken(by.token))).limit(1))[0];
+  }
+  if (by.inviteId === undefined) return undefined;
+  return (
+    await db
+      .select()
+      .from(invites)
+      .where(and(eq(invites.id, by.inviteId), eq(invites.invitedUserId, userId)))
+      .limit(1)
+  )[0];
+}
+
+/** Tell the invitee's other sessions the card is gone (accepted or declined). */
+function publishInviteEnded(userId: string, workspaceId: string, inviteId: string): void {
+  publishEvent(subjectUserNotify(userId), {
+    type: 'workspace.invited',
+    workspaceId,
+    ts: new Date().toISOString(),
+    data: { inviteId },
+  });
 }
 
 // ---- Persistent workspace join links (issue #85) --------------------------
@@ -531,10 +858,12 @@ export async function enrollInWorkspace(
   workspaceId: string,
   userId: string,
   role: MemberRole = 'member',
+  /** Agents only (#357): who vouched for this agent in THIS workspace. */
+  sponsorUserId?: string,
 ): Promise<boolean> {
   const inserted = await tx
     .insert(workspaceMembers)
-    .values({ workspaceId, userId, role })
+    .values({ workspaceId, userId, role, sponsorUserId: sponsorUserId ?? null })
     .onConflictDoNothing()
     .returning({ userId: workspaceMembers.userId });
   const general = await tx
@@ -550,6 +879,7 @@ export async function enrollInWorkspace(
 
 /** Broadcast a completed join: the roster event for everyone, plus the
  * per-user nudge that lets the joiner's live sockets subscribe. */
+/** New workspace member: broadcast `member.joined`, subscribe their sockets, and post the #general join line. Call only when the membership row is new. */
 export async function announceJoin(workspaceId: string, userId: string, role: MemberRole = 'member'): Promise<void> {
   const u = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   publishEvent(subjectMeta(workspaceId), {
@@ -559,7 +889,9 @@ export async function announceJoin(workspaceId: string, userId: string, role: Me
     data: {
       userId,
       displayName: u[0]?.displayName ?? '',
-      email: u[0]?.email ?? '',
+      // #489: a roster event reaches the whole workspace, so it carries no
+      // hidden address.
+      email: u[0] ? visibleEmail(u[0]) : '',
       avatarUrl: u[0]?.avatarUrl ?? null,
       isAgent: u[0]?.isAgent ?? false,
       role,
@@ -567,6 +899,15 @@ export async function announceJoin(workspaceId: string, userId: string, role: Me
     },
   });
   publishWorkspaceJoined(workspaceId, userId);
+  // The enrollment put them in #general silently; say so in the timeline, the
+  // same "X joined the channel" line a Browse→Join or an agent's auto-join
+  // posts. Best-effort inside postSystemMessage — never aborts the join.
+  const general = await db
+    .select({ id: channels.id, workspaceId: channels.workspaceId, kind: channels.kind })
+    .from(channels)
+    .where(and(eq(channels.workspaceId, workspaceId), eq(channels.name, 'general')))
+    .limit(1);
+  if (general[0]) await postSystemMessage(general[0], userId, 'member_joined');
 }
 
 /** Tell the joining user's live sockets so the gateway can subscribe them (they authed before joining). */

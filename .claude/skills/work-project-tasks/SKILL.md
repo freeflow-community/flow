@@ -57,7 +57,7 @@ gh auth status          # want: Token scopes include 'project'
 ## 1. Find the next batch
 
 ```sh
-bash skills/work-project-tasks/next-batch.sh
+bash .claude/skills/work-project-tasks/next-batch.sh
 ```
 
 It prints a JSON array of the batch members (`itemId`, `number`, `title`,
@@ -73,11 +73,31 @@ them.
 
 ## 2. Claim the batch
 
-Set every member to `In Progress` **before** you start, so a second agent
-doesn't take the same work:
+Claiming is **two steps in this order**: take the lock, then set the status.
+
+### 2a. Take the cross-machine lock
 
 ```sh
-bash skills/work-project-tasks/set-status.sh "In Progress" <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/task-lock.sh claim <lowest issue number>
+```
+
+**If this exits non-zero, another machine owns the batch. Stop — that is not an
+error, and it is not yours to retry.** Say so and end the run.
+
+Setting `In Progress` is a *signal*, not a claim. Projects V2 has no conditional
+update, so two machines can both read a batch as `Queued for Dev`, both write
+`In Progress`, and both start the same work. Creating a git ref is a real
+compare-and-swap: GitHub gives 201 to exactly one caller and 422 to the rest.
+That is the lock, and unlike anything on one machine's disk it works when runs
+are dispatched from more than one Mac.
+
+The lock is keyed on the **batch** — the lowest issue number — so claiming half
+a batch is impossible.
+
+### 2b. Set the status
+
+```sh
+bash .claude/skills/work-project-tasks/set-status.sh "In Progress" <itemId> [<itemId> ...]
 ```
 
 Claim the **whole batch in one go**. `next-batch.sh` only lists members that are
@@ -124,7 +144,7 @@ the order you will do them. Not the issue restated: the steps. Then work the
 plan and post one short message per step you finish, naming the step and what
 it produced. If the plan changes, post the revision and the reason.
 
-Follow skills/work-project-tasks/SKILL.md §4–§8: fresh worktree off
+Follow .claude/skills/work-project-tasks/SKILL.md §4–§8: fresh worktree off
 origin/main, build, test, verify in the running app with screenshots, one PR
 closing every issue, then set the items Done — or Blocked per "If you can't
 finish". Post here at the moments §3's reporting list names; upload
@@ -362,8 +382,14 @@ close all of them.
 Only after the PR is open (and merged, if you were asked to merge):
 
 ```sh
-bash skills/work-project-tasks/set-status.sh Done <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/set-status.sh Done <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/task-lock.sh release <lowest issue number>
 ```
+
+**Release the lock, always** — on `Done` and on `Blocked` alike. A lock left
+behind blocks that batch for every machine, and the hourly sweeper will report
+it as stale with your hostname on it. This is why "every task you claim ends as
+`Done` or `Blocked`" is now load-bearing rather than good manners.
 
 Then close out **in the channel**: the PR URL, the issues it closes, what you
 verified, and anything you deliberately left out. A handed-off run's final
@@ -384,7 +410,8 @@ Both steps are required. The status is the signal, the comment is the reason,
 and a status with no reason just hands a human the same puzzle you had.
 
 ```sh
-bash skills/work-project-tasks/set-status.sh Blocked <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/set-status.sh Blocked <itemId> [<itemId> ...]
+bash .claude/skills/work-project-tasks/task-lock.sh release <lowest issue number>
 
 gh issue comment <n> --repo freeflow-community/flow --body "$(cat <<'EOF'
 **Blocked:** <the one-line reason>
@@ -422,7 +449,11 @@ round trip.
 - **Don't mark Done without a PR.** Done means the change exists and is
   reviewable, not that you finished editing.
 - **Don't leave anything in `In Progress`.** Every task you claim ends the run
-  as `Done` or `Blocked`.
+  as `Done` or `Blocked` — **and releases its lock.** A lock left behind blocks
+  that batch on every machine, not just this one.
+- **Don't take work whose lock you lost.** A non-zero `task-lock.sh claim` means
+  another machine has it. That's the system working, not a problem to route
+  around — never delete someone else's lock to proceed.
 - **Don't retry a `Blocked` task.** It's blocked on a human, not on effort.
 - **Don't push to `main`.** Everything goes through a PR.
 - **Don't leave your servers running.** The run ends with the machine as you

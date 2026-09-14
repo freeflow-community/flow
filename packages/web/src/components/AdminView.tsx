@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 // Admin panel (owner/admin, web-only per operator ruling — like Apps/Agents).
 // A virtual content-pane view (not a real channel) reached from the workspace
 // menu's "Manage Users…" and pinned into the sidebar as the "Manage users" row.
@@ -89,6 +90,7 @@ function MemberRow({
   meId: string;
   workspaceId: string;
 }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);

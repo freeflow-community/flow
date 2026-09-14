@@ -1,8 +1,24 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { SIDEBAR_COLORS, PROFILE_BIO_MAX, PROFILE_WEBSITE_MAX, isProfileWebsiteUrl } from '@flow/shared';
-import type { ChannelDTO, InviteDTO, JoinLinkDTO, NotificationPrefs, UserDTO } from '@flow/shared';
-import { api, uploadAvatar } from '../lib/api';
+import {
+  SIDEBAR_COLORS,
+  PROFILE_BIO_MAX,
+  PROFILE_TITLE_MAX,
+  PROFILE_WEBSITE_MAX,
+  isProfileWebsiteUrl,
+} from '@flow/shared';
+import type {
+  ChannelDTO,
+  InviteDTO,
+  JoinLinkDTO,
+  NotificationPrefs,
+  UserDTO,
+  UserWorkspaceInviteResponse,
+  WorkspaceDTO,
+  WorkspaceInviteTargetsDTO,
+} from '@flow/shared';
+import { ApiError, api, uploadAvatar, uploadWorkspaceAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
 import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
 import { AuthImg, Avatar } from './Avatar';
@@ -40,6 +56,7 @@ export function Modal({
 }
 
 export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const sel = useSelection();
   const [name, setName] = useState('');
@@ -91,6 +108,7 @@ export function CreateChannelModal({ workspaceId, onClose }: { workspaceId: stri
  * can be neither renamed nor deleted.
  */
 export function ChannelOptionsModal({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const sel = useSelection();
   const [name, setName] = useState(channel.name ?? '');
@@ -167,6 +185,7 @@ export function ChannelOptionsModal({ channel, onClose }: { channel: ChannelDTO;
  * non-consumer domain; the server re-checks all of that.
  */
 function SelfRegisterToggle({ workspaceId }: { workspaceId: string }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
   const domain = useSelfRegisterDomain();
@@ -211,6 +230,7 @@ function SelfRegisterToggle({ workspaceId }: { workspaceId: string }) {
  * Regenerate replaces it (which kills the old URL) and Revoke removes it.
  */
 function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
+  const { api } = useBoundApi();
   const [url, setUrl] = useState<string | null>(null);
   // null = still asking; false = the server said no (not an owner/admin), which
   // is the same permission that gates emailed invites, so we hide the section.
@@ -288,6 +308,7 @@ function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
 }
 
 export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const [email, setEmail] = useState('');
   const [invite, setInvite] = useState<InviteDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -339,6 +360,7 @@ export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onC
 }
 
 export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
@@ -397,6 +419,7 @@ export function NewDmModal({ workspaceId, onClose }: { workspaceId: string; onCl
 
 /** Channel actions: notify level, invite members, leave, archive. */
 export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose: () => void }) {
+  const { api } = useBoundApi();
   const sel = useSelection();
   const qc = useQueryClient();
   const auth = useAuth();
@@ -524,19 +547,141 @@ export function ChannelMenu({ channel, onClose }: { channel: ChannelDTO; onClose
   );
 }
 
-/** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
-export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+/**
+ * Leaving a workspace (#340). Destructive and irreversible from the leaver's
+ * side — they need a re-invite to come back — so it confirms first and says
+ * plainly what survives. The owner never reaches this dialog; the menu item
+ * that opens it is disabled for them.
+ */
+export function LeaveWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api, serverOrigin } = useBoundApi();
+  const account = useAuth();
   const qc = useQueryClient();
+  const sel = useSelection();
   const workspaces = useWorkspaces();
-  const current = (workspaces.data ?? []).find((w) => w.id === workspaceId)?.sidebarColor;
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pick = async (id: string) => {
+  const leave = async () => {
     setError(null);
     setBusy(true);
     try {
-      await api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id });
+      await api('POST', `/v1/workspaces/${workspaceId}/leave`);
+      // Land somewhere valid before the list refetches, so no render sees a
+      // selection pointing at a workspace that is gone.
+      const next = (workspaces.data ?? []).find((w) => w.id !== workspaceId);
+      sel.selectWorkspace(next?.id ?? null);
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="leave-workspace-modal">
+      <h3 className="mb-2 font-bold">Leave {ws?.name ?? 'workspace'}?</h3>
+      <p className="mb-2 text-sm">{account.user?.email} · {serverOrigin}</p>
+      <p className="mb-4 text-sm text-ink-soft">
+        You&rsquo;ll lose access to all its channels. Your past messages will remain.
+      </p>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          data-testid="leave-workspace-confirm"
+          className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void leave()}
+        >
+          {busy ? 'Leaving…' : 'Leave workspace'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Deleting a workspace (#340 follow-up). Only reachable by an owner who is the
+ * last person in it — otherwise there is somebody to hand it to, and the menu
+ * offers "transfer ownership first" instead.
+ *
+ * Confirmation weight matches "Delete account" in `ProfileModal`, the nearest
+ * equally irreversible action in this app: an explicit destructive press, no
+ * type-the-name gesture. The blast radius here is one person's own workspace.
+ */
+export function DeleteWorkspaceModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
+  const qc = useQueryClient();
+  const sel = useSelection();
+  const workspaces = useWorkspaces();
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const destroy = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api('DELETE', `/v1/workspaces/${workspaceId}`);
+      const next = (workspaces.data ?? []).find((w) => w.id !== workspaceId);
+      sel.selectWorkspace(next?.id ?? null);
+      await qc.invalidateQueries({ queryKey: ['workspaces'] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} testid="delete-workspace-modal">
+      <h3 className="mb-2 font-bold">Delete {ws?.name ?? 'workspace'}?</h3>
+      <p className="mb-4 text-sm text-ink-soft">
+        You&rsquo;re the only one left, so there&rsquo;s nobody to hand it to. Deleting removes the workspace
+        and every channel, message and file in it, for good. This cannot be undone.
+      </p>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button className="px-3 py-1.5 text-sm text-ink-soft" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          data-testid="delete-workspace-confirm"
+          className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void destroy()}
+        >
+          {busy ? 'Deleting…' : 'Delete workspace'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Workspace sidebar color picker (phase 3.5 ruling 3): admins only reach this. */
+/** Owner/admin workspace branding: the sidebar color preset, and the optional
+ * avatar image (#336) that replaces the color/initial mark when set. */
+export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const { api, uploadWorkspaceAvatar } = useBoundApi();
+  const qc = useQueryClient();
+  const workspaces = useWorkspaces();
+  const ws = (workspaces.data ?? []).find((w) => w.id === workspaceId);
+  const current = ws?.sidebarColor;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  /** Both branding writes look the same from here: run it, refresh the list
+   * (the server has already broadcast `workspace.updated` to everyone else). */
+  const save = async (write: () => Promise<unknown>) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await write();
       await qc.invalidateQueries({ queryKey: ['workspaces'] });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed');
@@ -545,9 +690,59 @@ export function WorkspaceColorModal({ workspaceId, onClose }: { workspaceId: str
     }
   };
 
+  const pick = (id: string) => save(() => api('PATCH', `/v1/workspaces/${workspaceId}`, { sidebarColor: id }));
+
+  const pickAvatar = (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    void save(() => uploadWorkspaceAvatar(workspaceId, file));
+  };
+
   return (
     <Modal onClose={onClose} testid="workspace-color-modal">
-      <h3 className="mb-3 font-bold">Workspace color</h3>
+      <h3 className="mb-3 font-bold">Workspace appearance</h3>
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Avatar</label>
+      <div className="mb-4 flex items-center gap-3">
+        {ws?.avatarUrl ? (
+          <AuthImg
+            path={ws.avatarUrl}
+            alt={ws.name}
+            className="h-12 w-12 rounded-xl object-cover"
+          />
+        ) : (
+          <span
+            data-testid="workspace-avatar-placeholder"
+            className="flex h-12 w-12 items-center justify-center rounded-xl bg-daypill text-lg font-bold text-muted"
+          >
+            {(ws?.name ?? '?').slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        <div className="flex flex-col items-start gap-0.5">
+          <label className="cursor-pointer text-sm text-accent-soft hover:underline">
+            {busy ? 'Working…' : ws?.avatarUrl ? 'Replace image…' : 'Upload image…'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              hidden
+              data-testid="workspace-avatar-input"
+              onChange={(e) => { pickAvatar(e.target.files); e.target.value = ''; }}
+            />
+          </label>
+          {ws?.avatarUrl ? (
+            <button
+              data-testid="workspace-avatar-remove"
+              disabled={busy}
+              className="text-sm text-ink-soft hover:underline disabled:opacity-50"
+              onClick={() => void save(() => api('DELETE', `/v1/workspaces/${workspaceId}/avatar`))}
+            >
+              Remove
+            </button>
+          ) : (
+            <span className="text-xs text-faint">PNG, JPEG, GIF or WebP — under 1MB.</span>
+          )}
+        </div>
+      </div>
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Color</label>
       <div className="mb-3 grid grid-cols-4 gap-2">
         {SIDEBAR_COLORS.map((c) => (
           <button
@@ -605,9 +800,11 @@ function PrefToggle({
 }
 
 export function ProfileModal({ onClose }: { onClose: () => void }) {
+  const { serverOrigin, api, uploadAvatar } = useBoundApi();
   const auth = useAuth();
   const qc = useQueryClient();
   const [displayName, setDisplayName] = useState(auth.user.displayName);
+  const [title, setTitle] = useState(auth.user.title ?? '');
   const [timezone, setTimezone] = useState(auth.user.timezone || 'UTC');
   const [website, setWebsite] = useState(auth.user.website ?? '');
   const [bio, setBio] = useState(auth.user.bio ?? '');
@@ -639,6 +836,8 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
     try {
       const me = await api<UserDTO>('PATCH', '/v1/me', {
         displayName,
+        // #434: '' clears the title — the server trims, so a blank field is "unset"
+        title: title.trim(),
         timezone,
         website: website.trim(),
         bio,
@@ -656,6 +855,20 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
     try {
       const me = await api<UserDTO>('PATCH', '/v1/me', { notificationPrefs: { [key]: value } });
       auth.setUser(me);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
+
+  /** #489: live-saved like the notification prefs rather than waiting on Save —
+   * a privacy switch that needed a second click to take effect would be the
+   * wrong shape. The roster is refetched so the Directory drops (or restores)
+   * this member in the same beat. */
+  const setPrivacyMode = async (value: boolean) => {
+    try {
+      const me = await api<UserDTO>('PATCH', '/v1/me', { privacyMode: value });
+      auth.setUser(me);
+      await qc.invalidateQueries({ queryKey: ['members'] });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed');
     }
@@ -697,6 +910,14 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Display name</label>
       <input data-testid="profile-name" className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+      {/* #434: directly under the name — the two together are what a Directory
+          card shows, so they are edited together. */}
+      <label className="mb-1 block text-xs font-semibold text-faint uppercase">Title</label>
+      <input data-testid="profile-title" placeholder="Title (optional)" maxLength={PROFILE_TITLE_MAX}
+        className="w-full rounded border border-hairline2 px-3 py-2 text-sm"
+        value={title} onChange={(e) => setTitle(e.target.value)} />
+      <p className="mb-3 mt-1 text-xs text-faint">Shown under your name in the Directory.</p>
+
       <label className="mb-1 block text-xs font-semibold text-faint uppercase">Timezone</label>
       <select data-testid="profile-timezone" className="mb-3 w-full rounded border border-hairline2 px-3 py-2 text-sm"
         value={timezone} onChange={(e) => setTimezone(e.target.value)}>
@@ -739,14 +960,32 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.threadReply !== false} onChange={(v) => void setPref('threadReply', v)} />
       <PrefToggle testid="pref-reaction" label="Reactions" hint="someone reacts to your message"
         checked={prefs.reaction !== false} onChange={(v) => void setPref('reaction', v)} />
+      <PrefToggle testid="pref-channel-invite" label="Channel invites" hint="someone adds you to a channel"
+        checked={prefs.channelInvite !== false} onChange={(v) => void setPref('channelInvite', v)} />
+      <PrefToggle testid="pref-sound" label="Play a sound" hint="with every banner"
+        checked={prefs.sound !== false} onChange={(v) => void setPref('sound', v)} />
       <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
         checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
+
+      {/* #489. The address sits in this section rather than up with the
+          editable fields because it is not editable — and because "here is
+          your email, here is the switch that hides it" is one thought. */}
+      <div className="mt-2 mb-1 border-t border-hairline pt-3 text-xs font-semibold text-faint uppercase">
+        Privacy
+      </div>
+      <p className="mb-1 text-sm text-ink">
+        <span className="text-faint">Email: </span>
+        <span data-testid="profile-email" className="select-all">{auth.user.email}</span>
+      </p>
+      <PrefToggle testid="pref-privacy-mode" label="Privacy mode"
+        hint="Hide your email and remove you from the Directory."
+        checked={auth.user.privacyMode} onChange={(v) => void setPrivacyMode(v)} />
 
       <div className="mt-3 border-t border-hairline pt-3">
         {confirmingDelete ? (
           <div data-testid="profile-delete-confirm">
             <p className="mb-2 text-sm text-red-600">
-              Permanently delete your account? You leave every workspace, your email is freed for future
+              Permanently delete {auth.user.email} on {serverOrigin}? You leave every workspace on this server, your email is freed for future
               use, and this cannot be undone. Past messages remain, attributed to your name.
             </p>
             <div className="flex gap-2">
@@ -777,8 +1016,136 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * "Invite to workspace" (#358): bring this member into another workspace of
+ * mine. One control for two flows, because from the inviter's side it is one
+ * intention — an agent joins on the spot (its sponsor vouches for it, #357), a
+ * person is asked and joins when they accept (#359).
+ *
+ * The list is the server's answer to "which of my workspaces is this member NOT
+ * in", so it never offers a move that can only fail.
+ */
+function InviteToWorkspace({ user, onDone }: { user: UserDTO; onDone: () => void }) {
+  const { api } = useBoundApi();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [targets, setTargets] = useState<WorkspaceDTO[] | null>(null);
+  // Whether the server had nothing to offer in the first place. Distinct from
+  // "the list is empty now": after inviting into the last candidate, the right
+  // thing to say is the confirmation, not "already in all your workspaces".
+  const [noneToOffer, setNoneToOffer] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const show = async () => {
+    setOpen(true);
+    setError(null);
+    if (targets) return;
+    try {
+      const res = await api<WorkspaceInviteTargetsDTO>('GET', `/v1/users/${user.id}/workspace-invites`);
+      setTargets(res.workspaces);
+      setNoneToOffer(res.workspaces.length === 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed');
+    }
+  };
+
+  const invite = async (ws: WorkspaceDTO) => {
+    setBusy(ws.id);
+    setError(null);
+    try {
+      if (user.isAgent) {
+        await api('POST', `/v1/agents/${user.id}/workspace-invites`, { workspaceId: ws.id });
+        setDone(`${user.displayName} joined ${ws.name}`);
+        await qc.invalidateQueries({ queryKey: ['members', ws.id] });
+      } else {
+        // Idempotent server-side (#359): `created: false` means an identical
+        // invitation was already in flight, which is "already invited", not a
+        // second send.
+        const res = await api<UserWorkspaceInviteResponse>(
+          'POST',
+          `/v1/users/${user.id}/workspace-invites`,
+          { workspaceId: ws.id },
+        );
+        setDone(
+          res.created
+            ? `Invitation sent to ${user.displayName}`
+            : `${user.displayName} has already been invited to ${ws.name}`,
+        );
+      }
+      // Whatever happened, that workspace is no longer a candidate.
+      setTargets((prev) => (prev ?? []).filter((w) => w.id !== ws.id));
+      onDone();
+    } catch (err) {
+      setError(inviteErrorText(err, user, ws));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        data-testid="user-card-invite-workspace"
+        className="rounded border border-hairline px-4 py-1.5 text-sm"
+        onClick={() => void show()}
+      >
+        Invite to workspace
+      </button>
+    );
+  }
+
+  return (
+    <div data-testid="invite-workspace-panel" className="mt-2 w-full text-left">
+      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Invite to workspace</p>
+      {targets === null && !error && <p className="text-sm text-faint">Loading…</p>}
+      {noneToOffer && (
+        <p data-testid="invite-workspace-empty" className="text-sm text-muted">
+          {user.displayName} is already in all your workspaces.
+        </p>
+      )}
+      <div className="space-y-1">
+        {(targets ?? []).map((ws) => (
+          <button
+            key={ws.id}
+            data-testid={`invite-workspace-${ws.slug}`}
+            className="flex w-full items-center gap-2 rounded border border-hairline px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50"
+            disabled={busy !== null}
+            onClick={() => void invite(ws)}
+          >
+            {ws.avatarUrl ? (
+              <AuthImg path={ws.avatarUrl} alt={ws.name} className="h-5 w-5 rounded object-cover" />
+            ) : (
+              <span className="flex h-5 w-5 items-center justify-center rounded bg-accent text-[10px] font-bold text-white">
+                {ws.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <span className="flex-1 truncate text-left">{ws.name}</span>
+            {busy === ws.id && <span className="text-xs text-faint">…</span>}
+          </button>
+        ))}
+      </div>
+      {done && <p data-testid="invite-workspace-done" className="mt-1 text-sm text-accent-deep">{done}</p>}
+      {error && <p data-testid="invite-workspace-error" className="mt-1 text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+/** The inline message for a failed invite — the server's codes, said in names. */
+export function inviteErrorText(err: unknown, user: UserDTO, ws: WorkspaceDTO): string {
+  const code = err instanceof ApiError ? err.code : '';
+  if (code === 'already_member') return `${user.displayName} is already in ${ws.name}.`;
+  if (code === 'username_taken') {
+    return `A member of ${ws.name} already uses ${user.displayName}'s handle — rename one of them first.`;
+  }
+  if (code === 'invite_exists') return `${user.displayName} has already been invited to ${ws.name}.`;
+  return err instanceof Error ? err.message : 'failed';
+}
+
 /** Member profile card: avatar, email, local time, Message button. */
 export function UserCard({ userId, onClose }: { userId: string; onClose: () => void }) {
+  const { api } = useBoundApi();
   const auth = useAuth();
   const sel = useSelection();
   const qc = useQueryClient();
@@ -832,8 +1199,16 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
             {user.displayName}
             {user.isAgent && <span title="AI agent"> 🤖</span>}
           </p>
+          {/* #434: under the name, same as the Directory card it opens from. */}
+          {user.title && (
+            <p data-testid="user-card-title" className="max-w-full truncate text-sm text-ink-soft">
+              {user.title}
+            </p>
+          )}
           {user.isAgent && <p className="text-xs text-muted">AI agent</p>}
-          <p className="text-sm text-muted select-all">{user.email}</p>
+          {/* #489: '' means the address is hidden — draw no line rather than an
+              empty one that reserves space for something nobody will see. */}
+          {user.email && <p className="text-sm text-muted select-all">{user.email}</p>}
           <p data-testid="user-card-localtime" className="text-sm text-muted">{localTime(user.timezone)}</p>
           {/* #220: the server only stores http(s) URLs, but re-check before
               making it clickable — a row written before that rule must not
@@ -872,11 +1247,18 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
               <span className="text-sm font-semibold">{sponsor.displayName}</span>
             </div>
           )}
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-wrap justify-center gap-2">
             {userId !== auth.user.id && (
               <button data-testid="user-card-message"
                 className="rounded bg-accent px-4 py-1.5 text-sm font-semibold text-white"
                 onClick={() => void message()}>Message</button>
+            )}
+            {/* Never on your own profile: you are already in your workspaces. */}
+            {userId !== auth.user.id && (
+              <InviteToWorkspace
+                user={user}
+                onDone={() => void qc.invalidateQueries({ queryKey: ['workspaces'] })}
+              />
             )}
             <button className="rounded border border-hairline px-4 py-1.5 text-sm" onClick={onClose}>Close</button>
           </div>

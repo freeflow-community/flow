@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { HUDDLE_SYSTEM_KINDS } from '@flow/shared';
 import type { FileDTO, MessageDTO, MessagePage, ReactionAggDTO, SystemMessageKind, UnfurlDTO } from '@flow/shared';
 import { db, schema } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -6,16 +7,37 @@ import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { decryptBody, encryptBody } from '../crypto/index.js';
 import { requireChannelAccess } from './channels.js';
 import { reactionsForMessages } from './reactions.js';
-import { filesForMessages, validateAttachments, toFileDTO } from './files.js';
-import { computeRecipients, insertNotifications, publishNotifications } from './notifications.js';
+import { filesForMessages, reapFileIfUnreferenced, validateAttachments, toFileDTO } from './files.js';
+import {
+  computeRecipients,
+  insertNotifications,
+  publishNotificationRetirements,
+  publishNotifications,
+} from './notifications.js';
 import { enqueueMessageEvents } from './appEvents.js';
 import { publishEvent, subjectMsg } from '../bus.js';
 import { scheduleForMessage, unfurlsForMessages } from './unfurl/index.js';
+import { requireMembership } from './workspaces.js';
+import { expandMentions as expandMentionText } from '../lib/mentionExpansion.js';
 
-const { messages, channelMembers, messageFiles } = schema;
+const { messages, channelMembers, messageFiles, notifications, users, workspaceMembers } = schema;
 
 type MessageRow = typeof messages.$inferSelect;
 export type HydratedMessageRow = MessageRow;
+
+/** Pure authorization rule kept exported so role semantics have a fast unit test. */
+export function mayDeleteMessage(
+  actorId: string,
+  authorId: string,
+  role: 'owner' | 'admin' | 'member',
+  permanently: boolean,
+  isSystem: boolean,
+  allowOwnPermanentDelete = false,
+): boolean {
+  if (isSystem) return false;
+  if (!permanently) return actorId === authorId;
+  return role === 'owner' || role === 'admin' || (allowOwnPermanentDelete && actorId === authorId);
+}
 
 interface DtoExtras {
   reactions?: ReactionAggDTO[] | undefined;
@@ -39,6 +61,7 @@ export function toMessageDTO(row: MessageRow, extras?: DtoExtras): MessageDTO {
     pinnedAt: extras?.pin?.pinnedAt.toISOString() ?? null,
     pinnedBy: extras?.pin?.pinnedBy ?? null,
     systemKind: (row.systemKind as MessageDTO['systemKind']) ?? null,
+    scheduled: row.scheduled,
     replyCount: row.replyCount,
     lastReplyAt: row.lastReplyAt?.toISOString() ?? null,
     replyParticipantUserIds: extras?.replyParticipants ?? [],
@@ -118,10 +141,23 @@ async function pinsForMessages(
   return out;
 }
 
+/** Workspace members an API-posted `@Name` can resolve to (#415). */
+async function workspaceMentionCandidates(workspaceId: string): Promise<{ id: string; displayName: string }[]> {
+  return db
+    .select({ id: users.id, displayName: users.displayName })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), isNull(users.deletedAt)));
+}
+
 /**
  * Send message (spec write path): validate → insert (encrypted) + attach files
  * + write notification rows, one transaction → publish. Public channels:
  * auto-join on first post. Idempotent on (channel, clientMsgId).
+ *
+ * `opts.expandMentions` (#415) rewrites `@Display Name` to `<@userId>` before
+ * anything else looks at the body, so an API-posted mention is indistinguishable
+ * from a composer-typed one all the way down.
  */
 export async function sendMessage(
   channelId: string,
@@ -131,6 +167,7 @@ export async function sendMessage(
   threadRootId?: string,
   fileIds?: string[],
   mentions?: string[],
+  opts?: { expandMentions?: boolean; scheduled?: boolean },
 ): Promise<MessageDTO> {
   const { chan, isMember } = await requireChannelAccess(channelId, userId);
   if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
@@ -153,10 +190,22 @@ export async function sendMessage(
     if (!root || root.channelId !== channelId) throw badRequest('bad_thread_root', 'thread root not found in this channel');
     if (root.threadRootId !== null) throw badRequest('bad_thread_root', 'replies must target the thread root (one level deep)');
     if (root.deletedAt) throw badRequest('bad_thread_root', 'cannot reply to a deleted message');
+    // No client draws a thread affordance on a join/leave line, so a thread
+    // hung off one is unreachable — and any notification it raises can never
+    // be read by opening it (#270). Refuse the reply rather than build the trap.
+    if (root.systemKind) throw badRequest('bad_thread_root', 'cannot reply to a system message');
   }
 
   const attachRows = await validateAttachments(fileIds ?? [], chan.workspaceId, userId);
-  const { recipients, alertContext } = await computeRecipients(chan, userId, body, mentions ?? [], threadRootId);
+
+  let mentionIds = mentions ?? [];
+  if (opts?.expandMentions) {
+    const expanded = expandMentionText(body, await workspaceMentionCandidates(chan.workspaceId));
+    body = expanded.text;
+    if (expanded.userIds.length > 0) mentionIds = [...new Set([...mentionIds, ...expanded.userIds])];
+  }
+
+  const { recipients, alertContext } = await computeRecipients(chan, userId, body, mentionIds, threadRootId);
 
   const id = newId();
   const enc = encryptBody(body);
@@ -178,6 +227,9 @@ export async function sendMessage(
         encKeyId: enc.encKeyId,
         encScheme: enc.encScheme,
         createdAt: now,
+        // #419: this row was posted by a scheduled message, not typed. Nothing
+        // else on the write path changes — clients render a badge off it.
+        scheduled: opts?.scheduled === true,
       })
       .onConflictDoNothing({ target: [messages.channelId, messages.clientMsgId] })
       .returning();
@@ -209,7 +261,7 @@ export async function sendMessage(
       tx,
       chan,
       { id, userId, body, threadRootId: threadRootId ?? null },
-      mentions ?? [],
+      mentionIds,
     );
   });
 
@@ -240,6 +292,11 @@ export async function sendMessage(
 const SYSTEM_PREDICATE: Record<SystemMessageKind, string> = {
   member_joined: 'joined the channel',
   member_left: 'left the channel',
+  // Huddle outcomes (#436) render as their own sentence, not "<Name> <predicate>"
+  // — postHuddleSystemMessage builds those bodies and never reaches this table.
+  huddle_missed: '',
+  huddle_declined: '',
+  huddle_ended: '',
 };
 
 /**
@@ -253,13 +310,18 @@ const SYSTEM_PREDICATE: Record<SystemMessageKind, string> = {
  * The body is the pre-rendered sentence so every client (and scroll-back
  * history) reads correctly without a live member lookup; the name reflects the
  * user at the moment of the event, which is what we want.
+ *
+ * Returns the posted message, or null when there wasn't one (a non-standard
+ * channel, or a failure it swallowed). #303 hangs the channel-invite
+ * notification off this row — every notification anchors to a message, and the
+ * join line is both already there and the right tap destination.
  */
 export async function postSystemMessage(
   chan: { id: string; workspaceId: string; kind: string },
   subjectUserId: string,
   kind: SystemMessageKind,
-): Promise<void> {
-  if (chan.kind !== 'standard') return;
+): Promise<MessageDTO | null> {
+  if (chan.kind !== 'standard') return null;
   try {
     const who = await db
       .select({ displayName: schema.users.displayName })
@@ -288,17 +350,93 @@ export async function postSystemMessage(
       })
       .returning();
     const row = inserted[0];
-    if (!row) return;
+    if (!row) return null;
+    const dto = toMessageDTO(row);
     publishEvent(subjectMsg(chan.workspaceId, chan.id), {
       type: 'message.created',
       workspaceId: chan.workspaceId,
       channelId: chan.id,
       ts: now.toISOString(),
-      data: toMessageDTO(row),
+      data: dto,
     });
+    return dto;
   } catch (err) {
     // Best-effort: a failed courtesy line must not abort the join/leave.
     console.error('postSystemMessage failed', { channelId: chan.id, kind, err });
+    return null;
+  }
+}
+
+/**
+ * The DM transcript line a huddle leaves behind (#436): "Missed huddle",
+ * "Call declined", "Call ended · 4 min". Sibling of postSystemMessage, split
+ * out because it differs on both halves of that function's contract:
+ *
+ * - it posts into **DMs and group DMs**, which postSystemMessage refuses (a
+ *   join/leave line there would be nonsense; a missed call there is the whole
+ *   point), and
+ * - it **notifies**, through the ordinary DM path — a missed call that left no
+ *   unread and no badge is a missed call you never learn about. `computeRecipients`
+ *   gives every other member kind 1 (dm) and already drops anyone who muted
+ *   the conversation, so muting a DM silences its call lines too, for free.
+ *
+ * Body is pre-rendered, like every system message, so scroll-back reads
+ * correctly with no live lookup. Best-effort: a failed line must not fail the
+ * call it describes.
+ */
+export async function postHuddleSystemMessage(
+  chan: { id: string; workspaceId: string },
+  authorId: string,
+  kind: (typeof HUDDLE_SYSTEM_KINDS)[number],
+  body: string,
+): Promise<MessageDTO | null> {
+  try {
+    const chanRow = (await db.select().from(schema.channels).where(eq(schema.channels.id, chan.id)).limit(1))[0];
+    if (!chanRow) return null;
+    const { recipients, alertContext } = await computeRecipients(chanRow, authorId, body, []);
+
+    const id = newId();
+    const now = new Date();
+    const enc = encryptBody(body);
+    let row: MessageRow | undefined;
+    let planned: Awaited<ReturnType<typeof insertNotifications>> = [];
+    await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(messages)
+        .values({
+          id,
+          channelId: chan.id,
+          userId: authorId,
+          threadRootId: null,
+          clientMsgId: newId(),
+          body: enc.body,
+          bodyNonce: enc.bodyNonce,
+          encKeyId: enc.encKeyId,
+          encScheme: enc.encScheme,
+          createdAt: now,
+          systemKind: kind,
+        })
+        .returning();
+      row = inserted[0];
+      if (!row) return;
+      planned = await insertNotifications(tx, recipients, id, chan.id, authorId);
+    });
+    if (!row) return null;
+
+    const dto = toMessageDTO(row);
+    const ts = now.toISOString();
+    publishEvent(subjectMsg(chan.workspaceId, chan.id), {
+      type: 'message.created',
+      workspaceId: chan.workspaceId,
+      channelId: chan.id,
+      ts,
+      data: dto,
+    });
+    publishNotifications(planned, alertContext, dto, chan.workspaceId, ts);
+    return dto;
+  } catch (err) {
+    console.error('postHuddleSystemMessage failed', { channelId: chan.id, kind, err });
+    return null;
   }
 }
 
@@ -474,15 +612,16 @@ export async function editMessage(messageId: string, userId: string, body: strin
  * ciphertext, row kept, `deletedAt` set (spec §2) — clients render a tombstone.
  *
  * `hard` fully removes the row (child reactions/files/notifications cascade)
- * and publishes `message.purged` so clients drop it with no tombstone. Used by
- * the agent-bridge for its ephemeral "thinking…" status message, whose whole
- * point is to vanish on completion — a soft delete would leave a stray
- * "This message was deleted" line above the real reply.
+ * and publishes `message.purged` so clients drop it with no tombstone. Owners
+ * and admins may purge any message they can see. Session-authenticated agent
+ * identities may purge their own ephemeral status rows for bridge compatibility; ordinary
+ * members cannot turn their own soft deletes into permanent deletes. Purging a
+ * root removes its complete thread, while purging one reply repairs the rollup.
  */
 export async function deleteMessage(
   messageId: string,
   userId: string,
-  opts?: { hard?: boolean },
+  opts?: { hard?: boolean; allowOwnPermanentDelete?: boolean },
 ): Promise<void> {
   const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
   const row = rows[0];
@@ -491,10 +630,53 @@ export async function deleteMessage(
     throw notFound('message not found');
   }
   const { chan } = await requireChannelAccess(row.channelId, userId);
-  if (row.userId !== userId) throw forbidden('only the author can delete a message');
+  const actor = await requireMembership(chan.workspaceId, userId);
+  if (!mayDeleteMessage(
+    userId,
+    row.userId,
+    actor.role,
+    opts?.hard === true,
+    row.systemKind !== null,
+    opts?.allowOwnPermanentDelete === true,
+  )) {
+    throw forbidden(
+      opts?.hard
+        ? 'only workspace owners, admins, or the authoring automation can permanently delete a message'
+        : 'only the author can delete a message',
+    );
+  }
 
   if (opts?.hard) {
-    await db.transaction(async (tx) => {
+    const purged = await db.transaction(async (tx) => {
+      // Lock the target first. For roots, the self-FK makes concurrent reply
+      // inserts wait and then fail once the root is deleted; the following
+      // query therefore captures every committed row in the thread.
+      const locked = await tx.select().from(messages).where(eq(messages.id, messageId)).for('update');
+      if (!locked[0]) {
+        return {
+          rows: [] as MessageRow[],
+          fileIds: [] as string[],
+          retired: [] as Array<{ id: string; userId: string }>,
+        };
+      }
+      const targetRows = row.threadRootId
+        ? locked
+        : await tx
+            .select()
+            .from(messages)
+            .where(or(eq(messages.id, messageId), eq(messages.threadRootId, messageId)));
+      const targetIds = targetRows.map((m) => m.id);
+      const fileRows = await tx
+        .select({ fileId: messageFiles.fileId })
+        .from(messageFiles)
+        .where(inArray(messageFiles.messageId, targetIds));
+      const retired = await tx
+        .select({ id: notifications.id, userId: notifications.userId })
+        .from(notifications)
+        .where(inArray(notifications.messageId, targetIds));
+
+      // ON DELETE CASCADE removes a root's replies and all message-owned child
+      // rows atomically. A reply delete only touches that reply.
       await tx.delete(messages).where(eq(messages.id, messageId));
       // Fix the root's denormalized rollup if this was a thread reply
       // (participants are computed at query time, so they self-correct). The
@@ -509,14 +691,27 @@ export async function deleteMessage(
           })
           .where(eq(messages.id, row.threadRootId));
       }
+      return {
+        // Replies first and root last keeps older clients' open thread caches
+        // coherent before they receive the event that removes the root.
+        rows: targetRows.sort((a, b) =>
+          a.threadRootId && !b.threadRootId ? -1 : !a.threadRootId && b.threadRootId ? 1 : 0,
+        ),
+        fileIds: [...new Set(fileRows.map((f) => f.fileId))],
+        retired,
+      };
     });
-    publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
-      type: 'message.purged',
-      workspaceId: chan.workspaceId,
-      channelId: row.channelId,
-      ts: new Date().toISOString(),
-      data: toMessageDTO(row),
-    });
+    for (const fileId of purged.fileIds) await reapFileIfUnreferenced(fileId);
+    await publishNotificationRetirements(purged.retired, chan.workspaceId, row.channelId);
+    for (const removed of purged.rows) {
+      publishEvent(subjectMsg(chan.workspaceId, row.channelId), {
+        type: 'message.purged',
+        workspaceId: chan.workspaceId,
+        channelId: row.channelId,
+        ts: new Date().toISOString(),
+        data: toMessageDTO(removed),
+      });
+    }
     return;
   }
 

@@ -4,15 +4,52 @@ import SwiftUI
 struct WorkspaceSwitcherView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
+    /// Raises the workspace/server switcher owned by `RootView` (#566).
+    @Environment(\.openConnections) private var openConnections
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @State private var showCreate = false
     @State private var showAcceptInvite = false
+    // Invitations someone sent me from my profile popup (#359). They belong on
+    // this screen because it is exactly the question they answer: which
+    // workspace do I go to?
+    @State private var invites: [PendingWorkspaceInvite] = []
+    @State private var busyInviteId: String?
+    @State private var inviteError: String?
 
     var body: some View {
         VStack(spacing: 16) {
             Text("Choose a Workspace")
                 .flowFont(.title, weight: .bold)
                 .padding(.top, 24)
+
+            if !invites.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(invites) { inv in
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(inv.inviterName) invited you to \(inv.workspaceName)")
+                                    .flowFont(.callout)
+                                Text(inv.workspaceSlug).flowFont(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Accept") { Task { await respond(inv, accept: true) } }
+                                .buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("switcher.inviteAccept.\(inv.workspaceSlug)")
+                            Button("Decline") { Task { await respond(inv, accept: false) } }
+                                .accessibilityIdentifier("switcher.inviteDecline.\(inv.workspaceSlug)")
+                        }
+                        .disabled(busyInviteId != nil)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(.tint.opacity(0.08)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.tint.opacity(0.35)))
+                        .accessibilityIdentifier("switcher.invite.\(inv.workspaceSlug)")
+                    }
+                }
+                .frame(maxWidth: 440)
+            }
+            if let inviteError {
+                Text(inviteError).flowFont(.callout).foregroundStyle(.red)
+            }
 
             if workspaces.value.isEmpty {
                 Text("You're not in any workspace yet.\nCreate one, or accept an invite.")
@@ -24,19 +61,32 @@ struct WorkspaceSwitcherView: View {
                         win.selectWorkspace(ws.id)
                     } label: {
                         HStack {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(.tint)
+                            if let path = ws.avatarUrl, path.hasPrefix("/v1/avatars/") {
+                                AuthImage(path: path) {
+                                    RoundedRectangle(cornerRadius: 6).fill(.tint)
+                                }
+                                .scaledToFill()
                                 .frame(width: 32, height: 32)
-                                .overlay(
-                                    Text(String(ws.name.prefix(1)).uppercased())
-                                        .flowFont(.headline)
-                                        .foregroundStyle(.white)
-                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            } else {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(.tint)
+                                    .frame(width: 32, height: 32)
+                                    .overlay(
+                                        Text(String(ws.name.prefix(1)).uppercased())
+                                            .flowFont(.headline)
+                                            .foregroundStyle(.white)
+                                    )
+                            }
                             VStack(alignment: .leading) {
                                 Text(ws.name).flowFont(.headline)
                                 Text(ws.slug).flowFont(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
+                            // Same unread total as the rail badge (#345) — this
+                            // chooser is the other way into a workspace.
+                            WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: .clear)
+                                .accessibilityIdentifier("switcher.unread.\(ws.slug)")
                             if let role = ws.role {
                                 Text(role)
                                     .flowFont(.caption)
@@ -57,6 +107,10 @@ struct WorkspaceSwitcherView: View {
             HStack(spacing: 12) {
                 Button("Create Workspace…") { showCreate = true }
                 Button("Accept Invite…") { showAcceptInvite = true }
+                // No sidebar on this screen either (#566), and "none of these
+                // workspaces" is exactly the moment you want another server.
+                Button("Workspaces & servers…") { openConnections() }
+                    .accessibilityIdentifier("switcher.connections")
             }
 
             Button("Sign Out", role: .destructive) {
@@ -72,9 +126,33 @@ struct WorkspaceSwitcherView: View {
             workspaces.start(db: app.db) { db in
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
             }
+            await reloadInvites()
         }
         .sheet(isPresented: $showCreate) { CreateWorkspaceSheet() }
         .sheet(isPresented: $showAcceptInvite) { AcceptInviteSheet() }
+    }
+
+    private func reloadInvites() async {
+        invites = (try? await app.engine.fetchWorkspaceInvites()) ?? []
+    }
+
+    private func respond(_ invite: PendingWorkspaceInvite, accept: Bool) async {
+        busyInviteId = invite.id
+        inviteError = nil
+        defer { busyInviteId = nil }
+        do {
+            if accept {
+                let ws = try await app.engine.acceptWorkspaceInvite(inviteId: invite.id)
+                invites.removeAll { $0.id == invite.id }
+                win.selectWorkspace(ws.id)
+                return
+            }
+            try await app.engine.declineWorkspaceInvite(inviteId: invite.id)
+            invites.removeAll { $0.id == invite.id }
+        } catch {
+            inviteError = error.localizedDescription
+            await reloadInvites()
+        }
     }
 }
 

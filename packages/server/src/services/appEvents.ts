@@ -7,7 +7,7 @@
 // Delivery only flows to apps whose event_url answered the url_verification
 // challenge; sustained failure auto-clears the verification (flagged in UI).
 import { createHmac, randomBytes } from 'node:crypto';
-import { and, desc, eq, isNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { EMOJI_SHORTCODES, markdownToMrkdwn } from '@flow/shared';
 import { db, schema, type Tx } from '../db/index.js';
 import { newId } from '../lib/ids.js';
@@ -215,24 +215,65 @@ interface Logger {
   warn(o: unknown, msg?: string): void;
 }
 
-/** One drain pass. Exported for tests/QA; the interval loop calls it. */
+/** How long a claimed row is invisible to other drains. Delivery of one row is
+ * bounded by the 3s HTTP timeout (plus a socket attempt), and a batch is 20
+ * rows, so a live drain always finishes well inside the lease; the lease only
+ * matters when a replica dies mid-batch, and then its rows retry this soon
+ * with no attempts consumed. */
+const CLAIM_LEASE_MS = 120_000;
+
+/** One drain pass. Exported for tests/QA; the interval loop calls it.
+ *
+ * Phase 18 M1: rows are claimed with `FOR UPDATE SKIP LOCKED` in a short
+ * transaction that pushes `nextAttemptAt` forward as a lease (the #419
+ * scheduler pattern) — concurrent drains, on this replica or another, simply
+ * don't see each other's rows, so two replicas draining is throughput, not
+ * double delivery. Delivery then happens outside the transaction; the
+ * success/backoff writes below overwrite the lease. */
 export async function drainAppEvents(log: Logger): Promise<number> {
-  const due = await db
-    .select({ ev: pendingAppEvents, app: apps })
-    .from(pendingAppEvents)
-    .innerJoin(apps, eq(apps.id, pendingAppEvents.appId))
-    .where(
-      and(
-        isNull(pendingAppEvents.deliveredAt),
-        isNull(pendingAppEvents.failedAt),
-        lte(pendingAppEvents.nextAttemptAt, new Date()),
-      ),
-    )
-    .orderBy(pendingAppEvents.id)
-    .limit(20);
+  const claimed = await db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(pendingAppEvents)
+      .where(
+        and(
+          isNull(pendingAppEvents.deliveredAt),
+          isNull(pendingAppEvents.failedAt),
+          lte(pendingAppEvents.nextAttemptAt, new Date()),
+        ),
+      )
+      .orderBy(pendingAppEvents.id)
+      .limit(20)
+      .for('update', { skipLocked: true });
+    if (rows.length > 0) {
+      await tx
+        .update(pendingAppEvents)
+        .set({ nextAttemptAt: new Date(Date.now() + CLAIM_LEASE_MS) })
+        .where(
+          inArray(
+            pendingAppEvents.id,
+            rows.map((r) => r.id),
+          ),
+        );
+    }
+    return rows;
+  });
+  if (claimed.length === 0) return 0;
+
+  const appRows = await db
+    .select()
+    .from(apps)
+    .where(inArray(apps.id, [...new Set(claimed.map((r) => r.appId))]));
+  const appById = new Map(appRows.map((a) => [a.id, a]));
 
   let delivered = 0;
-  for (const { ev, app } of due) {
+  for (const ev of claimed) {
+    const app = appById.get(ev.appId);
+    if (!app) {
+      // app row deleted between enqueue and claim
+      await db.update(pendingAppEvents).set({ failedAt: new Date() }).where(eq(pendingAppEvents.id, ev.id));
+      continue;
+    }
     // config may have changed since enqueue
     const httpCapable = app.eventUrl !== null && app.eventUrlVerifiedAt !== null;
     const socketCapable = app.appTokenHash !== null;

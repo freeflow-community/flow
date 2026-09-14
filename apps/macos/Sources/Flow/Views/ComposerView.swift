@@ -21,6 +21,9 @@ struct ComposerView: View {
     @State private var suppressedToken: String?
     @State private var dropTargeted = false
     @State private var missingMentions: [MentionMiss] = []
+    /// Open schedule sheet (#424) — set by the clock below, carrying whatever
+    /// is typed and this conversation as the destination.
+    @State private var scheduling: ScheduleEditorTarget?
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
 
     var body: some View {
@@ -29,17 +32,22 @@ struct ComposerView: View {
                 mentionInviteBanner
             }
 
-            if !attachments.isEmpty || uploading > 0 {
-                attachmentBar
-            }
-
             HStack(alignment: .bottom, spacing: 8) {
-                Button(action: pickFiles) {
+                // Attach (#546): hidden when the provider cannot take files,
+                // and a limited provider says where the file ends up.
+                if app.can(.files) {
+                    Button(action: pickFiles) {
+                        Image(systemName: "paperclip")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(app.capabilities[.files].reason ?? "Attach files")
+                    .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
+                } else {
                     Image(systemName: "paperclip")
+                        .opacity(0.4)
+                        .help(app.capabilities[.files].reason ?? "Attachments are not available here.")
+                        .accessibilityIdentifier(threadRootId == nil ? "composer.attach.unavailable" : "thread.composer.attach.unavailable")
                 }
-                .buttonStyle(.borderless)
-                .help("Attach files")
-                .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
 
                 // NSTextView-backed input with live blockquote/code-fence
                 // styling (phase-3.5 ruling 2). Same AX identifiers as the
@@ -68,7 +76,7 @@ struct ComposerView: View {
                     }
                 }
                 .onChange(of: text) { _, newValue in
-                    guard !newValue.isEmpty else { return }
+                    guard !newValue.isEmpty, app.can(.typing) else { return }
                     Task { await app.engine.typing(channelId: channelId, threadRootId: threadRootId) }
                 }
 
@@ -83,6 +91,20 @@ struct ComposerView: View {
                 .help("Insert emoji")
                 .accessibilityIdentifier(threadRootId == nil ? "composer.emoji" : "thread.composer.emoji")
 
+                // Schedule instead of send (#424): same message, posted later.
+                // Only on a channel's main composer — a scheduled message is a
+                // top-level post, not a thread reply.
+                if threadRootId == nil, app.can(.scheduledMessages) {
+                    Button {
+                        scheduling = .creating(body: text, channelId: channelId)
+                    } label: {
+                        Image(systemName: "clock")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Schedule this message")
+                    .accessibilityIdentifier("composer.schedule")
+                }
+
                 Button(action: send) {
                     Image(systemName: "paperplane.fill")
                         .flowFont(size: 12)
@@ -94,7 +116,14 @@ struct ComposerView: View {
                 .buttonStyle(.plain)
                 .disabled(!canSend)
                 .help("Send message")
+                .capability(.send)
                 .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
+            }
+
+            // Pending attachments sit below the input row, inside the composer
+            // card (issue #471) — the composer reads top-to-bottom.
+            if !attachments.isEmpty || uploading > 0 {
+                attachmentBar
             }
         }
         .padding(12)
@@ -106,6 +135,12 @@ struct ComposerView: View {
                         .strokeBorder(dropTargeted ? MC.accent : MC.hairline2, lineWidth: 1)
                 )
         )
+        .sheet(item: $scheduling) { target in
+            ScheduleMessageSheet(workspaceId: workspaceId, target: target) { _ in
+                text = "" // it's scheduled now; leaving the draft would double-post it
+            }
+            .environmentObject(app)
+        }
         // Clicking anywhere on the card (padding, whitespace) focuses the
         // input; buttons and the text view keep their own click handling.
         .contentShape(RoundedRectangle(cornerRadius: 12))
@@ -121,6 +156,7 @@ struct ComposerView: View {
             }
             return true
         }
+        .modifier(ConnectionDraft(app: app, channelId: channelId, threadRootId: threadRootId, text: $text, attachments: $attachments))
         .onChange(of: autocomplete?.token) { _, _ in suggestionIndex = 0 }
         .padding([.horizontal, .bottom], 22)
         .padding(.top, 4)
@@ -157,7 +193,7 @@ struct ComposerView: View {
     }
 
     private var canSend: Bool {
-        uploading == 0 &&
+        app.can(.send) && uploading == 0 &&
             (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 

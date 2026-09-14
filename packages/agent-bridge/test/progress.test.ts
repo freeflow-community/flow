@@ -213,12 +213,12 @@ describe('ProgressReporter relayed text', () => {
     // The tool row is decoration and still vanishes; what the agent said stays.
     const { reporter, sendMessage, deleteMessage } = makeReporter(undefined);
     reporter.start();
-    reporter.onStep('Bash: pnpm test');
+    reporter.onStep('Bash(pnpm)');
     await tick();
     reporter.onText('Tests are green.');
     await reporter.finish();
     const posted = sendMessage.mock.calls.map((c) => c[1] as string);
-    expect(posted).toEqual(['🤖 *thinking…* — Bash: pnpm test', 'Tests are green.']);
+    expect(posted).toEqual(['🤖 *thinking…* — Bash(pnpm)', 'Tests are green.']);
     expect(deleteMessage).toHaveBeenCalledTimes(1);
     expect(deleteMessage).toHaveBeenCalledWith('msg-1', { hard: true }); // the status row
   });

@@ -7,7 +7,8 @@
 // (approved deviation from the workspace-scoped subject in the spec).
 //
 // Kinds: 0=mention (user or group mention), 1=dm, 2=thread_reply,
-// 3=channel activity (notify_level=all), 4=reaction on one of my messages.
+// 3=channel activity (notify_level=all), 4=reaction on one of my messages,
+// 5=someone added me to a channel (#303).
 // Precedence when a message qualifies a user several ways: dm > mention >
 // thread_reply > activity — one row per (user, message). notify_level 0 (mute)
 // suppresses everything, including DMs.
@@ -36,6 +37,8 @@ import { badRequest } from '../lib/errors.js';
 import { publishEvent, subjectUserNotify } from '../bus.js';
 import { isOnline } from '../presence.js';
 import { toMessageDTO, type HydratedMessageRow } from './messages.js';
+import { queueBadgeSync } from './badgeSync.js';
+import { enqueuePendingPush } from './pushOutbox.js';
 
 const { notifications, channelMembers, workspaceMembers, messages, channels, users } = schema;
 
@@ -89,9 +92,11 @@ export function suppressAlertFor(
         ? 'threadReply'
         : kind === 4
           ? 'reaction'
-          : subkind === 'here' || subkind === 'channel'
-            ? 'groupMention'
-            : 'mention';
+          : kind === 5
+            ? 'channelInvite'
+            : subkind === 'here' || subkind === 'channel'
+              ? 'groupMention'
+              : 'mention';
   return ctx.prefs[key] === false;
 }
 
@@ -118,8 +123,10 @@ export async function computeRecipients(
   const memberLevel = new Map(memberRows.map((r) => [r.userId, r.notifyLevel]));
 
   const muted = (uid: string): boolean => memberLevel.get(uid) === 0;
-  // priority: lower number wins (dm strongest)
-  const PRIORITY: Record<NotificationKind, number> = { 1: 0, 0: 1, 2: 2, 3: 3, 4: 4 };
+  // priority: lower number wins (dm strongest). Kind 5 (channel invite) is
+  // never proposed here — it isn't caused by a message — but the Record has to
+  // be total, so it sits last.
+  const PRIORITY: Record<NotificationKind, number> = { 1: 0, 0: 1, 2: 2, 3: 3, 4: 4, 5: 5 };
   const out = new Map<string, RecipientPlan>();
   const propose = (uid: string, kind: NotificationKind, subkind: NotificationSubkind | null = null): void => {
     if (uid === senderId || muted(uid)) return;
@@ -158,7 +165,9 @@ export async function computeRecipients(
   if (groupTokens.has('channel') || groupTokens.has('everyone')) {
     for (const [uid] of memberLevel) propose(uid, 0, 'channel');
   } else if (groupTokens.has('here')) {
-    for (const [uid] of memberLevel) if (isOnline(uid)) propose(uid, 0, 'here');
+    // online *in this workspace* (#364): a member connected only to another
+    // workspace is not here.
+    for (const [uid] of memberLevel) if (isOnline(uid, chan.workspaceId)) propose(uid, 0, 'here');
   }
 
   // thread replies notify prior participants (root author + repliers) who are
@@ -237,6 +246,13 @@ export async function insertNotifications(
         subkind: p.subkind,
         actorId,
       })),
+    );
+    // Push rides the same transaction (#247): a notification row that commits
+    // without its outbox row is a push the phone never gets, and there is no
+    // backfill path to recover it.
+    await enqueuePendingPush(
+      tx,
+      planned.map((p) => ({ userId: p.userId, notificationId: p.id })),
     );
   }
   return planned;
@@ -363,13 +379,22 @@ export async function notifyReaction(
   if (level === undefined || level === 0) return; // gone, or muted this channel
 
   const id = newId();
-  const inserted = await db
-    .insert(notifications)
-    .values({ id, userId: authorId, messageId: message.id, channelId: chan.id, kind: 4, actorId, reactionEmoji: emoji })
-    .onConflictDoNothing()
-    .returning({ id: notifications.id, createdAt: notifications.createdAt });
-  const row = inserted[0];
-  if (!row) return; // already notified for this (author, message, actor, emoji)
+  // Wrapped in a transaction so the push enqueue commits with the row (#247).
+  // The conflict clause is why this has to be a transaction rather than two
+  // statements: only the insert knows whether a row was actually written, and
+  // enqueuing for a suppressed duplicate would push twice for one reaction.
+  const row = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(notifications)
+      .values({ id, userId: authorId, messageId: message.id, channelId: chan.id, kind: 4, actorId, reactionEmoji: emoji })
+      .onConflictDoNothing()
+      .returning({ id: notifications.id, createdAt: notifications.createdAt });
+    const r = inserted[0];
+    if (!r) return undefined; // already notified for this (author, message, actor, emoji)
+    await enqueuePendingPush(tx, [{ userId: authorId, notificationId: r.id }]);
+    return r;
+  });
+  if (!row) return;
 
   const ctx = await alertContextFor(authorId);
   const dto: NotificationDTO = {
@@ -397,11 +422,73 @@ export async function notifyReaction(
 }
 
 /**
+ * Someone added me to a channel → kind 5 (issue #303). Before this, being added
+ * produced no signal at all beyond a new sidebar row, so an invite you weren't
+ * watching for was found by accident.
+ *
+ * Only `addMember` calls this — joining a public channel yourself goes through
+ * `joinChannel`, which deliberately does not, since you already know.
+ *
+ * The row anchors to the `member_joined` system message the caller just posted,
+ * which is also where tapping the Activity row lands you. Nothing to write if
+ * that line couldn't be posted (a non-standard channel): no anchor, no row.
+ */
+export async function notifyChannelInvite(
+  chan: ChannelRow,
+  message: import('@flow/shared').MessageDTO,
+  invitedUserId: string,
+  actorId: string,
+): Promise<void> {
+  if (invitedUserId === actorId) return; // added yourself — that's a join
+
+  const id = newId();
+  // Same transaction as its push enqueue (#247). The issue names only
+  // insertNotifications and notifyReaction because kind 5 postdates the spec —
+  // but it is a notification like any other, and leaving it out would make the
+  // outbox cover four kinds out of five for no reason anyone could state.
+  const row = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(notifications)
+      .values({ id, userId: invitedUserId, messageId: message.id, channelId: chan.id, kind: 5, actorId })
+      .returning({ id: notifications.id, createdAt: notifications.createdAt });
+    const r = inserted[0];
+    if (!r) return undefined;
+    await enqueuePendingPush(tx, [{ userId: invitedUserId, notificationId: r.id }]);
+    return r;
+  });
+  if (!row) return;
+
+  const ctx = await alertContextFor(invitedUserId);
+  const dto: NotificationDTO = {
+    id: row.id,
+    userId: invitedUserId,
+    messageId: message.id,
+    channelId: chan.id,
+    workspaceId: chan.workspaceId,
+    kind: 5,
+    actorId,
+    reactionEmoji: null,
+    subkind: null,
+    suppressAlert: suppressAlertFor(5, null, ctx),
+    createdAt: row.createdAt.toISOString(),
+    readAt: null,
+    message,
+  };
+  publishEvent(subjectUserNotify(invitedUserId), {
+    type: 'notification.created',
+    workspaceId: chan.workspaceId,
+    channelId: chan.id,
+    ts: dto.createdAt,
+    data: dto,
+  });
+}
+
+/**
  * This user's unread total — across every workspace, or within one when
  * `workspaceId` is given (the in-workspace Activity badge). Scoping needs the
  * channel join: notifications carry a channelId, not a workspaceId.
  */
-async function unreadCount(userId: string, workspaceId?: string | undefined): Promise<number> {
+export async function unreadCount(userId: string, workspaceId?: string | undefined): Promise<number> {
   const where = and(eq(notifications.userId, userId), isNull(notifications.readAt));
   const rows = workspaceId
     ? await db
@@ -411,6 +498,36 @@ async function unreadCount(userId: string, workspaceId?: string | undefined): Pr
         .where(and(where, eq(channels.workspaceId, workspaceId)))
     : await db.select({ n: sql<number>`count(*)::int` }).from(notifications).where(where);
   return rows[0]?.n ?? 0;
+}
+
+/**
+ * A hard-deleted message cascades its notification rows out of the database.
+ * Reuse the existing notification.read convergence event so older clients
+ * invalidate Activity and refresh their badges too. The ids name rows that
+ * were retired rather than flipped to read, but the client response is the
+ * same: refetch the server-authoritative list and count.
+ */
+export async function publishNotificationRetirements(
+  retired: Array<{ id: string; userId: string }>,
+  workspaceId: string,
+  channelId: string,
+): Promise<void> {
+  if (retired.length === 0) return;
+  const byUser = new Map<string, string[]>();
+  for (const row of retired) byUser.set(row.userId, [...(byUser.get(row.userId) ?? []), row.id]);
+  const readAt = new Date().toISOString();
+  for (const [userId, ids] of byUser) {
+    const total = await unreadCount(userId);
+    publishEvent(subjectUserNotify(userId), {
+      type: 'notification.read',
+      workspaceId,
+      channelId,
+      ts: readAt,
+      data: { ids, unreadCount: total, readAt },
+    });
+    // Same convergence, to devices instead of sockets (#248).
+    queueBadgeSync(userId, total);
+  }
 }
 
 /**
@@ -441,6 +558,9 @@ async function applyRead(
       ts: readAt.toISOString(),
       data: { ids, unreadCount: total, readAt: readAt.toISOString() },
     });
+    // The phone has no socket to hear that event on — mirror it as a silent
+    // badge push, coalesced and suppressed by services/badgeSync.ts (#248).
+    queueBadgeSync(userId, total);
   }
   return { ids, unreadCount: total };
 }
@@ -471,9 +591,22 @@ export async function markNotificationsRead(
 }
 
 /**
- * Visiting a channel reads its notifications (issue #63). Scoped to top-level
- * messages at or before the read cursor — thread replies live behind a click,
- * so they clear via markThreadNotificationsRead instead.
+ * Visiting a channel reads its notifications (issue #63): top-level messages at
+ * or before the read cursor, **and every thread reply in the channel** (#533).
+ *
+ * Thread rows used to be excluded here — they live behind a click, so they were
+ * left to markThreadNotificationsRead. But the sidebar badge counts *all* of a
+ * channel's unread rows, so that split made the number structurally unclearable
+ * from the channel view: N unread threads needed N thread openings, and the
+ * auto-open mitigation (#327/#441) only jumps to one of them, only on the way
+ * into a different channel. A badge you cannot clear by looking at the thing it
+ * points at is worse than a reply marked read a beat early, so the visit sweeps
+ * them. The reply chip's own unread dot (#270) still distinguishes threads that
+ * wanted you, right up until the visit.
+ *
+ * That also subsumes the #270 exception it replaces — a thread hanging off a
+ * system message has no affordance to open it, so before this its rows could
+ * never clear at all; now they clear with every other thread row.
  */
 export async function markChannelNotificationsRead(
   userId: string,
@@ -488,8 +621,10 @@ export async function markChannelNotificationsRead(
       sql`${notifications.messageId} IN (
         SELECT ${messages.id} FROM ${messages}
          WHERE ${messages.channelId} = ${channelId}
-           AND ${messages.threadRootId} IS NULL
-           AND ${messages.id} <= ${lastReadMsgId}
+           AND (
+             ${messages.threadRootId} IS NOT NULL
+             OR ${messages.id} <= ${lastReadMsgId}
+           )
       )`,
     ),
     chan.workspaceId,
@@ -522,12 +657,15 @@ export async function clearChannelNotificationsForAll(chan: ChannelRow): Promise
   const byUser = new Map<string, string[]>();
   for (const r of updated) byUser.set(r.userId, [...(byUser.get(r.userId) ?? []), r.id]);
   for (const [userId, ids] of byUser) {
+    const total = await unreadCount(userId);
     publishEvent(subjectUserNotify(userId), {
       type: 'notification.read',
       workspaceId: chan.workspaceId,
       ts: readAt.toISOString(),
-      data: { ids, unreadCount: await unreadCount(userId), readAt: readAt.toISOString() },
+      data: { ids, unreadCount: total, readAt: readAt.toISOString() },
     });
+    // Same convergence, to devices instead of sockets (#248).
+    queueBadgeSync(userId, total);
   }
 }
 

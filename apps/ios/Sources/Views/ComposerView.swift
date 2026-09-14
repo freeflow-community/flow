@@ -24,38 +24,70 @@ struct ComposerView: View {
     @State private var showFilePicker = false
     @State private var showCamera = false
     @State private var photoSelection: [PhotosPickerItem] = []
+    /// Open schedule sheet (#424) — set from the composer's `+` menu, carrying
+    /// whatever is typed and this conversation as the destination.
+    @State private var scheduling: ScheduleEditorTarget?
 
     var body: some View {
         VStack(spacing: 0) {
             if let s = suggestions, !s.items.isEmpty {
                 suggestionBar(s)
             }
-            if !attachments.isEmpty || uploading > 0 {
-                attachmentBar
-            }
             HStack(alignment: .bottom, spacing: 8) {
+                // Provider gating (#546): with no file and no schedule
+                // capability the `+` dims, and the reason rides a disabled row
+                // inside the menu rather than a glyph that opens nothing. The
+                // workspace switcher is not in here — it belongs to the sidebar
+                // (#563); this menu is for composing.
+                let canAttach = app.can(.files)
+                let canSchedule = threadRootId == nil && app.can(.scheduledMessages)
                 Menu {
-                    Button {
-                        showPhotoPicker = true
-                    } label: {
-                        Label("Photos & Videos", systemImage: "photo.on.rectangle")
-                    }
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    if canAttach {
                         Button {
-                            showCamera = true
+                            showPhotoPicker = true
                         } label: {
-                            Label("Camera", systemImage: "camera")
+                            Label("Photos & Videos", systemImage: "photo.on.rectangle")
                         }
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            Button {
+                                showCamera = true
+                            } label: {
+                                Label("Camera", systemImage: "camera")
+                            }
+                        }
+                        Button {
+                            showFilePicker = true
+                        } label: {
+                            Label("Files", systemImage: "folder")
+                        }
+                    } else {
+                        // The `+` is always a menu (#561), so a provider
+                        // without files (#546) states the reason on a disabled
+                        // row instead of on a glyph that opens nothing.
+                        Button {} label: {
+                            Label(
+                                app.capabilities[.files].reason ?? "Attachments unavailable",
+                                systemImage: "paperclip"
+                            )
+                        }
+                        .disabled(true)
+                        .accessibilityIdentifier(threadRootId == nil ? "composer.attach.unavailable" : "thread.composer.attach.unavailable")
                     }
-                    Button {
-                        showFilePicker = true
-                    } label: {
-                        Label("Files", systemImage: "folder")
+                    // Schedule instead of send (#424): same message, posted
+                    // later. The `+` menu is this composer's accessory idiom,
+                    // and it's main-composer only — a scheduled message is a
+                    // top-level post, not a thread reply.
+                    if canSchedule {
+                        Button {
+                            scheduling = .creating(body: text, channelId: channelId)
+                        } label: {
+                            Label("Schedule this message", systemImage: "clock")
+                        }
                     }
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 28))
-                        .foregroundStyle(MC.faint)
+                        .foregroundStyle(canAttach || canSchedule ? MC.faint : MC.faint.opacity(0.4))
                 }
                 .accessibilityIdentifier(threadRootId == nil ? "composer.attach" : "thread.composer.attach")
 
@@ -69,7 +101,7 @@ struct ComposerView: View {
                     .overlay(RoundedRectangle(cornerRadius: 18).stroke(MC.hairline2))
                     .onSubmit(send)
                     .onChange(of: text) { _, newValue in
-                        guard !newValue.isEmpty else { return }
+                        guard !newValue.isEmpty, app.can(.typing) else { return }
                         Task { await app.engine.typing(channelId: channelId, threadRootId: threadRootId) }
                     }
 
@@ -79,13 +111,41 @@ struct ComposerView: View {
                         .foregroundStyle(canSend ? MC.send : MC.faint)
                 }
                 .disabled(!canSend)
+                .disabledUnless(.send, in: app.capabilities)
                 .accessibilityLabel("Send")
                 .accessibilityIdentifier(threadRootId == nil ? "composer.send" : "thread.composer.send")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+
+            // Pending attachments sit below the input row (issue #471) — the
+            // composer reads top-to-bottom: what you typed, then what you attached.
+            if !attachments.isEmpty || uploading > 0 {
+                attachmentBar
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+                // A provider that takes files but shows them elsewhere says so
+                // once, under what was attached (#546).
+                if app.capabilities[.files].state == .limited, let reason = app.capabilities[.files].reason {
+                    Text(reason)
+                        .font(.caption2)
+                        .foregroundStyle(MC.faint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                        .accessibilityIdentifier("composer.files.limited")
+                }
+            }
         }
         .background(MC.base)
+        .sheet(item: $scheduling) { target in
+            NavigationStack {
+                ScheduleMessageSheet(workspaceId: workspaceId, target: target) { _ in
+                    text = "" // it's scheduled now; leaving the draft would double-post it
+                }
+                .environmentObject(app)
+            }
+        }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in
                 uploadCameraShot(image)
@@ -98,6 +158,7 @@ struct ComposerView: View {
             maxSelectionCount: 10,
             matching: .any(of: [.images, .videos])
         )
+        .modifier(ConnectionDraft(app: app, channelId: channelId, threadRootId: threadRootId, text: $text, attachments: $attachments))
         .onChange(of: photoSelection) { _, items in
             guard !items.isEmpty else { return }
             photoSelection = []
@@ -139,7 +200,7 @@ struct ComposerView: View {
     }
 
     private var canSend: Bool {
-        uploading == 0 &&
+        uploading == 0 && app.can(.send) &&
             (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
@@ -489,8 +550,7 @@ struct TypingIndicatorView: View {
         let ids = app.typingUserIds(channelId: channelId, threadRootId: threadRootId)
         HStack {
             if !ids.isEmpty {
-                let names = ids.map { userNames[$0] ?? "Someone" }
-                Text(typingText(names))
+                Text(typingText(ids))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("typing.indicator")
@@ -502,11 +562,15 @@ struct TypingIndicatorView: View {
         .background(MC.base)
     }
 
-    private func typingText(_ names: [String]) -> String {
-        switch names.count {
-        case 1: "\(names[0]) is typing…"
-        case 2: "\(names[0]) and \(names[1]) are typing…"
-        default: "Several people are typing…"
+    /// An agent at work "thinks" rather than "types" (mirrors web/macOS).
+    private func typingText(_ ids: [String]) -> String {
+        let names = ids.map { userNames[$0] ?? "Someone" }
+        switch ids.count {
+        case 1:
+            let verb = app.agentIds.contains(ids[0]) ? "thinking" : "typing"
+            return "\(names[0]) is \(verb)…"
+        case 2: return "\(names[0]) and \(names[1]) are typing…"
+        default: return "Several people are typing…"
         }
     }
 }

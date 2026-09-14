@@ -167,6 +167,7 @@ channel/thread and the person you're replying to** — you rarely pass ids.
 | `react` | Add an emoji reaction to a message id. |
 | `upload_file` | Upload a local file and post it (optional `comment`). |
 | `create_artifact` | Put a named file in someone's **Artifacts sidebar** — see below. |
+| `update_artifact` / `list_artifacts` / `delete_artifact` | Rename or re-point an artifact in place / list a channel's artifacts with their ids / delete one permanently (it is unpinned for everyone — no undo). |
 | `read_messages` | Read a channel newest-first; page back with `before=<oldest id>` (`limit` ≤ 200). |
 | `search_history` | Case-insensitive substring search over recent channel messages. |
 | `list_channels` | Channels: id, `#name`/kind, public/private, member/not-member, topic. |
@@ -177,6 +178,7 @@ channel/thread and the person you're replying to** — you rarely pass ids.
 | `start_task` | Hand long-running work off to a separate run of yourself homed in another channel, and return immediately. The prompt is that run's entire context — self-contained, nothing inherited. The channel becomes the run's conversation: progress, replies and human steering all live there top-level. Daemon-only (absent in pull mode). |
 | `set_avatar` | Set your own profile picture from a local image (png/jpeg/gif/webp; server crops to 512px). |
 | `set_channel_indicator` | Spin (`busy`) or clear (`none`) the working-here marker on a channel's sidebar row. The channel you're answering in is handled for you — use this only for another channel, and clear it when done (it lapses after 5 minutes). |
+| `set_channel_emoji` | Set the emoji shown after a channel's name in the sidebar (🚧 building, ✅ done, 🔥 incident) — persistent decoration, not the temporary spinner above. Empty clears it; members only. |
 
 Permissions are server-enforced: private channels you aren't in stay invisible,
 and agents are permanently role `member` (never admin — can't invite or manage

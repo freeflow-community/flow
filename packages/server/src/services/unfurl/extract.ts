@@ -8,6 +8,7 @@
 // fetcher stops the stream at </head>, and adding an HTML parser dependency to
 // process untrusted remote markup is its own attack surface.
 import type { UnfurlDTO } from '@flow/shared';
+import { parseDurationSec } from './video.js';
 
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 400;
@@ -151,6 +152,8 @@ export interface HtmlMetadata {
   /** oEmbed discovery endpoint, if the page advertised one. */
   oembedHref?: string | undefined;
   ogType?: string | undefined;
+  /** Runtime in seconds, for media cards. */
+  durationSec?: number | undefined;
 }
 
 /**
@@ -208,6 +211,9 @@ export function extractHtmlMetadata(html: string, finalUrl: string): HtmlMetadat
     layout: largeImage ? 'large_image' : 'thumbnail',
     oembedHref: absolute(oembed, finalUrl),
     ogType,
+    // Bare seconds (og:video:duration) or ISO-8601 (`itemprop="duration"`,
+    // which is the form YouTube uses) — parseDurationSec takes either.
+    durationSec: parseDurationSec(pick('og:video:duration', 'video:duration', 'duration', 'music:duration')),
   };
 }
 
@@ -228,6 +234,14 @@ const KNOWN_OEMBED: Array<{ host: RegExp; endpoint: (pageUrl: string) => string 
   {
     host: /(^|\.)tiktok\.com$/,
     endpoint: (pageUrl) => `https://www.tiktok.com/oembed?url=${encodeURIComponent(pageUrl)}`,
+  },
+  {
+    // YouTube advertises its endpoint, but ~690 KB into a ~700 KB <head> — past
+    // any sane body cap, so discovery only finds it on a full read. Knowing the
+    // endpoint means a truncated fetch still yields a titled card.
+    host: /(^|\.)(youtube\.com|youtu\.be)$/,
+    endpoint: (pageUrl) =>
+      `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(pageUrl)}`,
   },
 ];
 
@@ -271,6 +285,9 @@ export function applyOembed(base: HtmlMetadata, payload: OembedPayload, finalUrl
     author: author ?? base.author,
     siteName: provider ?? base.siteName,
     imageUrl: absolute(payload.thumbnail_url, finalUrl) ?? base.imageUrl,
+    // Vimeo and friends state it here; YouTube's oEmbed doesn't, which is why
+    // the page's own `itemprop="duration"` is still read.
+    durationSec: parseDurationSec(payload.duration?.toString()) ?? base.durationSec,
   };
 }
 

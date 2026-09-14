@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FlowApi } from './api.js';
-import { loadConfig } from './config.js';
+import { loadConfig, resolveWorkspace } from './config.js';
 
 const MCP_JSON = '.mcp.json';
 
@@ -90,11 +90,11 @@ export async function runMcpInit(configPath: string): Promise<void> {
   // Validate the token and resolve the workspace id (agent.json doesn't store
   // it) — upload_file/list_channels/list_users need FLOW_WORKSPACE_ID.
   const [me, workspaces] = await Promise.all([api.me(), api.myWorkspaces()]);
-  if (workspaces.length === 0) throw new Error('this agent belongs to no workspace');
-  const workspace = workspaces[0]!;
-  if (workspaces.length > 1) {
-    log(`agent is in ${workspaces.length} workspaces — using "${workspace.name}" (the first, as the daemon does)`);
-  }
+  // #357: the config's `workspace` slug decides when there is more than one,
+  // and resolveWorkspace raises the same listing error the daemon does — the
+  // MCP server must be scoped to the same room the daemon serves.
+  const workspace = resolveWorkspace(workspaces, cfg.workspace);
+  if (workspaces.length > 1) log(`agent is in ${workspaces.length} workspaces — scoping to "${workspace.name}"`);
 
   const entry = buildFlowServerEntry({
     serverUrl: cfg.serverUrl,

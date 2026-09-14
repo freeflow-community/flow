@@ -88,6 +88,9 @@ struct MermaidDiagramView: View {
 
     private var copyButton: some View { MermaidCopyButton(source: source) }
 
+    /// The fallback is an ordinary code block, so it gets the ordinary code
+    /// block's copy button too (#260) — the same text as `copyButton` above it,
+    /// but a reader looking at a block should not have to notice that.
     @ViewBuilder
     private var codeFallback: some View {
         #if os(iOS)
@@ -95,21 +98,25 @@ struct MermaidDiagramView: View {
             Text(source)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(MC.ink)
-                .padding(.horizontal, 10)
+                .padding(.leading, 10)
+                .padding(.trailing, 36)
                 .padding(.vertical, 8)
         }
         .background(RoundedRectangle(cornerRadius: 8).fill(MC.codeBg))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+        .overlay(alignment: .bottomTrailing) { CodeCopyButton(source: source).padding(4) }
         .accessibilityIdentifier("msg.codeBlock")
         #else
         Text(source)
             .flowFont(size: 12, design: .monospaced)
             .foregroundStyle(MC.ink)
             .textSelection(.enabled)
-            .padding(.horizontal, 10)
+            .padding(.leading, 10)
+            .padding(.trailing, 36)
             .padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 8).fill(MC.codeBg))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+            .overlay(alignment: .bottomTrailing) { CodeCopyButton(source: source).padding(4) }
             .accessibilityIdentifier("msg.codeBlock")
         #endif
     }

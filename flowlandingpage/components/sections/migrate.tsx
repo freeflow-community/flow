@@ -24,7 +24,7 @@ const steps = [
   {
     n: "03",
     title: "Watch it rebuild",
-    body: "Channels, threads, DMs, files and emoji — authors and timestamps intact.",
+    body: "Channels, threads, DMs, files and emoji, with authors and timestamps intact.",
   },
   {
     n: "04",

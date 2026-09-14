@@ -20,27 +20,27 @@ import { ArrowRight, Check, Cross, Discord, Github, Slack } from "@/components/i
 export const metadata: Metadata = {
   title: "Migrate from Slack or Discord",
   description:
-    "Point an agent at your Slack export or Discord guild and it rebuilds the whole ecosystem inside Freeflow — channels, threads, DMs, files, emoji, authors, timestamps.",
+    "Point an agent at your Slack export or Discord guild and it rebuilds the whole ecosystem inside Freeflow: channels, threads, DMs, files, emoji, authors, and timestamps.",
 };
 
 const timeline = [
   {
-    when: "Week 0 — Friday",
+    when: "Week 0: Friday",
     title: "Rehearse in the dark",
     body: "Spin Freeflow up on a spare box, run the importer in dry-run, and read the report. You will find two custom emoji with broken names and one channel nobody has posted in since 2021. Nothing is at stake yet.",
   },
   {
-    when: "Week 0 — Weekend",
+    when: "Week 0: Weekend",
     title: "Fix what the rehearsal found",
     body: "Map the handful of accounts that do not resolve, decide which archived channels are worth carrying, and re-run. The importer is idempotent, so re-running is boring rather than dangerous.",
   },
   {
-    when: "Week 1 — Sunday night",
+    when: "Week 1: Sunday night",
     title: "Run it for real",
     body: "Final export, final import, invite links out. Your old workspace stays live and read-only for as long as you want a safety net.",
   },
   {
-    when: "Week 1 — Monday",
+    when: "Week 1: Monday",
     title: "People just open a different app",
     body: "The channels have the same names. The threads have the same replies. The pinned deploy checklist is still pinned. Nobody has to be retrained on chat.",
   },
@@ -60,10 +60,10 @@ const carriedYes = [
 ];
 
 const carriedNo = [
-  "Slack Canvases — Freeflow has no canvas surface",
-  "BlockKit message layouts — collapsed to Markdown",
-  "Huddle and call history — no calls product",
-  "Workflow Builder automations — rewrite as agents",
+  "Slack Canvases: Freeflow has no canvas surface",
+  "BlockKit message layouts: collapsed to Markdown",
+  "Huddle and call history: no calls product",
+  "Workflow Builder automations: rewrite as agents",
   "Discord voice channels and stage events",
 ];
 
@@ -80,7 +80,7 @@ export default function MigratePage() {
             <em className="serif-accent text-accent">packing</em>.
           </>
         }
-        body="Nobody stays on a chat platform they have outgrown because they love it. They stay because moving means abandoning eight years of context — every decision, every thread, every file somebody will need in nine months. Freeflow's importers exist so that stops being a reason."
+        body="Nobody stays on a chat platform they have outgrown because they love it. They stay because moving means abandoning eight years of context: every decision, every thread, and every file somebody will need in nine months. Freeflow's importers exist so that stops being a reason."
         actions={
           <>
             <Button
@@ -116,7 +116,7 @@ export default function MigratePage() {
 
               <div className="mt-9">
                 <TerminalPanel
-                  caption="migration — bash"
+                  caption="migration: bash"
                   commands={[
                     {
                       note: "Rehearsal: writes nothing, reports everything",
@@ -144,7 +144,7 @@ export default function MigratePage() {
             <Reveal delay={100} className="lg:sticky lg:top-24">
               <CodeTabs tabs={migrateTabs} />
               <p className="mt-4 text-[13.5px] text-muted">
-                Or drive the importers directly from your own script — they are
+                Or drive the importers directly from your own script. They are
                 ordinary TypeScript classes, not a CLI you have to reverse
                 engineer.
               </p>

@@ -6,6 +6,7 @@ import type {
   ArtifactDTO,
   ChannelDTO,
   FileDTO,
+  HuddleJoinDTO,
   MessageDTO,
   MessagePage,
   UserDTO,
@@ -29,6 +30,15 @@ export function filenameFromDisposition(header: string | null): string | undefin
   }
   return /filename="?([^";]+)"?/i.exec(header)?.[1]?.trim() || undefined;
 }
+
+/**
+ * JSON calls get a deadline (#534). Without one a hung request — a server that
+ * accepted the connection and went away — never settles, and the caller waiting
+ * on it never settles either: an end-of-turn indicator PUT stalls `finish()`,
+ * which holds a concurrency-semaphore slot open for as long as the process
+ * lives. Every /v1 JSON call here is small; 30s is a stall, not slowness.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export class FlowApiError extends Error {
   constructor(
@@ -63,14 +73,25 @@ export class FlowApi {
   ) {}
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.serverUrl}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.serverUrl}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // Callers all handle FlowApiError; a bare TimeoutError would read as an
+      // unrelated crash in the logs.
+      if ((err as Error).name === 'TimeoutError') {
+        throw new FlowApiError(504, 'timeout', `${method} ${path} timed out after ${REQUEST_TIMEOUT_MS}ms`);
+      }
+      throw err;
+    }
     if (!res.ok) await parseError(res);
     return (await res.json()) as T;
   }
@@ -128,6 +149,16 @@ export class FlowApi {
     });
   }
 
+  /**
+   * Channel emoji (#396): the persistent glyph after a channel's name. Nothing
+   * like the indicator above despite sharing that sidebar slot — this is a
+   * stored channel property, so it stays until someone changes it. `null`
+   * clears it.
+   */
+  setChannelEmoji(channelId: string, emoji: string | null): Promise<{ emoji: string | null }> {
+    return this.req('PUT', `/v1/channels/${channelId}/emoji`, { emoji });
+  }
+
   listMessages(channelId: string, limit = 50, before?: string): Promise<MessagePage> {
     return this.req('GET', `/v1/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ''}`);
   }
@@ -138,6 +169,19 @@ export class FlowApi {
 
   leaveChannel(channelId: string): Promise<unknown> {
     return this.req('POST', `/v1/channels/${channelId}/leave`);
+  }
+
+  /** Answer an existing DM huddle ring and receive the ordinary room token. */
+  acceptHuddleInvite(inviteId: string): Promise<HuddleJoinDTO> {
+    return this.req('POST', `/v1/huddle/invites/${inviteId}/accept`, {});
+  }
+
+  declineHuddleInvite(inviteId: string): Promise<unknown> {
+    return this.req('POST', `/v1/huddle/invites/${inviteId}/decline`, {});
+  }
+
+  leaveHuddle(channelId: string): Promise<unknown> {
+    return this.req('POST', `/v1/channels/${channelId}/huddle/leave`, {});
   }
 
   /** Create a standard channel; the caller is auto-added as a member. Duplicate
@@ -171,6 +215,30 @@ export class FlowApi {
   /** Download a file attachment's original bytes (the agent is a channel member, so /v1/files authorizes it). */
   async downloadFile(fileId: string): Promise<Buffer> {
     return (await this.downloadFileWithMeta(fileId)).data;
+  }
+
+  /** Bounded streaming download for live calls; cancel on hangup or timeout. */
+  async downloadCallFile(fileId: string, signal: AbortSignal): Promise<Buffer> {
+    const limit = 20 * 1024 * 1024;
+    const res = await fetch(`${this.serverUrl}/v1/files/${encodeURIComponent(fileId)}`, {
+      headers: { authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+    });
+    if (!res.ok) await parseError(res);
+    if (!res.body) throw new Error('File download returned no content');
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) throw new Error('File exceeds the 20 MB call limit');
+        chunks.push(value);
+      }
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+    return Buffer.concat(chunks);
   }
 
   /** As `downloadFile`, plus the name and type the bytes came labelled with —
@@ -207,22 +275,50 @@ export class FlowApi {
   /** Phase 13: pin `fileId` as a shared artifact in a channel. The caller must
    * be a member of the channel and able to read the file. `ownsFile` marks an
    * artifact whose file was uploaded for it (agent-generated). */
-  createArtifact(channelId: string, fileId: string, name?: string, ownsFile?: boolean): Promise<ArtifactDTO> {
+  /** With `app: true` (link artifacts only) the response is an
+   * `AppArtifactSecretDTO`: the artifact plus its app secret, which Flow
+   * returns exactly once — see docs/design/MINI_APPS.md. */
+  createArtifact(
+    channelId: string,
+    opts: {
+      fileId?: string | undefined;
+      url?: string | undefined;
+      name?: string | undefined;
+      ownsFile?: boolean | undefined;
+      app?: boolean | undefined;
+    },
+  ): Promise<ArtifactDTO & { appSecret?: string }> {
     return this.req('POST', '/v1/artifacts', {
       channelId,
-      fileId,
-      ...(name ? { name } : {}),
-      ...(ownsFile ? { ownsFile } : {}),
+      ...(opts.fileId ? { fileId: opts.fileId } : {}),
+      ...(opts.url ? { url: opts.url } : {}),
+      ...(opts.name ? { name: opts.name } : {}),
+      ...(opts.ownsFile ? { ownsFile: opts.ownsFile } : {}),
+      ...(opts.app ? { app: true } : {}),
     });
   }
 
   /** Phase 13: rename and/or re-point an artifact at a new file (the "update"
    * path). At least one of name/fileId must be provided. */
+  /** The caller's visible artifacts in the workspace (channels they are a member
+   * of), newest first. Callers filter by channelId. */
+  async listArtifacts(workspaceId: string): Promise<ArtifactDTO[]> {
+    const r = await this.req<{ artifacts: ArtifactDTO[] }>('GET', `/v1/workspaces/${workspaceId}/artifacts`);
+    return r.artifacts;
+  }
+
   updateArtifact(
     artifactId: string,
-    patch: { name?: string; fileId?: string; ownsFile?: boolean },
+    patch: { name?: string; fileId?: string; ownsFile?: boolean; url?: string },
   ): Promise<ArtifactDTO> {
     return this.req('PATCH', `/v1/artifacts/${artifactId}`, patch);
+  }
+
+  /** Unpin an artifact for everyone in its channel (#393). Idempotent on the
+   * server: an id that no longer exists succeeds rather than 404s, so callers
+   * that want a "no such artifact" answer must look it up first. */
+  async deleteArtifact(artifactId: string): Promise<void> {
+    await this.req<{ ok: boolean }>('DELETE', `/v1/artifacts/${artifactId}`);
   }
 
   async uploadFile(workspaceId: string, filename: string, mimeType: string, data: Buffer): Promise<FileDTO> {

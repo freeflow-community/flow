@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { config } from '../config.js';
+import { LOCK_KEYS } from '../lib/singleton.js';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
@@ -12,6 +13,10 @@ export async function migrate(databaseUrl: string = config.databaseUrl): Promise
   const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
   const applied: string[] = [];
   try {
+    // Phase 18 M1: serialize replicas racing the same deploy. Blocking session
+    // lock on this dedicated connection — losers wait here, then find the rows
+    // already in schema_migrations and no-op. Released by sql.end().
+    await sql`SELECT pg_advisory_lock(${LOCK_KEYS.migrations.toString()}::bigint)`;
     await sql`CREATE TABLE IF NOT EXISTS schema_migrations (
       name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()
     )`;

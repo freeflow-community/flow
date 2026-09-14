@@ -78,7 +78,7 @@ export function Eyebrow({
 
 /**
  * Two-tone section heading: a muted first line, a solid second line.
- * Lifted from the reference set — it gives every section a readable rhythm.
+ * Lifted from the reference set to give every section a readable rhythm.
  */
 export function SectionHeading({
   lead,
@@ -162,7 +162,7 @@ export function Button({
     lg: "h-12 px-6 text-[15px]",
   } as const;
 
-  const classes = `group inline-flex shrink-0 items-center justify-center gap-2 rounded-full font-medium tracking-tight whitespace-nowrap transition-colors duration-150 ${variants[variant]} ${sizes[size]} ${className}`;
+  const classes = `group inline-flex shrink-0 items-center justify-center gap-2 rounded-[0.6rem] font-medium tracking-tight whitespace-nowrap transition-colors duration-150 ${variants[variant]} ${sizes[size]} ${className}`;
 
   if (!href) {
     return (

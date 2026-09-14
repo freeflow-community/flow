@@ -27,7 +27,79 @@ final class ShareStore: ObservableObject {
     /// and used for the pre-flight limit check.
     private(set) var fileSize: Int64 = 0
     private(set) var maxFileBytes: Int64 = ShareStore.fallbackMaxFileBytes
-    private let api = APIClient(baseURL: Server.baseURL)
+    private var api: APIClient!
+    /// Set for a Slack connection (#546): the send goes through the connector
+    /// via the same adapter the app uses, and `api` is never touched.
+    private var backend: WorkspaceBackend?
+    @Published private(set) var connections: [ServerConnection] = []
+    @Published private(set) var connectionId: String?
+    private var registry: ConnectionRegistry?
+    var connection: ServerConnection? { connections.first { $0.connectionId == connectionId } }
+    var isSlack: Bool { backend != nil }
+    var serverLabel: String {
+        guard let connection else { return "" }
+        return connection.provider == .slack ? "Slack · \(connection.label)" : connection.canonicalOrigin?.label ?? ""
+    }
+    /// The picker row for a connection: a Flow server by its origin, a Slack
+    /// team by its name with a Slack label.
+    func pickerLabel(for connection: ServerConnection) -> String {
+        connection.provider == .slack ? "\(connection.label) (Slack)" : connection.canonicalOrigin?.label ?? connection.origin
+    }
+    /// A file can't go to Slack from here. Shown under the attachment so the
+    /// user can pick a Flow server instead of hitting a dead end.
+    var attachmentRefusal: String? {
+        isSlack && payload?.fileURL != nil ? ShareError.slackFilesMessage : nil
+    }
+
+    func selectConnection(_ id: String) async {
+        guard case .ready = phase else { return }
+        guard id != connectionId else { return }
+        phase = .loading
+        guard await configureConnection(id) else { return }
+        do {
+            if let backend {
+                workspaces = try await backend.listWorkspaces()
+            } else {
+                maxFileBytes = await uploadLimit()
+                let response: WorkspacesResponse = try await api.get("/v1/me/workspaces")
+                workspaces = response.workspaces
+            }
+            workspaceId = workspaces.first?.id
+            await loadChannels(preselect: nil)
+        } catch { phase = .failed(message(for: error)) }
+    }
+
+    private func configureConnection(_ id: String) async -> Bool {
+        guard let connection = registry?.connection(id), let session = registry?.session(id),
+              session.status == .authenticated, let origin = connection.canonicalOrigin,
+              let token = Keychain.loadToken(account: session.credentialRef) else {
+            phase = .failed(ShareError.notSignedIn.localizedDescription); return false
+        }
+        connectionId = id
+        if connection.provider == .slack {
+            // Same construction as ConnectionRuntime.makeBackend in the app
+            // (not compiled into the extension): the credential is read from
+            // the Keychain slot on each use, never copied.
+            let account = session.credentialRef
+            // providerIdentity is `["slack", enterpriseId, teamId, userId]`.
+            let parts = (try? JSONSerialization.jsonObject(with: Data(connection.providerIdentity.utf8))) as? [Any] ?? []
+            backend = SlackBackend(
+                connectionId: connection.connectionId, origin: origin.url,
+                teamId: parts.count > 2 ? parts[2] as? String ?? "" : "",
+                userId: parts.count > 3 ? parts[3] as? String ?? "" : "",
+                label: connection.label, granted: connection.capabilities,
+                credential: { Keychain.loadToken(account: account) }, autoPoll: false
+            )
+            api = nil
+        } else {
+            backend = nil
+            api = APIClient(baseURL: origin.url)
+            let selectedAPI = api!
+            await selectedAPI.setToken(token)
+        }
+        channelId = nil; workspaceId = nil; channels = []; workspaces = []; memberNames = [:]
+        return true
+    }
     /// Display names for DM titles — DMs carry member ids, not a name.
     private var memberNames: [String: String] = [:]
 
@@ -39,6 +111,7 @@ final class ShareStore: ObservableObject {
 
     var canSend: Bool {
         guard case .ready = phase, channelId != nil else { return false }
+        if attachmentRefusal != nil { return false }
         if payload?.fileURL != nil { return fileSize <= maxFileBytes }
         return !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -58,11 +131,16 @@ final class ShareStore: ObservableObject {
     }
 
     func start(items: [NSExtensionItem]) async {
-        guard let token = Keychain.loadToken() else {
+        guard let defaults = UserDefaults(suiteName: SharedDefaults.appGroup),
+              let registry = ConnectionStore.load(from: defaults) else {
+            phase = .failed(ShareError.notSignedIn.localizedDescription); return
+        }
+        self.registry = registry
+        connections = registry.connections.filter { registry.session($0.connectionId)?.status == .authenticated }
+        guard let first = connections.first(where: { $0.connectionId == SharedDefaults.lastConnectionId }) ?? connections.first, await configureConnection(first.connectionId) else {
             phase = .failed(ShareError.notSignedIn.localizedDescription)
             return
         }
-        await api.setToken(token)
 
         guard let payload = await ShareItemLoader.load(from: items) else {
             phase = .failed(ShareError.nothingToShare.localizedDescription)
@@ -73,20 +151,28 @@ final class ShareStore: ObservableObject {
 
         // A 4K video can be gigabytes. Refuse it here, named and measured,
         // rather than after a long upload that the server rejects at presign.
+        // A Slack connection has no upload at all: the form still opens, with
+        // the refusal under the attachment, so a Flow server can be picked.
         if let fileURL = payload.fileURL {
             fileSize = Self.size(of: fileURL)
-            maxFileBytes = await uploadLimit()
-            if fileSize > maxFileBytes {
-                phase = .failed(
-                    ShareError.fileTooLarge(size: fileSize, limit: maxFileBytes).localizedDescription
-                )
-                return
+            if !isSlack {
+                maxFileBytes = await uploadLimit()
+                if fileSize > maxFileBytes {
+                    phase = .failed(
+                        ShareError.fileTooLarge(size: fileSize, limit: maxFileBytes).localizedDescription
+                    )
+                    return
+                }
             }
         }
 
         do {
-            let resp: WorkspacesResponse = try await api.get("/v1/me/workspaces")
-            workspaces = resp.workspaces
+            if let backend {
+                workspaces = try await backend.listWorkspaces()
+            } else {
+                let resp: WorkspacesResponse = try await api.get("/v1/me/workspaces")
+                workspaces = resp.workspaces
+            }
         } catch {
             phase = .failed(message(for: error))
             return
@@ -94,9 +180,9 @@ final class ShareStore: ObservableObject {
 
         // Preselect what was shared into last; fall back to the first
         // workspace so a first run is still one tap from sending.
-        let remembered = SharedDefaults.lastWorkspaceId
+        let remembered = SharedDefaults.lastConnectionId == connectionId ? SharedDefaults.lastWorkspaceId : nil
         workspaceId = workspaces.first(where: { $0.id == remembered })?.id ?? workspaces.first?.id
-        await loadChannels(preselect: SharedDefaults.lastChannelId)
+        await loadChannels(preselect: SharedDefaults.lastConnectionId == connectionId ? SharedDefaults.lastChannelId : nil)
     }
 
     func selectWorkspace(_ id: String) async {
@@ -113,13 +199,20 @@ final class ShareStore: ObservableObject {
         }
         phase = .loading
         do {
-            let resp: ChannelsResponse = try await api.get("/v1/workspaces/\(workspaceId)/channels")
-            channels = resp.channels
-            if let members: MembersResponse = try? await api.get("/v1/workspaces/\(workspaceId)/members") {
-                memberNames = Dictionary(
-                    members.members.map { ($0.userId, $0.displayName) },
-                    uniquingKeysWith: { first, _ in first }
-                )
+            if let backend {
+                channels = try await backend.listConversations(workspaceId: workspaceId)
+                if let members = try? await backend.listMembers(workspaceId: workspaceId) {
+                    memberNames = Dictionary(members.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
+                }
+            } else {
+                let resp: ChannelsResponse = try await api.get("/v1/workspaces/\(workspaceId)/channels")
+                channels = resp.channels
+                if let members: MembersResponse = try? await api.get("/v1/workspaces/\(workspaceId)/members") {
+                    memberNames = Dictionary(
+                        members.members.map { ($0.userId, $0.displayName) },
+                        uniquingKeysWith: { first, _ in first }
+                    )
+                }
             }
             channelId = visibleChannels.first(where: { $0.id == preselect })?.id ?? visibleChannels.first?.id
             phase = .ready
@@ -132,6 +225,19 @@ final class ShareStore: ObservableObject {
         guard let channelId, let workspaceId, let payload else { return }
         phase = .sending
         do {
+            if let backend {
+                // Text only. A file is refused by name, never dropped from the
+                // message or uploaded anywhere else (#546).
+                guard payload.fileURL == nil else { throw ShareError.slackFilesUnsupported }
+                let body = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !body.isEmpty else { throw ShareError.nothingToShare }
+                _ = try await backend.send(SendMessageInput(channelId: channelId, body: body, clientMsgId: UUID().uuidString.lowercased()))
+                SharedDefaults.lastConnectionId = connectionId
+                SharedDefaults.lastChannelId = channelId
+                SharedDefaults.lastWorkspaceId = workspaceId
+                phase = .sent
+                return
+            }
             var fileIds: [String] = []
             var body = caption.trimmingCharacters(in: .whitespacesAndNewlines)
             // One path for every kind of file — image, video, document. Only
@@ -152,6 +258,7 @@ final class ShareStore: ObservableObject {
                     fileIds: fileIds.isEmpty ? nil : fileIds
                 )
             )
+            SharedDefaults.lastConnectionId = connectionId
             SharedDefaults.lastChannelId = channelId
             SharedDefaults.lastWorkspaceId = workspaceId
             phase = .sent
@@ -209,6 +316,9 @@ final class ShareStore: ObservableObject {
     }
 
     private func message(for error: Error) -> String {
+        if let backendError = error as? BackendError {
+            return backendError.code == .unauthorized ? ShareError.notSignedIn.localizedDescription : backendError.message
+        }
         guard let api = error as? APIError else { return error.localizedDescription }
         if api.status == 401 { return ShareError.notSignedIn.localizedDescription }
         // The server states the limit in bytes ("files are limited to

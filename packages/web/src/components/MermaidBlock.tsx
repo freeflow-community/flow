@@ -11,6 +11,7 @@
 // the same page rendering the same source at window size — not the SVG lifted
 // out of the first one, which is what keeps the boundary above intact.
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { CodeBlock } from './CodeBlock';
 import { LightboxShell } from './Lightbox';
 
 /** The host's own bound on a frame that never answers — the script failing to
@@ -276,12 +277,10 @@ export function MermaidBlock({ source }: { source: string }) {
           </span>
           <CopySourceButton source={source} />
         </div>
-        <pre
-          data-testid="code-block"
-          className="my-1 max-w-full overflow-x-auto rounded-lg bg-[#f4f2ee] px-3 py-2 font-mono text-[13px] leading-relaxed whitespace-pre"
-        >
-          <code>{source}</code>
-        </pre>
+        {/* The fallback is an ordinary code block, so it gets the ordinary code
+            block's copy button too (#260) — the one above copies the same text,
+            but a reader looking at a <pre> should not have to notice that. */}
+        <CodeBlock source={source} />
       </div>
     );
   }

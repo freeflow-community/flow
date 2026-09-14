@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
@@ -54,6 +55,7 @@ export function JoinConfirm({
   onJoined: (ws: WorkspaceDTO, alreadyMember: boolean) => void;
   onDismiss: () => void;
 }) {
+  const { api } = useBoundApi();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
   const [busy, setBusy] = useState(false);
@@ -117,6 +119,7 @@ export default function JoinScreen({
   onJoined: (ws: WorkspaceDTO, alreadyMember: boolean) => void;
   onDismiss: () => void;
 }) {
+  const { api } = useBoundApi();
   const [preview, setPreview] = useState<JoinLinkPreviewDTO | null>(null);
   const [dead, setDead] = useState(false);
 

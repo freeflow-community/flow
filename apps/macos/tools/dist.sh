@@ -73,20 +73,20 @@ tools/make-app.sh release
 # runtime with a secure timestamp. Inside-out — signing the app seals everything
 # beneath it, so anything re-signed afterwards invalidates the outer signature.
 SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
-if [ -d "$SPARKLE_FW" ]; then
-  echo "==> Signing embedded Sparkle (nested code, inside-out)"
-  for nested in \
-    "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
-    "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
-    "$SPARKLE_FW/Versions/B/Updater.app" \
-    "$SPARKLE_FW/Versions/B/Autoupdate" \
-    "$SPARKLE_FW"; do
-    [ -e "$nested" ] || continue
-    codesign --force --options runtime --timestamp \
-      -s "$FLOW_SIGN_IDENTITY" "$nested" \
-      || fail "failed to sign $(basename "$nested")"
-  done
-fi
+echo "==> Signing embedded frameworks (nested code, inside-out)"
+for nested in \
+  "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
+  "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
+  "$SPARKLE_FW/Versions/B/Updater.app" \
+  "$SPARKLE_FW/Versions/B/Autoupdate" \
+  "$SPARKLE_FW" \
+  "$APP/Contents/Frameworks/RustLiveKitUniFFI.framework" \
+  "$APP/Contents/Frameworks/LiveKitWebRTC.framework"; do
+  [ -e "$nested" ] || continue
+  codesign --force --options runtime --timestamp \
+    -s "$FLOW_SIGN_IDENTITY" "$nested" \
+    || fail "failed to sign $(basename "$nested")"
+done
 
 echo "==> Signing with Developer ID under the hardened runtime"
 codesign --force --options runtime --timestamp \
@@ -96,6 +96,29 @@ codesign --force --options runtime --timestamp \
 # --- 3. Verify the signature before spending time uploading -------------------
 echo "==> Verifying signature"
 codesign --verify --deep --strict --verbose=2 "$APP"
+
+# --- 3a. Verify the bundle can actually reach the mic and camera (#469) -------
+# Under `--options runtime` the hardened runtime gates mic and camera behind
+# entitlements, and refuses them *before* TCC is consulted: no consent prompt,
+# no entry in Privacy & Security, requestAccess false in milliseconds. That
+# shipped for a while, because a missing entitlement is silent at build time
+# and make-app.sh (no hardened runtime) can never reproduce it. So assert it
+# here, on the signed artifact, where a regression costs a failed release
+# instead of a bug report from someone else's machine. A usage string is the
+# other half of the same grant — missing one, macOS kills the app on request.
+echo "==> Verifying hardened-runtime device access"
+SIGNED_ENTS=$(codesign -d --entitlements - --xml "$APP" 2>/dev/null)
+for ent in com.apple.security.device.audio-input com.apple.security.device.camera; do
+  printf '%s' "$SIGNED_ENTS" | grep -q "$ent" \
+    || fail "the signed bundle is missing the '$ent' entitlement.
+Huddle mic/camera would be denied with no prompt on every machine (issue #469).
+Check $ENTITLEMENTS."
+done
+for key in NSMicrophoneUsageDescription NSCameraUsageDescription; do
+  /usr/libexec/PlistBuddy -c "Print :$key" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+    || fail "the built bundle's Info.plist has no $key — macOS terminates an app
+that requests the device without one. Check tools/make-app.sh."
+done
 
 # --- 4. Zip for submission (notarytool needs a container) ---------------------
 echo "==> Packaging zip for notarization"

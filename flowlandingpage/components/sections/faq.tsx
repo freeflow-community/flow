@@ -13,7 +13,7 @@ export function Faq() {
   return (
     <Section id="faq" tone="paper">
       <Container>
-        {/* Non-goals first — leading with the limitations buys the answers below */}
+        {/* Non-goals first. Leading with the limitations buys the answers below. */}
         <Reveal>
           <div className="rounded-surface border border-warn/20 bg-warn-soft p-7 sm:p-9">
             <div className="grid gap-7 lg:grid-cols-[1fr_1.25fr] lg:items-center lg:gap-12">
@@ -25,7 +25,7 @@ export function Faq() {
                 <p className="mt-3 text-[15px] leading-relaxed text-body">
                   These are decisions written down in the spec, not gaps we are
                   quietly hoping you miss. If one of them is load-bearing for
-                  your team, Freeflow is the wrong choice today — and we would
+                  your team, Freeflow is the wrong choice today, and we would
                   rather you find that out here than in week three.
                 </p>
                 <div className="mt-4">
@@ -92,7 +92,7 @@ export function Faq() {
             >
               Ask in Discussions
             </a>{" "}
-            — the maintainers answer there in public, which is the only kind of
+            . The maintainers answer there in public, which is the only kind of
             answer worth having.
           </p>
         </Reveal>

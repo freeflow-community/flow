@@ -3,7 +3,13 @@
 // `data:` URL out of the database in the first place. These tests are the
 // evidence that the allowlist is enforced server-side and not by a client.
 import { describe, expect, it } from 'vitest';
-import { PatchMeBody, PROFILE_BIO_MAX, PROFILE_WEBSITE_MAX, isProfileWebsiteUrl } from '@flow/shared';
+import {
+  PatchMeBody,
+  PROFILE_BIO_MAX,
+  PROFILE_TITLE_MAX,
+  PROFILE_WEBSITE_MAX,
+  isProfileWebsiteUrl,
+} from '@flow/shared';
 
 const ok = (body: unknown) => PatchMeBody.safeParse(body).success;
 
@@ -83,13 +89,42 @@ describe('profile bio validation', () => {
   });
 });
 
+describe('profile title validation (#434)', () => {
+  it("accepts a one-line title, and '' to clear it", () => {
+    expect(ok({ title: 'Founder, Biztrip AI' })).toBe(true);
+    expect(ok({ title: '' })).toBe(true);
+  });
+
+  it('trims before storing, so padding never becomes part of the title', () => {
+    const r = PatchMeBody.safeParse({ title: '  Founder, Biztrip AI  ' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.title).toBe('Founder, Biztrip AI');
+  });
+
+  it('trims a whitespace-only title down to "unset" rather than storing blanks', () => {
+    const r = PatchMeBody.safeParse({ title: '   ' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.title).toBe('');
+  });
+
+  it(`rejects a title longer than ${PROFILE_TITLE_MAX} characters`, () => {
+    expect(ok({ title: 'a'.repeat(PROFILE_TITLE_MAX) })).toBe(true);
+    expect(ok({ title: 'a'.repeat(PROFILE_TITLE_MAX + 1) })).toBe(false);
+  });
+
+  it('measures the length after trimming — padding cannot push a title over', () => {
+    expect(ok({ title: `  ${'a'.repeat(PROFILE_TITLE_MAX)}  ` })).toBe(true);
+  });
+});
+
 describe('PatchMeBody still requires something to update', () => {
   it('rejects an empty patch', () => {
     expect(ok({})).toBe(false);
   });
 
-  it('counts website or bio alone as something to update', () => {
+  it('counts website, bio or title alone as something to update', () => {
     expect(ok({ website: 'https://example.com' })).toBe(true);
     expect(ok({ bio: 'hello' })).toBe(true);
+    expect(ok({ title: 'Founder' })).toBe(true);
   });
 });

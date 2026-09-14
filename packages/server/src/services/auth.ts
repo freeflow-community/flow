@@ -30,10 +30,24 @@ export function verifySecret(hash: string, secret: string): Promise<boolean> {
   return argon2.verify(hash, secret).catch(() => false);
 }
 
-export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
+/**
+ * Privacy mode (#489): the address a given viewer may see. Hidden addresses go
+ * out as '' rather than being dropped — the native clients decode `email` as a
+ * non-optional string, and '' is already how a card says "nothing to show".
+ * The default (no viewer) is the redacting one, so a call site that forgets to
+ * say who is looking errs toward hiding.
+ */
+export function visibleEmail(u: { id: string; email: string; privacyMode: boolean }, viewerId?: string): string {
+  return u.privacyMode && u.id !== viewerId ? '' : u.email;
+}
+
+/** `viewerId` is who will read this DTO; pass the subject's own id for the
+ * self-facing paths (/v1/me, sign-in, PATCH /v1/me). */
+export function toUserDTO(u: typeof users.$inferSelect, viewerId?: string): UserDTO {
   return {
     id: u.id,
-    email: u.email,
+    email: visibleEmail(u, viewerId),
+    privacyMode: u.privacyMode,
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
     timezone: u.timezone,
@@ -41,6 +55,7 @@ export function toUserDTO(u: typeof users.$inferSelect): UserDTO {
     statusText: u.statusText,
     website: u.website,
     bio: u.bio,
+    title: u.title,
     isAgent: u.isAgent,
     sponsorId: u.isAgent ? u.sponsorUserId : null,
     notificationPrefs: u.notificationPrefs,
@@ -112,6 +127,7 @@ export async function register(
   opts: { password?: string | undefined; displayName?: string | undefined; autoVerify?: boolean | undefined } = {},
   clientInfo?: string,
 ): Promise<RegisterResponse> {
+  if (!config.registrationEnabled) throw new ApiError(403, 'registration_disabled', 'Account registration is disabled on this server');
   if (opts.autoVerify === true && config.emailDriver === 'dev') {
     const passwordHash = await argon2.hash(opts.password ?? '', ARGON2_OPTS);
     const inserted = await db
@@ -128,7 +144,7 @@ export async function register(
     const user = inserted[0];
     if (!user) throw conflict('email_taken', 'an account with this email already exists');
     const token = await issueSession(user.id, clientInfo);
-    return { token, user: toUserDTO(user) };
+    return { token, user: toUserDTO(user, user.id) };
   }
 
   const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -176,6 +192,7 @@ export async function completeSignup(
   password: string,
   clientInfo?: string,
 ): Promise<AuthResponse> {
+  if (!config.registrationEnabled) throw new ApiError(403, 'registration_disabled', 'Account registration is disabled on this server');
   const consumed = await db
     .delete(pendingSignups)
     .where(and(eq(pendingSignups.tokenHash, hashToken(token)), gt(pendingSignups.expiresAt, sql`now()`)))
@@ -191,7 +208,7 @@ export async function completeSignup(
   const user = inserted[0];
   if (!user) throw conflict('email_taken', 'an account with this email already exists');
   const session = await issueSession(user.id, clientInfo);
-  return { token: session, user: toUserDTO(user) };
+  return { token: session, user: toUserDTO(user, user.id) };
 }
 
 export async function login(email: string, password: string, clientInfo?: string): Promise<AuthResponse> {
@@ -206,7 +223,7 @@ export async function login(email: string, password: string, clientInfo?: string
     throw new ApiError(403, 'email_not_verified', 'this email is unverified — use "Forgot password?" to verify it');
   }
   const token = await issueSession(user.id, clientInfo);
-  return { token, user: toUserDTO(user) };
+  return { token, user: toUserDTO(user, user.id) };
 }
 
 /** Always returns ok — never reveals whether the email has an account. */
@@ -243,7 +260,7 @@ export async function resetPassword(token: string, newPassword: string, clientIn
     .where(eq(users.id, user.id));
   await db.delete(sessions).where(eq(sessions.userId, user.id));
   const session = await issueSession(user.id, clientInfo);
-  return { token: session, user: toUserDTO(user) };
+  return { token: session, user: toUserDTO(user, user.id) };
 }
 
 /**
@@ -285,7 +302,7 @@ export async function consumeSigninLink(token: string, clientInfo?: string): Pro
     await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, user.id));
   }
   const session = await issueSession(user.id, clientInfo);
-  return { token: session, user: toUserDTO(user) };
+  return { token: session, user: toUserDTO(user, user.id) };
 }
 
 export async function logout(token: string): Promise<void> {
@@ -313,15 +330,18 @@ async function authenticateAgentToken(tokenHash: Buffer): Promise<UserDTO | null
   if (!row.lastUsedAt || now.getTime() - row.lastUsedAt.getTime() > AGENT_TOKEN_TOUCH_MS) {
     await db.update(agentTokens).set({ lastUsedAt: now }).where(eq(agentTokens.tokenHash, tokenHash));
   }
-  return toUserDTO(row.user);
+  return toUserDTO(row.user, row.user.id);
 }
 
 /**
- * Validate a bearer token → user. Sessions first (sliding 30-day expiry: when
- * a session is used with < 29 days remaining, extend to 30 — cheap: at most
- * one write/day), then agent tokens (non-expiring, revocable).
+ * How a request authenticated. 'session' is a signed-in client (the composer);
+ * 'agent' is a long-lived agent/bot token, i.e. something posting at the API.
+ * #415 uses the distinction to decide whether to expand `@Name` server-side.
  */
-export async function authenticate(token: string): Promise<UserDTO> {
+export type AuthKind = 'session' | 'agent';
+
+/** Validate a bearer token → user, `authenticate` plus how the token proved it. */
+export async function authenticateWithKind(token: string): Promise<{ user: UserDTO; kind: AuthKind }> {
   const tokenHash = hashToken(token);
   const now = new Date();
   const rows = await db
@@ -333,7 +353,7 @@ export async function authenticate(token: string): Promise<UserDTO> {
   const row = rows[0];
   if (!row) {
     const agentUser = await authenticateAgentToken(tokenHash);
-    if (agentUser) return agentUser;
+    if (agentUser) return { user: agentUser, kind: 'agent' };
     throw unauthorized();
   }
   // Tombstoned users drop their sessions in the same transaction, but a race
@@ -346,7 +366,16 @@ export async function authenticate(token: string): Promise<UserDTO> {
       .set({ expiresAt: new Date(now.getTime() + config.sessionTtlDays * 86400_000) })
       .where(and(eq(sessions.tokenHash, tokenHash), lt(sessions.expiresAt, slideThreshold)));
   }
-  return toUserDTO(row.user);
+  return { user: toUserDTO(row.user, row.user.id), kind: 'session' };
+}
+
+/**
+ * Validate a bearer token → user. Sessions first (sliding 30-day expiry: when
+ * a session is used with < 29 days remaining, extend to 30 — cheap: at most
+ * one write/day), then agent tokens (non-expiring, revocable).
+ */
+export async function authenticate(token: string): Promise<UserDTO> {
+  return (await authenticateWithKind(token)).user;
 }
 
 /**
@@ -375,7 +404,7 @@ export async function exchangeAppLink(code: string, clientInfo?: string): Promis
   const user = rows[0];
   if (!user) throw unauthorized('invalid or expired app link code');
   const token = await issueSession(user.id, clientInfo);
-  return { token, user: toUserDTO(user) };
+  return { token, user: toUserDTO(user, user.id) };
 }
 
 /** Purge expired sessions (called opportunistically at boot). */

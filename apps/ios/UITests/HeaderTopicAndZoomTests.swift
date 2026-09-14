@@ -66,17 +66,17 @@ final class HeaderTopicAndZoomTests: XCTestCase {
     func testHeaderShowsTopicUnderChannelName() {
         let app = launch(inChannel: topicChannel)
 
-        let bar = app.navigationBars["# \(topicChannel)"]
-        XCTAssertTrue(bar.waitForExistence(timeout: 15), "no channel name in the header")
+        // The header is a floating pill now (#298), not a system bar: the
+        // channel name and the topic are two lines inside it.
+        let name = app.staticTexts["header.title"]
+        XCTAssertTrue(name.waitForExistence(timeout: 15), "no channel name in the header")
+        XCTAssertEqual(name.label, "# \(topicChannel)")
 
         let topic = app.staticTexts["channel.header.topic"]
         XCTAssertTrue(topic.waitForExistence(timeout: 10), "the topic never appeared under the name")
         XCTAssertFalse(topic.label.isEmpty)
-        // Under the name, not in the bar beside it. (SwiftUI reports no useful
-        // frame for this element, so the stacking itself is screenshot
-        // evidence — the assertion here is that it is not a bar item.)
-        XCTAssertFalse(bar.staticTexts["channel.header.topic"].exists,
-                       "the topic belongs under the bar, not inside it")
+        XCTAssertTrue(app.navigationBars.count == 0,
+                      "the channel screen should have no system navigation bar")
         attach("01-header-with-topic")
     }
 
@@ -84,8 +84,9 @@ final class HeaderTopicAndZoomTests: XCTestCase {
     func testHeaderWithoutTopicIsUnchanged() {
         let app = launch(inChannel: plainChannel)
 
-        XCTAssertTrue(app.navigationBars["# \(plainChannel)"].waitForExistence(timeout: 15),
-                      "no channel name in the header")
+        let name = app.staticTexts["header.title"]
+        XCTAssertTrue(name.waitForExistence(timeout: 15), "no channel name in the header")
+        XCTAssertEqual(name.label, "# \(plainChannel)")
         XCTAssertFalse(app.staticTexts["channel.header.topic"].exists,
                        "a channel with no topic must not render the second line")
         attach("02-header-without-topic")

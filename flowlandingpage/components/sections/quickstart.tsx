@@ -42,7 +42,7 @@ export function Quickstart() {
                   cmd: "pnpm install && pnpm build",
                 },
                 {
-                  note: "3. Migrate and run — API, WebSocket, and web client",
+                  note: "3. Migrate and run: API, WebSocket, and web client",
                   cmd: "cd packages/server && pnpm migrate && pnpm dev",
                 },
               ]}

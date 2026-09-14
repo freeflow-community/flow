@@ -1,18 +1,32 @@
-// Runtime exec: spawn a coding-agent CLI headlessly per conversation turn.
+// Runtime exec: spawn a coding-agent CLI headlessly.
 //
-// Claude runtime (primary): `claude -p --output-format stream-json --verbose`
-// with `--session-id <uuid>` on the first turn and `--resume <uuid>` after.
-// Tool calls stream by as stream-json events → surfaced as thinking steps.
-// Codex runtime: STUB — baseline "prompt in, stdout out" contract, no session
-// resume, no thinking steps. Untested; see AGENT_MEMBERS.md.
+// Claude runtime (primary) runs as a *persistent* process per conversation —
+// see session.ts, which owns the lifecycle; this module supplies the pieces
+// both paths share: the argv builder, the stream-json parser, and process-group
+// bookkeeping. `runRuntime` below is the one-shot path, still used by the codex
+// and demo runtimes and by voice calls (whose lifetime is the call, not the
+// conversation).
+// Codex runtime: `codex exec --json`, whose JSONL events give the status row
+// its tool steps and the session its resumable thread id (see CodexJsonParser).
+// The system prompt is folded into the first invocation of a session.
 import { spawn } from 'node:child_process';
-import path from 'node:path';
 import type { RuntimeConfig } from './config.js';
 
 export interface RunOpts {
+  /** Prepared call images/PDF previews. Claude reads paths; Codex receives image inputs. */
+  imagePaths?: string[] | undefined;
+  /** Avoid OS command-line limits for document context and call transcripts. */
+  stdinPrompt?: boolean;
   sessionId: string;
   /** false → --session-id (new session); true → --resume. */
   resume: boolean;
+  /**
+   * Codex only: resume this recorded session (`codex exec resume <id>`)
+   * instead of starting fresh. Comes from a previous RunResult's
+   * codexSessionId — codex names its own sessions, unlike claude where the
+   * bridge chooses the id up front.
+   */
+  codexSessionId?: string | undefined;
   prompt: string;
   systemPrompt: string;
   /** Path to an MCP config JSON to pass via --mcp-config (claude only). */
@@ -49,40 +63,108 @@ export interface RunResult {
    * error or a timeout. The caller says so instead of apologising.
    */
   interrupted?: boolean;
+  /**
+   * Codex only: the session id this run recorded itself under (parsed from
+   * the run header). Present on failures too — a run that got far enough to
+   * print its header left a resumable session behind, whatever ended it.
+   */
+  codexSessionId?: string | undefined;
 }
 
-/** One line per tool call, latest step shown: "Bash: pnpm test". */
+/**
+ * Shell wrappers a CLI puts around the command it actually ran
+ * (`/bin/zsh -lc 'pnpm test'`). The interesting word is inside the quotes, so
+ * peel the wrapper before looking for it.
+ */
+const SHELL_WRAPPER_RE = /^\s*(?:\S*\/)?(?:sh|bash|zsh|dash|ksh|fish)\s+-[a-z]*c\s+(['"])([\s\S]*)\1\s*$/;
+
+/** `FOO=bar`, `PATH=/x:$PATH` — a prefix, never the command being run. */
+const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The first *command word* of a shell invocation — what the status row calls
+ * the step. Peels shell wrappers, stops at the first separator (a pipeline's
+ * head is what the step is "about"), skips env-var prefixes, and reduces a
+ * path to its basename so `/usr/bin/sed` reads as `sed`. Returns '' when there
+ * is nothing recognisable, which the caller renders as a bare `Bash`.
+ */
+export function bashCommandWord(command: unknown): string {
+  let cmd = String(command ?? '').trim();
+  // Nested wrappers are real: `zsh -lc "bash -c 'pnpm test'"`. Bounded, so a
+  // pathological string can't spin here.
+  for (let i = 0; i < 3; i++) {
+    const m = SHELL_WRAPPER_RE.exec(cmd);
+    if (!m) break;
+    cmd = m[2]!.trim();
+  }
+  // First segment only — `cd x && pnpm test` is a `cd` step (#552 says the
+  // first command is acceptable; it is also the one that has already started).
+  const head = cmd.split(/\||&&|\|\||;|\n/)[0] ?? '';
+  for (const raw of head.trim().split(/\s+/)) {
+    let word = raw.replace(/^["']|["']$/g, '');
+    if (!word) continue;
+    if (ENV_ASSIGN_RE.test(word)) continue; // FOO=1 cmd …
+    if (word === 'env' || word === 'command' || word === 'exec') continue;
+    if (word.startsWith('(') || word.startsWith('{')) word = word.replace(/^[({]+/, '');
+    if (!word) continue;
+    const base = word.split('/').filter(Boolean).pop() ?? word;
+    // A label, not an argument: cap it so a rogue command can't stretch the row.
+    return base.length > 24 ? `${base.slice(0, 23)}…` : base;
+  }
+  return '';
+}
+
+/**
+ * Tools that wrap something else and are worth naming: the status row says
+ * which skill or which subagent, because "Skill" alone says nothing. Values
+ * are the input keys to try, in order — the first non-empty one wins.
+ */
+const PRIMARY_ARG_KEYS: Record<string, readonly string[]> = {
+  Skill: ['skill', 'name', 'command'],
+  Task: ['subagent_type', 'agent_type'],
+  Agent: ['subagent_type', 'agent_type'],
+};
+
+/** A sub-name is a label, not an argument: one short token, no paths, no spaces. */
+function subName(v: unknown): string {
+  const s = String(v ?? '').trim();
+  if (!s || /[\s/\\]/.test(s)) return '';
+  return s.length > 32 ? `${s.slice(0, 31)}…` : s;
+}
+
+/**
+ * The compact label for one tool call, as shown in the `🤖 thinking…` status
+ * row: the *kind* of step, never its arguments (#550, #552). A full path or a
+ * command tail wraps over four lines on a phone and adds no scanning value —
+ * transcripts and task channels still log the whole invocation.
+ *
+ *   Bash: sed -n 240,300p /tmp/…/runtime.ts   →  Bash(sed)
+ *   mcp__flow__send_message                   →  flow: send_message
+ *   Read / Edit / Grep / Write                →  Read / Edit / Grep / Write
+ */
 export function formatToolStep(name: string, input: unknown): string {
   const i = (input ?? {}) as Record<string, unknown>;
-  const short = (v: unknown, max = 80): string => {
-    const s = String(v ?? '').replace(/\s+/g, ' ').trim();
-    return s.length > max ? `${s.slice(0, max - 1)}…` : s;
-  };
-  if (name.startsWith('mcp__flow__')) return `Flow: ${name.slice('mcp__flow__'.length)}`;
-  if (name.startsWith('mcp__')) return name.replace(/^mcp__/, '').replace('__', ': ');
-  switch (name) {
-    case 'Bash':
-      return `Bash: ${short(i.command)}`;
-    case 'Read':
-    case 'Write':
-    case 'Edit':
-    case 'NotebookEdit':
-      return `${name}: ${short(path.basename(String(i.file_path ?? i.notebook_path ?? '')))}`;
-    case 'Glob':
-    case 'Grep':
-      return `${name}: ${short(i.pattern)}`;
-    case 'WebSearch':
-      return `WebSearch: ${short(i.query)}`;
-    case 'WebFetch':
-      return `WebFetch: ${short(i.url)}`;
-    case 'Task':
-    case 'Agent':
-      return `Agent: ${short(i.description ?? i.prompt)}`;
-    case 'TodoWrite':
-      return 'updating plan';
-    default:
-      return name;
+  if (name.startsWith('mcp__')) {
+    const [server, ...rest] = name.slice('mcp__'.length).split('__');
+    const tool = rest.join('__');
+    return server && tool ? `${server}: ${tool}` : (server ?? name);
   }
+  if (name === 'Bash' || name === 'BashOutput') {
+    const word = name === 'Bash' ? bashCommandWord(i.command) : '';
+    return word ? `Bash(${word})` : name;
+  }
+  if (name === 'TodoWrite') return 'updating plan';
+  // `Task` is what the CLI calls it; `Agent` is what a reader watching the row
+  // calls it, and #552 spells it that way.
+  const label = name === 'Task' ? 'Agent' : name;
+  const keys = PRIMARY_ARG_KEYS[name];
+  if (keys) {
+    for (const key of keys) {
+      const sub = subName(i[key]);
+      if (sub) return `${label}(${sub})`;
+    }
+  }
+  return label;
 }
 
 interface StreamEvent {
@@ -90,7 +172,32 @@ interface StreamEvent {
   subtype?: string;
   result?: string;
   is_error?: boolean;
-  message?: { content?: Array<{ type?: string; name?: string; input?: unknown; text?: string }> };
+  message?: {
+    content?: Array<{ type?: string; id?: string; name?: string; input?: unknown; text?: string }>;
+  };
+  /** system/background_tasks_changed: the complete set of tasks running right now. */
+  tasks?: Array<{ task_id?: string; description?: string }>;
+  /** system/task_started, system/task_notification. */
+  task_id?: string;
+  description?: string;
+  tool_use_id?: string;
+  is_backgrounded?: boolean;
+  status?: string;
+  summary?: string;
+}
+
+/**
+ * Turn-scoped signals a persistent session needs and a one-shot run doesn't:
+ * where one turn ends and the next begins, and whether the agent still has
+ * background work running (which is what holds the idle reaper off).
+ */
+export interface StreamHooks {
+  /** A turn began — `system`/`init`, which the CLI re-emits for every turn. */
+  onTurnStart?(): void;
+  /** The turn's terminal `result` event; the parser's per-turn fields are set. */
+  onResult?(): void;
+  /** The count of open background tasks changed. */
+  onPendingChange?(pending: number): void;
 }
 
 /**
@@ -123,10 +230,33 @@ export class StreamJsonParser {
    * (#162). A block identical to the one before it is swallowed: relaying the
    * same sentence twice reads as a glitch, never as progress.
    */
+  /**
+   * Background work the agent started and has not finished — the reason a
+   * session with no turn in flight is still not idle. Keyed by
+   * `tool:<tool_use_id>` until the CLI gives the task an id of its own, then by
+   * `task:<task_id>`; the value is a human description for the logs.
+   */
+  readonly pending = new Map<string, string>();
+
   constructor(
     private readonly onToolStep: (step: string) => void,
     private readonly onText: (text: string) => void = () => {},
+    private readonly hooks: StreamHooks = {},
   ) {}
+
+  /**
+   * Forget the last turn so the next one is judged on its own events. Only the
+   * per-turn verdict is cleared: `sawEvent` (the session exists, so a respawn
+   * can `--resume`) and `pending` (background work outlives the turn that
+   * started it) are properties of the session, not of any one turn.
+   */
+  resetTurn(): void {
+    this.finalText = '';
+    this.isError = false;
+    this.sawResult = false;
+    this.errorSubtype = '';
+    this.lastText = '';
+  }
 
   feed(chunk: string): void {
     this.buf += chunk;
@@ -147,9 +277,13 @@ export class StreamJsonParser {
       return; // non-JSON noise
     }
     if (typeof ev.type === 'string') this.sawEvent = true;
+    if (ev.type === 'system') return this.handleSystem(ev);
     if (ev.type === 'assistant') {
       for (const block of ev.message?.content ?? []) {
-        if (block.type === 'tool_use' && block.name) this.onToolStep(formatToolStep(block.name, block.input));
+        if (block.type === 'tool_use' && block.name) {
+          this.openIfBackgrounded(block.id, block.name, block.input);
+          this.onToolStep(formatToolStep(block.name, block.input));
+        }
         else if (block.type === 'text' && block.text?.trim()) {
           const text = block.text.trim();
           if (text !== this.lastText) this.onText(text);
@@ -162,12 +296,182 @@ export class StreamJsonParser {
       this.isError = ev.is_error === true || (ev.subtype !== undefined && ev.subtype !== 'success');
       this.errorSubtype = this.isError ? (ev.subtype ?? '') : '';
       this.finalText = ev.result ?? '';
+      this.hooks.onResult?.();
     }
+  }
+
+  /**
+   * `system` events carry the session's out-of-band state: `init` opens every
+   * turn (including the ones the SDK starts by itself when a background task
+   * finishes), and the task events say what is still running.
+   *
+   * `background_tasks_changed` is a full snapshot and therefore authoritative —
+   * it is what stops a task that never really started from pinning a session
+   * open forever. The narrower events keep the count honest in between.
+   */
+  private handleSystem(ev: StreamEvent): void {
+    const before = this.pending.size;
+    switch (ev.subtype) {
+      case 'init':
+        this.hooks.onTurnStart?.();
+        return;
+      case 'background_tasks_changed': {
+        for (const key of [...this.pending.keys()]) if (key.startsWith('task:')) this.pending.delete(key);
+        for (const t of ev.tasks ?? []) if (t.task_id) this.pending.set(`task:${t.task_id}`, t.description ?? t.task_id);
+        // Nothing is running, so no tool_use can still be waiting to start.
+        if ((ev.tasks ?? []).length === 0) this.pending.clear();
+        break;
+      }
+      case 'task_started': {
+        if (ev.tool_use_id) this.pending.delete(`tool:${ev.tool_use_id}`);
+        if (ev.is_backgrounded && ev.task_id) this.pending.set(`task:${ev.task_id}`, ev.description ?? ev.task_id);
+        break;
+      }
+      case 'task_notification': {
+        // Anything but "running" is terminal — completed, failed, killed.
+        if (ev.status === 'running') break;
+        if (ev.task_id) this.pending.delete(`task:${ev.task_id}`);
+        if (ev.tool_use_id) this.pending.delete(`tool:${ev.tool_use_id}`);
+        break;
+      }
+      default:
+        return;
+    }
+    if (this.pending.size !== before) this.hooks.onPendingChange?.(this.pending.size);
+  }
+
+  /**
+   * A `run_in_background` tool call opens a pending entry straight away, keyed
+   * by the tool_use id: the task's own id only arrives with `task_started`, and
+   * between those two events the reaper must already know work is starting.
+   */
+  private openIfBackgrounded(id: string | undefined, name: string, input: unknown): void {
+    const i = (input ?? {}) as Record<string, unknown>;
+    if (i.run_in_background !== true || !id) return;
+    this.pending.set(`tool:${id}`, formatToolStep(name, input));
+    this.hooks.onPendingChange?.(this.pending.size);
   }
 }
 
-export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
+/**
+ * One `codex exec --json` event. Codex names its own vocabulary — a turn is a
+ * sequence of *items* (a shell command, a message, a file edit) each announced
+ * by `item.started` and closed by `item.completed`.
+ */
+interface CodexEvent {
+  type?: string;
+  /** thread.started: the session id, which `codex exec resume <id>` takes. */
+  thread_id?: string;
+  item?: {
+    id?: string;
+    type?: string;
+    /** command_execution: the full invocation, shell wrapper and all. */
+    command?: string;
+    /** agent_message: what the agent said. */
+    text?: string;
+  };
+}
+
+/**
+ * Item types worth a status row of their own. Codex will grow more of them;
+ * anything not named here is ignored rather than guessed at, so a new item
+ * type is a silent no-op instead of a bad label or a crash.
+ */
+const CODEX_ITEM_LABELS: Record<string, string> = {
+  file_change: 'Edit',
+  web_search: 'WebSearch',
+  todo_list: 'updating plan',
+};
+
+/**
+ * The codex-side sibling of `StreamJsonParser`: same job, different dialect.
+ * Feed it `codex exec --json` stdout and it emits terse tool steps, relays the
+ * agent's narration, and picks up the thread id that makes the next turn
+ * resumable (#552). Tolerant of non-JSON noise, exactly like its sibling —
+ * codex prints the odd plain-text warning alongside the stream.
+ */
+export class CodexJsonParser {
+  private buf = '';
+  /** From `thread.started` — this run's resumable session id. */
+  threadId: string | undefined;
+  /**
+   * The last `agent_message`. Codex narrates mid-turn with the same item type
+   * it uses for the final answer, so latest-wins is both "the reply" and, on a
+   * run that gets killed, the salvage — the mirror of `StreamJsonParser.lastText`.
+   */
+  lastText = '';
+  /** Any well-formed event — proof the session exists. See RunResult.sawSession. */
+  sawEvent = false;
+
+  constructor(
+    private readonly onToolStep: (step: string) => void,
+    private readonly onText: (text: string) => void = () => {},
+  ) {}
+
+  feed(chunk: string): void {
+    this.buf += chunk;
+    let idx: number;
+    while ((idx = this.buf.indexOf('\n')) >= 0) {
+      const line = this.buf.slice(0, idx).trim();
+      this.buf = this.buf.slice(idx + 1);
+      if (line) this.handleLine(line);
+    }
+  }
+
+  private handleLine(line: string): void {
+    let ev: CodexEvent;
+    try {
+      ev = JSON.parse(line) as CodexEvent;
+    } catch {
+      return; // non-JSON noise
+    }
+    if (!ev || typeof ev !== 'object' || typeof ev.type !== 'string') return;
+    this.sawEvent = true;
+    if (ev.type === 'thread.started') {
+      if (typeof ev.thread_id === 'string' && ev.thread_id) this.threadId = ev.thread_id;
+      return;
+    }
+    const item = ev.item;
+    if (!item || typeof item.type !== 'string') return;
+    if (item.type === 'agent_message') {
+      const text = String(item.text ?? '').trim();
+      if (!text) return;
+      if (text !== this.lastText) this.onText(text);
+      this.lastText = text;
+      return;
+    }
+    // Steps are announced once, when the item starts — `item.completed` for the
+    // same id would print the row a second time after the work is already done.
+    if (ev.type !== 'item.started') return;
+    if (item.type === 'command_execution') {
+      const word = bashCommandWord(item.command);
+      this.onToolStep(word ? `Bash(${word})` : 'Bash');
+      return;
+    }
+    const label = CODEX_ITEM_LABELS[item.type];
+    if (label) this.onToolStep(label);
+  }
+}
+
+/** Just the fields the argv depends on — `RunOpts` satisfies it structurally. */
+export interface ClaudeArgsOpts {
+  sessionId: string;
+  resume: boolean;
+  prompt: string;
+  systemPrompt: string;
+  mcpConfigPath?: string | undefined;
+  stdinPrompt?: boolean | undefined;
+  /**
+   * Persistent session: turns arrive as stream-json user messages on stdin, so
+   * there is no prompt on the command line at all and the process outlives the
+   * turn (see session.ts).
+   */
+  streamInput?: boolean | undefined;
+}
+
+export function buildClaudeArgs(cfg: RuntimeConfig, opts: ClaudeArgsOpts): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+  if (opts.streamInput) args.push('--input-format', 'stream-json');
   args.push(opts.resume ? '--resume' : '--session-id', opts.sessionId);
   args.push('--append-system-prompt', opts.systemPrompt);
   args.push('--max-turns', String(cfg.maxTurns));
@@ -186,13 +490,40 @@ export function buildClaudeArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
   }
   if (allowed.length) args.push(`--allowedTools=${allowed.join(',')}`);
   args.push(...cfg.extraArgs);
-  args.push(opts.prompt);
+  if (!opts.stdinPrompt && !opts.streamInput) args.push(opts.prompt);
   return args;
 }
 
-function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
-  // STUB: baseline contract only (stdout = reply). No session resume.
-  return ['exec', '--skip-git-repo-check', ...cfg.extraArgs, opts.prompt];
+export function buildCodexArgs(cfg: RuntimeConfig, opts: RunOpts): string[] {
+  // stdout is a JSONL event stream (--json); the reply is its last agent_message.
+  // Continuity comes from `codexSessionId`
+  // — the id codex printed on an earlier run — which turns the invocation into
+  // `codex exec resume <id>`, reloading that session's full context from
+  // ~/.codex. Only then does the prompt carry just the new turn; a fresh run
+  // still fronts the system prompt itself. Callers without an id fall back to
+  // whatever continuity they packed into opts.prompt (e.g. voice transcripts).
+  const resume = opts.codexSessionId !== undefined;
+  const prompt = resume ? opts.prompt : `${opts.systemPrompt}\n\n${opts.prompt}`;
+  const images = (opts.imagePaths ?? []).map((image) => `--image=${image}`);
+  // --json turns stdout into the JSONL event stream CodexJsonParser reads: tool
+  // steps for the status row, and the thread id that resumes the session (#552).
+  return ['exec', ...(resume ? ['resume'] : []), '--json', '--skip-git-repo-check', ...images, ...cfg.extraArgs,
+    ...(images.length || opts.stdinPrompt ? ['--'] : []),
+    ...(resume ? [opts.codexSessionId as string] : []),
+    opts.stdinPrompt ? '-' : prompt];
+}
+
+/**
+ * Fallback session-id source: the header codex prints (`session id: <uuid>` —
+ * stderr in non-tty runs). Under `--json` the id arrives structurally, as
+ * `thread.started.thread_id`, and this header is not printed at all; the regex
+ * stays because it costs two lines and is the only thing that would keep
+ * resume working if a codex build ever refused the flag.
+ */
+const CODEX_SESSION_ID_RE = /^session id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/im;
+
+export function parseCodexSessionId(stderr: string, stdout: string): string | undefined {
+  return (CODEX_SESSION_ID_RE.exec(stderr) ?? CODEX_SESSION_ID_RE.exec(stdout))?.[1];
 }
 
 /** Demo mode: static canned reply, no CLI spawn. */
@@ -208,7 +539,7 @@ const liveGroups = new Set<number>();
  * unsupervised. SIGTERM first so the CLI can flush its session transcript —
  * that transcript is what makes the next turn resumable.
  */
-function killGroup(pid: number, graceMs: number): void {
+export function killGroup(pid: number, graceMs: number): void {
   const send = (sig: NodeJS.Signals): void => {
     try {
       process.kill(-pid, sig);
@@ -225,9 +556,19 @@ function killGroup(pid: number, graceMs: number): void {
   t.unref();
 }
 
+/** Persistent sessions join the same registry, so shutdown reaches them too. */
+export function registerGroup(pid: number): void {
+  liveGroups.add(pid);
+}
+
+export function unregisterGroup(pid: number): void {
+  liveGroups.delete(pid);
+}
+
 /**
  * Shutdown hook: runtimes are spawned detached (own process group), so they no
  * longer die with the bridge on Ctrl-C — the daemon has to end them itself.
+ * Covers persistent sessions as well as one-shot runs (AC 6 of #519).
  */
 export function killAllRuntimes(): void {
   for (const pid of liveGroups) killGroup(pid, 0);
@@ -267,7 +608,7 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
   return new Promise((resolve) => {
     const child = spawn(cfg.command, args, {
       cwd: cfg.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [opts.stdinPrompt ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: { ...process.env },
       // Own process group, so expiry can kill the agent's whole subprocess tree
       // rather than just the CLI. Costs us the automatic teardown on bridge
@@ -275,9 +616,26 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       detached: true,
     });
     if (child.pid) liveGroups.add(child.pid);
+    if (opts.stdinPrompt && child.stdin) {
+      child.stdin.on('error', () => { /* Spawn/exit handlers report a failed CLI. */ });
+      // A resumed codex session already holds its system prompt; only a fresh
+      // run needs it fronted (mirrors the argv form in buildCodexArgs).
+      const freshCodex = cfg.kind === 'codex' && opts.codexSessionId === undefined;
+      child.stdin.end(freshCodex ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt);
+    }
     const parser = new StreamJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
+    const codex = new CodexJsonParser(opts.onToolStep, (t) => opts.onText?.(t));
     let stdout = '';
     let stderr = '';
+    /** The id to resume this codex session by, structural source first. */
+    const codexId = (): string | undefined =>
+      cfg.kind === 'codex' ? (codex.threadId ?? parseCodexSessionId(stderr, stdout)) : undefined;
+    /**
+     * What codex has said so far. `--json` gives us the agent's own messages;
+     * raw stdout is the fallback for a build that ignored the flag and printed
+     * plain text instead.
+     */
+    const codexText = (): string => codex.lastText || stdout.trim();
     let settled = false;
     let idleTimer: NodeJS.Timeout | null = null;
     let capTimer: NodeJS.Timeout | null = null;
@@ -301,12 +659,14 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       if (child.pid) killGroup(child.pid, 5000);
       // The terminal result event will never arrive, so salvage the last thing
       // the agent said (codex has no events — its raw stdout is the contract).
+      const codexSessionId = codexId();
       resolve({
         ok: false,
-        text: cfg.kind === 'claude' ? parser.lastText : stdout.trim(),
+        text: cfg.kind === 'claude' ? parser.lastText : codexText(),
         error,
-        sawSession: parser.sawEvent,
+        sawSession: cfg.kind === 'codex' ? codexSessionId !== undefined : parser.sawEvent,
         interrupted,
+        codexSessionId,
       });
     };
     function onAbort(): void {
@@ -326,13 +686,14 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
     capTimer = setTimeout(() => expire(`hit the ${cfg.timeoutSec}s run cap`), cfg.timeoutSec * 1000);
     bumpIdle();
 
-    child.stdout.on('data', (d: Buffer) => {
+    child.stdout!.on('data', (d: Buffer) => {
       bumpIdle();
       const s = d.toString('utf8');
       stdout += s;
       if (cfg.kind === 'claude') parser.feed(s);
+      else if (cfg.kind === 'codex') codex.feed(s);
     });
-    child.stderr.on('data', (d: Buffer) => {
+    child.stderr!.on('data', (d: Buffer) => {
       bumpIdle();
       stderr += d.toString('utf8');
     });
@@ -347,6 +708,7 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
       settled = true;
       cleanup();
       parser.feed('\n'); // flush a trailing unterminated line
+      codex.feed('\n');
       if (cfg.kind === 'claude') {
         if (parser.sawResult && !parser.isError) return resolve({ ok: true, text: parser.finalText, sawSession: true });
         // Error text stays short: the runtime's own words ride along as
@@ -362,9 +724,17 @@ export async function runRuntime(cfg: RuntimeConfig, opts: RunOpts): Promise<Run
           sawSession: parser.sawEvent,
         });
       }
-      // baseline contract: stdout is the reply
-      if (code === 0) return resolve({ ok: true, text: stdout.trim() });
-      return resolve({ ok: false, text: '', error: `runtime exited ${code}${stderr ? `: ${stderr.slice(-300)}` : ''}` });
+      // the reply is the turn's last agent_message (raw stdout if there were none)
+      const codexSessionId = codexId();
+      const sawSession = codexSessionId !== undefined;
+      if (code === 0) return resolve({ ok: true, text: codexText(), sawSession, codexSessionId });
+      return resolve({
+        ok: false,
+        text: '',
+        error: `runtime exited ${code}${stderr ? `: ${stderr.slice(-300)}` : ''}`,
+        sawSession,
+        codexSessionId,
+      });
     });
   });
 }

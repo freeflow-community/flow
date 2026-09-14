@@ -2,6 +2,8 @@ import type {
   ArtifactDTO,
   ChannelDTO,
   ChannelIndicatorState,
+  HuddleInviteDTO,
+  HuddleParticipantDTO,
   MessageDTO,
   NotificationDTO,
   UserDTO,
@@ -13,7 +15,7 @@ export type EventType =
   | 'message.created'
   | 'message.updated'
   | 'message.deleted' // soft delete: row kept, renders as a "This message was deleted" tombstone
-  | 'message.purged' // hard delete: row gone, clients remove it entirely (no tombstone) — used for the agent's ephemeral "thinking…" status
+  | 'message.purged' // hard delete: row gone, clients remove it entirely — bot cleanup or owner/admin moderation
   | 'thread.reply'
   | 'typing'
   | 'presence'
@@ -21,6 +23,9 @@ export type EventType =
   | 'channel.updated' // rename / topic change (ui_nits item 5)
   | 'channel.archived'
   | 'channel.indicator' // per-channel subject: the activity spinner turned on/off (#137)
+  | 'channel.emoji' // per-channel subject: the persistent channel emoji changed (#396)
+  | 'huddle.updated' // per-channel subject: huddle roster changed (Phase 1)
+  | 'huddle.invite' // per-user notify subject: a DM huddle is ringing you, or the ring resolved (#436)
   | 'member.joined'
   | 'member.left'
   | 'member.updated' // workspace role change (admin panel)
@@ -36,7 +41,11 @@ export type EventType =
   | 'artifact.deleted' // per-channel subject
   | 'user.updated' // meta subject of every workspace the user belongs to
   | 'workspace.updated' // meta subject; workspace-level changes (e.g. sidebar color)
-  | 'workspace.joined'; // per-user subject; gateway attaches the new workspace's subs, then forwards so other sessions refresh their workspace list
+  | 'workspace.joined' // per-user subject; gateway attaches the new workspace's subs, then forwards so other sessions refresh their workspace list
+  // per-user notify subject (#359): someone invited me to a workspace, or the
+  // invitation I was shown is gone (accepted elsewhere, declined, expired).
+  // Clients refetch GET /v1/me/workspace-invites; `workspaceId` is the target.
+  | 'workspace.invited';
 
 export interface Event<T = unknown> {
   type: EventType;
@@ -63,6 +72,51 @@ export interface TypingData {
 export interface ChannelIndicatorData {
   channelId: string;
   state: ChannelIndicatorState | null;
+}
+
+/**
+ * A channel's emoji after a change (#396). `emoji: null` means it was cleared.
+ * Published only on a real change, on the same per-channel subject shape as
+ * ChannelIndicatorData — so the gateway's visibility filter keeps a private
+ * channel's decoration private too.
+ */
+export interface ChannelEmojiData {
+  channelId: string;
+  emoji: string | null;
+}
+
+/**
+ * A channel's live huddle roster after a change (Phase 1). Like
+ * ChannelIndicatorData, this is the aggregate, not one joiner/leaver — clients
+ * replace their whole roster with it. An empty array means the huddle ended.
+ */
+export interface HuddleUpdatedData {
+  channelId: string;
+  participants: HuddleParticipantDTO[];
+}
+
+/**
+ * A DM huddle invite changed (#436), delivered on each involved user's notify
+ * subject — the caller's and every callee's, so one event drives both the
+ * incoming-ring overlay and the caller's "ringing…"/"X isn't available" state.
+ *
+ * Clients render the ring while `invite.status === 'ringing'` and this user's
+ * target row is still `ringing`; any other combination dismisses it. That rule
+ * is what makes multi-device work without a second event type: accepting on a
+ * phone flips the target to `accepted` and every other device of that user
+ * takes the same event down. `answeredBySessionId` names the *socket* that
+ * answered, so the answering device stays quiet while its siblings can say
+ * "Answered on another device."
+ */
+export interface HuddleInviteData {
+  invite: HuddleInviteDTO;
+  answeredBySessionId?: string;
+  /**
+   * Display names of callees who could never be rung (offline, DND, muted DM,
+   * or busy in another DM huddle). Only sent to the caller — it is the text of
+   * "X isn't available."
+   */
+  unavailable?: string[];
 }
 
 export interface PresenceData {
@@ -101,9 +155,21 @@ export interface NotificationReadData {
 export type ArtifactEventData = ArtifactDTO;
 export type UserUpdatedData = UserDTO;
 
+/** `workspace.invited` payload (#359) — the invitation, or just its id when it ended. */
+export interface WorkspaceInvitedData {
+  inviteId: string;
+  /** Present when the invitation is live; absent when it just ended. */
+  invite?: import('./dto.js').PendingWorkspaceInviteDTO;
+}
+
 // ---- WS protocol frames (phase1.md §4) --------------------------
 export type ClientFrame =
-  | { op: 'auth'; token: string }
+  // `workspaces` (optional, #364) narrows *presence* to the workspaces this
+  // connection actually serves — an agent bridge runs one process per
+  // workspace and would otherwise show a green dot in every workspace its
+  // agent belongs to. Omitted means "all of them", which is what the human
+  // clients want: one window is reachable in every workspace it shows.
+  | { op: 'auth'; token: string; workspaces?: string[] }
   // threadRootId scopes the indicator to a thread's composer; absent = the
   // channel's main composer. Older clients omit it and read as main-composer.
   | { op: 'typing'; channelId: string; threadRootId?: string }

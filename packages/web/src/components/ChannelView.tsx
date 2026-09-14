@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
+import { useHuddle } from '../huddle';
 import { useArtifacts, useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
@@ -8,15 +9,20 @@ import ChannelMembersPopover, { type MemberRow } from './ChannelMembersPopover';
 import ChannelOverflowMenu from './ChannelOverflowMenu';
 import MessageList, { PinIcon } from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
+import FindBar, { useChatFind } from './FindBar';
 import { MobileMenuButton } from './MobileMenuButton';
+import { useHoverTooltip } from './HoverTooltip';
 import { ChannelOptionsModal, Modal, UserCard } from './modals';
 import { renderBody } from '../lib/format';
 import { useSyncBar } from '../lib/syncBar';
+import { useBackend, useCapabilities } from '../lib/backend';
+import { BackendError } from '@flow/shared';
 
 export default function ChannelView({ channelId }: { channelId: string }) {
   const auth = useAuth();
   const sel = useSelection();
   const live = useLive();
+  const huddle = useHuddle();
   const channels = useChannels(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
@@ -24,6 +30,27 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const messagesQ = useMessages(channelId);
   const pins = usePinnedMessages(channelId);
   const markRead = useMarkRead();
+  // Capability gating (#545): the header's Flow-only controls are not
+  // rendered for a backend that cannot do them; history that the provider
+  // limits is shown as limited rather than as the end of the transcript.
+  const caps = useCapabilities();
+  const backend = useBackend();
+  const openUrl = backend.openUrl({ channelId });
+  const limitedHistory = caps.history.state === 'limited';
+  const historyError = messagesQ.error instanceof BackendError ? messagesQ.error : null;
+  const lastPage = messagesQ.data?.pages[messagesQ.data.pages.length - 1];
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (historyError?.code === 'rate_limited') setRetryAt(Date.now() + (historyError.retryAfterMs ?? 60_000));
+    else setRetryAt(null);
+  }, [historyError]);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (retryAt === null) return;
+    const timer = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [retryAt]);
+  const waitSeconds = retryAt === null ? 0 : Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
   const lastReadRef = useRef<string | null>(null);
   const [cardUserId, setCardUserId] = useState<string | null>(null);
   const [editChannel, setEditChannel] = useState(false);
@@ -32,6 +59,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const [pinsOpen, setPinsOpen] = useState(false);
   // Reconnect bar (#234) — delayed and floored so short drops don't flash.
   const showSyncBar = useSyncBar(live.syncing);
+  // cmd-F find bar (#518) — searches the transcript this pane has loaded.
+  const paneRef = useRef<HTMLElement>(null);
 
   const channel = (channels.data ?? []).find((c) => c.id === channelId);
   // This channel's artifacts, for the "⋯" menu's Artifacts section (#188).
@@ -41,6 +70,9 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     [artifacts.data, channelId],
   );
   const messages = useMemo(() => flattenMessages(messagesQ.data?.pages), [messagesQ.data]);
+  // The find bar re-runs whenever the loaded set changes — a new message, or an
+  // older page arriving — so the counter never describes a stale transcript.
+  const find = useChatFind(paneRef, `${channelId}:${messages.length}:${messages.at(-1)?.id ?? ''}`);
 
   // Mark read whenever the newest visible message changes — but only while
   // the tab is actually visible. The WS keeps filling the cache in a hidden
@@ -108,7 +140,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       statusEmoji: m?.statusEmoji ?? '',
       statusText: m?.statusText ?? '',
       // You're online by definition — this client is the one connected.
-      online: id === auth.user.id || !!live.presence[id],
+      online: id === auth.user.id || live.isOnline(id),
       isSelf: id === auth.user.id,
     };
   });
@@ -116,26 +148,42 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   // Switching channels shouldn't leave the previous channel's roster hanging open.
   useEffect(() => setMembersOpen(false), [channelId]);
 
+  // Huddles run in any entity now — channel, DM or group DM (#436) — just not
+  // in an archived one. In a channel the button joins something ambient; in a
+  // DM the same button *rings* the other member(s), so it says so.
+  const huddleParticipants = channel?.huddleParticipants ?? [];
+  const inThisHuddle = huddle.channelId === channelId;
+  const huddleEligible = !!channel && !channel.archivedAt && caps.huddles.state !== 'unavailable';
+  const canEditChannel = channel?.kind === 'standard' && caps.channelManagement.state !== 'unavailable';
+  const isDmHuddle = !!channel && channel.kind !== 'standard';
+
+  // #392: the header shows the topic on one truncated line — hovering it gives
+  // the whole thing, raw, matching the sidebar tooltip.
+  const topicTip = useHoverTooltip(channel?.topic, 'channel-topic-tooltip');
+
   // Main-composer typing only — thread typing shows in its own panel. An agent
   // at work "thinks" rather than "types" (ui_nits), so carry the isAgent flag.
   const typers = Object.entries(live.typing[typingKey(channelId)] ?? {})
     .filter(([uid, ts]) => Date.now() - ts < 5000 && uid !== auth.user.id)
     .map(([uid]) => ({ name: names[uid] ?? 'Someone', isAgent: memberMap[uid]?.isAgent ?? false }));
 
+  // #387: the chat pane sits on pure white, not the app shell's warm
+  // `bg-base` — messages read cleaner, and it is what the macOS client paints
+  // now too. Every other surface keeps `bg-base`.
   return (
-    <section className="flex min-w-0 flex-1 flex-col bg-base">
+    <section ref={paneRef} className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-[22px] max-md:px-3">
         <MobileMenuButton />
         <div className="min-w-0 flex-1">
           <h2
             data-testid="channel-header"
-            className={`truncate text-[15px] font-bold ${dmOtherId || channel?.kind === 'standard' ? 'cursor-pointer hover:underline' : ''}`}
-            title={channel?.kind === 'standard' ? 'Edit name & topic' : undefined}
+            className={`truncate text-[15px] font-bold ${dmOtherId || canEditChannel ? 'cursor-pointer hover:underline' : ''}`}
+            title={canEditChannel ? 'Edit name & topic' : undefined}
             onClick={
               dmOtherId
                 ? () => setCardUserId(dmOtherId)
                 // Clicking a standard channel's name opens the name/topic editor (ui_nits item 5).
-                : channel?.kind === 'standard'
+                : canEditChannel
                   ? () => setEditChannel(true)
                   : undefined
             }
@@ -145,13 +193,42 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           {/* #194: the topic runs through the same inline renderer as a message
               body, so a URL in it is a real link (new tab) instead of grey text. */}
           {channel?.topic && (
-            <p data-testid="channel-topic" className="truncate text-xs text-muted">
+            // #392: the header's topic line is one truncated line, so hovering
+            // it shows the whole thing — same tooltip as the sidebar, and the
+            // raw text rather than the rendered links. The handlers go on the
+            // line itself, not the text inside it, so a pointer anywhere along
+            // the row counts as hovering it.
+            <p data-testid="channel-topic" {...topicTip.anchorProps} className="truncate text-xs text-muted">
               {renderBody(channel.topic, names, auth.user.id)}
             </p>
           )}
+          {topicTip.tooltip}
           {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">
+          {huddleEligible && (
+            <button
+              type="button"
+              data-testid={inThisHuddle ? 'huddle-leave' : 'huddle-join'}
+              title={inThisHuddle ? 'Leave huddle' : isDmHuddle ? 'Start a huddle — this rings them' : 'Join huddle'}
+              disabled={huddle.connecting}
+              className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold max-md:hidden ${
+                inThisHuddle
+                  ? 'bg-accent/15 text-accent-soft hover:bg-accent/25'
+                  : 'text-muted hover:bg-daypill/60 hover:text-ink'
+              }`}
+              onClick={() => {
+                if (inThisHuddle) void huddle.leave();
+                else if (channel) void huddle.join(channelId, channel.workspaceId).catch(() => {});
+              }}
+            >
+              🎙 {inThisHuddle ? 'Leave Huddle' : isDmHuddle ? 'Huddle' : 'Join Huddle'}
+              {/* ambient indicator: a huddle live but not yet joined shows who's in it */}
+              {!inThisHuddle && huddleParticipants.length > 0 && (
+                <span className="rounded-full bg-accent/15 px-1.5 text-accent-soft">{huddleParticipants.length}</span>
+              )}
+            </button>
+          )}
           {/* member stack — opens the roster; dropped on mobile so the title gets the room */}
           <button
             data-testid="channel-members-trigger"
@@ -172,7 +249,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
                     avatarUrl={m?.avatarUrl}
                     size={26}
                     radius={13}
-                    className="ring-2 ring-base"
+                    className="ring-2 ring-white"
                   />
                 </span>
               );
@@ -181,8 +258,20 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             {/* nothing to stack yet (fetch in flight) — keep a clickable target */}
             {shown.length === 0 && <span className="text-sm text-muted">👥</span>}
           </button>
+          {/* Another provider's conversation opens natively there (#545). */}
+          {openUrl && (
+            <a
+              data-testid="open-in-provider"
+              className="rounded-lg px-2 py-1 text-xs font-semibold text-accent-soft hover:bg-daypill/60"
+              href={openUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open in Slack ↗
+            </a>
+          )}
           {/* #188: pins, artifacts and channel options share one "⋯" menu */}
-          <button
+          {caps.pins.state !== 'unavailable' && <button
             type="button"
             data-testid="channel-menu-trigger"
             data-overflow-trigger
@@ -193,7 +282,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             onClick={() => { setMenuOpen((v) => !v); setMembersOpen(false); }}
           >
             ⋯
-          </button>
+          </button>}
           {membersOpen && (
             <ChannelMembersPopover
               rows={memberRows}
@@ -207,6 +296,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
               artifacts={channelArtifacts}
               pinCount={pins.data?.length ?? 0}
               showOptions={channel?.kind === 'standard'}
+              onOpenFiles={() => sel.openFiles(true)}
               onOpenPins={() => setPinsOpen(true)}
               onOpenArtifact={(id) => sel.selectArtifact(id)}
               onOpenOptions={() => setEditChannel(true)}
@@ -215,6 +305,43 @@ export default function ChannelView({ channelId }: { channelId: string }) {
           )}
         </div>
       </header>
+
+      {/* #518: the find bar slides in under the header, above the transcript —
+          it pushes the list down rather than floating over the newest message. */}
+      {find.open && <FindBar find={find} />}
+
+      {/* Provider-limited history (#545): say so, with the wait, instead of a
+          silent end of the transcript or a retry loop against the budget. */}
+      {limitedHistory && (historyError?.code === 'rate_limited' || messagesQ.hasNextPage || lastPage?.partial) && (
+        <div data-testid="history-limited" role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline bg-amber-50 px-[22px] py-1.5 text-xs text-ink-soft">
+          <span>
+            {historyError?.code === 'rate_limited'
+              ? waitSeconds > 0 ? `Slack asked Flow to wait ${waitSeconds}s before loading older messages.` : 'Slack is ready for the next page of history.'
+              : caps.history.reason}
+          </span>
+          {(messagesQ.hasNextPage || historyError) && (
+            <button
+              data-testid="history-load-older"
+              className="shrink-0 font-semibold text-accent-soft hover:underline disabled:opacity-40"
+              disabled={messagesQ.isFetchingNextPage || waitSeconds > 0}
+              onClick={() => void messagesQ.fetchNextPage()}
+            >
+              Load older
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* A provider with retention or read limits never gets to look like an
+          empty, complete archive (#546): when its history is exhausted, say
+          where the rest lives — at the old end, under the header, where the
+          reader who scrolled up is looking. */}
+      {openUrl && !messagesQ.hasNextPage && !messagesQ.isLoading && (
+        <p data-testid="history-end-note" role="status" className="shrink-0 border-b border-hairline px-[22px] py-1 text-[11px] text-faint">
+          Older messages may exist in Slack beyond what Flow can read here.{' '}
+          <a className="underline" href={openUrl} target="_blank" rel="noreferrer">Open in Slack</a>
+        </p>
+      )}
 
       {showSyncBar && (
         <div
@@ -236,9 +363,10 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         messages={messages}
         names={names}
         membersById={memberMap}
-        hasMore={messagesQ.hasNextPage ?? false}
-        onLoadOlder={() => void messagesQ.fetchNextPage()}
+        hasMore={(messagesQ.hasNextPage ?? false) && !(limitedHistory && waitSeconds > 0)}
+        onLoadOlder={() => { if (!limitedHistory || waitSeconds === 0) void messagesQ.fetchNextPage(); }}
         showThreadAffordances
+        unreadThreadRootIds={channel?.unreadThreadRootIds ?? []}
         focusMessageId={focusId}
         onFocused={() => sel.clearFocusMessage()}
       />

@@ -37,6 +37,17 @@ html, body, #root {
   border-radius: 8px;
 }
 
+/* Inline chat find (#518): matches are painted by the CSS Custom Highlight
+   API over Ranges the find bar holds, so React keeps owning the message DOM.
+   The current match is the accent, the rest are a soft wash of it. */
+::highlight(flow-find) {
+  background-color: color-mix(in oklch, var(--color-accent) 22%, transparent);
+}
+::highlight(flow-find-current) {
+  background-color: var(--color-accent);
+  color: #fff;
+}
+
 /* Reconnect bar (#234): a 2px indeterminate sweep under the channel header
    while the socket is down or the post-connect refetch is still running. */
 @keyframes mc-sync-slide {

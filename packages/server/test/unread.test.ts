@@ -1,7 +1,7 @@
 // Per-channel unread counts (#71): your own messages must never badge, and
 // posting advances your read cursor. DB-backed — scratch database on the dev
 // postgres (docker compose in packages/infra, host port 5442).
-import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 process.env.DATABASE_URL = process.env.FLOW_TEST_DATABASE_URL
@@ -25,9 +25,11 @@ const auth = await import('../src/services/auth.js');
 const ws = await import('../src/services/workspaces.js');
 const ch = await import('../src/services/channels.js');
 const msg = await import('../src/services/messages.js');
-const { and, eq } = await import('drizzle-orm');
+const { and, desc, eq, isNull } = await import('drizzle-orm');
+const { encryptBody } = await import('../src/crypto/index.js');
+const { newId } = await import('../src/lib/ids.js');
 
-const { channelMembers } = schema;
+const { channelMembers, messages, notifications } = schema;
 
 let aliceId = '';
 let bobId = '';
@@ -121,5 +123,251 @@ describe('sending advances the read cursor', () => {
     // alice replies in a thread — a reply must not touch the channel cursor
     await msg.sendMessage(channelId, aliceId, randomUUID(), 'threaded reply', newer.id);
     expect(await readCursor(aliceId, channelId)).toBe(newer.id);
+  });
+});
+
+// #270: a thread hanging off a join/leave line is unreachable — no client
+// draws a thread affordance on one — so a notification it raises could never
+// be read, and the sidebar badge stuck at 1 for ever.
+describe('threads on system messages', () => {
+  // Earlier tests in this file leave bob notifications of their own; these
+  // assert exact counts, so start each one from a clean inbox.
+  beforeEach(async () => {
+    await db.delete(notifications).where(eq(notifications.userId, bobId));
+  });
+
+  async function systemRootId(): Promise<string> {
+    const rows = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(and(eq(messages.channelId, channelId), eq(messages.systemKind, 'member_joined')))
+      .limit(1);
+    const id = rows[0]?.id;
+    if (!id) throw new Error('expected a member_joined line from addMember');
+    return id;
+  }
+
+  it('refuses a reply to a join/leave line', async () => {
+    const root = await systemRootId();
+    await expect(msg.sendMessage(channelId, aliceId, randomUUID(), 'reply to a join line', root))
+      .rejects.toMatchObject({ code: 'bad_thread_root' });
+  });
+
+  it('a channel visit clears a notification already stuck under a system root', async () => {
+    // Rows like this exist in the wild, written before the refusal above: a
+    // reply under the join line, notifying its author. Forge one directly.
+    const root = await systemRootId();
+    const replyId = newId();
+    const enc = encryptBody('a reply that predates the fix');
+    await db.insert(messages).values({
+      id: replyId,
+      channelId,
+      userId: aliceId,
+      threadRootId: root,
+      clientMsgId: newId(),
+      body: enc.body,
+      bodyNonce: enc.bodyNonce,
+      encKeyId: enc.encKeyId,
+      encScheme: enc.encScheme,
+    });
+    await db.insert(notifications).values({
+      id: newId(),
+      userId: bobId, // bob authored the join line, so the reply notified him
+      messageId: replyId,
+      channelId,
+      kind: 2,
+      actorId: aliceId,
+    });
+
+    const before = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(before?.unreadNotifications).toBe(1);
+    // and it is visible on the root's reply chip, not only in the sidebar
+    expect(before?.unreadThreadRootIds).toContain(root);
+
+    const newest = (
+      await db
+        .select({ id: messages.id })
+        .from(messages)
+        .where(and(eq(messages.channelId, channelId), isNull(messages.threadRootId)))
+        .orderBy(desc(messages.id))
+        .limit(1)
+    )[0]!.id;
+    await ch.markRead(channelId, bobId, newest);
+
+    const after = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(after?.unreadNotifications).toBe(0);
+    expect(after?.unreadThreadRootIds).toEqual([]);
+  });
+
+  it('opening the thread still clears an ordinary reply', async () => {
+    const root = await msg.sendMessage(channelId, bobId, randomUUID(), 'a real root');
+    await msg.sendMessage(channelId, aliceId, randomUUID(), 'a real reply', root.id);
+
+    const before = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(before?.unreadNotifications).toBe(1);
+    expect(before?.unreadThreadRootIds).toEqual([root.id]);
+
+    await ch.markRead(channelId, bobId, root.id, root.id);
+    const after = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(after?.unreadNotifications).toBe(0);
+    expect(after?.unreadThreadRootIds).toEqual([]);
+  });
+});
+
+// #533: the sidebar badge counts every unread row a channel has, thread replies
+// included, but a visit used to clear only top-level ones — so the number was
+// structurally unclearable from the channel view. A visit now sweeps the
+// channel's thread rows too.
+describe('a channel visit clears thread-reply notifications', () => {
+  let chanId = '';
+
+  beforeEach(async () => {
+    const c = await ch.createChannel(workspaceId, aliceId, `t533-${randomUUID().slice(0, 8)}`);
+    chanId = c.id;
+    await ch.addMember(chanId, aliceId, bobId);
+    await db.delete(notifications).where(eq(notifications.userId, bobId));
+  });
+
+  async function forBob() {
+    return (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === chanId);
+  }
+
+  it('clears replies across several threads in one visit', async () => {
+    const first = await msg.sendMessage(chanId, bobId, randomUUID(), 'first root');
+    const second = await msg.sendMessage(chanId, bobId, randomUUID(), 'second root');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply one', first.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply two', first.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply three', second.id);
+
+    const before = await forBob();
+    expect(before?.unreadNotifications).toBe(3);
+    expect(before?.unreadThreadRootIds).toEqual(expect.arrayContaining([first.id, second.id]));
+
+    await ch.markRead(chanId, bobId, second.id); // the visit, no threadRootId
+
+    const after = await forBob();
+    expect(after?.unreadNotifications).toBe(0);
+    expect(after?.unreadThreadRootIds).toEqual([]);
+    expect(after?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('clears a reply whose root sits past the read cursor', async () => {
+    // The cursor a client sends is the newest message it has cached, which on a
+    // partially loaded transcript can be older than the thread's root. The
+    // sweep must not depend on where the cursor landed, or the badge is stuck
+    // again for exactly the user who scrolled least.
+    const older = await msg.sendMessage(chanId, aliceId, randomUUID(), 'older top-level');
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'newer root');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'a reply', root.id);
+
+    expect((await forBob())?.unreadNotifications).toBe(1);
+    await ch.markRead(chanId, bobId, older.id);
+    expect((await forBob())?.unreadNotifications).toBe(0);
+  });
+
+  it('leaves another channel alone', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'root here');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply here', root.id);
+    const otherRoot = await msg.sendMessage(channelId, bobId, randomUUID(), 'root over there');
+    await msg.sendMessage(channelId, aliceId, randomUUID(), 'reply over there', otherRoot.id);
+
+    await ch.markRead(chanId, bobId, root.id);
+
+    expect((await forBob())?.unreadNotifications).toBe(0);
+    const other = (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === channelId);
+    expect(other?.unreadNotifications).toBe(1);
+  });
+
+  it('the cleared state survives a reload of the channel list', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'bobs root');
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'a reply', root.id);
+    await ch.markRead(chanId, bobId, root.id);
+
+    // Rows are flipped server-side, not just zeroed on a client: any fresh read
+    // of the list — a relaunched app, another device — sees the same zero.
+    const rows = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(and(eq(notifications.userId, bobId), eq(notifications.channelId, chanId), isNull(notifications.readAt)));
+    expect(rows).toEqual([]);
+    expect((await forBob())?.unreadNotifications).toBe(0);
+  });
+});
+
+// #327: when a channel's unreads live only inside a thread, the sidebar row is
+// the only sign of them — the main timeline looks unchanged. The channel list
+// says which thread to open (and where in it), so one click lands on the unread.
+describe('oldest unread inside a thread', () => {
+  let chanId = '';
+
+  // A fresh channel and a clean inbox per case: earlier tests in this file
+  // leave bob both notifications and unread messages.
+  beforeEach(async () => {
+    const c = await ch.createChannel(workspaceId, aliceId, `t327-${randomUUID().slice(0, 8)}`);
+    chanId = c.id;
+    await ch.addMember(chanId, aliceId, bobId);
+    await db.delete(notifications).where(eq(notifications.userId, bobId));
+  });
+
+  async function forBob() {
+    return (await ch.listChannels(workspaceId, bobId)).find((c) => c.id === chanId);
+  }
+
+  it('points at the thread when every unread is a reply', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'bobs root');
+    const reply = await msg.sendMessage(chanId, aliceId, randomUUID(), 'first reply', root.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'second reply', root.id);
+
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(0); // nothing new in the main timeline
+    expect(c?.oldestUnreadThreadReply).toEqual({ rootId: root.id, replyId: reply.id });
+  });
+
+  it('stays quiet when the oldest unread is a top-level message', async () => {
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'top-level news');
+
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(1);
+    expect(c?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('stays quiet with no unreads at all', async () => {
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(0);
+    expect(c?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('lets the main timeline win when an unread top-level message is older', async () => {
+    // alice's root is itself unread for bob; his reply makes him a participant
+    // so alice's later reply notifies him.
+    const root = await msg.sendMessage(chanId, aliceId, randomUUID(), 'alices root');
+    await msg.sendMessage(chanId, bobId, randomUUID(), 'bob joins the thread', root.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'alice replies back', root.id);
+
+    const c = await forBob();
+    expect(c?.unreadCount).toBe(1); // the root is still unread in the timeline
+    expect(c?.unreadThreadRootIds).toEqual([root.id]); // the chip keeps its dot
+    expect(c?.oldestUnreadThreadReply).toBeUndefined();
+  });
+
+  it('picks the thread holding the oldest unread when several have replies', async () => {
+    const first = await msg.sendMessage(chanId, bobId, randomUUID(), 'first root');
+    const second = await msg.sendMessage(chanId, bobId, randomUUID(), 'second root');
+    const oldest = await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply in first', first.id);
+    await msg.sendMessage(chanId, aliceId, randomUUID(), 'reply in second', second.id);
+
+    const c = await forBob();
+    expect(c?.oldestUnreadThreadReply).toEqual({ rootId: first.id, replyId: oldest.id });
+    // the other thread keeps its own unread indicator
+    expect(c?.unreadThreadRootIds).toEqual(expect.arrayContaining([first.id, second.id]));
+  });
+
+  it('clears once the thread has been read', async () => {
+    const root = await msg.sendMessage(chanId, bobId, randomUUID(), 'bobs root');
+    const reply = await msg.sendMessage(chanId, aliceId, randomUUID(), 'a reply', root.id);
+    expect((await forBob())?.oldestUnreadThreadReply).toEqual({ rootId: root.id, replyId: reply.id });
+
+    await ch.markRead(chanId, bobId, reply.id, root.id); // opening the thread
+    expect((await forBob())?.oldestUnreadThreadReply).toBeUndefined();
   });
 });

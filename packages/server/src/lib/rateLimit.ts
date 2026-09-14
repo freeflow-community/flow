@@ -19,3 +19,9 @@ export function rateAllow(key: string, limit: number, windowMs: number): boolean
   w.count += 1;
   return w.count <= limit;
 }
+
+/** Test hook: drop every window so a suite can exercise a limiter twice
+ * without waiting one out. Never called from production code. */
+export function _resetRateLimitsForTests(): void {
+  windows.clear();
+}

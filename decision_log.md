@@ -1,5 +1,263 @@
 # Decision log
 
+## 2026-09-03 — Agent calls borrow the huddle lifecycle, not LiveKit transport
+
+- A one-to-one agent DM's huddle control starts an ongoing iOS agent call. The
+  call is app-owned, survives navigation and sheet dismissal, minimizes to a
+  persistent bar, and ends only from an explicit red call control.
+- Speech remains the existing conversation protocol: a pause posts the
+  transcript as a normal message, the first durable agent reply after that
+  exact message is spoken, and listening resumes. Raw audio is never sent to
+  Flow or joined to a LiveKit room.
+- LiveKit huddles and agent calls are mutually exclusive microphone owners.
+  Starting an agent call waits for a current huddle to disconnect; accepting or
+  joining a huddle ends the agent call.
+- Unlike a LiveKit huddle, speech recognition pauses while iOS backgrounds the
+  app and resumes on return. Multi-person agent calls, video and a separate
+  voice transcript protocol are outside this slice.
+
+## 2026-09-02 — #469 was the hardened runtime, not the signing identity
+
+The issue's stated hypothesis was that `tccd` auto-denies because the release
+is signed with the self-signed "MyChat Dev Signing" identity, whose certificate
+only exists on the build machine. That is wrong on both halves, and the record
+matters because the wrong fix (buy a Developer ID, re-sign) would have changed
+nothing.
+
+The shipped artifact — `Flow-2.2.83-524.zip`, pulled from the live appcast —
+is signed `Developer ID Application: BizTrip AI Inc. (76NSMTH84G)`, timestamped,
+notarized and stapled; `spctl` accepts it as `source=Notarized Developer ID`.
+It validates on any machine, from the stapled ticket, with no keychain trust
+involved. "MyChat Dev Signing" belongs to `make-app.sh`'s local path only, and
+that certificate is no longer in this machine's keychain either, so local
+builds have quietly been ad-hoc for some time.
+
+What actually breaks it: `dist.sh` signs with `--options runtime` against an
+**empty** `Flow.entitlements`. The hardened runtime gates the microphone and
+camera behind `com.apple.security.device.audio-input` and
+`com.apple.security.device.camera`, and refuses them before TCC is consulted —
+which is why there is no prompt, no Privacy & Security row, and an instant
+`false`. Measured with a probe signed by the same certificate under the same
+runtime, varying only the entitlements file:
+
+    empty file       .notDetermined -> requestAccess false in 0.004s -> .denied
+    with audio-input .notDetermined -> system prompt shown           -> .authorized
+
+Camera behaves identically. **The general lesson is the one worth keeping: a
+capability that only the release path can exercise cannot be validated by
+building locally.** `make-app.sh` applies no hardened runtime, so every
+developer build worked and every shipped build could not, and no amount of
+task-channel QA on this machine would ever have caught it. That is why the
+check now lives in `dist.sh`, asserting on the signed bundle, where failing
+costs a release instead of a bug report from someone else's Mac.
+
+Corollary ruling: **the "Access Needed" alert may only be raised by a settled
+`.denied`/`.restricted`.** `LiveKitSDK.ensureDeviceAccess` returns one `Bool`
+for "the user declined" and "the OS declined to ask", and sending someone to a
+Privacy pane that does not list Flow is worse than saying nothing. Flow reads
+the status itself now (`Support/DeviceAccess.swift`).
+
+
+## 2026-09-02 — Huddle video (#435) and DM huddles that ring (#436)
+
+Design calls made while building batch 4, kept here because each closed a
+question the issues left open.
+
+- **`cancelled` is recorded, but the DM reads "Missed huddle".** The caller
+  hanging up before anyone answered is a distinct *fact* — it is in the
+  `huddle_invites` row — but from the callee's side it is exactly a call they
+  never got to answer. Inventing a fourth transcript line ("Call cancelled")
+  would tell them something about the caller's behaviour they have no use for.
+- **`unavailable` is a target status separate from `missed`.** Both are
+  misses. Only the first is *instant* and produces "X isn't available" for the
+  caller, and Track A makes it the common case (no push means a closed tab is
+  unreachable), so collapsing the two would throw away the distinction that
+  matters most right now. When Track B lands, `unavailable` should get rarer —
+  it is a useful measure of how much the ring is missing.
+- **Huddle outcome lines count toward channel unread; join/leave lines still
+  do not.** The unread query excluded *all* system messages, which is right for
+  a courtesy notice and wrong for "Missed huddle" — the only trace a call you
+  weren't there for leaves. The exclusion is now by kind
+  (`HUDDLE_SYSTEM_KINDS`, shared between the unread query and the poster) rather
+  than by "is it a system message".
+- **Accept is join.** Answering a ring marks the target answered and then takes
+  the ordinary join path for its token; there is no second way into the room.
+  This is what keeps "a target who just joins the room without pressing Accept"
+  from being stuck ringing forever.
+- **The multi-device rule lives in one pure function per client**
+  (`lib/huddleRing.ts`, `Support/HuddleRing.swift`), not in the view layer. One
+  event type carries the whole lifecycle to everyone involved, so the
+  interesting logic is the *reading* — and a laptop and a phone reading the
+  same event have to agree. Both implementations carry the same six cases as
+  tests. Writing them caught the group-DM bug: keying the ring card off
+  `invite.status` rather than the reader's own target row would have yanked the
+  card away from everyone else the moment the first person accepted, killing
+  the late-join the issue asks for.
+- **Turning a camera off mutes its publication, it does not unpublish it.** So
+  "is there a publication?" is not "is there video?" — it stays true forever
+  after the first camera-on, and the grid never collapses back to the bar.
+  Tiles require a live, unmuted, subscribed track. (The Swift SDK's
+  `firstCameraVideoTrack` already guards this; the web client had to be taught.)
+- **An empty ScreenCaptureKit source list means "permission not granted".**
+  macOS does not error when Screen Recording was never granted — it returns no
+  windows and no displays. That is the signal the share picker keys its
+  Open-Settings path off, which covers both "denied" and "never asked".
+- **The grid is capped at 40% of the viewport on web.** A huddle is something
+  you have *while* working in the conversation; an uncapped 16:9 share tile
+  pushed the transcript and composer off screen entirely. Shares letterbox
+  rather than crop — cropping cuts off the edges of what someone is showing.
+
+## 2026-09-01 — APNs polish (#251): push obeys the prefs, and the hour gets a budget
+
+Four questions #251 asked, answered with what the code and the measurements
+actually say rather than by turning knobs.
+
+- **The prefs never reached the phone.** `suppressAlertFor` gated the banner on
+  web and macOS, but the outbox enqueued and sent every notification row
+  regardless — so "mute reactions" and a Do-not-disturb status silenced the
+  laptop while the phone in the same pocket rang. Fixed in `pushOutbox.ts` by
+  running the same function at **send** time (prefs joined into the hydration
+  query that was already running). Shipping the iOS prefs UI on top of the old
+  behaviour would have given people toggles that did nothing to the device that
+  wakes them up.
+- **A muted push still carries the badge**, as `{aps:{badge:N}}` at priority 5:
+  nothing displays, but an unread row that the badge stops counting is a lie.
+  Deliberately an *alert* push rather than the `content-available` kind —
+  background pushes are metered and a muted mention is a new notification, not
+  a correction, so spending that budget on the common case would starve the
+  corrections that need it.
+- **The 30 s coalescing window is right; the hour had no limit at all.**
+  Measured through the real module (`test/badgeSyncBudget.test.ts`, time scaled
+  400:1): a catch-up burst of 40 reads costs 2 pushes — the window doing its
+  job — but an hour of steady reading on a busy workspace cost **119**, and a
+  read every two minutes still cost **30**, against an Apple background budget
+  documented as "a few per hour". Added a rolling **6 per hour per user** cap
+  that *holds* the newest count rather than dropping it; the busy profiles now
+  cost 6. Over the budget iOS delays or drops these itself, which is the same
+  staleness chosen by something that cannot see which count matters.
+- **`apns-collapse-id` was dead code — removed rather than extended.** It was
+  set for kind 3 only, and `suppressAlertFor` never alerts kind 3, so no push
+  ever carried one. Extending it to the kinds that do push was rejected:
+  collapsing *replaces* the previous notification, so a busy channel would show
+  the newest mention and silently drop the ones before it, and a tap could only
+  route to the survivor. `thread-id` already gives a busy channel one stacked
+  group in Notification Center, which is the grouping that was wanted.
+- **The 1 h expiry stays.** It bounds how stale a push can be when a phone comes
+  back from a tunnel, and it also bounds the badge: an expired push is a badge
+  update that never lands. Shortening it trades a rare stale banner for a more
+  often wrong badge.
+- Also added: a `sound` pref (default on) — `aps.sound` omitted when off, and
+  the iOS foreground rule presents `[.banner]` alone — and the iOS
+  notification-prefs screen the toggles have never had here, which closes that
+  half of the standing Parity gap (macOS still has none).
+
+## 2026-09-01 — APNs push payloads carry the message text (operator ruling)
+
+- `PUSH_APNS.md` § "Open questions for the operator", 1: bodies are AES-GCM
+  encrypted at rest, so putting the plaintext in a push hands it to Apple in
+  transit. Options were (a) include it, (b) "Alice sent you a message" with no
+  body, (c) `mutable-content` + a Notification Service Extension that fetches
+  the body on device.
+- **Operator ruling (Scott, in #task-248): (a) — include the text, and leave
+  the flag enabled.** So `FLOW_PUSH_BODY_PREVIEW` defaults on and stays on;
+  it exists as the one-line reversal to (b) should a workspace ever need it,
+  not as something to tune. (c) remains the upgrade path if that day comes,
+  and is not built.
+- Where: `config.ts` (`pushBodyPreview`), `push/payload.ts`
+  (`alertStringsFor`). Shipped in #248 / PR #453.
+
+## 2026-08-31 — Socket Mode routing: request/reply, not heartbeat liveness; tickets to Postgres (phase 18 M3)
+
+- The design doc (§3) had app-socket liveness riding the presence heartbeat,
+  with the outbox consulting the merged view before choosing socket vs HTTP.
+  Implemented instead as **NATS request/reply**: `deliverEnvelope` tries the
+  local socket, then requests `app.{appId}.socketmode`; the socket-holding
+  replica subscribes (queue group `socketmode`, so exactly one responder) and
+  replies with the ack result. The request itself is the liveness probe — a
+  "no responders" error means no replica holds a socket, with **zero staleness
+  window**, where heartbeat liveness would be up to a beat stale in both
+  directions. Ack semantics are unchanged; the outbox stays the retry
+  backstop.
+- The design doc missed the **connection tickets**: `apps.connections.open`
+  may answer on one replica while the WebSocket upgrade lands on another, so
+  the one-time ticket moved from an in-memory map to Postgres (0039,
+  sha256-only, single-use via `DELETE .. RETURNING`) — hard state, per the
+  "soft state gossips, hard state locks" principle.
+
+## 2026-08-31 — Presence event dedup is asymmetric (phase 18 M2 implementation)
+
+- The design doc's rule ("emit only when a local transition changes the merged
+  answer") is unsafe against heartbeat staleness — the remote view is up to one
+  beat old. Two holes: a stale remote entry can suppress a real **online**
+  emission (wrong gray dot until a refetch), and two sockets closing on
+  different replicas within one beat suppress both **offline** emissions.
+- Ruling as implemented: **online** transitions emit on the *local* 0→1,
+  never suppressed (a redundant online event is harmless — presence events are
+  idempotent state); **offline** transitions emit on the *merged* answer (an
+  offline for a user still connected elsewhere would be wrong, not redundant).
+  The offline staleness hole is closed by emitting elected offline events for
+  pairs a *snapshot diff* removes from the merged view, in addition to the
+  crash-expiry election the doc already had. Duplicate offline events are
+  possible and tolerated.
+- Where: `presence.ts` header (rationale), `presenceSync.ts` (`emitElected`
+  on both snapshot-apply and expiry). Design doc §1 to be aligned after the
+  phase-18 M1 doc revision (PR #443) merges, to avoid cross-PR edits to the
+  same section.
+
+## 2026-08-27 — Permanent message deletion is an owner/admin moderation power (operator)
+
+- Workspace `owner` and `admin` roles may permanently delete any non-system
+  message they can access, including bot/agent messages and existing soft-delete
+  tombstones. Regular members retain soft delete for their own live messages.
+- Permanent deletion removes the row rather than leaving a courtesy line. A
+  thread-root purge removes every reply atomically; a reply purge preserves the
+  thread and recomputes its rollup. The server remains the authorization boundary,
+  and clients must reconcile Activity, unread counts, attachments, and caches.
+
+## 2026-08-20 — Phase 1 voice huddle rulings
+
+Grilling session ahead of implementing `docs/research/voice-huddle-livekit.md`
+Phase 1. See `CONTEXT.md` for the Huddle glossary entry (first use of a root
+`CONTEXT.md` in this repo).
+
+- **LiveKit is the source of truth for huddle state**, not Flow's server.
+  `huddles.ts`'s in-memory map is a cache of it — server boot reconciles by
+  querying LiveKit's REST API (`RoomServiceClient.listParticipants`) for any
+  live rooms and republishing corrected `huddle.updated` events, since a
+  server restart wipes Flow's map while LiveKit's rooms (hosted separately,
+  on LiveKit Cloud) keep running regardless.
+- **No TTL-sweep on huddle participants**, unlike `channelIndicators`.
+  LiveKit's own RTC layer already detects a dead peer and fires the
+  `participant_left` webhook — that's the disconnect-clear safety net. REST
+  join/leave is the primary path; there's no "forgot to refresh" failure mode
+  to guard against the way a long-running indicator-setter has.
+- **LiveKit identity is the bare `userId`**, not per-device/per-tab. A second
+  connection from the same user disconnects their first — one live presence
+  per person, mirroring Slack Huddles. Flagged as revisitable later if
+  multi-device presence turns out to be wanted.
+- **Mid-huddle permission loss is a known Phase 1 gap.** Being removed from a
+  channel, or the channel being archived, while actively in that channel's
+  huddle does not force a disconnect — consistent with the rest of the
+  codebase, which never forcibly closes live WS connections on membership
+  removal either.
+- **Background audio is in scope for iOS Phase 1** (`UIBackgroundModes:
+  audio`). An ambient huddle has to survive backgrounding/lock-screen, not
+  just in-app navigation, or the "feels like Slack" pitch fails at the first
+  app-switch.
+- **Access tokens are minted with a 24h TTL.** No refresh mechanism exists yet
+  in Phase 1, so erring long avoids a mid-call disconnect.
+- **`POST /join` is idempotent.** Calling it while already an active
+  participant re-mints a fresh token rather than erroring — this is also the
+  reconnect path (tab refresh, network blip).
+- **`HuddleMiniBar`'s ✕ actually leaves the huddle** (disconnect + `POST
+  /leave`), unlike `OpenInAppBanner`'s dismiss-only semantics — a
+  hidden-but-still-broadcasting state would contradict the ambient
+  drop-in/drop-out model. Clicking the bar body (not the ✕) navigates to the
+  huddle's channel.
+- **Work lands as a sequence of ordered commits** (server → web → macOS → iOS
+  → docs) on `feature/voice-huddle-audio`, merged as one PR with one
+  changelog file — not split into separate PRs per platform.
+
 ## 2026-08-06 — Account deletion: owners hand off, never blocked (5.1.1(v))
 
 App Review rejected iOS 2.0 (3) for offering account creation without account
@@ -1038,3 +1296,115 @@ one-recipient MCP correction).
   member — not just its creator — can rename, update, or delete it.
 - **macOS parity ships in-phase** (not a gap); iOS artifacts UI remains a
   Parity gap, now tracking the per-channel model.
+- **A shared browser session may be offered for sign-in, never assumed**
+  (operator ruling, #279). The native "Continue with Google" handoff page used
+  to sign the app in from whatever Flow session the browser already held, which
+  on iOS is whoever used the phone last. The first fix made the
+  `ASWebAuthenticationSession` sheet ephemeral to force Google's chooser; the
+  ruling reversed it. We want the chooser *and* the cookies: shared cookies are
+  what make the chooser cheap, because it opens already listing the device's
+  accounts. So `prefersEphemeralWebBrowserSession` stays `false`, and
+  `/?native=google` always renders a choice — `Continue as <email>` beside the
+  Google button. Do not trade the common case (one tap) for the rare one (wrong
+  account) by discarding sessions the user legitimately has.
+
+## 2026-09-04 — Agents answer the existing Huddle, not a second voice mode
+
+- **Calling an agent uses the ordinary DM Huddle ring and room.** The bridge
+  accepts with the agent bearer token and joins LiveKit under that same Flow
+  user id, so every client gets its existing roster, persistent bar, audio,
+  backgrounding and hang-up behavior without an agent-specific call screen.
+- **Realtime conversation and durable work are two layers of one agent.** A
+  low-latency OpenAI Realtime session handles the ongoing, interruptible call;
+  an explicit tool writes the agreed task into the DM and queues the existing
+  CLI runtime for code or research work. The voice layer never claims tool work
+  happened before the chat runtime reports it.
+- **One active voice call per bridge, and no recording.** Caller departure,
+  terminal invite state, model closure or daemon shutdown closes the room and
+  calls the existing leave route. LiveKit Agents recording is disabled. A
+  missing `OPENAI_API_KEY` or disabled voice config declines immediately with
+  an actionable DM message rather than allowing a fake or unanswered call.
+
+## 2026-09-11 — Slack connector sends its client secret on token refresh (#543)
+
+- **Operator ruling: sign-in stays secret-free PKCE, refresh sends
+  `SLACK_CLIENT_SECRET`.** Slack's PKCE guide says a public client refreshes
+  with only `client_id`, but live Slack answered `bad_client_secret`, so every
+  connection would have died ~12h after sign-in. The connector is a server, so
+  holding the secret costs little; turning off token rotation (one-way per
+  Slack app, and weaker) was rejected.
+- **Trust live Slack over its docs, and make the fakes match.** The unit fakes
+  followed the docs, which is why both live bugs (refresh secret, and the app's
+  `bot_id` on user-token posts) passed CI. The fake Slack now reproduces both.
+
+## 2026-09-11 — Slack protocol investigation runs in the operator's test workspace (#544)
+
+- **Operator ruling: the designated Slack test workspace is Coderbots, channel
+  `#testing`, using the operator's own member account.** Synthetic messages
+  labelled "Flow protocol test" only; other channels stay read-only. The
+  2026-09-09 observation used a non-test workspace and is kept only as v1
+  history.
+- **A first-party `xoxc` session is a recorded blocker, not a gap.** Every
+  internal-protocol capability in the matrix is "observed but blocked" on web,
+  macOS and iOS alike until a supported session flow is designed and approved.
+  No OAuth token was tried against internal endpoints and no session material
+  was extracted, per the spec's hard rules.
+- **Raw captures never enter the repo.** Only `tools/sanitize.mjs` output does;
+  the id map stays in the scratch directory, and the sanitizer fails the run if
+  a token or workspace hostname survives.
+- **No public-API history experience is promised with this app.** Measured live:
+  `conversations.history` allows one request per minute with 15 objects per
+  page, shared per app + team, because the app is distributed outside the
+  Marketplace. The public route to tier-3 history is Marketplace approval; the
+  other route is the internal protocol, which is session-blocked. Discovery
+  and send remain fine on the public API.
+
+## 2026-09-11 — Slack provider step 3: what "UI consumes the backend" means for this round (#545)
+
+- **The chat core goes through `WorkspaceBackend`; Flow-only surfaces stay on
+  the Flow runtime and are gated.** Channels, members, history, threads, send,
+  edit, delete, reactions, read state and identity are backend calls on all
+  clients. Artifacts, apps, agents, admin, scheduling, notifications, huddles
+  and invites keep their Flow REST calls but are disabled by capability, so a
+  Slack workspace never reaches a Flow mutation. Moving those surfaces behind
+  the interface is not required for a provider that cannot have them.
+- **The connector normalizes once for every client.** Slack payloads become the
+  shared DTO shapes inside the connector (mrkdwn → markdown, `ts` verbatim,
+  provenance with Open in Slack), so web, macOS and iOS decode the same JSON
+  and cannot drift on conversion rules.
+- **A limited provider is never refetched casually.** Slack history costs one
+  page per minute, so a delete or an event patches the cache instead of
+  invalidating the transcript, pages that overlap are deduped by id, and a 429
+  is shown as a wait with the provider's `Retry-After`, never retried.
+- **Native ships the backend, not the sign-in.** macOS and iOS get the
+  adapter, the registry record with per-team bindings, and tests; the Connect
+  Slack flow and routing the sync engine through the protocol are the next
+  native slice and are recorded in the Parity ledger rather than half-wired.
+
+## 2026-09-12 — Slack provider step 4: what is verified, what is honest, what is deferred (#546)
+
+- **No internal-protocol capability ships.** Step 2 established that every
+  internal interface needs a first-party `xoxc` session, which is a recorded
+  blocker on all platforms. The "versioned adapter with capability switches"
+  the spec asks for is therefore the public-API adapter plus the executable
+  scope manifest; a protocol change surfaces as a dropped, counted event and a
+  disabled capability, never as a crash or a silent gap.
+- **A send that times out is unknown, not failed.** The connector keys sends
+  on `client_msg_id`, records the attempt before posting, and on retry looks
+  the message up by author, exact text and `ts` at or after the attempt. It
+  never posts twice and never retries blindly through another transport.
+- **Notifications are `limited`, on purpose.** Slack events reach only the
+  connector; the Flow server pushes only its own notification rows and has no
+  server-to-server route the connector could call. Rather than register a
+  device token with the connector, each client posts local banners for
+  mentions and DMs while it runs, and the capability reason says exactly that.
+  The signed connector→Flow route that would close the gap is written down in
+  `docs/dev/SLACK_CONNECTOR.md` and not built.
+- **Native sign-in uses the app's URL scheme as its client origin.** A native
+  client cannot send an `Origin` header, so the connector accepts a configured
+  `flow://slack` origin on the OAuth routes and bounces the callback to
+  `flow://slack/connected?operationId=…`. Only the operation id travels in the
+  URL; the PKCE verifier stays in the app and redeems the handoff by polling.
+- **The share extension refuses attachments for Slack.** The app is not
+  granted `files:write`; rather than upload somewhere else or drop the file
+  silently, the extension sends text only and says why.

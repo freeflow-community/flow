@@ -3,7 +3,7 @@ import type { CodeTab } from "@/components/code-tabs";
 /**
  * Agents are a Freeflow primitive, not an integration you wire up. You describe
  * one, scope it, and it shows up in the channel. Code is the escape hatch for
- * when you want more control — never the price of entry.
+ * when you want more control, never the price of entry.
  */
 export const agentTabs: CodeTab[] = [
   {
@@ -38,7 +38,7 @@ export const agentTabs: CodeTab[] = [
     lines: [
       'import { tool } from "@freeflow/agents";',
       "",
-      "// Anything you can run, the agent can run — on your infrastructure,",
+      "// Anything you can run, the agent can run on your infrastructure,",
       "// with your credentials, never leaving your network.",
       "export const deploy = tool({",
       '  name: "deploy",',

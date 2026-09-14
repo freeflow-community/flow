@@ -7,6 +7,8 @@
   monospace; long documents clamp to a fixed height with Expand. `[ios]` tapping
   a `.md` chip opens the rendered document in a sheet (iOS has no inline text
   cards at all).
+- `[web]` The channel Files panel previews a `.md` file as a rendered document
+  with a View source toggle, instead of force-downloading it.
 - `[web]` `[macos]` `[ios]` Markdown routes ahead of the text branch everywhere
   (`isMarkdownFile` / `FileAttachment.isMarkdown`) — it is a subset of "text", so
   the text preview would otherwise claim it.

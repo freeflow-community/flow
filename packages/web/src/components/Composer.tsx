@@ -1,3 +1,4 @@
+import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO } from '@flow/shared';
 import { emojiMatches } from '@flow/shared';
@@ -5,10 +6,12 @@ import { api, uploadFile } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
 import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';
 import { useLive, useSelection } from '../state';
-import { useChannelMembers, useChannels, useMembers, useSendMessage } from '../hooks';
+import { useChannelMembers, useChannels, useEditMessage, useMembers, useSendMessage } from '../hooks';
+import { useCapabilities } from '../lib/backend';
 import { useQueryClient } from '@tanstack/react-query';
-import { AuthImg } from './Avatar';
+import { FileImage } from './FileImage';
 import EmojiPicker from './EmojiPicker';
+import { ScheduleMessageModal } from './ScheduleMessageModal';
 
 export default function Composer({
   channelId,
@@ -28,6 +31,8 @@ export default function Composer({
    * body loads here, Enter saves via PATCH, Esc/Cancel restores the draft. */
   editingMessage?: MessageDTO | undefined;
 }) {
+  const { api, uploadFile, scopedStorageKey } = useBoundApi();
+  const draftKey = scopedStorageKey(`draft:${channelId}:${threadRootId ?? ''}`);
   const sel = useSelection();
   const live = useLive();
   const qc = useQueryClient();
@@ -35,11 +40,17 @@ export default function Composer({
   const channels = useChannels(sel.workspaceId);
   const channelMembers = useChannelMembers(channelId);
   const send = useSendMessage(channelId);
+  const edit = useEditMessage();
+  // Capability gating (#545): a control whose capability is unavailable is not
+  // rendered, so it can never fall through to a Flow mutation on a Slack team.
+  const caps = useCapabilities();
   // Mention-of-non-member CTA (Slack semantics): after sending an @mention of
   // someone outside a standard channel, offer to add them.
   const [missingMentions, setMissingMentions] = useState<string[]>([]);
+  /** The "schedule this instead of sending it" dialog (#420). */
+  const [scheduling, setScheduling] = useState(false);
   const [addedNotice, setAddedNotice] = useState<string | null>(null);
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const [attachments, setAttachments] = useState<FileDTO[]>([]);
   const [uploading, setUploading] = useState(0);
   const [showEmoji, setShowEmoji] = useState(false);
@@ -48,6 +59,17 @@ export default function Composer({
   // for the draft; `text` mirrors it (normalized to "\n" newlines) for the
   // autocomplete/send/disable logic below.
   const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const saved = localStorage.getItem(draftKey) ?? '';
+    setText(saved);
+    if (editorRef.current) rebuild(editorRef.current, saved);
+  }, [draftKey]);
+  useEffect(() => {
+    if (!editingMessage) {
+      if (text) localStorage.setItem(draftKey, text);
+      else localStorage.removeItem(draftKey);
+    }
+  }, [draftKey, text, editingMessage]);
   const fileRef = useRef<HTMLInputElement>(null);
   const testPrefix = threadRootId ? 'thread-composer' : 'composer';
 
@@ -210,7 +232,7 @@ export default function Composer({
     // token form), then leave edit mode — the effect restores the stashed draft.
     // An emptied edit just cancels (no delete), matching the prior inline editor.
     if (editingId) {
-      if (raw) void api('PATCH', `/v1/messages/${editingId}`, { body: raw });
+      if (raw && editingMessage) edit.mutate({ message: editingMessage, body: raw }, { onError: (err) => setError(err instanceof Error ? err.message : 'edit failed') });
       sel.setEditingMessage(null);
       return;
     }
@@ -382,7 +404,7 @@ export default function Composer({
             {missingMentions.length === 1 ? 'is' : 'are'} not in this channel and won&rsquo;t see your mention.
           </span>
           <span className="flex shrink-0 gap-2">
-            <button
+            {caps.channelManagement.state !== 'unavailable' && <button
               data-testid="mention-cta-add"
               className="rounded bg-accent px-2.5 py-1 text-xs font-semibold text-white"
               onClick={() => {
@@ -400,7 +422,7 @@ export default function Composer({
               }}
             >
               Add to channel
-            </button>
+            </button>}
             <button
               data-testid="mention-cta-dismiss"
               className="rounded px-2 py-1 text-xs text-faint hover:bg-daypill"
@@ -415,42 +437,6 @@ export default function Composer({
         <p data-testid="mention-cta-added" className="mb-1.5 px-1 text-xs text-muted">
           {addedNotice}
         </p>
-      )}
-
-      {(attachments.length > 0 || uploading > 0) && (
-        <div className="mb-1 flex flex-wrap items-end gap-1.5">
-          {attachments.map((f) =>
-            f.hasThumb ? (
-              // Image previews in the prompt area (phase 5 item 4): real thumbnail + ✕ overlay.
-              <span key={f.id} data-testid={`pending-file-${f.name}`} className="relative" title={f.name}>
-                <AuthImg
-                  path={`/v1/files/${f.id}/thumb`}
-                  alt={f.name}
-                  className="h-14 w-14 rounded-lg border border-hairline object-cover"
-                />
-                <button
-                  className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-hairline bg-white text-[9px] text-faint shadow-sm hover:text-ink"
-                  title="Remove"
-                  onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}
-                >
-                  ✕
-                </button>
-              </span>
-            ) : (
-              <span
-                key={f.id}
-                data-testid={`pending-file-${f.name}`}
-                className="flex items-center gap-1 rounded-full bg-daypill px-2 py-0.5 text-xs"
-              >
-                📄 {f.name}
-                <button className="text-faint hover:text-ink" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
-                  ✕
-                </button>
-              </span>
-            ),
-          )}
-          {uploading > 0 && <span className="text-xs text-muted">Uploading…</span>}
-        </div>
       )}
 
       {editingId && (
@@ -504,14 +490,18 @@ export default function Composer({
           onPaste={onPaste}
         />
         <div className="mt-1.5 flex items-center gap-3 text-[15px] text-faint">
-          <button
-            data-testid={`${testPrefix}-attach`}
-            className="hover:text-ink"
-            title="Attach files"
-            onClick={() => fileRef.current?.click()}
-          >
-            ＋
-          </button>
+          {caps.files.state !== 'unavailable' ? (
+            <button
+              data-testid={`${testPrefix}-attach`}
+              className="hover:text-ink"
+              title="Attach files"
+              onClick={() => fileRef.current?.click()}
+            >
+              ＋
+            </button>
+          ) : (
+            <span data-testid={`${testPrefix}-attach-unavailable`} className="cursor-not-allowed opacity-40" title={caps.files.reason}>＋</span>
+          )}
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => void pickFiles(e.target.files)} />
           <button
             data-testid={`${testPrefix}-emoji`}
@@ -528,6 +518,19 @@ export default function Composer({
           >
             @
           </button>
+          {/* Schedule instead of send (#420): same message, posted later. Only on
+              a channel's main composer — a scheduled message is a top-level
+              post, not a thread reply. */}
+          {!threadRootId && caps.scheduledMessages.state !== 'unavailable' && (
+            <button
+              data-testid={`${testPrefix}-schedule`}
+              className="hover:text-ink"
+              title="Schedule this message"
+              onClick={() => setScheduling(true)}
+            >
+              🕐
+            </button>
+          )}
           <button
             data-testid={`${testPrefix}-send`}
             className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
@@ -538,7 +541,54 @@ export default function Composer({
             {editingId ? '✓' : '➤'}
           </button>
         </div>
+
+        {(attachments.length > 0 || uploading > 0) && (
+          <div className="mt-2 flex flex-wrap items-end gap-1.5">
+            {attachments.map((f) =>
+              f.hasThumb ? (
+                // Image previews sit inside the composer card, below the input
+                // row (issue #471): real thumbnail + ✕ overlay.
+                <span key={f.id} data-testid={`pending-file-${f.name}`} className="relative" title={f.name}>
+                  <FileImage
+                    fileId={f.id}
+                    alt={f.name}
+                    className="h-14 w-14 rounded-lg border border-hairline object-cover"
+                  />
+                  <button
+                    className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-hairline bg-white text-[9px] text-faint shadow-sm hover:text-ink"
+                    title="Remove"
+                    onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ) : (
+                <span
+                  key={f.id}
+                  data-testid={`pending-file-${f.name}`}
+                  className="flex items-center gap-1 rounded-full bg-daypill px-2 py-0.5 text-xs"
+                >
+                  📄 {f.name}
+                  <button className="text-faint hover:text-ink" onClick={() => setAttachments((p) => p.filter((x) => x.id !== f.id))}>
+                    ✕
+                  </button>
+                </span>
+              ),
+            )}
+            {uploading > 0 && <span className="text-xs text-muted">Uploading…</span>}
+          </div>
+        )}
       </div>
+
+      {scheduling && sel.workspaceId && (
+        <ScheduleMessageModal
+          workspaceId={sel.workspaceId}
+          initialBody={text}
+          initialChannelId={channelId}
+          onSaved={() => setDraft('')}
+          onClose={() => setScheduling(false)}
+        />
+      )}
 
       {showEmoji && (
         <div className="absolute right-[22px] bottom-full z-30 mb-1">

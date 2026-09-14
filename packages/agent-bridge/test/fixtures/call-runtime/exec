@@ -1,0 +1,7 @@
+// Synthetic Codex subprocess: validates transport only; never invokes a model.
+import fs from 'node:fs';
+let input = '';
+process.stdin.setEncoding('utf8');
+for await (const chunk of process.stdin) input += chunk;
+const images = process.argv.slice(2).filter((arg) => arg.startsWith('--image=')).map((arg) => arg.slice(8));
+process.stdout.write(JSON.stringify({ length: input.length, imagesExist: images.every((image) => fs.existsSync(image)) }));

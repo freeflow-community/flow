@@ -24,7 +24,7 @@ struct FlowApp: App {
                 // "Is the user actually looking at us?" — the native answer to
                 // the web client's `document.hidden`. A selected channel in a
                 // hidden window must not mark its mail read (issue #63).
-                .onChange(of: scenePhase) { _, phase in app.setAppActive(phase == .active) }
+                .onChange(of: scenePhase) { _, phase in app.connections.setAppActive(phase == .active) }
                 // Hand the app state to the notification-center delegate so a
                 // tapped banner can jump to its message (and flush any tap that
                 // arrived before the UI was ready, e.g. a cold launch).
@@ -42,6 +42,13 @@ struct FlowApp: App {
         .commands {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesCommand(updater: updater)
+            }
+            // Find lives at the foot of the Edit menu, where every Mac app
+            // keeps it — and owning the ⌘F key equivalent there is what stops
+            // AppKit offering its own find bar on the composer (#518).
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                ChatFindCommands()
             }
             // `.sidebar` anchors the top of the View menu — where Mac apps
             // keep zoom.
@@ -96,23 +103,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         appState = state
         if let tap = pendingTap {
             pendingTap = nil
-            state.openNotification(
-                workspaceId: tap.workspaceId,
-                channelId: tap.channelId,
-                messageId: tap.messageId,
-                threadRootId: tap.threadRootId
-            )
+            route(tap)
         }
     }
 
     // Show the banner even when Flow is frontmost — SyncEngine only posts one
     // when the user isn't already looking at that channel, so it's never noise.
+    // The sound follows the request: `Banners.show` leaves the content's sound
+    // nil when the `sound` pref is off (#464).
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        completionHandler(
+            Banners.presentationOptions(hasSound: notification.request.content.sound != nil)
+        )
     }
 
     // Banner tapped: bring the app forward and jump to the message.
@@ -129,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let workspaceId, let channelId, let messageId {
             let tap = NotificationTap(
                 workspaceId: workspaceId, channelId: channelId,
-                messageId: messageId, threadRootId: threadRootId
+                messageId: messageId, threadRootId: threadRootId, routingId: info["routingId"] as? String
             )
             Task { @MainActor in self.route(tap) }
         }
@@ -143,7 +149,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             pendingTap = tap
             return
         }
-        appState.openNotification(
+        guard let owner = appState.connections.notificationApp(routingId: tap.routingId) else { return }
+        if let show = appState.connections.presentNotification, let userId = owner.currentUser?.id {
+            show(owner, NavigationTarget(connectionId: owner.connectionId, userId: userId,
+                workspaceId: tap.workspaceId, channelId: tap.channelId, messageId: tap.messageId,
+                threadRootId: tap.threadRootId))
+            return
+        }
+        owner.openNotification(
             workspaceId: tap.workspaceId,
             channelId: tap.channelId,
             messageId: tap.messageId,
@@ -159,4 +172,5 @@ private struct NotificationTap: Sendable {
     let channelId: String
     let messageId: String
     let threadRootId: String?
+    let routingId: String?
 }

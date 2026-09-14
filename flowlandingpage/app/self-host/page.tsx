@@ -22,15 +22,15 @@ import { Apple, ArrowRight, Github, Icon } from "@/components/icons";
 export const metadata: Metadata = {
   title: "Self-host Freeflow",
   description:
-    "Node 22, pnpm 10, Docker, and one box. Run the API, the WebSocket gateway, and the web client from a single process — on infrastructure you control.",
+    "Node 22, pnpm 10, Docker, and one box. Run the API, the WebSocket gateway, and the web client from a single process on infrastructure you control.",
 };
 
 const prerequisites = [
   { label: "Node", value: "22 or newer" },
   { label: "pnpm", value: "10" },
   { label: "Docker", value: "for Postgres 16 and NATS" },
-  { label: "Xcode", value: "26 — only for the macOS client" },
-  { label: "macOS", value: "14+ — only for the macOS client" },
+  { label: "Xcode", value: "26, only for the macOS client" },
+  { label: "macOS", value: "14+, only for the macOS client" },
   { label: "Ports", value: "8787 app · 5442 Postgres" },
 ];
 
@@ -38,7 +38,7 @@ const operational = [
   {
     icon: "lock" as const,
     title: "Key management",
-    body: "Message encryption and AES-256-GCM file encryption both take keys from your environment. Rotate them the way you rotate everything else — the deployment doc covers the procedure and what it costs you.",
+    body: "Message encryption and AES-256-GCM file encryption both take keys from your environment. Rotate them the way you rotate everything else. The deployment doc covers the procedure and what it costs you.",
   },
   {
     icon: "server" as const,
@@ -70,7 +70,7 @@ export default function SelfHostPage() {
             <em className="serif-accent text-accent">Yours</em>.
           </>
         }
-        body="The Freeflow server hosts the REST API, the WebSocket gateway, the Slack-compatible API, and the built web client. That means a working deployment is a single service in front of a Postgres and a NATS — small enough to reason about, and small enough to move somewhere else when you feel like it."
+        body="The Freeflow server hosts the REST API, the WebSocket gateway, the Slack-compatible API, and the built web client. That means a working deployment is a single service in front of a Postgres and a NATS. It is small enough to reason about and small enough to move somewhere else when you feel like it."
         actions={
           <>
             <Button
@@ -101,7 +101,7 @@ export default function SelfHostPage() {
                     <em className="serif-accent text-accent">team</em>.
                   </>
                 }
-                body="Three commands gets you a complete Freeflow at 127.0.0.1:8787 — API, real-time gateway, and web client included."
+                body="Three commands gets you a complete Freeflow at 127.0.0.1:8787, with the API, real-time gateway, and web client included."
               />
 
               <div className="mt-9">

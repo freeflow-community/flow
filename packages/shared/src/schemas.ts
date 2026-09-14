@@ -159,10 +159,36 @@ export const UpdateWorkspaceBody = z
   );
 export type UpdateWorkspaceBody = z.infer<typeof UpdateWorkspaceBody>;
 
-export const AcceptInviteBody = z.object({
-  token: z.string().min(16).max(128),
-});
+/**
+ * POST /v1/invites/accept — the emailed link carries `token`; an in-app
+ * workspace invitation (#359, addressed to a known user) carries `inviteId`
+ * instead, because its raw token was never handed to anyone. Same table, same
+ * accept path — only the way the row is addressed differs.
+ */
+export const AcceptInviteBody = z
+  .object({
+    token: z.string().min(16).max(128).optional(),
+    inviteId: z.string().uuid().optional(),
+  })
+  .refine((b) => (b.token === undefined) !== (b.inviteId === undefined), 'pass exactly one of token or inviteId');
 export type AcceptInviteBody = z.infer<typeof AcceptInviteBody>;
+
+/** POST /v1/invites/decline — in-app workspace invitations only (#359). */
+export const DeclineInviteBody = z.object({
+  inviteId: z.string().uuid(),
+});
+export type DeclineInviteBody = z.infer<typeof DeclineInviteBody>;
+
+/**
+ * POST /v1/agents/:agentUserId/workspace-invites (#357) and
+ * POST /v1/users/:userId/workspace-invites (#359) — "bring this member into
+ * that workspace of mine". Same body either way; agents join immediately,
+ * people get an invitation.
+ */
+export const WorkspaceInviteBody = z.object({
+  workspaceId: z.string().uuid(),
+});
+export type WorkspaceInviteBody = z.infer<typeof WorkspaceInviteBody>;
 
 /** POST /v1/join-links/redeem — the persistent workspace join link (issue #85).
  * The slug is carried for a readable URL; the token alone identifies the link. */
@@ -225,10 +251,54 @@ export const SetChannelIndicatorBody = z.object({
 });
 export type SetChannelIndicatorBody = z.infer<typeof SetChannelIndicatorBody>;
 
+/**
+ * One emoji, as a channel's decoration is allowed to be (#396).
+ *
+ * `\p{RGI_Emoji}` is the Unicode "recommended for general interchange" set, so
+ * ZWJ sequences (👩🏽‍🚀) and skin-tone modifiers count as the single grapheme they
+ * render as, while two emoji, an emoji plus text, or plain text do not. Asking
+ * the runtime rather than hand-rolling a code-point range means the rule tracks
+ * whatever Unicode version is actually rendering the glyph.
+ */
+const SINGLE_EMOJI_RE = /^\p{RGI_Emoji}$/v;
+
+export function isSingleEmoji(value: string): boolean {
+  return SINGLE_EMOJI_RE.test(value);
+}
+
+/**
+ * PUT /v1/channels/:id/emoji (#396) — the persistent glyph after a channel's
+ * name. Null, absent or empty all mean "clear it"; anything else must be one
+ * emoji. Note this is not the transient activity spinner (SetChannelIndicatorBody).
+ */
+export const SetChannelEmojiBody = z.object({
+  emoji: z
+    .string()
+    .max(64) // a ZWJ sequence is long; arbitrary text is not welcome at any length
+    .nullable()
+    .optional()
+    .refine((v) => v === undefined || v === null || v === '' || isSingleEmoji(v), {
+      message: 'must be a single emoji (or empty to clear)',
+    }),
+});
+export type SetChannelEmojiBody = z.infer<typeof SetChannelEmojiBody>;
+
 export const SetNotifyLevelBody = z.object({
   level: z.union([z.literal(0), z.literal(1), z.literal(2)]), // 0=mute 1=mentions 2=all
 });
 export type SetNotifyLevelBody = z.infer<typeof SetNotifyLevelBody>;
+
+/**
+ * Answering or refusing a DM huddle ring (#436). `sessionId` is the WS session
+ * of the device doing it (from the `hello` frame) — it rides along so this
+ * device stays quiet while the user's *other* devices can say "Answered on
+ * another device" rather than just blinking the overlay away. Optional: an
+ * older client that omits it simply gets the plain dismissal everywhere.
+ */
+export const HuddleInviteReplyBody = z.object({
+  sessionId: z.string().optional(),
+});
+export type HuddleInviteReplyBody = z.infer<typeof HuddleInviteReplyBody>;
 
 // ---- messages --------------------------------------------------
 /** Group-mention tokens stored in bodies (Slack-style). */
@@ -244,6 +314,13 @@ export const SendMessageBody = z.object({
   fileIds: z.array(z.string().uuid()).max(10).optional(),
   /** Resolved @-mention user ids (phase2 §4): client resolves names, server validates membership. */
   mentions: z.array(z.string().uuid()).max(50).optional(),
+  /**
+   * Rewrite `@Display Name` in the body to `<@userId>` before storing (#415),
+   * so an API-posted message pings like a composer-typed one. Defaults to true
+   * for agent/bot tokens and false for a client session — the composer already
+   * resolves its own mentions. Set false to store the body verbatim.
+   */
+  expandMentions: z.boolean().optional(),
 });
 export type SendMessageBody = z.infer<typeof SendMessageBody>;
 
@@ -268,6 +345,13 @@ export const ListMessagesQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type ListMessagesQuery = z.infer<typeof ListMessagesQuery>;
+
+export const ListChannelFilesQuery = z.object({
+  sort: z.enum(['newest', 'oldest', 'name', 'size']).default('newest'),
+  before: z.string().optional(), // opaque cursor from the previous page
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
+export type ListChannelFilesQuery = z.infer<typeof ListChannelFilesQuery>;
 
 export const ListThreadQuery = z.object({
   after: z.string().uuid().optional(),
@@ -355,7 +439,9 @@ export const NotificationPrefsBody = z.object({
   groupMention: z.boolean().optional(),
   threadReply: z.boolean().optional(),
   reaction: z.boolean().optional(),
+  channelInvite: z.boolean().optional(),
   persistentBanners: z.boolean().optional(),
+  sound: z.boolean().optional(),
 });
 
 /** #220: the only schemes a profile website may use.
@@ -367,6 +453,10 @@ export const NotificationPrefsBody = z.object({
  * defence in depth for rows written before this rule. */
 export const PROFILE_WEBSITE_MAX = 200;
 export const PROFILE_BIO_MAX = 500;
+/** #434: the one-line role a Directory card shows under the name. Short on
+ * purpose — a card truncates, so anything longer would only ever be read as an
+ * ellipsis. */
+export const PROFILE_TITLE_MAX = 80;
 
 /** Absolute http(s) URL: a literal `http://` or `https://` prefix, a non-empty
  * host, and no whitespace anywhere.
@@ -396,6 +486,9 @@ export const PatchMeBody = z
       .optional(),
     // #220: plain text, newlines preserved. '' clears it.
     bio: z.string().max(PROFILE_BIO_MAX).optional(),
+    // #434: one-line role/title. Trimmed before the length check, so trailing
+    // whitespace can neither be stored nor push a title over the limit; '' clears it.
+    title: z.string().trim().max(PROFILE_TITLE_MAX).optional(),
     timezone: z
       .string()
       .max(64)
@@ -422,18 +515,24 @@ export const PatchMeBody = z
     statusSuppressAlerts: z.boolean().optional(),
     // phase 11 §10: don't unfurl links in my own messages
     unfurlOwnLinks: z.boolean().optional(),
+    // #489: hide my email from the API and drop me from the Directory. This is
+    // the only write path, and it only ever writes the caller's own row — which
+    // is what makes "settable by the user themselves" true by construction.
+    privacyMode: z.boolean().optional(),
   })
   .refine(
     (b) =>
       b.displayName !== undefined ||
       b.website !== undefined ||
       b.bio !== undefined ||
+      b.title !== undefined ||
       b.timezone !== undefined ||
       b.statusEmoji !== undefined ||
       b.statusText !== undefined ||
       b.notificationPrefs !== undefined ||
       b.statusSuppressAlerts !== undefined ||
-      b.unfurlOwnLinks !== undefined,
+      b.unfurlOwnLinks !== undefined ||
+      b.privacyMode !== undefined,
     'nothing to update',
   )
   .refine(
@@ -510,12 +609,18 @@ export const CreateArtifactBody = z
     url: z.string().url().max(2048).optional(),
     name: z.string().min(1).max(255).optional(),
     ownsFile: z.boolean().optional(),
+    /** Mini apps (MINI_APPS.md): register this link as an app — the row gets a
+     * per-artifact secret, returned once in the create response. Link-only. */
+    app: z.boolean().optional(),
   })
   .refine((b) => (b.fileId === undefined) !== (b.url === undefined), {
     message: 'provide exactly one of fileId or url',
   })
   .refine((b) => b.url === undefined || /^https?:\/\//i.test(b.url), {
     message: 'url must be http(s)',
+  })
+  .refine((b) => b.app !== true || b.url !== undefined, {
+    message: 'app is only valid with url',
   });
 export type CreateArtifactBody = z.infer<typeof CreateArtifactBody>;
 
@@ -544,3 +649,130 @@ export const PresignUploadBody = z.object({
   sizeBytes: z.number().int().positive(),
 });
 export type PresignUploadBody = z.infer<typeof PresignUploadBody>;
+
+// ---- scheduled messages (#419) ---------------------------------
+
+/** 5-field cron (`min hour dom mon dow`); each field is `*`, a number, a
+ * range, a step, or a comma list of those. Parsed properly server-side — this
+ * only keeps obvious junk out of the column. */
+export const CRON_FIELD_RE = /^(\*|\d+)(-\d+)?(\/\d+)?(,(\*|\d+)(-\d+)?(\/\d+)?)*$/;
+
+export const RecurrenceSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('once'), at: z.string().datetime({ offset: true }) }),
+  z.object({ type: z.literal('hourly'), minute: z.number().int().min(0).max(59) }),
+  z.object({
+    type: z.literal('everyNHours'),
+    hours: z.number().int().min(1).max(24),
+    anchor: z.string().datetime({ offset: true }),
+  }),
+  z.object({
+    type: z.literal('daily'),
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+  }),
+  z.object({
+    type: z.literal('weekly'),
+    weekday: z.number().int().min(0).max(6),
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+  }),
+  z.object({
+    type: z.literal('cron'),
+    expression: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine(
+        (e) => {
+          const fields = e.trim().split(/\s+/);
+          return fields.length === 5 && fields.every((f) => CRON_FIELD_RE.test(f));
+        },
+        { message: 'must be 5 cron fields: min hour dom mon dow' },
+      ),
+  }),
+]);
+export type RecurrenceInput = z.infer<typeof RecurrenceSchema>;
+
+export const CreateScheduledMessageBody = z.object({
+  /** Destination: a channel, or the author's own self-DM for "Just me". */
+  channelId: z.string().uuid(),
+  body: z.string().min(1).max(12000),
+  recurrence: RecurrenceSchema,
+  /** IANA zone. Defaults to the author's profile timezone when omitted. */
+  timezone: z.string().min(1).max(64).optional(),
+});
+export type CreateScheduledMessageBody = z.infer<typeof CreateScheduledMessageBody>;
+
+export const UpdateScheduledMessageBody = z
+  .object({
+    channelId: z.string().uuid().optional(),
+    body: z.string().min(1).max(12000).optional(),
+    recurrence: RecurrenceSchema.optional(),
+    timezone: z.string().min(1).max(64).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .refine((b) => Object.keys(b).length > 0, { message: 'nothing to update' });
+export type UpdateScheduledMessageBody = z.infer<typeof UpdateScheduledMessageBody>;
+
+export const ListScheduledMessagesQuery = z.object({
+  workspaceId: z.string().uuid(),
+  /** Only rows this caller owns. Absent = everything they may see. */
+  mine: z.enum(['true', 'false']).optional(),
+});
+export type ListScheduledMessagesQuery = z.infer<typeof ListScheduledMessagesQuery>;
+
+// ---- push devices ----------------------------------------------
+/**
+ * APNs device token: hex, and a path segment on the DELETE route.
+ *
+ * Apple's tokens are 32 bytes today (64 hex chars) but Apple has explicitly
+ * said the length is not fixed, so the bound is a sanity range rather than an
+ * exact length — narrow enough that nothing but a token gets stored, wide
+ * enough that a longer future token still registers. Case is not significant:
+ * the server lowercases before storing (see services/devices.ts) so a client
+ * that sends uppercase on one launch and lowercase on the next still hits the
+ * same row instead of creating a second one.
+ */
+export const DeviceTokenParam = z
+  .string()
+  .regex(/^[0-9a-fA-F]{32,256}$/, 'must be a hex APNs device token');
+
+/** POST /v1/me/devices — register (or re-register) this device for push. */
+export const RegisterDeviceBody = z.object({
+  token: DeviceTokenParam,
+  /** iOS only for now; macOS joins the enum when it registers for push. */
+  platform: z.enum(['ios']),
+  environment: z.enum(['sandbox', 'production']),
+  /** APNs topic — the app's bundle id, e.g. `im.freeflow.app`. */
+  bundleId: z.string().min(1).max(255),
+});
+export type RegisterDeviceBody = z.infer<typeof RegisterDeviceBody>;
+
+// ---- community email (#481) ------------------------------------
+/** POST /v1/workspaces/:id/email — admin broadcast to every human member.
+ * Body is markdown; the server renders and sanitizes it (single source of
+ * truth) so the composer's Preview tab and the sent mail cannot diverge. */
+export const SendWorkspaceEmailBody = z.object({
+  subject: z.string().trim().min(1).max(200),
+  markdown: z.string().trim().min(1).max(10_000),
+});
+export type SendWorkspaceEmailBody = z.infer<typeof SendWorkspaceEmailBody>;
+
+/** POST /v1/workspaces/:id/email/test (#484) — the same draft to the author
+ * alone, so it takes the same body; the server adds the `[Test] ` prefix. */
+export const SendTestWorkspaceEmailBody = SendWorkspaceEmailBody;
+export type SendTestWorkspaceEmailBody = z.infer<typeof SendTestWorkspaceEmailBody>;
+
+/** POST /v1/workspaces/:id/email/preview — same renderer, nothing sent. */
+export const PreviewWorkspaceEmailBody = z.object({
+  markdown: z.string().trim().min(1).max(10_000),
+});
+export type PreviewWorkspaceEmailBody = z.infer<typeof PreviewWorkspaceEmailBody>;
+
+/** POST /v1/workspaces/:id/email/images (#492) — adopt an already-uploaded
+ * file as a broadcast image. The bytes travel by the ordinary presign flow;
+ * this only asks for the public URL that a mail client can fetch. */
+export const AdoptEmailImageBody = z.object({
+  fileId: z.string().uuid(),
+});
+export type AdoptEmailImageBody = z.infer<typeof AdoptEmailImageBody>;

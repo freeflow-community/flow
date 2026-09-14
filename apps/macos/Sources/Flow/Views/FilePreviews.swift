@@ -27,10 +27,16 @@ enum PreviewCache {
     }()
 }
 
-/// Hover "Download" affordance shared by all attachment cards: saves to
-/// ~/Downloads and reveals in Finder.
+/// "Download" affordance shared by every attachment surface: saves to
+/// ~/Downloads and reveals in Finder. Two chromes over one action — the
+/// attachment cards float it over a preview and need the opaque pill, the
+/// Files panel (#347) sits it on a plain row where an accent circle reads.
 struct DownloadIconButton: View {
+    enum Style { case overlay, panel }
+
     let file: FileAttachment
+    var style: Style = .overlay
+    var accessibilityId: String?
     @EnvironmentObject private var app: AppState
     @State private var saving = false
 
@@ -42,15 +48,26 @@ struct DownloadIconButton: View {
                 } else {
                     Image(systemName: "arrow.down.to.line")
                         .flowFont(size: 12, weight: .semibold)
+                        .foregroundStyle(style == .panel ? MC.accent : Color.primary)
                 }
             }
             .frame(width: 24, height: 24)
-            .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.92)))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MC.hairline, lineWidth: 1))
+            .background {
+                if style == .panel {
+                    Circle().fill(MC.accent.opacity(0.12))
+                } else {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.white.opacity(0.92))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MC.hairline, lineWidth: 1))
+                }
+            }
         }
         .buttonStyle(.plain)
         .help("Download")
-        .accessibilityIdentifier("msg.file.download.\(file.name)")
+        // Without this the glyph's own name is read out ("End", for
+        // arrow.down.to.line) — useless on a row that is already a filename.
+        .accessibilityLabel("Download \(file.name)")
+        .accessibilityIdentifier(accessibilityId ?? "msg.file.download.\(file.name)")
     }
 
     private func save() {
@@ -614,7 +631,11 @@ struct VideoAttachmentView: View {
                     placeholder
                 }
             }
-            .frame(width: displaySize.width, height: displaySize.height)
+            // Ceiling, not a size — same rule as the image card: keep the
+            // aspect ratio and fit the transcript column rather than clipping
+            // out of it when the side panel is open (#354).
+            .aspectRatio(displaySize.width / displaySize.height, contentMode: .fit)
+            .frame(maxWidth: displaySize.width, maxHeight: displaySize.height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
             .animation(.easeOut(duration: 0.15), value: displaySize)

@@ -40,10 +40,21 @@ const NARRATION_MIN_INTERVAL_MS = 1500;
 const INDICATOR_TTL_SECONDS = 90;
 const INDICATOR_REFRESH_MS = 30_000;
 
+/**
+ * The clear at the end of a turn is the one indicator write that has to land:
+ * a server restart or a 502 in that instant leaves the sidebar spinning until
+ * the TTL sweep, long after the reply is visible. Ask again a couple of times
+ * before giving up on it.
+ */
+const INDICATOR_CLEAR_RETRIES = 2;
+const INDICATOR_CLEAR_RETRY_MS = 250;
+
 export class ProgressReporter {
   private typingTimer: NodeJS.Timeout | null = null;
   private indicatorTimer: NodeJS.Timeout | null = null;
   private statusMessageId: string | null = null;
+  /** What the status row currently says, so it can be re-posted verbatim. */
+  private statusBody: string | null = null;
   private inFlight = false;
   private pendingStep: string | null = null;
   private finished = false;
@@ -53,6 +64,8 @@ export class ProgressReporter {
   /** The narration message being grown, and the blocks currently in it. */
   private narrationMessageId: string | null = null;
   private narrationChunks: string[] = [];
+  /** Narration messages this turn has opened — >1 means it has rolled over. */
+  private narrationCount = 0;
   private lastNarrationWrite = 0;
   private waitTimer: NodeJS.Timeout | null = null;
   private waitResolve: (() => void) | null = null;
@@ -91,18 +104,34 @@ export class ProgressReporter {
    * Serialized through one chain so the final clear can't overtake a set that
    * is still in flight — a turn short enough for that to happen is exactly the
    * one where a stuck spinner would be most obviously wrong.
+   *
+   * Resolves false when the write failed, which is what lets the clear retry.
    */
-  private setIndicator(state: 'busy' | 'none'): Promise<void> {
-    this.indicatorChain = this.indicatorChain.then(async () => {
+  private setIndicator(state: 'busy' | 'none'): Promise<boolean> {
+    const next = this.indicatorChain.then(async () => {
       try {
         await this.api.setChannelIndicator(this.channelId, state, INDICATOR_TTL_SECONDS);
+        return true;
       } catch (err) {
         // Never let the chain reject: a rejected link would skip every later
         // set — including the clear that stops the spinner.
         this.log(`channel indicator (${state}) failed: ${(err as Error).message}`);
+        return false;
       }
     });
-    return this.indicatorChain;
+    this.indicatorChain = next.then(() => {});
+    return next;
+  }
+
+  /** The end-of-turn clear, with a short retry — see INDICATOR_CLEAR_RETRIES. */
+  private async clearIndicator(): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      if (await this.setIndicator('none')) return;
+      if (attempt >= INDICATOR_CLEAR_RETRIES) return;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, INDICATOR_CLEAR_RETRY_MS * (attempt + 1)).unref();
+      });
+    }
   }
 
   /** Latest step wins; edits are serialized (a step landing mid-edit is applied after). */
@@ -134,6 +163,7 @@ export class ProgressReporter {
           const step = this.pendingStep;
           this.pendingStep = null;
           const body = `🤖 *thinking…* — ${step}`;
+          this.statusBody = body;
           try {
             if (this.statusMessageId === null) {
               const msg = await this.api.sendMessage(this.channelId, body, this.threadRootId);
@@ -201,13 +231,54 @@ export class ProgressReporter {
     return this.narrationChunks.join('\n\n');
   }
 
+  /**
+   * Keep the status row the newest message of the turn (#528).
+   *
+   * Message ids are time-ordered, so a narration message created *after* the
+   * status row renders below it — and a turn that talks past
+   * NARRATION_MAX_CHARS creates one every rollover. That splits what the agent
+   * said either side of a row that is hard-deleted at the end anyway:
+   * everything written before the rollover is stranded above a live row with
+   * new text growing underneath it, so in a transcript that follows the bottom
+   * it marches up and out of the viewport while the thinking line stays put and
+   * keeps updating. That is what "the narration disappeared mid-turn and came
+   * back when the turn finished" is — a reorder, not a delete; the settle at
+   * the end makes the messages contiguous again.
+   *
+   * Re-posting the row after the new narration message restores one reading
+   * order: commentary in the order it was said, the live row last. The id
+   * changes, which the Interrupt path reads live off `statusId`, and a 🛑 that
+   * lands on the row we just removed is reaped as an orphan by the bridge.
+   */
+  private async keepStatusLast(): Promise<void> {
+    const previous = this.statusMessageId;
+    if (previous === null || this.statusBody === null || this.finished) return;
+    // Cleared first: if the re-post fails, the next step opens a fresh row
+    // rather than editing one that is about to be deleted.
+    this.statusMessageId = null;
+    try {
+      const msg = await this.api.sendMessage(this.channelId, this.statusBody, this.threadRootId);
+      this.statusMessageId = msg.id;
+    } catch (err) {
+      this.log(`status re-post failed: ${(err as Error).message}`);
+    }
+    await this.api.deleteMessage(previous, { hard: true }).catch((err: Error) => {
+      this.log(`status move failed: ${err.message}`);
+    });
+  }
+
   /** Create the narration message, or edit it to its current contents. */
   private async putNarration(): Promise<void> {
     const body = this.narrationBody();
     try {
       if (this.narrationMessageId === null) {
+        const rollover = this.narrationCount > 0;
         const msg = await this.api.sendMessage(this.channelId, body, this.threadRootId);
         this.narrationMessageId = msg.id;
+        this.narrationCount += 1;
+        // Only a successor strands anything: the turn's first narration message
+        // has nothing above it to cut off from.
+        if (rollover) await this.keepStatusLast();
       } else {
         await this.api.editMessage(this.narrationMessageId, body);
       }
@@ -252,7 +323,7 @@ export class ProgressReporter {
     if (this.typingTimer) clearInterval(this.typingTimer);
     if (this.indicatorTimer) clearInterval(this.indicatorTimer);
     // Only if start() actually turned it on; 'silent' never does.
-    if (this.mode !== 'silent') await this.setIndicator('none');
+    if (this.mode !== 'silent') await this.clearIndicator();
     // wait out an in-flight post/edit so the delete can't race message creation
     this.wake(); // don't sit out a narration throttle we're about to flush anyway
     while (this.inFlight) await new Promise((r) => setTimeout(r, 25));
