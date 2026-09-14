@@ -10,7 +10,9 @@ import {
 } from '@flow/shared';
 import type {
   ChannelDTO,
-  InviteDTO,
+  InviteBatchDTO,
+  InviteResultDTO,
+  InviteStatus,
   JoinLinkDTO,
   NotificationPrefs,
   UserDTO,
@@ -307,47 +309,129 @@ function JoinLinkSection({ workspaceId }: { workspaceId: string }) {
   );
 }
 
+/**
+ * Splits whatever an admin pasted into addresses: commas, semicolons, spaces
+ * and newlines all separate, so a list copied out of a mail client works as-is.
+ * Deduped case-insensitively (first spelling wins) — the server collapses
+ * duplicates anyway, and two results for one person reads like a bug.
+ * Nothing is validated here: a typo has to reach the server to come back as
+ * that address's `invalid_email`, not silently vanish from the batch (#578).
+ */
+export function parseInviteEmails(input: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input.split(/[,;\s]+/)) {
+    const addr = raw.trim();
+    if (!addr) continue;
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(addr);
+  }
+  return out;
+}
+
+/** What each per-address status (#577) says to the person who hit Send. */
+export function inviteStatusText(status: InviteStatus): string {
+  switch (status) {
+    case 'sent':
+      return 'Invite emailed';
+    case 'resent':
+      return 'Invite emailed again';
+    case 'already_member':
+      return 'Already a member';
+    case 'invalid_email':
+      return 'Not a valid email address';
+    case 'email_failed':
+      return "Couldn't send the email — share this link yourself:";
+  }
+}
+
+/** Addresses worth another try: the ones nothing was delivered to. */
+export function retryableInviteEmails(results: InviteResultDTO[]): string[] {
+  return results.filter((r) => r.status === 'invalid_email' || r.status === 'email_failed').map((r) => r.email);
+}
+
+export function InviteResultRow({ result }: { result: InviteResultDTO }) {
+  const failed = result.status === 'invalid_email' || result.status === 'email_failed';
+  const ok = result.status === 'sent' || result.status === 'resent';
+  return (
+    <li data-testid={`invite-result-${result.email}`} className="border-b border-hairline2 py-1.5 last:border-0">
+      <div className="flex items-baseline gap-2">
+        <span aria-hidden className={failed ? 'text-red-600' : ok ? 'text-green-600' : 'text-ink-soft'}>
+          {failed ? '✕' : ok ? '✓' : '•'}
+        </span>
+        <span className="min-w-0 flex-1 break-all text-sm">{result.email}</span>
+        <span data-testid={`invite-status-${result.email}`} className={`text-xs ${failed ? 'text-red-600' : 'text-ink-soft'}`}>
+          {inviteStatusText(result.status)}
+        </span>
+      </div>
+      {result.status === 'email_failed' && result.inviteUrl && (
+        <code data-testid={`invite-url-${result.email}`} className="mt-1 block rounded bg-daypill p-2 text-xs break-all select-all">
+          {result.inviteUrl}
+        </code>
+      )}
+    </li>
+  );
+}
+
 export function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
   const { api } = useBoundApi();
-  const [email, setEmail] = useState('');
-  const [invite, setInvite] = useState<InviteDTO | null>(null);
+  const [emails, setEmails] = useState('');
+  const [results, setResults] = useState<InviteResultDTO[] | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inviteUrl = invite?.inviteUrl ?? null;
+  const parsed = parseInviteEmails(emails);
+  // Everything landed: nothing left to edit, so the form gives way to Done.
+  const allDelivered = results !== null && retryableInviteEmails(results).length === 0;
 
-  const create = async () => {
+  const send = async () => {
+    if (parsed.length === 0 || busy) return;
+    setBusy(true);
     setError(null);
     try {
-      setInvite(await api<InviteDTO>('POST', `/v1/workspaces/${workspaceId}/invites`, { email }));
+      const res = await api<InviteBatchDTO>('POST', `/v1/workspaces/${workspaceId}/invites`, { emails: parsed });
+      setResults(res.results);
+      // Only what failed stays in the box — retrying must not re-send the rest.
+      setEmails(retryableInviteEmails(res.results).join(', '));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed');
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <Modal onClose={onClose} testid="invite-modal">
       <h3 className="mb-3 font-bold">Invite People</h3>
-      {inviteUrl ? (
-        <>
-          <p className="mb-2 text-sm text-ink-soft" data-testid="invite-result">
-            {invite?.emailSent
-              ? `Invite emailed to ${invite.email}. You can also share this link (shown once):`
-              : 'The invite email could not be sent — share this link yourself (shown once):'}
-          </p>
-          <code data-testid="invite-url" className="mb-3 block rounded bg-daypill p-2 text-xs break-all select-all">{inviteUrl}</code>
-          <div className="flex justify-end">
-            <button className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white" onClick={onClose}>Done</button>
-          </div>
-        </>
+      {results && (
+        <ul data-testid="invite-result" className="mb-3 rounded border border-hairline2 px-2">
+          {results.map((r) => (
+            <InviteResultRow key={r.email} result={r} />
+          ))}
+        </ul>
+      )}
+      {allDelivered ? (
+        <div className="flex justify-end">
+          <button className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white" onClick={onClose}>Done</button>
+        </div>
       ) : (
         <>
-          <input data-testid="invite-email" className="mb-2 w-full rounded border border-hairline2 px-3 py-2 text-sm"
-            placeholder="email@example.com" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+          <textarea data-testid="invite-email" rows={2}
+            className="mb-1 w-full resize-y rounded border border-hairline2 px-3 py-2 text-sm"
+            placeholder="email@example.com, someone@example.com"
+            value={emails} onChange={(e) => setEmails(e.target.value)} autoFocus />
+          <p className="mb-2 text-xs text-faint">
+            Separate addresses with commas. We'll email each person an invite link.
+          </p>
           {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
           <div className="flex justify-end gap-2">
             <button className="px-3 py-1.5 text-sm text-ink-soft" onClick={onClose}>Cancel</button>
             <button data-testid="invite-submit"
               className="rounded bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-              disabled={!email.includes('@')} onClick={() => void create()}>Send Invite</button>
+              disabled={busy || parsed.length === 0} onClick={() => void send()}>
+              {parsed.length > 1 ? `Send ${parsed.length} Invites` : 'Send Invites'}
+            </button>
           </div>
           <SelfRegisterToggle workspaceId={workspaceId} />
         </>

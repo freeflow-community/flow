@@ -17,12 +17,10 @@ This file keeps two things:
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
-- **Batch invites are server-only so far** (#577). `POST
-  /v1/workspaces/:id/invites` now takes many addresses and reports each one, but
-  every client still sends one address per call: the macOS/iOS invite sheets
-  take a single field, and web has no multi-address entry either. Closing it is
-  a comma-separated field per client rendering the `results` list — the point of
-  landing the endpoint first.
+- **Batch invites reach web + macOS, not iOS** (#577, #578). Both now take a
+  comma-separated list and render the per-address `results`; the iOS sheet still
+  sends one address per call and still says "No email is sent", which the server
+  stopped being true about. #579 closes it with the same shape.
 - **The channel Docs list is searchable and collapsible on web only** (#574).
   macOS and iOS list a channel's artifacts as a plain run of rows with no
   group header, filter or fold. Closing it is the same `DocsGroup` shape in

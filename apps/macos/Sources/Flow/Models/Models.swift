@@ -951,6 +951,47 @@ struct InviteResponse: Decodable, Sendable {
     let email: String?
     let expiresAt: String?
 }
+/// Per-address outcome of a batch invite (#577). Decoded leniently: a status a
+/// newer server grows must not fail the whole sheet's response.
+enum InviteStatus: String, Decodable, Sendable {
+    case sent
+    case resent
+    case emailFailed = "email_failed"
+    case alreadyMember = "already_member"
+    case invalidEmail = "invalid_email"
+    case unknown
+
+    init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InviteStatus(rawValue: raw) ?? .unknown
+    }
+
+    /// What the sheet says about this address.
+    var label: String {
+        switch self {
+        case .sent: return "Invite emailed"
+        case .resent: return "Invite emailed again"
+        case .alreadyMember: return "Already a member"
+        case .invalidEmail: return "Not a valid email address"
+        case .emailFailed: return "Couldn't send the email — share this link yourself:"
+        case .unknown: return "Unknown result"
+        }
+    }
+
+    /// Nothing reached this address, so it goes back in the box for a retry.
+    var isFailure: Bool { self == .invalidEmail || self == .emailFailed || self == .unknown }
+    var isDelivered: Bool { self == .sent || self == .resent }
+}
+/// One entry of `POST /v1/workspaces/:id/invites` called with `emails`.
+struct InviteResult: Decodable, Sendable {
+    let email: String
+    let status: InviteStatus
+    let inviteUrl: String?
+    let expiresAt: String?
+}
+struct InviteBatchResponse: Decodable, Sendable {
+    let results: [InviteResult]
+}
 /// The workspace's persistent join link (issue #85). `joinUrl` is nil when no
 /// link is live — one exists at a time, and revoking clears it.
 struct JoinLinkResponse: Decodable, Sendable {
@@ -1093,6 +1134,28 @@ struct UpdateChannelBody: Encodable, Sendable {
     let topic: String?
 }
 struct CreateInviteBody: Encodable, Sendable { let email: String }
+/// The batch shape (#577): one call per submit, one result per address.
+struct CreateInviteBatchBody: Encodable, Sendable { let emails: [String] }
+
+/// Turns whatever an admin pasted into the invite field into addresses.
+enum InviteAddresses {
+    /// Commas, semicolons, spaces and newlines all separate, so a list copied
+    /// out of a mail client works as-is. Deduped case-insensitively (the first
+    /// spelling wins) — the server collapses duplicates anyway, and two results
+    /// for one person reads like a bug. Nothing is validated: a typo has to
+    /// reach the server to come back as that address's `invalidEmail` rather
+    /// than silently vanish from the batch (#578).
+    static func parse(_ input: String) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        for piece in input.split(whereSeparator: { $0 == "," || $0 == ";" || $0.isWhitespace }) {
+            let addr = String(piece)
+            guard seen.insert(addr.lowercased()).inserted else { continue }
+            out.append(addr)
+        }
+        return out
+    }
+}
 /// POST /v1/invites/accept — an emailed invite carries the raw `token`; an
 /// in-app workspace invitation (#359) carries its `inviteId`, since its token
 /// was minted, hashed and shown to nobody. Exactly one is ever set.
