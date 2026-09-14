@@ -1,3 +1,4 @@
+import GRDB
 import QuickLook
 import SwiftUI
 import UIKit
@@ -10,6 +11,7 @@ struct AttachmentView: View {
     let file: FileAttachment
     @EnvironmentObject private var app: AppState
     @State private var showLightbox = false
+    @State private var showMarkdown = false
     @State private var previewURL: URL?
     @State private var busy = false
 
@@ -23,6 +25,14 @@ struct AttachmentView: View {
         }
         .padding(.top, 3)
         .accessibilityIdentifier("msg.file.\(file.name)")
+        // #569: a .md chip opens the rendered document in-app rather than
+        // handing the raw text to QuickLook. The chip itself is unchanged —
+        // iOS has no inline text cards at all, so a rendered card here would
+        // be a new divergence; the sheet keeps the phone's one-tap model.
+        .sheet(isPresented: $showMarkdown) {
+            MarkdownDocumentSheet(file: file)
+                .environmentObject(app)
+        }
     }
 
     private var isGif: Bool { file.mimeType == "image/gif" }
@@ -103,6 +113,7 @@ struct AttachmentView: View {
         case let m where m.hasPrefix("audio/"): "waveform"
         case "application/pdf": "doc.richtext"
         case "application/zip": "doc.zipper"
+        case _ where file.isMarkdown: "doc.richtext"
         case let m where m.hasPrefix("text/"): "doc.text"
         default: "doc"
         }
@@ -111,6 +122,10 @@ struct AttachmentView: View {
     /// Downloads to a temp file (original filename preserved) and hands it to
     /// QuickLook — its viewer covers text/PDF/media and has share built in.
     private func openPreview() {
+        if file.isMarkdown {
+            showMarkdown = true
+            return
+        }
         guard !busy else { return }
         busy = true
         Task {
@@ -119,6 +134,63 @@ struct AttachmentView: View {
                 previewURL = try await app.engine.downloadFile(file)
             } catch {
                 app.showError("Couldn't open \(file.name): \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+/// Rendered markdown document sheet (#569) — what a `.md` attachment opens
+/// into. The body is the shared `MarkdownDocumentPane`, so the phone shows the
+/// same document, with the same View source and copy controls, that the Mac and
+/// the web client do.
+struct MarkdownDocumentSheet: View {
+    let file: FileAttachment
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String?
+    @State private var userNames: [String: String] = [:]
+    @State private var failed = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let text {
+                    MarkdownDocumentPane(
+                        text: text,
+                        userNames: userNames,
+                        currentUserId: app.currentUser?.id
+                    )
+                } else if failed {
+                    ContentUnavailableView(
+                        "Couldn\u{2019}t open this document",
+                        systemImage: "doc.richtext",
+                        description: Text("Try again, or download \(file.name) to read it elsewhere.")
+                    )
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(file.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .accessibilityIdentifier("msg.file.markdown.\(file.name)")
+        .task(id: file.id) {
+            // Best-effort roster for the inline mention pass; an empty map only
+            // affects <@id> tokens, which a document rarely carries.
+            userNames = (try? await app.db.reader.read { db in
+                try Dictionary(
+                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
+                )
+            }) ?? [:]
+            do {
+                text = try await app.engine.fileText(file)
+            } catch {
+                failed = true
             }
         }
     }

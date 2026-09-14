@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { api, blobUrl, fileStreamUrl, fileText } from '../lib/api';
 import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
-import { isTextFile, isVideoFile } from '../lib/fileKind';
+import { isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { useAuth, useSelection } from '../state';
 import { useSendMessage, useTogglePin, useToggleReaction, useWorkspaceEmojiMap } from '../hooks';
@@ -14,6 +14,7 @@ import { EmojiGlyph } from './CustomEmoji';
 import EmojiPicker from './EmojiPicker';
 import { Modal, UserCard } from './modals';
 import { UnfurlCard } from './UnfurlCard';
+import { MarkdownDocBody } from './MarkdownDoc';
 
 /** Remembered scroll position per channel, so switching away and back lands
  * where you left off (ui_nits). Kept module-level (survives the per-channel
@@ -484,7 +485,7 @@ function MessageRow({
               </div>
             )}
             {message.files.map((f) => (
-              <Attachment key={f.id} file={f} />
+              <Attachment key={f.id} file={f} names={names} currentUserId={auth.user.id} />
             ))}
             {failed && (
               <div
@@ -781,10 +782,20 @@ function DownloadHoverButton({ file, onDownload }: { file: FileDTO; onDownload: 
   );
 }
 
-function Attachment({ file }: { file: FileDTO }) {
+function Attachment({
+  file,
+  names,
+  currentUserId,
+}: {
+  file: FileDTO;
+  names: Record<string, string>;
+  currentUserId: string;
+}) {
   if (file.hasThumb) return <ImageAttachment file={file} />;
   if (isVideoFile(file)) return <VideoAttachment file={file} />;
   if (file.mimeType === 'application/pdf') return <PdfAttachment file={file} />;
+  // Before the text branch — markdown is text, and text would claim it (#569).
+  if (isMarkdownFile(file)) return <MarkdownAttachment file={file} names={names} currentUserId={currentUserId} />;
   if (isTextFile(file)) return <TextAttachment file={file} />;
   return <FileChip file={file} />;
 }
@@ -978,6 +989,106 @@ function TextAttachment({ file }: { file: FileDTO }) {
               {expanded ? 'Collapse ▴' : 'Expand ▾'}
             </button>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Height a long markdown card clamps to before you expand it. A height clamp
+ * rather than the text branch's line slice (#569): cutting markdown at line N
+ * can open a fence or halve a table, and the rendered result then looks broken
+ * rather than merely shortened. */
+const MARKDOWN_CLAMP_PX = 320;
+
+/**
+ * Rendered markdown preview for a `.md` attachment (#569) — the same document
+ * body the artifact panel shows, in a chat-sized card. Long files clamp with a
+ * fade and an Expand control; View source drops back to raw markdown.
+ */
+function MarkdownAttachment({
+  file,
+  names,
+  currentUserId,
+}: {
+  file: FileDTO;
+  names: Record<string, string>;
+  currentUserId: string;
+}) {
+  const [collapsed, toggleCollapsed] = useCollapsed(file.id);
+  const [expanded, setExpanded] = useState(false);
+  const [source, setSource] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const download = useDownload(file);
+
+  useEffect(() => {
+    let alive = true;
+    void fileText(`/v1/files/${file.id}`)
+      .then((t) => { if (alive) setText(t); })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [file.id]);
+
+  if (failed) return <FileChip file={file} />;
+
+  // Whether to clamp is decided from the *source* line count, not the rendered
+  // height: it needs no measurement pass, so the card never reflows after paint.
+  const long = text !== null && text.split('\n').length > TEXT_PREVIEW_LINES;
+  const clamped = long && !expanded;
+
+  return (
+    <div className="mt-1 max-w-[560px]">
+      <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
+      {!collapsed && (
+        <div className="mt-0.5">
+          <div className="group/att relative">
+            <div
+              data-testid={`file-markdown-${file.name}`}
+              className="mc-scroll overflow-x-auto rounded-lg border border-hairline bg-white"
+              style={clamped ? { maxHeight: MARKDOWN_CLAMP_PX, overflowY: 'hidden' } : undefined}
+            >
+              {text === null ? (
+                <p className="px-3 py-2 text-xs text-faint">Loading…</p>
+              ) : (
+                <MarkdownDocBody
+                  text={text}
+                  names={names}
+                  currentUserId={currentUserId}
+                  source={source}
+                  dense
+                  testId={`file-markdown-body-${file.name}`}
+                />
+              )}
+            </div>
+            {clamped && (
+              // Fade only — the Expand button below is the control, so this is
+              // decorative and must not eat clicks on the text underneath.
+              <div className="pointer-events-none absolute inset-x-px bottom-px h-10 rounded-b-lg bg-gradient-to-t from-white to-transparent" />
+            )}
+            <DownloadHoverButton file={file} onDownload={download} />
+          </div>
+          <div className="mt-0.5 flex items-center gap-3">
+            {long && (
+              <button
+                data-testid={`file-markdown-expand-${file.name}`}
+                className="text-xs font-semibold text-accent-soft hover:underline"
+                onClick={() => setExpanded((v) => !v)}
+              >
+                {expanded ? 'Collapse ▴' : 'Expand ▾'}
+              </button>
+            )}
+            {text !== null && (
+              <button
+                data-testid={`file-markdown-source-${file.name}`}
+                className="text-xs font-semibold text-accent-soft hover:underline"
+                title={source ? 'Show the rendered document' : 'Show the raw markdown'}
+                onClick={() => setSource((v) => !v)}
+              >
+                {source ? 'Rendered' : 'View source'}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -23,6 +23,18 @@ export function isTextFile(file: FileDTO): boolean {
   return TEXT_EXTS.has(ext(file));
 }
 
+/** Markdown documents (#569) render as formatted prose through the same block
+ * grammar messages use, not as raw monospace. Markdown is a subset of
+ * `isTextFile`, so every router must test this FIRST or the text branch claims
+ * it. Mime wins over extension so a `text/markdown` blob with no `.md` name
+ * still renders. */
+export const MARKDOWN_EXTS = new Set(['md', 'markdown', 'mdown', 'mkd', 'mkdn', 'mdtext']);
+export const MARKDOWN_MIMES = new Set(['text/markdown', 'text/x-markdown']);
+export function isMarkdownFile(file: FileDTO): boolean {
+  if (MARKDOWN_MIMES.has(file.mimeType)) return true;
+  return MARKDOWN_EXTS.has(ext(file));
+}
+
 /** Video formats we render inline (ui_nits); anything the browser can't
  * decode falls back to the file chip at runtime via the <video> error event. */
 export const VIDEO_EXTS = new Set(['mp4', 'mov', 'webm', 'm4v']);

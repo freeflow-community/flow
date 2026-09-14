@@ -1,5 +1,6 @@
 import AppKit
 import AVKit
+import GRDB
 import PDFKit
 import SwiftUI
 
@@ -188,6 +189,144 @@ struct TextAttachmentView: View {
     }
 
     private func load() async {
+        if let hit = PreviewCache.text.object(forKey: file.id as NSString) {
+            text = hit as String
+            return
+        }
+        do {
+            let value = try await app.engine.fileText(file)
+            PreviewCache.text.setObject(value as NSString, forKey: file.id as NSString)
+            text = value
+        } catch {
+            failed = true
+        }
+    }
+}
+
+// MARK: - Markdown preview
+
+/// Rendered markdown card for a `.md` attachment (#569) — the same document
+/// body the artifact panel shows, in a chat-sized card. Long documents clamp to
+/// a fixed height with an Expand control, and **View source** drops back to the
+/// raw markdown (the exact presentation `TextAttachmentView` gives a `.txt`).
+///
+/// The clamp is a height, not the text card's line slice: cutting markdown at
+/// line N can open a fence or halve a table, and the rendered result then looks
+/// broken rather than merely shortened.
+struct MarkdownAttachmentView: View {
+    let file: FileAttachment
+    @EnvironmentObject private var app: AppState
+    @State private var text: String?
+    @State private var userNames: [String: String] = [:]
+    @State private var failed = false
+    @State private var expanded = false
+    @State private var showSource = false
+    @State private var hovering = false
+    @State private var collapsed: Bool
+
+    /// Above this many source lines the card clamps and offers Expand.
+    static let previewLines = 10
+    static let clampHeight: CGFloat = 320
+
+    init(file: FileAttachment) {
+        self.file = file
+        _collapsed = State(initialValue: CollapsedImages.contains(file.id))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            AttachmentCardHeader(file: file, collapsed: $collapsed)
+            if !collapsed {
+                markdownBody
+            }
+        }
+        .task(id: file.id) { await load() }
+    }
+
+    private var isLong: Bool {
+        guard let text else { return false }
+        return text.split(separator: "\n", omittingEmptySubsequences: false).count > Self.previewLines
+    }
+
+    private var clamped: Bool { isLong && !expanded }
+
+    @ViewBuilder
+    private var markdownBody: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if failed {
+                        Text("Preview unavailable")
+                            .flowFont(size: 11, design: .monospaced)
+                            .foregroundStyle(MC.faint)
+                    } else if let text {
+                        if showSource {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                Text(text)
+                                    .flowFont(size: 11, design: .monospaced)
+                                    .foregroundStyle(MC.ink)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        } else {
+                            MarkdownDocumentView(
+                                text: text,
+                                userNames: userNames,
+                                currentUserId: app.currentUser?.id
+                            )
+                        }
+                    } else {
+                        Text("Loading…")
+                            .flowFont(size: 11, design: .monospaced)
+                            .foregroundStyle(MC.faint)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                // Clamp-then-clip BEFORE the background, so the card's border
+                // wraps what is on screen rather than the full document.
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxHeight: clamped ? Self.clampHeight : nil, alignment: .top)
+                .clipped()
+                .background(RoundedRectangle(cornerRadius: 8).fill(.white))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(MC.hairline, lineWidth: 1))
+                .accessibilityIdentifier("msg.file.markdown.\(file.name)")
+
+                if hovering {
+                    DownloadIconButton(file: file)
+                        .padding(6)
+                }
+            }
+            if !failed, text != nil {
+                HStack(spacing: 12) {
+                    if isLong {
+                        Button(expanded ? "Collapse" : "Expand") { expanded.toggle() }
+                            .buttonStyle(.link)
+                            .flowFont(.caption)
+                            .pointingHandCursor()
+                            .accessibilityIdentifier("msg.file.expand.\(file.name)")
+                    }
+                    Button(showSource ? "Rendered" : "View source") { showSource.toggle() }
+                        .buttonStyle(.link)
+                        .flowFont(.caption)
+                        .pointingHandCursor()
+                        .help(showSource ? "Show the rendered document" : "Show the raw markdown")
+                        .accessibilityIdentifier("msg.file.source.\(file.name)")
+                }
+            }
+        }
+        .onHover { hovering = $0 }
+    }
+
+    private func load() async {
+        // Best-effort roster for the inline mention pass — see the artifact
+        // pane's note; an empty map only affects <@id> tokens, which a document
+        // rarely carries.
+        userNames = (try? await app.db.reader.read { db in
+            try Dictionary(
+                uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
+            )
+        }) ?? [:]
         if let hit = PreviewCache.text.object(forKey: file.id as NSString) {
             text = hit as String
             return

@@ -1,4 +1,5 @@
 import AVKit
+import GRDB
 import PDFKit
 import QuickLook
 import SwiftUI
@@ -60,7 +61,7 @@ struct ArtifactRoute: Identifiable, Equatable {
 // MARK: - Viewer
 
 /// Full-screen viewer for one artifact. Type routing follows the macOS panel
-/// (image → video → pdf → html → text → download card) so the same artifact
+/// (image → video → pdf → html → markdown → text → download card) so the same artifact
 /// renders the same way on both; the chrome is a phone sheet, not a tab strip.
 struct ArtifactSheet: View {
     let artifactId: String
@@ -164,6 +165,9 @@ private struct ArtifactContentPane: View {
             ArtifactPdfPane(file: file)
         } else if file.isHTML {
             ArtifactHtmlPane(file: file)
+        } else if file.isMarkdown {
+            // Before the text branch — markdown is text, and text would claim it (#569).
+            ArtifactMarkdownPane(file: file)
         } else if file.isTextPreviewable {
             ArtifactTextPane(file: file)
         } else {
@@ -320,6 +324,48 @@ private struct SandboxedHTMLView: UIViewRepresentable {
     func updateUIView(_ view: WKWebView, context: Context) {
         // Static per artifact — the pane is re-created per file (`.id(file.id)`
         // upstream), so there's nothing to update in place.
+    }
+}
+
+/// Rendered markdown document (#569). Fetch and failure fallback match the text
+/// pane exactly; the body is the shared `MarkdownDocumentPane`, which carries
+/// the View source toggle and the copy-raw control.
+private struct ArtifactMarkdownPane: View {
+    let file: FileAttachment
+    @EnvironmentObject private var app: AppState
+    @State private var text: String?
+    @State private var userNames: [String: String] = [:]
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let text {
+                MarkdownDocumentPane(
+                    text: text,
+                    userNames: userNames,
+                    currentUserId: app.currentUser?.id
+                )
+            } else if failed {
+                ArtifactFilePane(file: file)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .accessibilityIdentifier("artifact.markdown.\(file.name)")
+        .task(id: file.id) {
+            // Best-effort roster for the inline mention pass; an empty map only
+            // affects <@id> tokens, which a document rarely carries.
+            userNames = (try? await app.db.reader.read { db in
+                try Dictionary(
+                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
+                )
+            }) ?? [:]
+            do {
+                text = try await app.engine.fileText(file)
+            } catch {
+                failed = true
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 import AppKit
 import AVKit
+import GRDB
 import PDFKit
 import SwiftUI
 import WebKit
@@ -140,7 +141,7 @@ private struct ArtifactToolbarView: View {
 }
 
 /// Type routing, same order as the web panel (image → video → pdf → html →
-/// text → download card).
+/// markdown → text → download card).
 private struct ArtifactContentView: View {
     let file: FileAttachment
 
@@ -159,6 +160,9 @@ private struct ArtifactContentView: View {
             ArtifactPdfPane(file: file)
         } else if file.isHTML {
             ArtifactHtmlPane(file: file)
+        } else if file.isMarkdown {
+            // Before the text branch — markdown is text, and text would claim it (#569).
+            ArtifactMarkdownPane(file: file)
         } else if file.isTextPreviewable {
             ArtifactTextPane(file: file)
         } else {
@@ -448,6 +452,51 @@ private struct CoBrowserWebView: NSViewRepresentable {
             if s == lastLoaded { return }
             lastLoaded = s
             onNavigate(s)
+        }
+    }
+}
+
+/// Rendered markdown document (#569). The fetch and the failure fallback match
+/// the text pane exactly; the body is the shared `MarkdownDocumentPane`, which
+/// carries the View source toggle and the copy-raw control.
+private struct ArtifactMarkdownPane: View {
+    let file: FileAttachment
+    @EnvironmentObject private var app: AppState
+    @State private var text: String?
+    @State private var userNames: [String: String] = [:]
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let text {
+                MarkdownDocumentPane(
+                    text: text,
+                    userNames: userNames,
+                    currentUserId: app.currentUser?.id
+                )
+            } else if failed {
+                ArtifactDownloadPane(file: file)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .accessibilityIdentifier("artifact.markdown.\(file.name)")
+        .task(id: file.id) {
+            // Names are for the inline mention pass. A document rarely carries
+            // <@id> tokens, so this is best-effort: an empty map just renders
+            // any it does carry as "@someone", exactly as the message list
+            // would before its roster arrives.
+            userNames = (try? await app.db.reader.read { db in
+                try Dictionary(
+                    uniqueKeysWithValues: User.fetchAll(db).map { ($0.id, $0.displayNameWithBadge) }
+                )
+            }) ?? [:]
+            do {
+                text = try await app.engine.fileText(file)
+            } catch {
+                failed = true
+            }
         }
     }
 }

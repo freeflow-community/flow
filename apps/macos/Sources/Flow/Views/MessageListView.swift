@@ -1150,6 +1150,9 @@ struct AttachmentView: View {
                 VideoAttachmentView(file: file)
             } else if file.isPDF {
                 PdfAttachmentView(file: file)
+            } else if file.isMarkdown {
+                // Before the text branch — markdown is text, and text would claim it (#569).
+                MarkdownAttachmentView(file: file)
             } else if file.isTextPreviewable {
                 TextAttachmentView(file: file)
             } else {

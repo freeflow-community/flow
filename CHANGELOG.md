@@ -13,6 +13,11 @@ This file keeps two things:
 ## Parity
 
 ### Gaps to close
+- iOS renders a markdown **attachment** in a pushed sheet, not inline: web and
+  macOS show the rendered document in the message stream (#569). Follows from
+  iOS having no inline text-preview cards at all — every non-image attachment is
+  a chip that opens a viewer — so closing this means giving iOS inline cards,
+  not porting the markdown work. The artifact viewer is at parity on all three.
 - "Share to Flow" from the system share sheet is iOS-only (#214, extended to
   videos and documents in #219). macOS supports
   share extensions too and the extension's logic is platform-agnostic
