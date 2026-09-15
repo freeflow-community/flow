@@ -137,6 +137,21 @@ export function normalizeChannel(channel, { teamId, selfUserId, handles = null }
   };
 }
 
+/** The app or bot that posted a message with no user (an integration, a
+ * webhook), as a member row keyed by its `B…` id — so clients name it and
+ * draw its icon the way they do for people. Null for a person's message. */
+export function botMember(message) {
+  if (message.user || typeof message.bot_id !== 'string' || !message.bot_id) return null;
+  const profile = message.bot_profile ?? {};
+  const icons = { ...(message.icons ?? {}), ...(profile.icons ?? {}) };
+  const avatar = icons.image_72 ?? icons.image_48 ?? icons.image_36 ?? null;
+  return {
+    userId: message.bot_id, displayName: String(profile.name || message.username || 'App'), email: '',
+    avatarUrl: typeof avatar === 'string' && avatar.startsWith('https://') ? avatar : null, statusEmoji: '', statusText: '', title: '',
+    isAgent: false, isBot: true, sponsorId: null, privacyMode: false, role: 'member', joinedAt: '',
+  };
+}
+
 /** users.list member -> WorkspaceMemberDTO. */
 export function normalizeMember(user) {
   const profile = user.profile ?? {};

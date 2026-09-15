@@ -209,10 +209,11 @@ export default function Main() {
             // Patch the roster in place: a refetch per profile change would spend
             // the provider's member-list budget on every status anyone sets.
             const { member } = event;
+            // A sender the roster has not seen yet (a Slack app's first message) is added.
             for (const [key, data] of qc.getQueriesData<{ members: WorkspaceMemberDTO[] }>({ queryKey: ['members'] })) {
-              if (data?.members.some((m) => m.userId === member.userId)) {
-                qc.setQueryData(key, { ...data, members: data.members.map((m) => (m.userId === member.userId ? member : m)) });
-              }
+              if (!data) continue;
+              const known = data.members.some((m) => m.userId === member.userId);
+              qc.setQueryData(key, { ...data, members: known ? data.members.map((m) => (m.userId === member.userId ? member : m)) : [...data.members, member] });
             }
             const current = authRef.current;
             if (member.userId === current.user.id) {

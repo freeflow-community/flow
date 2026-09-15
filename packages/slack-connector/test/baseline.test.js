@@ -7,7 +7,7 @@ import { randomBytes, createHmac } from 'node:crypto';
 import { Store } from '../src/store.js';
 import { Connector, hash, opaque } from '../src/connector.js';
 import { requestedScopes, requestedEvents, grantedCapabilities } from '../src/manifest.js';
-import { normalizeMessage, normalizeEvent, isDegraded, emojiFromName, expandBodyEmoji, tsToIso } from '../src/normalize.js';
+import { botMember, normalizeMessage, normalizeEvent, isDegraded, emojiFromName, expandBodyEmoji, tsToIso } from '../src/normalize.js';
 import { createConnectorServer } from '../src/http.js';
 
 const TS1 = '1789171841.148649', TS2 = '1789171890.271539', TS3 = '1789172009.709539';
@@ -556,4 +556,22 @@ test('activity: conversations carry lastActivityAt from checks, history loads an
   const again = await f.connector.conversations(credential);
   assert.equal(again.find(c => c.id === 'C1').lastActivityAt, tsToIso(later));
   assert.equal(again.find(c => c.id === 'D1').lastActivityAt, tsToIso(TS3));
+});
+
+test('bot senders: an app message names its bot in members and on the stream, not Unknown', async t => {
+  const sentinel = { type: 'message', subtype: 'bot_message', bot_id: 'B0SENTINEL', ts: TS1, text: '[FIRING] KubeCPUOvercommit', bot_profile: { id: 'B0SENTINEL', name: 'Sentinel', app_id: 'A0S', icons: { image_72: 'https://avatars.slack-edge.com/sentinel_72.png' } } };
+  assert.deepEqual([botMember(sentinel).userId, botMember(sentinel).displayName, botMember(sentinel).avatarUrl, botMember(sentinel).isBot], ['B0SENTINEL', 'Sentinel', 'https://avatars.slack-edge.com/sentinel_72.png', true]);
+  assert.equal(botMember({ ...sentinel, bot_profile: undefined, username: 'deploy-hook', icons: { image_48: 'https://x.test/h.png' } }).displayName, 'deploy-hook');
+  assert.equal(botMember(slackMessage(TS1)), null, 'a person is not a bot row');
+
+  const f = fixture(t, { fetcher: async method => { if (method === 'conversations.history') return { ok: true, messages: [sentinel, slackMessage(TS2)], has_more: false }; } });
+  const { credential } = await f.connect();
+  const page = await f.connector.history(credential, { channel: 'C1', limit: 15 });
+  assert.equal(page.messages.find(m => m.id === TS1).userId, 'B0SENTINEL');
+  const members = await f.connector.members(credential);
+  assert.equal(members.find(m => m.userId === 'B0SENTINEL').displayName, 'Sentinel');
+  const updates = f.connector.stream(credential, 0).events.filter(e => e.type === 'member.updated');
+  assert.deepEqual(updates.map(e => e.member.displayName), ['Sentinel']);
+  await f.connector.history(credential, { channel: 'C1', limit: 15 });
+  assert.equal(f.connector.stream(credential, 0).events.filter(e => e.type === 'member.updated').length, 1, 'seen again: no new event');
 });

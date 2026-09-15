@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 import { markdownToMrkdwn, EMOJI_SHORTCODES } from '@flow/shared';
 import { requestedScopes, grantedCapabilities } from './manifest.js';
-import { SLACK_EMOJI, isTs, tsToIso, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
+import { SLACK_EMOJI, botMember, isTs, tsToIso, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
 
 export const opaque = () => randomBytes(32).toString('base64url');
 export const hash = value => createHash('sha256').update(value).digest('base64url');
@@ -41,6 +41,8 @@ export class Connector {
     /** teamId -> when a person last loaded history, so the background check
      * never competes with someone reading. */
     this.historyReadAt = new Map();
+    /** teamId -> Map(bot id -> member row) for apps seen posting (no users.list row). */
+    this.bots = new Map();
   }
   async locked(key, fn) {
     const previous = this.locks.get(key) ?? Promise.resolve();
@@ -171,7 +173,8 @@ export class Connector {
     return this.withGrant(credential, async grant => {
       this.requireCapability(grant, 'readConversations');
       const rows = await this.paged(grant, 'users.list', { limit: '200' }, r => r.members);
-      return rows.map(normalizeMember).filter(m => !m.deleted).map(({ deleted, ...m }) => m);
+      const people = rows.map(normalizeMember).filter(m => !m.deleted).map(({ deleted, ...m }) => m);
+      return [...people, ...(this.bots.get(grant.identity.teamId)?.values() ?? [])];
     });
   }
   static cursorOk(cursor) { return cursor == null || cursor === '' || (typeof cursor === 'string' && /^[A-Za-z0-9=_-]{1,512}$/.test(cursor)); }
@@ -184,6 +187,7 @@ export class Connector {
       const result = await this.call(grant, 'conversations.history', { channel, limit: String(size), ...(cursor ? { cursor } : {}) });
       const raw = (result.messages ?? []).filter(m => isTs(m.ts));
       this.rememberFiles(grantId, raw);
+      this.rememberBots(grant.identity.teamId, raw);
       if (!cursor) this.recordActivity(grantId, channel, raw[0]?.ts ?? '');
       const messages = raw.map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel, readFiles: grantedCapabilities(grant.scopes).readFiles })).reverse();
       const next = result.response_metadata?.next_cursor || null;
@@ -199,6 +203,7 @@ export class Connector {
       const result = await this.call(grant, 'conversations.replies', { channel, ts, limit: '200', ...(cursor ? { cursor } : {}) });
       const raw = (result.messages ?? []).filter(m => isTs(m.ts));
       this.rememberFiles(grantId, raw);
+      this.rememberBots(grant.identity.teamId, raw);
       const all = raw.map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel, readFiles: grantedCapabilities(grant.scopes).readFiles }));
       const root = all.find(m => m.id === ts) ?? null;
       if (!root) throw new Fault('not_found', 404);
@@ -245,6 +250,7 @@ export class Connector {
       this.requireCapability(grant, 'search');
       const result = await this.call(grant, 'search.messages', { query, count: '20', ...(cursor ? { cursor } : {}) });
       const matches = result.messages?.matches ?? [];
+      this.rememberBots(grant.identity.teamId, matches);
       return { messages: matches.filter(m => isTs(m.ts) && m.channel?.id).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: m.channel.id, readFiles: grantedCapabilities(grant.scopes).readFiles })), cursor: result.messages?.pagination?.next_cursor || null, partial: Boolean(result.messages?.pagination?.next_cursor) };
     });
   }
@@ -556,6 +562,22 @@ export class Connector {
     this.store.put('activity', id, { latestTs: newest, checkedAt: this.now(), expiresAt: this.now() + 90 * 86400_000 });
     if (newest && newest !== prior?.latestTs) this.appendStream(grantId, { type: 'channel.activity', channelId, lastActivityAt: tsToIso(newest) });
   }
+  /** Note the apps behind bot messages; a new or renamed one reaches every
+   * grant on the team as member.updated, so the sender stops reading Unknown. */
+  rememberBots(teamId, messages) {
+    let known = this.bots.get(teamId);
+    for (const message of messages) {
+      const member = botMember(message);
+      if (!member) continue;
+      if (!known) { known = new Map(); this.bots.set(teamId, known); }
+      const prior = known.get(member.userId);
+      if (prior && prior.displayName === member.displayName && prior.avatarUrl === member.avatarUrl) continue;
+      known.set(member.userId, member);
+      for (const { id, value: grant } of this.store.all('grant')) {
+        if (grant.identity.teamId === teamId && grant.status === 'active') this.appendStream(id, { type: 'member.updated', member });
+      }
+    }
+  }
   appendStream(grantId, event) {
     const grant = this.store.get('grant', grantId);
     if (!grant) return;
@@ -728,6 +750,7 @@ export class Connector {
         this.streamSeq = (this.streamSeq ?? 0) + 1;
         const readFiles = grantedCapabilities(grant.scopes).readFiles;
         if (readFiles && source?.files) this.rememberFiles(id, [source]);
+        if (source) this.rememberBots(grant.identity.teamId, [source]);
         this.store.put('stream', rowId, { grantId: id, generation: grant.generation, seq: this.streamSeq, event: readFiles ? previewable : normalized, expiresAt: this.now() + 300_000 });
       }
       // A new message is activity for every grant that lists the channel, not
