@@ -10,6 +10,11 @@ Keep entries very succinct — one or two lines each: what changed, plus the why
 only when it isn't obvious. Reasoning, investigation notes and file lists go in
 the commit message, not here. This is a ledger to scan, not a narrative.
 
+### 2026-09-14 — Browser voice dictation
+
+- The web composer can transcribe a browser-managed microphone session into a channel, DM, or thread draft without a paid speech SDK or Flow transcription service. `[web]`
+- Dictation keeps finalized text in the draft for review, blocks accidental sends while listening, and safely cancels stale sessions when the composer changes. `[web]`
+
 ### 2026-08-25 — Permanent message moderation
 
 - Workspace owners and admins can permanently remove visible user, bot, or
@@ -18,6 +23,10 @@ the commit message, not here. This is a ledger to scan, not a narrative.
   and connected-client caches. `[server] [web] [macos] [ios] [qa]`
 
 ## Parity
+
+### 2026-09-14 — Voice dictation parity
+
+- Web composer dictation is browser-managed only. macOS and iOS need separate native Speech framework work before this feature can be called cross-client. `[web]`
 
 ### Gaps to close
 - iOS: no text zoom (#105). macOS scales every font from a `\.textZoom`
