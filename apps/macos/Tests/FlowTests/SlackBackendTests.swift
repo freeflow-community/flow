@@ -103,6 +103,13 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         #expect(Capabilities.allSupported[.artifacts] == .supported)
     }
 
+    @Test func loadOlderButtonSaysTheHistoryBudget() {
+        let slack = SlackBackend.capabilities(granted: ["readHistory": true])
+        #expect(slack.loadOlderLabel(wait: 0) == "Load earlier messages (15 max/min)")
+        #expect(slack.loadOlderLabel(wait: 42) == "Load earlier messages (wait 42s)")
+        #expect(Capabilities.allSupported.loadOlderLabel(wait: 0) == "Load earlier messages")
+    }
+
     @Test func mapsEmojiBothWays() {
         #expect(SlackBackend.shortcode(for: "✅") == "white_check_mark")
         #expect(SlackBackend.shortcode(for: ":custom_thing:") == "custom_thing")

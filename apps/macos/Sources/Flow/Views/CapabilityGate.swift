@@ -5,8 +5,8 @@ import SwiftUI
 /// render exactly as before. On a provider connection (Slack) a control whose
 /// capability is `unavailable` is disabled with the backend's reason as its
 /// tooltip, or hidden by the caller via `app.can(...)`; a `limited` one works
-/// and the reason shows once, in `ProviderLimitsBanner` at the top of the
-/// channel — the same split the web client makes.
+/// and says so where it is used (history: on the "Load earlier messages"
+/// button) — the same split the web client makes.
 extension View {
     /// Disable this control and explain why when the active connection's
     /// backend cannot do `name`. Leaves it untouched otherwise.
@@ -32,17 +32,16 @@ private struct CapabilityGate: ViewModifier {
 }
 
 /// The provider's limits for one channel, said once at the top of the
-/// transcript: a limited history budget (with the wait when Slack asked for
-/// one), a paused event stream, and the way out — open it natively.
+/// transcript: a paused event stream, and the way out — open it natively.
+/// The history budget and its wait live on the "Load earlier messages"
+/// button itself (MessageListView), so they are said in one place.
 struct ProviderLimitsBanner: View {
     let channelId: String
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        // `TimelineView` re-evaluates the wait every few seconds so the
-        // countdown and the Load-older button come back on their own.
-        TimelineView(.periodic(from: .now, by: 5)) { timeline in
-            let lines = lines(now: timeline.date)
+        Group {
+            let lines = lines()
             if !lines.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -72,23 +71,8 @@ struct ProviderLimitsBanner: View {
         }
     }
 
-    private func lines(now: Date) -> [String] {
-        var out: [String] = []
-        if app.streamDegraded {
-            out.append("Live updates paused; showing cached messages.")
-        }
-        let history = app.capabilities[.history]
-        if let limit = app.historyLimits[channelId], limit.limited {
-            if let retry = limit.retryAfter, retry > now {
-                let wait = Int(retry.timeIntervalSince(now).rounded(.up))
-                out.append("Slack asked Flow to wait \(wait)s before loading older messages.")
-            } else if let reason = history.reason, history.state == .limited {
-                out.append(reason)
-            }
-        } else if history.state == .limited, let reason = history.reason, app.hasMore[channelId] ?? false {
-            out.append(reason)
-        }
-        return out
+    private func lines() -> [String] {
+        app.streamDegraded ? ["Live updates paused; showing cached messages."] : []
     }
 }
 

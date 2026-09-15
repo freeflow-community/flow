@@ -60,6 +60,7 @@ export default function MessageList({
   membersById = {},
   hasMore,
   onLoadOlder,
+  loadOlder,
   showThreadAffordances,
   unreadThreadRootIds = [],
   scrollKey: unscopedScrollKey,
@@ -72,6 +73,8 @@ export default function MessageList({
   membersById?: Record<string, WorkspaceMemberDTO>;
   hasMore: boolean;
   onLoadOlder: () => void;
+  /** A provider-limited label and disabled state (page size, or the wait). */
+  loadOlder?: { label: string; disabled: boolean };
   showThreadAffordances: boolean;
   /** Thread roots with an unread notification for me (#270) — their reply
    * chips get a dot, so a reply that needs you is visible here and not only
@@ -218,8 +221,13 @@ export default function MessageList({
         <div ref={contentRef}>
           {hasMore && (
             <div className="py-1 text-center">
-              <button className="text-sm font-semibold text-accent-soft hover:underline" onClick={onLoadOlder}>
-                Load earlier messages
+              <button
+                data-testid="history-load-older"
+                className="text-sm font-semibold text-accent-soft hover:underline disabled:opacity-40 disabled:hover:no-underline"
+                disabled={loadOlder?.disabled}
+                onClick={onLoadOlder}
+              >
+                {loadOlder?.label ?? 'Load earlier messages'}
               </button>
             </div>
           )}

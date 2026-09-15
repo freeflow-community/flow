@@ -141,7 +141,7 @@ struct MessageListView: View {
                     if isLoadingHistory, !messages.isEmpty {
                         loadingRow("Loading earlier messages…")
                     } else if let limit = historyLimit, limit.limited, hasMore || limit.retryAfter.map({ $0 > Date() }) == true {
-                        HistoryLimitFooter(limit: limit, reason: capabilities[.history].reason) {
+                        HistoryLimitFooter(limit: limit, capabilities: capabilities) {
                             loadOlderAnchorId = messages.first?.id
                             followBox.model.positionRestored(atBottom: false)
                             onLoadOlder()
@@ -149,7 +149,7 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
-                            Button("Load earlier messages") {
+                            Button(capabilities.loadOlderLabel(wait: 0)) {
                                 // Reading history is a decision to leave the
                                 // end: unpin, remember the current top row,
                                 // and restore it once the page lands.
