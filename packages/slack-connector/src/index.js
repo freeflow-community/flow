@@ -36,6 +36,14 @@ const server = createConnectorServer(connector);
 server.requestTimeout = 20_000;
 server.headersTimeout = 10_000;
 const sweep = setInterval(() => connector.sweep(), 60_000).unref();
+// Conversation activity (hidden-by-default sidebar): one Slack call per tick
+// at most, and none while someone is reading history.
+let checking = false;
+const activity = setInterval(() => {
+  if (checking) return;
+  checking = true;
+  connector.activityTick().catch(() => {}).finally(() => { checking = false; });
+}, 20_000).unref();
 // Loopback by default (an HTTPS proxy on the same host); `HOST=0.0.0.0` where
 // the platform's edge terminates TLS and reaches the container over its own
 // network, as Railway does.
@@ -45,5 +53,6 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   if (stopping) return;
   stopping = true;
   clearInterval(sweep);
+  clearInterval(activity);
   server.close(() => { store.close(); if (lock !== null) { closeSync(lock); unlinkSync(lockPath); } });
 });

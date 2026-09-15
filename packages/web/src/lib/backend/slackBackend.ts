@@ -301,6 +301,7 @@ export function isWellFormed(event: unknown): event is BackendEvent {
     case 'message.deleted': return typeof e.channelId === 'string' && typeof e.messageId === 'string' && (e.threadRootId === null || typeof e.threadRootId === 'string');
     case 'reaction.added': case 'reaction.removed': return typeof e.channelId === 'string' && typeof e.messageId === 'string' && typeof e.emoji === 'string' && typeof e.userId === 'string';
     case 'channel.updated': return !!e.channel && typeof (e.channel as { id?: unknown }).id === 'string';
+    case 'channel.activity': return typeof e.channelId === 'string' && typeof e.lastActivityAt === 'string';
     case 'member.updated': {
       const m = e.member as Record<string, unknown> | null;
       return !!m && typeof m.userId === 'string' && typeof m.displayName === 'string' && typeof m.statusEmoji === 'string' && typeof m.statusText === 'string';

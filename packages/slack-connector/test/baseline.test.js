@@ -529,3 +529,31 @@ test('uploads: bytes go to Slack upload URL, send completes them as one message 
   const { credential: other } = await noScope.connect();
   await assert.rejects(noScope.connector.upload(other, { channel: 'C1', name: 'a.txt', type: 'text/plain', bytes: Buffer.from('x') }), /missing_scopes/);
 });
+
+test('activity: conversations carry lastActivityAt from checks, history loads and live messages; the check yields to readers', async t => {
+  const f = fixture(t);
+  const { credential } = await f.connect();
+  const first = await f.connector.conversations(credential);
+  assert.deepEqual(first.map(c => [c.id, c.lastActivityAt]), [['C1', null], ['D1', null], ['G1', null]]);
+
+  // Channels are checked before group DMs, and group DMs before DMs.
+  assert.equal((await f.connector.activityTick()).channelId, 'C1');
+  assert.equal(f.calls.filter(c => c.method === 'conversations.history').at(-1).params.limit, '1');
+  assert.equal((await f.connector.activityTick()).channelId, 'G1');
+  const events = f.connector.stream(credential, 0).events.filter(e => e.type === 'channel.activity');
+  assert.deepEqual(events.map(e => [e.channelId, e.lastActivityAt]), [['C1', tsToIso(TS3)], ['G1', tsToIso(TS3)]]);
+
+  // Someone reading history pauses the check for two minutes.
+  await f.connector.history(credential, { channel: 'D1', limit: 15 });
+  assert.equal(await f.connector.activityTick(), null);
+  f.advance(121_000);
+  assert.equal(await f.connector.activityTick(), null, 'D1 was learned from the history load, so nothing is left');
+
+  // A live message moves a channel forward; an older ts never moves it back.
+  const later = '1789190000.000001';
+  f.event({ type: 'message', channel: 'C1', user: 'U2', ts: later, text: 'new' });
+  f.connector.recordActivity(JSON.parse(JSON.stringify([...f.connector.activityTargets.keys()][0])), 'C1', TS1);
+  const again = await f.connector.conversations(credential);
+  assert.equal(again.find(c => c.id === 'C1').lastActivityAt, tsToIso(later));
+  assert.equal(again.find(c => c.id === 'D1').lastActivityAt, tsToIso(TS3));
+});

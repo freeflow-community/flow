@@ -131,6 +131,8 @@ enum BackendEvent: Sendable {
     case threadReply(Message)
     case reactionChanged(channelId: String, messageId: String, emoji: String, userId: String, added: Bool)
     case channelUpdated(Channel)
+    /// A provider conversation's newest top-level message time moved (Slack).
+    case channelActivity(channelId: String, lastActivityAt: String)
     case channelRead(channelId: String, lastReadMsgId: String?)
     case typing(channelId: String, userId: String, threadRootId: String?)
     case presence(userId: String, online: Bool)

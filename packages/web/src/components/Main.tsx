@@ -172,6 +172,13 @@ export default function Main() {
           case 'channel.updated':
             void qc.invalidateQueries({ queryKey: ['channels'] });
             break;
+          case 'channel.activity':
+            // Patched in place: a sidebar row may unfold, and a list refetch
+            // per message would spend the provider's conversation budget.
+            qc.setQueriesData<{ channels: ChannelDTO[] }>({ queryKey: ['channels'] }, (data) =>
+              data ? { ...data, channels: data.channels.map((c) => (c.id === event.channelId ? { ...c, lastActivityAt: event.lastActivityAt } : c)) } : data,
+            );
+            break;
           case 'stream.degraded':
             setStatus('reconnecting');
             break;

@@ -137,6 +137,7 @@ credential>`, never cookies. No endpoint accepts a Flow token as its identity.
 | `GET /v1/files/:id[/thumb]` | Slack file bytes fetched with the user token from `files.slack.com` only; `/url` variants return `{url: null}` (always proxied). `emoji:<name>` ids serve custom emoji images, `team-icon:<teamId>` the workspace icon (`avatarUrl` of `GET /v1/workspace`) |
 | `PATCH /v1/me` | `{statusEmoji, statusText}` → sets the user's Slack status (unicode mapped to a Slack shortcode; unknown emoji refused) and returns a Flow-shaped user |
 | `POST /v1/files?channel=&name=` | Raw file bytes (≤ 50 MB, `Content-Type` = the file's type) → reserved Slack upload, bytes sent to Slack's pre-authorized upload URL; returns a FileDTO. Unshared until a send carries its id |
+| `GET /v1/conversations` → `lastActivityAt` | Newest known message per conversation (ISO or null). Learned from live message events, the latest history page a client loads, and a background check (`conversations.history`, limit 1): one call per 20 s tick at most, channels before group DMs before DMs, skipped for 2 minutes after anyone on the team loads history and while the budget is parked; rechecked weekly. Changes stream as `channel.activity` |
 | `GET /v1/workspaces/:teamId/emoji` | Custom emoji in Flow's `WorkspaceEmojiDTO` shape, aliases resolved, cached 10 minutes per team |
 | `GET /health` | Process health only |
 

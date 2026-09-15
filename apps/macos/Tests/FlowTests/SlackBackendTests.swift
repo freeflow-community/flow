@@ -289,6 +289,23 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         #expect(user?.statusText == "Out sick")
     }
 
+    @Test func channelActivityEventsCarryTheNewTime() async throws {
+        let fake = FakeConnector()
+        fake.streamPages = [
+            #"{"events":[{"type":"channel.activity","channelId":"C1","lastActivityAt":"2026-09-15T17:00:00.000Z"},{"type":"channel.activity","channelId":"C2"}],"seq":2,"gap":false}"#,
+        ]
+        let backend = makeBackend(fake, autoPoll: false)
+        let stream = backend.events()
+        let collector = Task { () -> (String, String)? in
+            for await event in stream { if case .channelActivity(let id, let at) = event { return (id, at) } }
+            return nil
+        }
+        await backend.pollOnce()
+        let got = await collector.value
+        #expect(got?.0 == "C1")
+        #expect(got?.1 == "2026-09-15T17:00:00.000Z")
+    }
+
     @Test func setStatusPatchesTheConnectorAndIsGatedByTheScope() async throws {
         let fake = FakeConnector()
         let backend = makeBackend(fake)
@@ -349,5 +366,44 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         #expect(SlackIdentity.messageKey(connectionId: "c", teamId: "T1", channelId: "C1", ts: "1789171841.100000") == "slack:c:T1:C1:1789171841.100000")
         #expect(SlackIdentity.messageKey(connectionId: "c", teamId: "T1", channelId: "C1", ts: "bad") == nil)
         #expect(SlackIdentity.date(fromTs: "1789171841.148649")?.timeIntervalSince1970 == 1789171841.148)
+    }
+}
+
+
+/// Slack inactive conversations: hidden unless known active in 30 days,
+/// unread, or open; a Flow workspace is never split.
+@Suite struct InactiveConversationTests {
+    private let now = Channel.parseActivityDate("2026-09-15T12:00:00.000Z")!
+
+    private func channel(_ id: String, activity: String? = nil, unread: Int = 0, notifications: Int = 0) -> Channel {
+        Channel(id: id, workspaceId: "T1", name: id, topic: nil, isPrivate: false, createdBy: "", createdAt: "",
+                archivedAt: nil, isMember: true, lastReadMsgId: nil, unreadCount: unread,
+                unreadNotifications: notifications, lastActivityAt: activity)
+    }
+
+    @Test func rule() {
+        #expect(!channel("unknown").isRecentlyActive(selectedId: nil, now: now))
+        #expect(channel("recent", activity: "2026-08-17T12:00:00.000Z").isRecentlyActive(selectedId: nil, now: now), "29 days")
+        #expect(!channel("old", activity: "2026-08-15T11:00:00Z").isRecentlyActive(selectedId: nil, now: now), "31 days")
+        #expect(channel("unread", unread: 2).isRecentlyActive(selectedId: nil, now: now))
+        #expect(channel("mention", notifications: 1).isRecentlyActive(selectedId: nil, now: now))
+        #expect(channel("open").isRecentlyActive(selectedId: "open", now: now))
+    }
+
+    @Test func splitOnlyForAProvider() {
+        let list = [channel("a", activity: "2026-09-14T00:00:00.000Z"), channel("b"), channel("c", activity: "2025-01-01T00:00:00.000Z")]
+        let slack = Channel.splitInactive(list, isProvider: true, selectedId: nil, now: now)
+        #expect(slack.active.map(\.id) == ["a"])
+        #expect(slack.inactiveCount == 2)
+        let flow = Channel.splitInactive(list, isProvider: false, selectedId: nil, now: now)
+        #expect(flow.active.count == 3 && flow.inactiveCount == 0)
+    }
+
+    @Test func decodesLastActivityAt() throws {
+        let json = #"{"id":"C1","workspaceId":"T1","name":"eng","kind":"standard","createdBy":"","createdAt":"","lastActivityAt":"2026-09-15T17:00:00.000Z"}"#
+        let decoded = try JSONDecoder().decode(Channel.self, from: Data(json.utf8))
+        #expect(decoded.lastActivityAt == "2026-09-15T17:00:00.000Z")
+        let flow = try JSONDecoder().decode(Channel.self, from: Data(#"{"id":"c1","workspaceId":"w1","name":"eng","createdBy":"","createdAt":""}"#.utf8))
+        #expect(flow.lastActivityAt == nil)
     }
 }

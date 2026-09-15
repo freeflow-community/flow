@@ -334,6 +334,7 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         let emoji: String?
         let userId: String?
         let member: MemberRow?
+        let lastActivityAt: String?
 
         var event: BackendEvent? {
             switch type {
@@ -347,6 +348,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
                 guard let channelId, let messageId, let emoji, let userId else { return nil }
                 return .reactionChanged(channelId: channelId, messageId: messageId, emoji: emoji, userId: userId, added: type == "reaction.added")
             case "member.updated": return member.map { .memberUpdated($0.user) }
+            case "channel.activity":
+                guard let channelId, let lastActivityAt else { return nil }
+                return .channelActivity(channelId: channelId, lastActivityAt: lastActivityAt)
             default: return nil
             }
         }

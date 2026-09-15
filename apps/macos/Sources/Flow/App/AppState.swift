@@ -488,6 +488,9 @@ final class AppState: ObservableObject {
 
     func can(_ name: CapabilityName) -> Bool { capabilities.canUse(name) }
 
+    /// A provider connection (Slack) rather than a Flow server.
+    var isProviderWorkspace: Bool { runtime.backend != nil }
+
     /// The provider's own deep link for a conversation or message ("Open in
     /// Slack"); nil on a Flow connection, which has nowhere else to open.
     func providerOpenURL(channelId: String, messageId: String? = nil) -> URL? {

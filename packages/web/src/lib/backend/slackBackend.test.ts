@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BackendError } from '@flow/shared';
+import { BackendError, hiddenAsInactive } from '@flow/shared';
 import type { ConnectionRuntime } from '../connectionRuntime';
 import { SlackBackend, shortcodeFor, slackCapabilities } from './slackBackend';
 
@@ -133,5 +133,22 @@ describe('SlackBackend', () => {
     expect(backend.auth().status).toBe('reauthorization_required');
     expect(backend.auth().detail).toMatch(/revoked/i);
     expect(events).toContain('auth.changed');
+  });
+});
+
+describe('hiddenAsInactive', () => {
+  const now = Date.parse('2026-09-15T12:00:00.000Z');
+  const days = (n: number) => new Date(now - n * 86_400_000).toISOString();
+  const slack = (over: Record<string, unknown> = {}) => ({ id: 'C1', workspaceId: 'T1', name: 'eng', kind: 'standard', topic: null, isPrivate: false, createdBy: '', createdAt: '', archivedAt: null, isMember: true, lastReadMsgId: null, unreadCount: 0, unreadNotifications: 0, unreadThreadRootIds: [], notifyLevel: 1, parentId: null, provenance: { provider: 'slack' as const, openUrl: null }, lastActivityAt: null, ...over }) as unknown as Parameters<typeof hiddenAsInactive>[0];
+  it('hides a Slack conversation unless it is known active, unread, or open', () => {
+    expect(hiddenAsInactive(slack(), null, now)).toBe(true);
+    expect(hiddenAsInactive(slack({ lastActivityAt: days(29) }), null, now)).toBe(false);
+    expect(hiddenAsInactive(slack({ lastActivityAt: days(31) }), null, now)).toBe(true);
+    expect(hiddenAsInactive(slack({ unreadCount: 2 }), null, now)).toBe(false);
+    expect(hiddenAsInactive(slack({ unreadNotifications: 1 }), null, now)).toBe(false);
+    expect(hiddenAsInactive(slack(), 'C1', now)).toBe(false);
+  });
+  it('never hides a Flow channel', () => {
+    expect(hiddenAsInactive(slack({ provenance: undefined }), null, now)).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 import { markdownToMrkdwn, EMOJI_SHORTCODES } from '@flow/shared';
 import { requestedScopes, grantedCapabilities } from './manifest.js';
-import { SLACK_EMOJI, isTs, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
+import { SLACK_EMOJI, isTs, tsToIso, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
 
 export const opaque = () => randomBytes(32).toString('base64url');
 export const hash = value => createHash('sha256').update(value).digest('base64url');
@@ -34,6 +34,13 @@ export class Connector {
     this.emojiCache = new Map();
     /** teamId -> { url, expiresAt } from team.info. */
     this.teamIcons = new Map();
+    /** grantId -> { channels: ids in check order, seenAt } from the grant's last
+     * conversation list: what the activity check walks, and who else a
+     * channel's message counts for. */
+    this.activityTargets = new Map();
+    /** teamId -> when a person last loaded history, so the background check
+     * never competes with someone reading. */
+    this.historyReadAt = new Map();
   }
   async locked(key, fn) {
     const previous = this.locks.get(key) ?? Promise.resolve();
@@ -43,7 +50,7 @@ export class Connector {
   }
   sweep() {
     const now = this.now();
-    for (const kind of ['oauth', 'handoff', 'session', 'event', 'stream', 'sent', 'upload']) {
+    for (const kind of ['oauth', 'handoff', 'session', 'event', 'stream', 'sent', 'upload', 'activity']) {
       for (const { id, value } of this.store.all(kind)) if (value.expiresAt <= now) this.store.remove(kind, id);
     }
     for (const [key, expiresAt] of this.rateLimits) if (expiresAt <= now) this.rateLimits.delete(key);
@@ -144,7 +151,7 @@ export class Connector {
     return { ...result, name: 'team-icon' };
   }
   async conversations(credential) {
-    return this.withGrant(credential, async grant => {
+    return this.withGrant(credential, async (grant, grantId) => {
       this.requireCapability(grant, 'readConversations');
       const rows = await this.paged(grant, 'users.conversations', { types: 'public_channel,private_channel,mpim,im', exclude_archived: 'true', limit: '200' }, r => r.channels);
       // A group DM only names its members by handle ("mpdm-alice--bob--carol-1");
@@ -154,7 +161,10 @@ export class Connector {
         const members = await this.paged(grant, 'users.list', { limit: '200' }, r => r.members);
         handles = new Map(members.map(m => [m.name, m.id]));
       }
-      return rows.map(c => normalizeChannel(c, { teamId: grant.identity.teamId, selfUserId: grant.identity.userId, handles }));
+      const channels = rows.map(c => ({ ...normalizeChannel(c, { teamId: grant.identity.teamId, selfUserId: grant.identity.userId, handles }), lastActivityAt: this.activityAt(grantId, String(c.id)) }));
+      const order = { standard: 0, group_dm: 1, dm: 2 };
+      this.activityTargets.set(grantId, { channels: [...channels].sort((a, b) => order[a.kind] - order[b.kind]).map(c => c.id), seenAt: this.now() });
+      return channels;
     });
   }
   async members(credential) {
@@ -170,9 +180,11 @@ export class Connector {
     const size = Math.min(200, Math.max(1, Number(limit) || 50));
     return this.withGrant(credential, async (grant, grantId) => {
       this.requireCapability(grant, 'readHistory');
+      this.historyReadAt.set(grant.identity.teamId, this.now());
       const result = await this.call(grant, 'conversations.history', { channel, limit: String(size), ...(cursor ? { cursor } : {}) });
       const raw = (result.messages ?? []).filter(m => isTs(m.ts));
       this.rememberFiles(grantId, raw);
+      if (!cursor) this.recordActivity(grantId, channel, raw[0]?.ts ?? '');
       const messages = raw.map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel, readFiles: grantedCapabilities(grant.scopes).readFiles })).reverse();
       const next = result.response_metadata?.next_cursor || null;
       // Slack may cap the page below what was asked (15 for restricted apps);
@@ -341,11 +353,19 @@ export class Connector {
   }
   async withGrant(credential, fn) {
     const { session } = this.session(credential);
-    const original = this.store.get('grant', session.grantId);
+    // Re-check after waiting: a disconnect/removal must not resurrect a grant.
+    return this.withGrantId(session.grantId, fn, () => this.session(credential));
+  }
+  /** The grant lock, token rotation and failure marking, by grant id — for
+   * work no client request is waiting on (the activity check). */
+  async withGrantId(grantId, fn, recheck = () => {}) {
+    const session = { grantId };
+    const original = this.store.get('grant', grantId);
+    if (!original) throw new Fault('reauthorization_required', 401);
     return this.locked(identityKey(original.identity), async () => {
-      // Re-check after waiting: a disconnect/removal must not resurrect a grant.
-      this.session(credential);
+      recheck();
       let grant = this.store.get('grant', session.grantId);
+      if (!grant) throw new Fault('reauthorization_required', 401);
       if (grant.status !== 'active') throw new Fault(grant.status, 401);
       try {
         if (grant.expiresAt <= this.now() + 60_000) {
@@ -519,6 +539,60 @@ export class Connector {
       };
     });
   }
+  // ---- conversation activity ------------------------------------------------
+  // Slack's sidebar hides conversations with no new message in 30 days, and
+  // the public API does not expose a channel's latest message to this app. The
+  // connector learns it from what it already sees (live message events, the
+  // latest history page someone loads) and a slow background check.
+  activityAt(grantId, channelId) {
+    const row = this.store.get('activity', hash(JSON.stringify([grantId, channelId])));
+    return row?.latestTs ? tsToIso(row.latestTs) : null;
+  }
+  /** `latestTs` '' records "checked, no messages". Never moves backwards. */
+  recordActivity(grantId, channelId, latestTs) {
+    const id = hash(JSON.stringify([grantId, channelId]));
+    const prior = this.store.get('activity', id);
+    const newest = prior?.latestTs && (!latestTs || prior.latestTs.localeCompare(latestTs) > 0) ? prior.latestTs : latestTs;
+    this.store.put('activity', id, { latestTs: newest, checkedAt: this.now(), expiresAt: this.now() + 90 * 86400_000 });
+    if (newest && newest !== prior?.latestTs) this.appendStream(grantId, { type: 'channel.activity', channelId, lastActivityAt: tsToIso(newest) });
+  }
+  appendStream(grantId, event) {
+    const grant = this.store.get('grant', grantId);
+    if (!grant) return;
+    this.streamSeq = (this.streamSeq ?? 0) + 1;
+    this.store.put('stream', opaque(), { grantId, generation: grant.generation, seq: this.streamSeq, event, expiresAt: this.now() + 300_000 });
+  }
+  /** One background check per tick: the newest message of one conversation a
+   * recently seen grant has never had checked (or not in a week). Skipped
+   * while someone on the team loaded history in the last two minutes, and
+   * while Slack has the history budget parked. Returns what it checked. */
+  async activityTick() {
+    const now = this.now();
+    for (const [grantId, target] of this.activityTargets) {
+      if (now - target.seenAt > 86400_000) { this.activityTargets.delete(grantId); continue; }
+      const grant = this.store.get('grant', grantId);
+      if (!grant || grant.status !== 'active' || !grantedCapabilities(grant.scopes).readHistory) continue;
+      const team = grant.identity.teamId;
+      if (now - (this.historyReadAt.get(team) ?? 0) < 120_000) continue;
+      if ((this.rateLimits.get(this.budgetKey(grant, 'conversations.history')) ?? 0) > now) continue;
+      const channelId = target.channels.find(id => {
+        const row = this.store.get('activity', hash(JSON.stringify([grantId, id])));
+        return !row || now - row.checkedAt > 7 * 86400_000;
+      });
+      if (!channelId) continue;
+      try {
+        await this.withGrantId(grantId, async current => {
+          const result = await this.call(current, 'conversations.history', { channel: channelId, limit: '1' });
+          this.recordActivity(grantId, channelId, (result.messages ?? []).find(m => isTs(m.ts))?.ts ?? '');
+        });
+      } catch (error) {
+        // Parked budget or a channel that went away: try it again next week, not next tick.
+        if (!error.retryAfter) this.recordActivity(grantId, channelId, '');
+      }
+      return { grantId, channelId };
+    }
+    return null;
+  }
   // ---- file bytes and custom emoji ---------------------------------------------
   rememberFiles(grantId, messages) {
     for (const message of messages) {
@@ -655,6 +729,14 @@ export class Connector {
         const readFiles = grantedCapabilities(grant.scopes).readFiles;
         if (readFiles && source?.files) this.rememberFiles(id, [source]);
         this.store.put('stream', rowId, { grantId: id, generation: grant.generation, seq: this.streamSeq, event: readFiles ? previewable : normalized, expiresAt: this.now() + 300_000 });
+      }
+      // A new message is activity for every grant that lists the channel, not
+      // only the one Slack named in `authorizations`.
+      if (normalized.type === 'message.created') {
+        const channelId = normalized.message.channelId;
+        for (const [grantId, target] of this.activityTargets) {
+          if (target.channels.includes(channelId) || authorized.has(this.store.get('grant', grantId)?.identity.userId)) this.recordActivity(grantId, channelId, normalized.message.id);
+        }
       }
       const rows = this.store.all('stream');
       for (const row of rows.slice(0, Math.max(0, rows.length - 1000))) this.store.remove('stream', row.id);

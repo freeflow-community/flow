@@ -746,7 +746,12 @@ actor SyncEngine {
                     // Unread state is local for a provider without read-marker
                     // sync: keep the cached count rather than the list's zero.
                     var row = c
-                    if let cached = try Channel.fetchOne(db, key: c.id) { row.unreadCount = cached.unreadCount; row.lastReadMsgId = cached.lastReadMsgId }
+                    if let cached = try Channel.fetchOne(db, key: c.id) {
+                        row.unreadCount = cached.unreadCount; row.lastReadMsgId = cached.lastReadMsgId
+                        // Activity the stream delivered since the list was built is newer
+                        // knowledge; the list's value wins only when it has one.
+                        if row.lastActivityAt == nil { row.lastActivityAt = cached.lastActivityAt }
+                    }
                     try row.save(db)
                 }
             }
@@ -2528,6 +2533,10 @@ actor SyncEngine {
             }
         case .channelUpdated(let channel):
             try? await db.writer.write { db in try channel.save(db) }
+        case .channelActivity(let channelId, let lastActivityAt):
+            try? await db.writer.write { db in
+                try db.execute(sql: "UPDATE channel SET lastActivityAt = ? WHERE id = ?", arguments: [lastActivityAt, channelId])
+            }
         case .memberUpdated(let user):
             // Profile or status changed in the provider: the row every view
             // draws names, avatars and statuses from, and the footer's own user.
