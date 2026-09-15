@@ -141,6 +141,13 @@ credential>`, never cookies. No endpoint accepts a Flow token as its identity.
 | `GET /v1/workspaces/:teamId/emoji` | Custom emoji in Flow's `WorkspaceEmojiDTO` shape, aliases resolved, cached 10 minutes per team |
 | `GET /health` | Process health only |
 
+The Flow server advertises its connector at `GET /v1/client-info` as
+`slackConnectorOrigin` (from `SLACK_CONNECTOR_ORIGIN`, else the web build's
+`VITE_SLACK_CONNECTOR_ORIGIN`; https only, null when absent). The web client
+uses its build-time value; the native apps use `FLOW_SLACK_CONNECTOR_ORIGIN`
+or the `FlowSlackConnectorOrigin` Info.plist key when set, and otherwise what
+the server advertises — a shipped app has neither baked in.
+
 Do not execute a live message send without an explicit operator request. The web
 PoC intentionally has no send button. Later chat phases must add their own scope,
 method and event entries, conversation authorization, pacing and retention rules.

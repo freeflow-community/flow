@@ -26,6 +26,9 @@ struct ServerConnectionsView: View {
     @State private var error: String?
     @State private var revision = 0
     @State private var removal: String?
+    /// The connector this deployment advertises (`GET /v1/client-info`), for a
+    /// build with no `FLOW_SLACK_CONNECTOR_ORIGIN`/Info.plist value of its own.
+    @State private var advertisedConnector: CanonicalOrigin?
     @State private var signout: String?
     @State private var memberships: [String: [Workspace]] = [:]
     @State private var offline: Set<String> = []
@@ -93,7 +96,7 @@ struct ServerConnectionsView: View {
                 // Slack account per team, verified before it is added — the
                 // same flow the web client runs, in the system web-auth sheet.
                 Text("Slack workspaces").font(.headline)
-                if let connector = Server.slackConnectorOrigin {
+                if let connector = Server.slackConnectorOrigin ?? advertisedConnector {
                     Text("Sign in with your Slack account. Flow’s connector stores your authorization and handles Slack content on your behalf.")
                         .font(.caption).foregroundStyle(.secondary)
                     if let pending = slackHandoff {
@@ -204,6 +207,17 @@ struct ServerConnectionsView: View {
         .interactiveDismissDisabled(busy)
         .id(revision)
         .task(id: current.currentUser?.id) { await loadMemberships() }
+        // Which connector this deployment offers; a build-time value wins, so
+        // only ask when there is none.
+        .task {
+            guard Server.slackConnectorOrigin == nil, advertisedConnector == nil else { return }
+            guard let address = try? ServerAddress(Server.baseURL.absoluteString),
+                  let info = try? await address.discover(),
+                  let raw = info.slackConnectorOrigin,
+                  let origin = try? CanonicalOrigin.normalize(raw), origin.origin.hasPrefix("https://")
+            else { return }
+            advertisedConnector = origin
+        }
         .alert("Remove \(actionLabel(removal))?", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } })) {
             Button("Cancel", role: .cancel) { removal = nil }
             Button("Remove server", role: .destructive) {
