@@ -4,7 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { PendingWorkspaceInviteDTO, WorkspaceDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useSelfRegisterDomain, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { useSelfRegisterDomain, useSwitcherEntries, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { openWorkspace, showsSource } from '../lib/workspaceSwitcher';
 import { useIsFlow } from '../lib/backend';
 import { EMPTY_SLUG_FIELD, slugEdited, slugForName } from '../lib/slugify';
 import { OpenInAppButton } from './OpenInApp';
@@ -17,6 +18,15 @@ export default function WorkspaceChooser() {
   const sel = useSelection();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
+  // Workspaces on the other connections — Flow servers and Slack teams — so
+  // this screen answers "which workspace?" across all of them.
+  const switcher = useSwitcherEntries();
+  const elsewhere = switcher.filter((e) => !e.foreground);
+  const labelSources = showsSource(switcher);
+  const foreground = switcher.find((e) => e.foreground);
+  // A Slack team's slug is its team id, which means nothing to a person.
+  const subtitle = (slug: string) => foreground?.provider === 'slack' ? foreground.source
+    : labelSources && foreground ? `${slug} · ${foreground.source}` : slug;
   // Invitations someone sent me from my profile popup (#359). They live here,
   // above the workspaces I'm already in, because this screen is exactly the
   // question they answer: which workspace do I go to?
@@ -145,9 +155,26 @@ export default function WorkspaceChooser() {
             )}
             <span className="flex-1">
               <span className="block font-semibold text-ink">{ws.name}</span>
-              <span className="block text-sm text-muted">{ws.slug}</span>
+              <span className="block text-sm text-muted">{subtitle(ws.slug)}</span>
             </span>
             {ws.role && <span className="text-xs text-faint">{ws.role}</span>}
+          </button>
+        ))}
+        {elsewhere.map((e) => (
+          <button
+            key={`${e.connectionId}:${e.workspaceId}`}
+            data-testid={`workspace-elsewhere-${e.workspaceId}`}
+            onClick={() => openWorkspace(e.connectionId, e.workspaceId)}
+            className="flex w-full items-center gap-3 rounded-lg border border-hairline bg-white p-3 text-left shadow-sm hover:border-accent"
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent font-bold text-white">
+              {e.name.slice(0, 1).toUpperCase()}
+            </span>
+            <span className="flex-1">
+              <span className="block font-semibold text-ink">{e.name}</span>
+              <span className="block text-sm text-muted">{e.source}</span>
+            </span>
+            {e.unread > 0 && <span className="rounded bg-violet-100 px-2 text-xs" aria-label="Unread notifications">{e.unread}</span>}
           </button>
         ))}
       </div>

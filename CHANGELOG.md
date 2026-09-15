@@ -17,6 +17,10 @@ This file keeps two things:
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
+- **One workspace list across connections is web only.** The web sidebar menu
+  and chooser list Slack teams and other servers' workspaces, and Workspaces &
+  servers puts Slack teams in the server list; the macOS and iOS switchers were
+  not changed.
 - **The channel browser is web only** (#588). macOS and iOS still list unjoined
   channels inline and cannot open an archived channel; the server side
   (`includeArchived`, `memberCount`) is ready for them.

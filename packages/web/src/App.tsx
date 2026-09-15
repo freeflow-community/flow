@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import ServerConnections from './components/ServerConnections';
 import { REGISTRY_KEY } from './lib/connections';
+import { OPEN_WORKSPACE_EVENT } from './lib/workspaceSwitcher';
 import { consumeHandoffCallback, pendingHandoff } from './lib/authHandoff';
 import { BackendError, type ArtifactDTO, type UserDTO, type AuthResponse, type WorkspaceDTO } from '@flow/shared';
 import { backgroundSync } from './lib/backgroundSync';
@@ -97,6 +98,15 @@ export default function App() {
   });
   const [showConnections, setShowConnections] = useState(false);
   const [epoch, reset] = useState(0);
+  // Foreground a workspace on any connection — from Workspaces & servers, or
+  // from the sidebar menu and chooser through `openWorkspace()`.
+  const openOn = useCallback((connectionId: string, workspaceId: string) => {
+    manager.setActive(connectionId);
+    const target = manager.active();
+    target.write(ACTIVE_WS, workspaceId);
+    selectRuntime(target);
+    reset(n => n + 1);
+  }, [manager]);
   const [clients] = useState(() => new Map<string, QueryClient>());
   const [clientOwners] = useState(() => new Map<string, string>());
   // Every *other* connected server keeps syncing while this tab runs — a
@@ -138,15 +148,21 @@ export default function App() {
       // line with what the registry now says.
       sync.reconcile();
     };
+    const open = (event: Event) => {
+      const { connectionId, workspaceId } = (event as CustomEvent<{ connectionId: string; workspaceId: string }>).detail;
+      openOn(connectionId, workspaceId);
+    };
     window.addEventListener('storage', storageChanged);
     window.addEventListener('flow:connections', show);
     window.addEventListener('flow:registry', reload);
+    window.addEventListener(OPEN_WORKSPACE_EVENT, open);
     return () => {
       window.removeEventListener('storage', storageChanged);
       window.removeEventListener('flow:connections', show);
       window.removeEventListener('flow:registry', reload);
+      window.removeEventListener(OPEN_WORKSPACE_EVENT, open);
     };
-  }, [manager, runtime, clients, sync]);
+  }, [manager, runtime, clients, sync, openOn]);
   const owner = runtime.key('queryCache');
   if (clientOwners.get(runtime.connectionId) !== owner || runtime.isDisposed) {
     clients.get(runtime.connectionId)?.clear();
@@ -169,13 +185,7 @@ export default function App() {
         Every entry point — the sidebar's workspace menu, the sign-in screen,
         the workspace chooser — raises it through `openServerConnections()`,
         which is the `flow:connections` event the effect above listens for. */}
-    {showConnections && <ServerConnections onClose={() => setShowConnections(false)} onSelect={(connectionId, workspaceId) => {
-      manager.setActive(connectionId);
-      const target = manager.active();
-      target.write(ACTIVE_WS, workspaceId);
-      selectRuntime(target);
-      reset(n => n + 1);
-    }} />}
+    {showConnections && <ServerConnections onClose={() => setShowConnections(false)} onSelect={openOn} />}
   </>;
 }
 
