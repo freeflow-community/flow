@@ -49,12 +49,20 @@ export function isDegraded(message) {
 
 const SYSTEM_KINDS = { channel_join: 'member_joined', channel_leave: 'member_left', group_join: 'member_joined', group_leave: 'member_left' };
 
-export function normalizeFile(file, { teamId, userId }) {
+/** Slack's thumbnail for an image file, largest first; null for other files. */
+export function slackThumbUrl(file) {
+  if (!String(file.mimetype ?? '').startsWith('image/')) return null;
+  return file.thumb_720 ?? file.thumb_480 ?? file.thumb_360 ?? null;
+}
+
+/** `readFiles`: the grant can fetch file bytes, so an image with a Slack
+ * thumbnail previews through the connector's /v1/files routes. */
+export function normalizeFile(file, { teamId, userId, readFiles = false }) {
   return {
     id: String(file.id), workspaceId: teamId, userId: String(file.user ?? userId ?? ''), name: String(file.name ?? file.title ?? 'file'),
     mimeType: String(file.mimetype ?? 'application/octet-stream'), sizeBytes: Number(file.size ?? 0) || 0,
     width: Number.isFinite(file.original_w) ? file.original_w : null, height: Number.isFinite(file.original_h) ? file.original_h : null,
-    hasThumb: false, createdAt: Number.isFinite(file.created) ? new Date(file.created * 1000).toISOString() : '',
+    hasThumb: Boolean(readFiles && slackThumbUrl(file)), createdAt: Number.isFinite(file.created) ? new Date(file.created * 1000).toISOString() : '',
   };
 }
 
@@ -63,7 +71,7 @@ export function normalizeReactions(reactions) {
 }
 
 /** A Slack message (history/replies/event/chat.* reply) -> BackendMessage. */
-export function normalizeMessage(message, { teamId, channelId }) {
+export function normalizeMessage(message, { teamId, channelId, readFiles = false }) {
   const ts = message.ts;
   if (!isTs(ts)) throw new Error('slack message without a ts');
   const channel = String(channelId ?? message.channel ?? '');
@@ -77,7 +85,7 @@ export function normalizeMessage(message, { teamId, channelId }) {
     editedAt: message.edited?.ts ? tsToIso(message.edited.ts) : null, deletedAt: null, pinnedAt: null, pinnedBy: null,
     replyCount: Number(message.reply_count ?? 0) || 0, lastReplyAt: isTs(message.latest_reply) ? tsToIso(message.latest_reply) : null,
     systemKind, scheduled: false, replyParticipantUserIds: (message.reply_users ?? []).slice(0, 4).map(String),
-    reactions: normalizeReactions(message.reactions), files: (message.files ?? []).map(f => normalizeFile(f, { teamId, userId: message.user })), unfurls: [],
+    reactions: normalizeReactions(message.reactions), files: (message.files ?? []).map(f => normalizeFile(f, { teamId, userId: message.user, readFiles })), unfurls: [],
     provenance: { provider: 'slack', openUrl: openUrl(teamId, channel, ts), degraded, subtype: message.subtype ?? null },
   };
 }
@@ -125,7 +133,7 @@ export function normalizeWorkspace(grant) {
 
 /** An Events API `event` -> BackendEvent, or null when it is not a chat event
  * the clients render. Membership/authorization is the caller's job. */
-export function normalizeEvent(event, { teamId }) {
+export function normalizeEvent(event, { teamId, readFiles = false }) {
   if (!event || typeof event !== 'object') return null;
   if (event.type === 'message') {
     const channelId = String(event.channel ?? '');
@@ -133,10 +141,10 @@ export function normalizeEvent(event, { teamId }) {
       const previous = event.previous_message ?? {};
       return { type: 'message.deleted', channelId, messageId: event.deleted_ts, threadRootId: isTs(previous.thread_ts) && previous.thread_ts !== event.deleted_ts ? previous.thread_ts : null };
     }
-    if (event.subtype === 'message_changed' && event.message?.ts) return { type: 'message.updated', message: normalizeMessage(event.message, { teamId, channelId }) };
+    if (event.subtype === 'message_changed' && event.message?.ts) return { type: 'message.updated', message: normalizeMessage(event.message, { teamId, channelId, readFiles }) };
     if (event.subtype === 'message_replied') return null; // the reply itself arrives as its own event
     if (!isTs(event.ts)) return null;
-    const message = normalizeMessage(event, { teamId, channelId });
+    const message = normalizeMessage(event, { teamId, channelId, readFiles });
     return { type: message.threadRootId ? 'thread.reply' : 'message.created', message };
   }
   if (event.type === 'reaction_added' || event.type === 'reaction_removed') {

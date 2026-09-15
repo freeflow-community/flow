@@ -212,7 +212,8 @@ export class SlackBackend implements WorkspaceBackend {
     return Promise.reject(new BackendError('unsupported', this.caps.files.reason ?? 'File uploads are not available.'));
   }
 
-  /** No file bytes flow through Flow: previews and downloads open in Slack. */
+  /** No direct URL: file bytes come through the connector's /v1/files routes,
+   * which the connection runtime fetches with the connector credential. */
   fileUrl(): string | null { return null; }
 
   search(query: string, options: { cursor: string | null } = { cursor: null }): Promise<SearchResult> {

@@ -61,6 +61,9 @@ private final class FakeConnector: @unchecked Sendable {
             return reply(page)
         case ("DELETE", "/v1/session"):
             return reply(#"{"ok":true}"#)
+        case ("GET", "/v1/files/F1/thumb"):
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
+            return (Data([0x89, 0x50, 0x4E, 0x47]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!)
         default:
             return reply(#"{"error":"not_found"}"#, status: 404)
         }
@@ -103,6 +106,19 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
 }
 
 @Suite struct SlackBackendTests {
+    /// Slack file bytes come through the connector with its credential, and
+    /// only file paths are accepted.
+    @Test func fetchesFileBytesThroughTheConnectorOnly() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let data = try await backend.fileData(path: "/v1/files/F1/thumb")
+        #expect(data == Data([0x89, 0x50, 0x4E, 0x47]))
+        #expect(fake.requests.last?.path == "/v1/files/F1/thumb")
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "/v1/history?channel=C1") }
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "v1/files/../session") }
+        #expect(fake.requests.count == 1)
+    }
+
     @Test func bootsThroughTheConnectorAndSynthesizesTheUser() async throws {
         let fake = FakeConnector()
         let backend = makeBackend(fake)

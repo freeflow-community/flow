@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
+import { Readable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
-import { Fault } from './connector.js';
+import { Fault, MAX_FILE_BYTES } from './connector.js';
 
 export function createConnectorServer(connector) {
   return createServer(async (req, res) => {
@@ -93,11 +94,45 @@ export function createConnectorServer(connector) {
       if (path === '/v1/messages' && req.method === 'DELETE') { respond(200, await connector.remove(credential, body)); return; }
       if (path === '/v1/reactions' && req.method === 'POST') { respond(200, await connector.reaction(credential, body)); return; }
       if (path === '/v1/read' && req.method === 'POST') { respond(200, await connector.markRead(credential, body)); return; }
+      // File bytes (image previews, downloads) and custom emoji images, on the
+      // same paths a Flow server serves, so clients reuse their file loading.
+      // There is never a direct URL: the bytes come through here.
+      const fileRoute = req.method === 'GET' && /^\/v1\/files\/([^/]+)(\/thumb)?(\/url)?$/.exec(path);
+      if (fileRoute) {
+        const id = decodeURIComponent(fileRoute[1]);
+        if (fileRoute[3]) { connector.session(credential); respond(200, { url: null, expiresInSeconds: 0 }); return; }
+        const file = id.startsWith('emoji:') ? await connector.emojiImage(credential, id.slice(6)) : await connector.file(credential, { id, variant: fileRoute[2] ? 'thumb' : 'original' });
+        sendFile(res, file);
+        return;
+      }
+      const emojiRoute = req.method === 'GET' && /^\/v1\/workspaces\/([A-Z0-9]+)\/emoji$/.exec(path);
+      if (emojiRoute) { respond(200, { emoji: await connector.emoji(credential, emojiRoute[1]) }); return; }
       throw new Fault('not_found', 404);
     } catch (error) {
+      if (res.headersSent) { res.destroy(); return; }
       // Never serialize Slack responses, URLs, request bodies, or exception text.
       if (error.retryAfter) res.setHeader('Retry-After', String(error.retryAfter));
       respond(error instanceof Fault ? error.status : 500, { error: error instanceof Fault ? error.code : 'connector_error' });
     }
   });
+}
+
+/** Stream downloaded bytes to the client. Images render inline; anything else
+ * is an attachment, and nothing served here may run as a document. */
+function sendFile(res, { contentType, length, body, name }) {
+  const inline = contentType.startsWith('image/') && contentType !== 'image/svg+xml';
+  res.writeHead(200, {
+    'content-type': inline ? contentType : 'application/octet-stream',
+    'cache-control': 'private, max-age=86400',
+    'content-security-policy': "default-src 'none'; sandbox",
+    'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`,
+    ...(length ? { 'content-length': String(length) } : {}),
+  });
+  if (!body) { res.end(); return; }
+  let sent = 0;
+  const stream = Readable.fromWeb(body);
+  stream.on('data', chunk => { sent += chunk.length; if (sent > MAX_FILE_BYTES) stream.destroy(); });
+  stream.on('error', () => res.destroy());
+  stream.on('close', () => { if (sent > MAX_FILE_BYTES) res.destroy(); });
+  stream.pipe(res);
 }

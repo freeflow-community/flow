@@ -15,6 +15,10 @@ export const capabilities = {
   // user events (operator step); the scopes are the history scopes above.
   liveUpdates: { methods: [], tokenType: 'user', scopes: ['channels:history', 'groups:history', 'im:history', 'mpim:history'], events: ['message.channels', 'message.groups', 'message.im', 'message.mpim'] },
   lifecycle: { methods: [], tokenType: 'user', scopes: [], events: ['tokens_revoked', 'app_uninstalled'] },
+  // View Slack files (image previews, downloads) and custom emoji images. The
+  // connector fetches the bytes with the user token; clients never see Slack URLs.
+  readFiles: { methods: ['files.info'], tokenType: 'user', scopes: ['files:read'], events: [] },
+  customEmoji: { methods: ['emoji.list'], tokenType: 'user', scopes: ['emoji:read'], events: [] },
   // Not granted to the test app yet (#544 §6): kept out of the authorize URL.
   reactions: { methods: ['reactions.add', 'reactions.remove'], tokenType: 'user', scopes: ['reactions:write', 'reactions:read'], events: ['reaction_added', 'reaction_removed'], requested: false },
   readState: { methods: ['conversations.mark'], tokenType: 'user', scopes: ['channels:write', 'groups:write', 'im:write', 'mpim:write'], events: [], requested: false },

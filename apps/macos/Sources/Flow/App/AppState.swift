@@ -336,11 +336,14 @@ final class AppState: ObservableObject {
         self.db = runtime.db
         self.engine = runtime.engine
         let api = runtime.api
+        let backend = runtime.backend
         connections.register(self)
         let engine = self.engine
         let images = self.images
         bootstrapTask = Task { [weak self] in
-            await images.configure(api: api)
+            // A provider workspace's images come from its own backend; the
+            // runtime's API client carries no credential for that origin.
+            if let backend { await images.configure(backend: backend) } else { await images.configure(api: api) }
             guard let self else { return }
             await engine.attach(self)
             await engine.bootstrap()

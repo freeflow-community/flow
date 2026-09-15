@@ -267,7 +267,9 @@ export function useApps(workspaceId: string | null) {
 }
 
 /** Workspace custom emoji (#175). Every member can read this — you need the
- * images to render other people's reactions, not just to add your own. */
+ * images to render other people's reactions, not just to add your own. The
+ * Slack connector serves the same route and shape from emoji.list; without the
+ * emoji:read scope it refuses, and reactions keep their `:shortcode:` text. */
 export function useWorkspaceEmoji(workspaceId: string | null) {
   const runtime = useRuntime();
   const api = runtime.api.bind(runtime);
@@ -276,7 +278,8 @@ export function useWorkspaceEmoji(workspaceId: string | null) {
     queryKey: ['emoji', workspaceId],
     queryFn: () => api<{ emoji: WorkspaceEmojiDTO[] }>('GET', `/v1/workspaces/${workspaceId}/emoji`),
     select: (d) => d.emoji,
-    enabled: workspaceId !== null && isFlow,
+    enabled: workspaceId !== null,
+    retry: isFlow ? 3 : false,
   });
 }
 

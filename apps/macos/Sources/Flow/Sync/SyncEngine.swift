@@ -1347,6 +1347,7 @@ actor SyncEngine {
     /// same access check as a download). nil when the storage driver can't
     /// presign — callers must have a no-network fallback.
     func streamURL(fileId: String) async -> URL? {
+        guard backend == nil else { return nil } // a provider's connector proxies bytes; no presigned URLs
         guard let response: StreamUrlResponse = try? await api.get("/v1/files/\(fileId)/url"),
               let raw = response.url else { return nil }
         return URL(string: raw)
@@ -1423,11 +1424,24 @@ actor SyncEngine {
         return try await api.post("/v1/files/\(pres.file.id)/complete")
     }
 
+    /// A file's original bytes from whichever backend owns it.
+    private func fileBytes(_ file: FileAttachment) async throws -> Data {
+        if let backend { return try await backend.fileData(path: "/v1/files/\(file.id)") }
+        return try await api.getData("/v1/files/\(file.id)")
+    }
+
     /// Downloads a file to a temp path (original filename preserved) and
     /// returns the local URL — used for "open" on attachments.
     func downloadFile(_ file: FileAttachment) async throws -> URL {
-        // streamed to disk — videos can be hundreds of MB
-        let tmp = try await api.downloadToFile("/v1/files/\(file.id)")
+        let tmp: URL
+        if let backend {
+            // A provider's bytes come through its connector, never the Flow API.
+            tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try await backend.fileData(path: "/v1/files/\(file.id)").write(to: tmp)
+        } else {
+            // streamed to disk — videos can be hundreds of MB
+            tmp = try await api.downloadToFile("/v1/files/\(file.id)")
+        }
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FlowDownloads-\(file.id)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1440,14 +1454,14 @@ actor SyncEngine {
     /// Fetches a text-ish file's original bytes decoded as UTF-8 (lossy on
     /// invalid sequences) — backs the inline text preview.
     func fileText(_ file: FileAttachment) async throws -> String {
-        let data = try await api.getData("/v1/files/\(file.id)")
+        let data = try await fileBytes(file)
         return String(decoding: data, as: UTF8.self)
     }
 
     /// Saves a file's original bytes into ~/Downloads (uniqued name on
     /// collision) — backs the attachment/lightbox Download buttons.
     func saveToDownloads(_ file: FileAttachment) async throws -> URL {
-        let data = try await api.getData("/v1/files/\(file.id)")
+        let data = try await fileBytes(file)
         let dir = try FileManager.default.url(
             for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )

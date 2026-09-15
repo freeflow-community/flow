@@ -279,8 +279,20 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         throw BackendError(code: .unsupported, message: caps[.files].reason ?? "File uploads are not available.")
     }
 
-    /// No file bytes flow through Flow: previews and downloads open in Slack.
+    /// No presigned URLs: the connector proxies every file byte.
     func fileURL(_ file: FileAttachment) -> URL? { nil }
+
+    /// File bytes through the connector, which fetches them from Slack with the
+    /// grant's token (`hasThumb` is set only when the grant can read files).
+    /// Only file paths are accepted, so the credential never leaves for an
+    /// arbitrary route and `raw` pins it to the connector origin.
+    func fileData(path: String) async throws -> Data {
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        guard trimmed.hasPrefix("v1/files/"), !trimmed.contains(".."), !trimmed.contains("?") else {
+            throw BackendError(code: .invalid, message: "Not a file path.")
+        }
+        return try await raw("GET", trimmed)
+    }
 
     private struct StreamPayload: Decodable { let events: [StreamEvent]; let seq: Int; let gap: Bool }
     /// The connector's BackendEvent JSON, decoded by `type`.

@@ -177,6 +177,10 @@ protocol WorkspaceBackend: AnyObject, Sendable {
 
     func uploadFile(workspaceId: String, channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment
     func fileURL(_ file: FileAttachment) -> URL?
+    /// Bytes for a Flow-shaped file path (`/v1/files/<id>` or `…/thumb`),
+    /// fetched from this provider with its own credential. Image loaders and
+    /// downloads for a provider workspace go through here, never the Flow API.
+    func fileData(path: String) async throws -> Data
 
     /// The normalized live stream. Finishes when the backend is torn down.
     func events() -> AsyncStream<BackendEvent>

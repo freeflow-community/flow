@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 import { markdownToMrkdwn } from '@flow/shared';
 import { requestedScopes, grantedCapabilities } from './manifest.js';
-import { isTs, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace } from './normalize.js';
+import { isTs, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
 
 export const opaque = () => randomBytes(32).toString('base64url');
 export const hash = value => createHash('sha256').update(value).digest('base64url');
@@ -11,6 +11,13 @@ export class Fault extends Error {
 }
 export const identityKey = ({ environment, enterpriseId, teamId, userId }) => JSON.stringify([environment, enterpriseId ?? null, teamId, userId]);
 const idPattern = /^[A-Z][A-Z0-9]+$/;
+const fileIdPattern = /^F[A-Z0-9]{6,20}$/;
+export const emojiNamePattern = /^[a-z0-9_+'.-]{1,100}$/;
+// Hosts the connector will fetch bytes from. Files need the user token; custom
+// emoji images are public, so the token is never sent there.
+const SLACK_FILE_HOST = 'https://files.slack.com/';
+const SLACK_EMOJI_HOST = 'https://emoji.slack-edge.com/';
+export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const terminal = new Map([['token_revoked', 'revoked'], ['invalid_auth', 'reauthorization_required'], ['account_inactive', 'account_deactivated'], ['token_expired', 'reauthorization_required']]);
 
 export class Connector {
@@ -18,6 +25,11 @@ export class Connector {
     Object.assign(this, { store, clientId, clientSecret, publicOrigin, clientOrigins, signingSecret, fetcher, now });
     this.locks = new Map();
     this.rateLimits = new Map();
+    /** [grantId, fileId] -> Slack file object seen in a read for that grant, so a
+     * preview does not cost a files.info call. Bounded; oldest dropped first. */
+    this.fileRefs = new Map();
+    /** teamId -> { names: Map(name -> image url), expiresAt } from emoji.list. */
+    this.emojiCache = new Map();
   }
   async locked(key, fn) {
     const previous = this.locks.get(key) ?? Promise.resolve();
@@ -62,7 +74,7 @@ export class Connector {
     if (!response.ok) throw new Fault('slack_unavailable', 502);
     const result = await response.json();
     if (!result.ok) {
-      const fault = new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required', bad_client_secret: 'connector_misconfigured', invalid_client_id: 'connector_misconfigured', channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', msg_too_long: 'invalid_message' }[result.error]) ?? 'slack_request_failed', { not_found: 404, forbidden: 403, missing_scopes: 403 }[terminal.get(result.error) ?? ({ channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', missing_scope: 'missing_scopes' }[result.error])] ?? 400);
+      const fault = new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required', bad_client_secret: 'connector_misconfigured', invalid_client_id: 'connector_misconfigured', channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', file_not_found: 'not_found', file_deleted: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', msg_too_long: 'invalid_message' }[result.error]) ?? 'slack_request_failed', { not_found: 404, forbidden: 403, missing_scopes: 403 }[terminal.get(result.error) ?? ({ channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', file_not_found: 'not_found', file_deleted: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', missing_scope: 'missing_scopes' }[result.error])] ?? 400);
       // The Slack error code stays on the fault for callers that treat some
       // codes as benign (already_reacted); it is never serialized to clients.
       fault.slackError = result.error;
@@ -125,10 +137,12 @@ export class Connector {
   async history(credential, { channel, cursor, limit }) {
     if (!idPattern.test(channel ?? '') || !Connector.cursorOk(cursor)) throw new Fault('invalid_request');
     const size = Math.min(200, Math.max(1, Number(limit) || 50));
-    return this.withGrant(credential, async grant => {
+    return this.withGrant(credential, async (grant, grantId) => {
       this.requireCapability(grant, 'readHistory');
       const result = await this.call(grant, 'conversations.history', { channel, limit: String(size), ...(cursor ? { cursor } : {}) });
-      const messages = (result.messages ?? []).filter(m => isTs(m.ts)).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel })).reverse();
+      const raw = (result.messages ?? []).filter(m => isTs(m.ts));
+      this.rememberFiles(grantId, raw);
+      const messages = raw.map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel, readFiles: grantedCapabilities(grant.scopes).readFiles })).reverse();
       const next = result.response_metadata?.next_cursor || null;
       // Slack may cap the page below what was asked (15 for restricted apps);
       // a short page with more behind it is visibly partial, not complete.
@@ -137,10 +151,12 @@ export class Connector {
   }
   async replies(credential, { channel, ts, cursor }) {
     if (!idPattern.test(channel ?? '') || !isTs(ts) || !Connector.cursorOk(cursor)) throw new Fault('invalid_request');
-    return this.withGrant(credential, async grant => {
+    return this.withGrant(credential, async (grant, grantId) => {
       this.requireCapability(grant, 'readHistory');
       const result = await this.call(grant, 'conversations.replies', { channel, ts, limit: '200', ...(cursor ? { cursor } : {}) });
-      const all = (result.messages ?? []).filter(m => isTs(m.ts)).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel }));
+      const raw = (result.messages ?? []).filter(m => isTs(m.ts));
+      this.rememberFiles(grantId, raw);
+      const all = raw.map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: channel, readFiles: grantedCapabilities(grant.scopes).readFiles }));
       const root = all.find(m => m.id === ts) ?? null;
       if (!root) throw new Fault('not_found', 404);
       return { root, replies: all.filter(m => m.id !== ts), cursor: result.has_more ? result.response_metadata?.next_cursor || null : null, partial: Boolean(result.has_more) };
@@ -151,7 +167,7 @@ export class Connector {
     return this.withGrant(credential, async grant => {
       this.requireCapability(grant, 'sendAsUser');
       const result = await this.call(grant, 'chat.update', { channel, ts, text: markdownToMrkdwn(text) });
-      return normalizeMessage({ ...result.message, ts: result.ts, channel: result.channel }, { teamId: grant.identity.teamId, channelId: result.channel ?? channel });
+      return normalizeMessage({ ...result.message, ts: result.ts, channel: result.channel }, { teamId: grant.identity.teamId, channelId: result.channel ?? channel, readFiles: grantedCapabilities(grant.scopes).readFiles });
     });
   }
   async remove(credential, { channel, ts }) {
@@ -186,7 +202,7 @@ export class Connector {
       this.requireCapability(grant, 'search');
       const result = await this.call(grant, 'search.messages', { query, count: '20', ...(cursor ? { cursor } : {}) });
       const matches = result.messages?.matches ?? [];
-      return { messages: matches.filter(m => isTs(m.ts) && m.channel?.id).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: m.channel.id })), cursor: result.messages?.pagination?.next_cursor || null, partial: Boolean(result.messages?.pagination?.next_cursor) };
+      return { messages: matches.filter(m => isTs(m.ts) && m.channel?.id).map(m => normalizeMessage(m, { teamId: grant.identity.teamId, channelId: m.channel.id, readFiles: grantedCapabilities(grant.scopes).readFiles })), cursor: result.messages?.pagination?.next_cursor || null, partial: Boolean(result.messages?.pagination?.next_cursor) };
     });
   }
   /** Chat events the Events API delivered for this grant since `since` (a
@@ -386,6 +402,87 @@ export class Connector {
     const message = normalizeMessage({ ...match, channel }, { teamId: grant.identity.teamId, channelId: channel });
     return { channel, ts: match.ts, userId: match.user, message, reconciled: true };
   }
+  // ---- file bytes and custom emoji ---------------------------------------------
+  rememberFiles(grantId, messages) {
+    for (const message of messages) {
+      for (const file of message.files ?? []) {
+        if (!fileIdPattern.test(file.id ?? '')) continue;
+        const key = JSON.stringify([grantId, file.id]);
+        this.fileRefs.delete(key);
+        this.fileRefs.set(key, file);
+      }
+    }
+    for (const key of this.fileRefs.keys()) { if (this.fileRefs.size <= 5000) break; this.fileRefs.delete(key); }
+  }
+  /** One Slack file's bytes, fetched with the user token. Only the URL lookup
+   * runs under the grant lock; the download does not, so a channel full of
+   * previews loads in parallel. `variant` is 'thumb' or 'original'. */
+  async file(credential, { id, variant }) {
+    if (!fileIdPattern.test(id ?? '')) throw new Fault('invalid_request');
+    const { url, token, name } = await this.withGrant(credential, async (grant, grantId) => {
+      this.requireCapability(grant, 'readFiles');
+      let file = this.fileRefs.get(JSON.stringify([grantId, id]));
+      if (!file) {
+        file = (await this.call(grant, 'files.info', { file: id })).file ?? {};
+        this.rememberFiles(grantId, [{ files: [{ ...file, id }] }]);
+      }
+      const url = variant === 'thumb' ? slackThumbUrl(file) : file.url_private;
+      if (typeof url !== 'string' || !url.startsWith(SLACK_FILE_HOST)) throw new Fault('not_found', 404);
+      return { url, token: grant.accessToken, name: String(file.name ?? 'file') };
+    });
+    return { ...(await this.download(url, token)), name };
+  }
+  async download(url, token) {
+    let response;
+    try {
+      response = await this.fetcher(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(30_000), headers: token ? { authorization: `Bearer ${token}` } : {} });
+    } catch { throw new Fault('slack_unavailable', 502); }
+    if (response.status === 404) throw new Fault('not_found', 404);
+    if (!response.ok) throw new Fault('slack_unavailable', 502);
+    // Slack answers a token it will not honor with its HTML sign-in page.
+    const contentType = String(response.headers.get('content-type') ?? 'application/octet-stream').split(';')[0].trim().toLowerCase();
+    if (contentType === 'text/html') throw new Fault('forbidden', 403);
+    const length = Number(response.headers.get('content-length'));
+    if (length > MAX_FILE_BYTES) throw new Fault('file_too_large', 413);
+    return { contentType, length: Number.isFinite(length) && length > 0 ? length : null, body: response.body };
+  }
+  /** Custom emoji for the grant's team, aliases resolved, cached ten minutes. */
+  async emojiNames(grant) {
+    const teamId = grant.identity.teamId;
+    const cached = this.emojiCache.get(teamId);
+    if (cached && cached.expiresAt > this.now()) return cached.names;
+    const listed = (await this.call(grant, 'emoji.list', {})).emoji ?? {};
+    const names = new Map();
+    for (const [name, value] of Object.entries(listed)) {
+      let target = value;
+      for (let hops = 0; typeof target === 'string' && target.startsWith('alias:') && hops < 3; hops++) target = listed[target.slice(6)];
+      if (emojiNamePattern.test(name) && typeof target === 'string' && target.startsWith(SLACK_EMOJI_HOST)) names.set(name, target);
+    }
+    this.emojiCache.set(teamId, { names, expiresAt: this.now() + 600_000 });
+    return names;
+  }
+  /** The shape Flow's /v1/workspaces/:id/emoji returns; each image is served
+   * at /v1/files/emoji:<name>, so clients reuse their Flow emoji rendering. */
+  async emoji(credential, workspaceId) {
+    return this.withGrant(credential, async grant => {
+      if (workspaceId !== grant.identity.teamId) throw new Fault('not_found', 404);
+      this.requireCapability(grant, 'customEmoji');
+      const names = await this.emojiNames(grant);
+      return [...names.keys()].sort().map(name => ({ id: `emoji:${name}`, workspaceId: grant.identity.teamId, shortcode: name, emoji: `:${name}:`, fileId: `emoji:${name}`, createdBy: '', createdAt: '' }));
+    });
+  }
+  async emojiImage(credential, name) {
+    if (!emojiNamePattern.test(name ?? '')) throw new Fault('invalid_request');
+    const url = await this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'customEmoji');
+      const found = (await this.emojiNames(grant)).get(name);
+      if (!found) throw new Fault('not_found', 404);
+      return found;
+    });
+    const result = await this.download(url, null);
+    if (!result.contentType.startsWith('image/')) throw new Fault('not_found', 404);
+    return { ...result, name };
+  }
   event(raw, timestamp, signature) {
     if (!/^\d+$/.test(timestamp ?? '') || Math.abs(this.now() / 1000 - Number(timestamp)) > 300) throw new Fault('invalid_signature', 401);
     const expected = `v0=${createHmac('sha256', this.signingSecret).update(`v0:${timestamp}:`).update(raw).digest('hex')}`;
@@ -418,9 +515,14 @@ export class Connector {
     // Protocol drift is isolated to the one event: a payload the normalizer
     // cannot read is acknowledged and dropped (Slack would otherwise retry it
     // three times), and the next well-formed event still flows (#546).
-    let normalized;
-    try { normalized = normalizeEvent(envelope.event, { teamId: envelope.team_id }); } catch { this.driftCount = (this.driftCount ?? 0) + 1; return { ok: true }; }
+    // Normalized twice at most: file previews depend on the grant's files:read.
+    let normalized, previewable;
+    try {
+      normalized = normalizeEvent(envelope.event, { teamId: envelope.team_id });
+      previewable = normalizeEvent(envelope.event, { teamId: envelope.team_id, readFiles: true });
+    } catch { this.driftCount = (this.driftCount ?? 0) + 1; return { ok: true }; }
     if (!normalized) return { ok: true };
+    const source = envelope.event?.subtype === 'message_changed' ? envelope.event.message : envelope.event;
     const authorized = new Set((envelope.authorizations ?? []).filter(a => !a.is_bot && typeof a.user_id === 'string').map(a => a.user_id));
     if (!authorized.size) return { ok: true };
     this.sweep();
@@ -430,7 +532,9 @@ export class Connector {
         const rowId = hash(JSON.stringify([envelope.event_id, id, 'stream']));
         if (this.store.get('stream', rowId)) continue;
         this.streamSeq = (this.streamSeq ?? 0) + 1;
-        this.store.put('stream', rowId, { grantId: id, generation: grant.generation, seq: this.streamSeq, event: normalized, expiresAt: this.now() + 300_000 });
+        const readFiles = grantedCapabilities(grant.scopes).readFiles;
+        if (readFiles && source?.files) this.rememberFiles(id, [source]);
+        this.store.put('stream', rowId, { grantId: id, generation: grant.generation, seq: this.streamSeq, event: readFiles ? previewable : normalized, expiresAt: this.now() + 300_000 });
       }
       const rows = this.store.all('stream');
       for (const row of rows.slice(0, Math.max(0, rows.length - 1000))) this.store.remove('stream', row.id);

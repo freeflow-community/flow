@@ -341,3 +341,68 @@ test('HTTP: a native client signs in without an Origin header and returns to its
   const me = await fetch(`${base}/v1/workspace`, { headers: { authorization: `Bearer ${done.credential}` } });
   assert.equal(me.status, 200);
 });
+
+test('file previews: images get hasThumb only with files:read; bytes come through the connector with the user token', async t => {
+  const image = { id: 'F0IMAGE1', name: 'image.png', mimetype: 'image/png', size: 183000, original_w: 800, original_h: 600, url_private: 'https://files.slack.com/files-pri/T1-F0IMAGE1/image.png', thumb_720: 'https://files.slack.com/files-tmb/T1-F0IMAGE1-x/image_720.png' };
+  assert.equal(normalizeMessage(slackMessage(TS1, { files: [image] }), { teamId: 'T1', channelId: 'C1' }).files[0].hasThumb, false);
+  assert.equal(normalizeMessage(slackMessage(TS1, { files: [image] }), { teamId: 'T1', channelId: 'C1', readFiles: true }).files[0].hasThumb, true);
+  assert.equal(normalizeMessage(slackMessage(TS1, { files: [{ ...image, id: 'F0TEXT01', mimetype: 'text/plain' }] }), { teamId: 'T1', channelId: 'C1', readFiles: true }).files[0].hasThumb, false);
+
+  const seen = [];
+  const f = fixture(t, { scopes: [...requestedScopes], fetcher: async (method, params, request) => {
+    if (method === 'conversations.history') return { ok: true, messages: [slackMessage(TS1, { files: [image] })], has_more: false };
+    if (method === 'files.info') return params.file === 'F0EVIL01' ? { ok: true, file: { ...image, id: 'F0EVIL01', url_private: 'https://evil.test/x.png' } } : { ok: false, error: 'file_not_found' };
+    if (method === 'image_720.png' || method === 'image.png') { seen.push({ method, authorization: request.headers.authorization }); return new Response(Buffer.from('PNGDATA'), { headers: { 'content-type': 'image/png', 'content-length': '7' } }); }
+    if (method === 'sign-in.png') return new Response('<html>', { headers: { 'content-type': 'text/html' } });
+  } });
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const { credential } = await f.connect();
+  const auth = { authorization: `Bearer ${credential}`, origin: 'https://flow.test' };
+  const history = await (await fetch(`${base}/v1/history?channel=C1`, { headers: auth })).json();
+  assert.equal(history.messages[0].files[0].hasThumb, true);
+  assert.deepEqual(await (await fetch(`${base}/v1/files/F0IMAGE1/thumb/url`, { headers: auth })).json(), { url: null, expiresInSeconds: 0 });
+  const thumb = await fetch(`${base}/v1/files/F0IMAGE1/thumb`, { headers: auth });
+  assert.equal(thumb.status, 200);
+  assert.equal(thumb.headers.get('content-type'), 'image/png');
+  assert.equal(Buffer.from(await thumb.arrayBuffer()).toString(), 'PNGDATA');
+  assert.equal((await fetch(`${base}/v1/files/F0IMAGE1`, { headers: auth })).status, 200);
+  assert.deepEqual(seen, [{ method: 'image_720.png', authorization: 'Bearer secret-T1' }, { method: 'image.png', authorization: 'Bearer secret-T1' }]);
+  assert.equal(f.calls.filter(c => c.method === 'files.info').length, 0, 'a file seen in history needs no files.info');
+  // Never fetches a non-Slack host; unknown files 404; no credential 401.
+  assert.equal((await fetch(`${base}/v1/files/F0EVIL01`, { headers: auth })).status, 404);
+  assert.equal((await fetch(`${base}/v1/files/F0MISSNG`, { headers: auth })).status, 404);
+  assert.equal((await fetch(`${base}/v1/files/F0IMAGE1/thumb`)).status, 401);
+  // A token Slack will not honor comes back as its sign-in page: refused, not served.
+  const [grantId] = JSON.parse([...f.connector.fileRefs.keys()][0]);
+  f.connector.rememberFiles(grantId, [{ files: [{ ...image, id: 'F0HTML01', url_private: 'https://files.slack.com/x/sign-in.png' }] }]);
+  assert.equal((await fetch(`${base}/v1/files/F0HTML01`, { headers: auth })).status, 403);
+
+  const noScope = fixture(t, { scopes: requestedScopes.filter(s => s !== 'files:read') });
+  const { credential: other } = await noScope.connect();
+  await assert.rejects(noScope.connector.file(other, { id: 'F0IMAGE1', variant: 'thumb' }), /missing_scopes/);
+});
+
+test('custom emoji: Flow-shaped list with aliases resolved; images fetched without the user token', async t => {
+  const seen = [];
+  const f = fixture(t, { scopes: [...requestedScopes], fetcher: async (method, params, request) => {
+    if (method === 'emoji.list') return { ok: true, emoji: { merged: 'https://emoji.slack-edge.com/T1/merged/abc.png', shipit: 'alias:merged', thumbsup_all: 'alias:+1', evil: 'https://evil.test/e.png' } };
+    if (method === 'abc.png') { seen.push(request.headers.authorization ?? null); return new Response(Buffer.from('GIF'), { headers: { 'content-type': 'image/png' } }); }
+  } });
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const { credential } = await f.connect();
+  const auth = { authorization: `Bearer ${credential}`, origin: 'https://flow.test' };
+  const list = await (await fetch(`${base}/v1/workspaces/T1/emoji`, { headers: auth })).json();
+  assert.deepEqual(list.emoji.map(e => [e.emoji, e.fileId]), [[':merged:', 'emoji:merged'], [':shipit:', 'emoji:shipit']]);
+  assert.equal((await fetch(`${base}/v1/workspaces/T2/emoji`, { headers: auth })).status, 404);
+  const img = await fetch(`${base}/v1/files/emoji:shipit`, { headers: auth });
+  assert.equal(img.status, 200);
+  assert.deepEqual(seen, [null]);
+  assert.equal((await fetch(`${base}/v1/files/emoji:evil`, { headers: auth })).status, 404);
+  assert.equal(f.calls.filter(c => c.method === 'emoji.list').length, 1, 'emoji.list is cached');
+});

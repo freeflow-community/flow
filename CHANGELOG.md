@@ -157,7 +157,8 @@ This file keeps two things:
   the literal text `:shortcode:` rather than the image. The reaction itself is
   correct everywhere (count, who reacted, notifications) — only the glyph is
   missing. Each client needs to fetch `GET /v1/workspaces/:id/emoji` and swap in
-  the image. Custom emoji inline in *message text* is unbuilt on every client.
+  the image (the Slack connector serves the same route, so one port covers
+  Slack teams too). Custom emoji inline in *message text* is unbuilt on every client.
 - Scroll-position memory exists on no client: leaving a channel mid-history and
   coming straight back always re-opens at the newest message. Tried on iOS
   (#159) and removed — tracking the on-screen row needs per-row geometry, which

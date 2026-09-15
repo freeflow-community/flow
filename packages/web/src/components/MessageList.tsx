@@ -581,7 +581,9 @@ function MessageRow({
               </div>
             )}
             {message.files.map((f) => (
-              provenance ? <ExternalAttachment key={f.id} file={f} openUrl={provenance.openUrl} provider={provenance.provider} /> : <Attachment key={f.id} file={f} />
+              // A provider file previews here only when the backend can serve its
+              // bytes (Slack: an image and the files:read scope set hasThumb).
+              provenance && !f.hasThumb ? <ExternalAttachment key={f.id} file={f} openUrl={provenance.openUrl} provider={provenance.provider} /> : <Attachment key={f.id} file={f} />
             ))}
             {provenance?.degraded && (
               <p data-testid={`degraded-${message.id}`} className="mt-1 text-xs text-muted">

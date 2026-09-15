@@ -10,7 +10,9 @@ import UIKit
 actor ImageLoader {
     static let shared = ImageLoader()
 
-    private var api: APIClient?
+    /// Where bytes come from: the Flow API client, or a provider backend
+    /// (Slack) whose connector proxies file bytes with its own credential.
+    private var fetch: (@Sendable (String) async throws -> Data)?
     private var generation = 0
     // NSCache is internally thread-safe; `nonisolated(unsafe)` lets
     // `cachedImage(path:)` peek it synchronously from outside the actor.
@@ -25,7 +27,12 @@ actor ImageLoader {
     }
 
     func configure(api: APIClient) {
-        self.api = api
+        fetch = { try await api.getData($0) }
+        cache.countLimit = 500
+    }
+
+    func configure(backend: WorkspaceBackend) {
+        fetch = { try await backend.fileData(path: $0) }
         cache.countLimit = 500
     }
 
@@ -39,9 +46,9 @@ actor ImageLoader {
     func image(path: String) async -> UIImage? {
         if let hit = cache.object(forKey: path as NSString) { return hit }
         if let task = inflight[path] { return await task.value }
-        guard let api else { return nil }
+        guard let fetch else { return nil }
         let task = Task<UIImage?, Never> {
-            guard let data = try? await api.getData(path), let img = UIImage(data: data) else { return nil }
+            guard let data = try? await fetch(path), let img = UIImage(data: data) else { return nil }
             return img
         }
         let startedGeneration = generation
@@ -55,8 +62,8 @@ actor ImageLoader {
 
     /// Raw authenticated bytes (uncached) — used for animated GIF decoding.
     func data(path: String) async -> Data? {
-        guard let api else { return nil }
-        return try? await api.getData(path)
+        guard let fetch else { return nil }
+        return try? await fetch(path)
     }
 }
 
