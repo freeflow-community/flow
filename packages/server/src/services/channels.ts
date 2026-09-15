@@ -84,6 +84,52 @@ async function standardMemberCounts(channelIds: string[]): Promise<Map<string, n
   return new Map(channelIds.map((id) => [id, rows.find((r) => r.channelId === id)?.n ?? 0]));
 }
 
+/**
+ * Unread top-level messages per joined channel, past each channel's own read
+ * cursor, in one grouped query (this was one query per channel, and on a
+ * remote database every one of them is a round trip).
+ *
+ * Membership lines (join/leave) never contribute to unread — they're courtesy
+ * notices, not messages you need to catch up on. A *huddle* line is the
+ * opposite (#436): "Missed huddle" is the only trace a call you weren't there
+ * for leaves, and a missed call that doesn't mark the DM unread is one you
+ * never find out about. So the exclusion is by kind, not by "is it a system
+ * message". Neither do your own messages count: you can't have unread mail
+ * from yourself, and the read cursor may not have caught up if you sent from
+ * another client (#71).
+ */
+async function unreadMessageCounts(
+  channelIds: string[],
+  userId: string,
+): Promise<Map<string, { n: number; oldest: string | null }>> {
+  if (channelIds.length === 0) return new Map();
+  const rows = await db
+    // min() has no uuid overload, so the id goes through text — the hex
+    // representation sorts the same way the uuid does.
+    .select({
+      channelId: messages.channelId,
+      n: sql<number>`count(*)::int`,
+      oldest: sql<string | null>`min(${messages.id}::text)`,
+    })
+    .from(messages)
+    .innerJoin(
+      channelMembers,
+      and(eq(channelMembers.channelId, messages.channelId), eq(channelMembers.userId, userId)),
+    )
+    .where(
+      and(
+        inArray(messages.channelId, channelIds),
+        isNull(messages.threadRootId),
+        isNull(messages.deletedAt),
+        or(isNull(messages.systemKind), inArray(messages.systemKind, [...HUDDLE_SYSTEM_KINDS])),
+        ne(messages.userId, userId),
+        or(isNull(channelMembers.lastReadMsgId), gt(messages.id, channelMembers.lastReadMsgId)),
+      ),
+    )
+    .groupBy(messages.channelId);
+  return new Map(rows.map((r) => [r.channelId, { n: r.n, oldest: r.oldest }]));
+}
+
 async function dmMemberIds(channelIds: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (channelIds.length === 0) return out;
@@ -304,63 +350,72 @@ export async function listChannels(
   userId: string,
   opts: { includeArchived?: boolean } = {},
 ): Promise<ChannelDTO[]> {
-  await requireMembership(workspaceId, userId);
-  const rows = await db
-    .select({
-      c: channels,
-      lastReadMsgId: channelMembers.lastReadMsgId,
-      notifyLevel: channelMembers.notifyLevel,
-      isMember: sql<boolean>`(${channelMembers.userId} IS NOT NULL)`,
-    })
-    .from(channels)
-    .leftJoin(
-      channelMembers,
-      and(eq(channelMembers.channelId, channels.id), eq(channelMembers.userId, userId)),
-    )
-    .where(
-      opts.includeArchived
-        ? eq(channels.workspaceId, workspaceId)
-        : and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)),
-    )
-    .orderBy(channels.name);
+  // The membership check and the list go out together; a non-member's
+  // rejection still throws before anything from the list is returned.
+  const [, rows] = await Promise.all([
+    requireMembership(workspaceId, userId),
+    db
+      .select({
+        c: channels,
+        lastReadMsgId: channelMembers.lastReadMsgId,
+        notifyLevel: channelMembers.notifyLevel,
+        isMember: sql<boolean>`(${channelMembers.userId} IS NOT NULL)`,
+      })
+      .from(channels)
+      .leftJoin(
+        channelMembers,
+        and(eq(channelMembers.channelId, channels.id), eq(channelMembers.userId, userId)),
+      )
+      .where(
+        opts.includeArchived
+          ? eq(channels.workspaceId, workspaceId)
+          : and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)),
+      )
+      .orderBy(channels.name),
+  ]);
 
   const visible = rows.filter((r) =>
     r.c.archivedAt ? r.c.kind === 'standard' && !r.c.isPrivate : !r.c.isPrivate || r.isMember,
   );
   const dmIds = visible.filter((r) => r.c.kind !== 'standard').map((r) => r.c.id);
-  const dmMembers = await dmMemberIds(dmIds);
-  const memberCounts = await standardMemberCounts(
-    visible.filter((r) => r.c.kind === 'standard').map((r) => r.c.id),
-  );
+  const liveJoinedIds = visible.filter((r) => r.isMember && !r.c.archivedAt).map((r) => r.c.id);
 
-  // Unread notifications per channel — the number the sidebar badge shows
-  // (operator ruling 2026-07-26; unread *messages* only embolden the row).
-  // One grouped query for the whole list, served by notifications_unread_channel_idx.
-  const notifRows = await db
-    .select({ channelId: notifications.channelId, n: sql<number>`count(*)::int` })
-    .from(notifications)
-    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
-    .groupBy(notifications.channelId);
+  // Everything below depends only on the rows above, so it goes out together:
+  // each query is sub-millisecond in Postgres, and what a sequential chain
+  // costs is one network round trip apiece.
+  const [dmMembers, memberCounts, notifRows, threadRootRows, unreadByChannel] = await Promise.all([
+    dmMemberIds(dmIds),
+    standardMemberCounts(visible.filter((r) => r.c.kind === 'standard').map((r) => r.c.id)),
+    // Unread notifications per channel — the number the sidebar badge shows
+    // (operator ruling 2026-07-26; unread *messages* only embolden the row).
+    // One grouped query for the whole list, served by notifications_unread_channel_idx.
+    db
+      .select({ channelId: notifications.channelId, n: sql<number>`count(*)::int` })
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+      .groupBy(notifications.channelId),
+    // Which threads are waiting on this user (#270) — the reply chip draws an
+    // unread dot from this, so a thread reply that needs you is visible in the
+    // transcript and not only in the sidebar number. One grouped query over the
+    // same unread rows; thread notifications are few, so the lists stay short.
+    // The reply id rides along (#327) so the same rows answer "which thread holds
+    // the oldest unread reply" — ids are UUIDv7, so oldest-first is id order.
+    db
+      .select({ channelId: notifications.channelId, rootId: messages.threadRootId, replyId: messages.id })
+      .from(notifications)
+      .innerJoin(messages, eq(messages.id, notifications.messageId))
+      .where(
+        and(
+          eq(notifications.userId, userId),
+          isNull(notifications.readAt),
+          sql`${messages.threadRootId} IS NOT NULL`,
+        ),
+      )
+      .orderBy(asc(messages.id)),
+    unreadMessageCounts(liveJoinedIds, userId),
+  ]);
   const notifByChannel = new Map(notifRows.map((r) => [r.channelId, r.n]));
 
-  // Which threads are waiting on this user (#270) — the reply chip draws an
-  // unread dot from this, so a thread reply that needs you is visible in the
-  // transcript and not only in the sidebar number. One grouped query over the
-  // same unread rows; thread notifications are few, so the lists stay short.
-  // The reply id rides along (#327) so the same rows answer "which thread holds
-  // the oldest unread reply" — ids are UUIDv7, so oldest-first is id order.
-  const threadRootRows = await db
-    .select({ channelId: notifications.channelId, rootId: messages.threadRootId, replyId: messages.id })
-    .from(notifications)
-    .innerJoin(messages, eq(messages.id, notifications.messageId))
-    .where(
-      and(
-        eq(notifications.userId, userId),
-        isNull(notifications.readAt),
-        sql`${messages.threadRootId} IS NOT NULL`,
-      ),
-    )
-    .orderBy(asc(messages.id));
   const threadRootsByChannel = new Map<string, string[]>();
   const oldestUnreadReplyByChannel = new Map<string, { rootId: string; replyId: string }>();
   for (const r of threadRootRows) {
@@ -386,30 +441,9 @@ export async function listChannels(
     let unreadCount = 0;
     let oldestUnreadTopLevel: string | null = null;
     if (r.isMember && !archived) {
-      // Membership lines (join/leave) never contribute to unread — they're
-      // courtesy notices, not messages you need to catch up on. A *huddle*
-      // line is the opposite (#436): "Missed huddle" is the only trace a call
-      // you weren't there for leaves, and a missed call that doesn't mark the
-      // DM unread is one you never find out about. So the exclusion is by
-      // kind, not by "is it a system message". Neither do your own messages
-      // count: you can't have unread mail from yourself, and the read cursor
-      // may not have caught up if you sent from another client (#71).
-      const base = and(
-        eq(messages.channelId, r.c.id),
-        isNull(messages.threadRootId),
-        isNull(messages.deletedAt),
-        or(isNull(messages.systemKind), inArray(messages.systemKind, [...HUDDLE_SYSTEM_KINDS])),
-        ne(messages.userId, userId),
-      );
-      const cond = r.lastReadMsgId ? and(base, gt(messages.id, r.lastReadMsgId)) : base;
-      const cnt = await db
-        // min() has no uuid overload, so the id goes through text — the hex
-        // representation sorts the same way the uuid does.
-        .select({ n: sql<number>`count(*)::int`, oldest: sql<string | null>`min(${messages.id}::text)` })
-        .from(messages)
-        .where(cond);
-      unreadCount = cnt[0]?.n ?? 0;
-      oldestUnreadTopLevel = cnt[0]?.oldest ?? null;
+      const unread = unreadByChannel.get(r.c.id);
+      unreadCount = unread?.n ?? 0;
+      oldestUnreadTopLevel = unread?.oldest ?? null;
     }
     // Auto-open target (#327): only when the channel's oldest unread is a reply.
     // An older unread top-level message means the main timeline already shows
