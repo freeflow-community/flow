@@ -55,10 +55,10 @@ final class AppState: ObservableObject {
     /// no state and the tests are not on the main actor.
     nonisolated static func channelRowHighlighted(
         rowId: String, selectedChannelId: String?, selectedArtifactId: String?, showActivity: Bool,
-        showScheduled: Bool = false, showDirectory: Bool = false
+        showScheduled: Bool = false, showDirectory: Bool = false, showChannelBrowser: Bool = false
     ) -> Bool {
         selectedChannelId == rowId && selectedArtifactId == nil && !showActivity && !showScheduled
-            && !showDirectory
+            && !showDirectory && !showChannelBrowser
     }
 
     /// Scroll identity for a sidebar channel/DM row (#319), so the sidebar can
@@ -269,6 +269,10 @@ final class AppState: ObservableObject {
         get { window.showDirectory }
         set { window.showDirectory = newValue }
     }
+    var showChannelBrowser: Bool {
+        get { window.showChannelBrowser }
+        set { window.showChannelBrowser = newValue }
+    }
     var focusMessageId: String? {
         get { window.focusMessageId }
         set { window.focusMessageId = newValue }
@@ -289,6 +293,7 @@ final class AppState: ObservableObject {
     func showActivityFeed() { window.showActivityFeed() }
     func showScheduledPanel() { window.showScheduledPanel() }
     func showDirectoryPanel() { window.showDirectoryPanel() }
+    func showChannelBrowserPanel() { window.showChannelBrowserPanel() }
     func jumpToMessage(channelId: String, messageId: String) {
         window.jumpToMessage(channelId: channelId, messageId: messageId)
     }
@@ -455,6 +460,16 @@ final class AppState: ObservableObject {
 
     func setHasMore(channelId: String, _ value: Bool) {
         hasMore[channelId] = value
+    }
+
+    /// Archived channels seen by the channel browser (#590), by id. In memory
+    /// only: the local cache — and so the sidebar and unread counts — never
+    /// holds an archived channel, so this is how one opened from the browser
+    /// resolves its name and read-only state.
+    @Published private(set) var archivedChannels: [String: Channel] = [:]
+
+    func rememberArchivedChannels(_ channels: [Channel]) {
+        for c in channels { archivedChannels[c.id] = c }
     }
 
     // MARK: - Provider capabilities and limits (#546)

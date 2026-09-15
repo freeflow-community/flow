@@ -52,6 +52,12 @@ struct ThreadPanelView: View {
         thread.value.first { $0.id == rootId }
     }
 
+    /// A thread in an archived channel (#590) is read-only like its channel.
+    /// Archived channels are never cached, so the browser's list is the test.
+    private var isArchived: Bool {
+        root.map { app.archivedChannels[$0.channelId] != nil } ?? false
+    }
+
     private var replies: [Message] {
         thread.value.filter { $0.id != rootId }
     }
@@ -101,7 +107,7 @@ struct ThreadPanelView: View {
                                     onError: { app.showError($0) },
                                     onSelectArtifact: { win.selectArtifact($0) },
                                     onOpenScheduled: { win.showScheduledPanel() },
-                                    capabilities: app.capabilities
+                                    capabilities: isArchived ? app.capabilities.archivedReadOnly() : app.capabilities
                                 ),
                                 showHeader: true,
                                 showThreadAffordances: false,
@@ -206,7 +212,7 @@ struct ThreadPanelView: View {
                 }
             }
 
-            if let root {
+            if let root, !isArchived {
                 TypingIndicatorView(channelId: root.channelId, threadRootId: root.id, userNames: userNames.value)
                 ComposerView(
                     channelId: root.channelId,

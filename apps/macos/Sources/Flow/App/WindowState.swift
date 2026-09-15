@@ -32,6 +32,8 @@ final class WindowState: ObservableObject {
     /// Directory (#432) — the workspace member grid, same treatment as the two
     /// above: it covers the content pane while the channel selection stays put.
     @Published var showDirectory: Bool = false
+    /// Channel browser (#590) — every public channel; same treatment again.
+    @Published var showChannelBrowser: Bool = false
     /// Jump-to-message target (phase 12): a message id the channel/thread view
     /// should scroll to and flash after navigation. Cleared once reached.
     @Published var focusMessageId: String?
@@ -74,6 +76,7 @@ final class WindowState: ObservableObject {
         showActivity = false
         showScheduled = false
         showDirectory = false
+        showChannelBrowser = false
         nav = NavHistory() // the other workspace's channels aren't reachable from here
         // Active workspace survives relaunch (phase 3.5 fixes). Shared across
         // windows on purpose: the *last* pick is what a fresh window starts on.
@@ -170,6 +173,7 @@ final class WindowState: ObservableObject {
             showActivity = false
             showScheduled = false
             showDirectory = false
+            showChannelBrowser = false
             if selectedChannelId != nil { switchChannel(to: nil) }
             return
         }
@@ -207,19 +211,29 @@ final class WindowState: ObservableObject {
             filesOpen = false
             showScheduled = false
             showDirectory = false
+            showChannelBrowser = false
             showActivity = true
         case .scheduled:
             selectedArtifactId = nil
             filesOpen = false
             showActivity = false
             showDirectory = false
+            showChannelBrowser = false
             showScheduled = true
         case .directory:
             selectedArtifactId = nil
             filesOpen = false
             showActivity = false
             showScheduled = false
+            showChannelBrowser = false
             showDirectory = true
+        case .channelBrowser:
+            selectedArtifactId = nil
+            filesOpen = false
+            showActivity = false
+            showScheduled = false
+            showDirectory = false
+            showChannelBrowser = true
         case .channel(let id):
             // Selecting a channel always closes an open artifact panel, the
             // activity feed or the Scheduled panel — even when it's the same
@@ -230,6 +244,7 @@ final class WindowState: ObservableObject {
             showActivity = false
             showScheduled = false
             showDirectory = false
+            showChannelBrowser = false
             guard id != selectedChannelId else {
                 // Picking the channel already on screen used to stop here, which
                 // made the gesture people reach for when a badge won't clear the
@@ -314,7 +329,7 @@ final class WindowState: ObservableObject {
     /// `channels` is the caller's already-observed list rather than a fresh
     /// query, so restoring costs nothing beyond a lookup.
     func restorableLastChannel(from channels: [Channel]) -> String? {
-        guard selectedChannelId == nil, !showActivity, !showScheduled, !showDirectory,
+        guard selectedChannelId == nil, !showActivity, !showScheduled, !showDirectory, !showChannelBrowser,
               let saved = lastChannelId,
               let channel = channels.first(where: { $0.id == saved }),
               channel.isMember, channel.archivedAt == nil,
@@ -354,6 +369,7 @@ final class WindowState: ObservableObject {
             showActivity = false
             showScheduled = false
             showDirectory = false
+            showChannelBrowser = false
         }
     }
 
@@ -382,6 +398,7 @@ final class WindowState: ObservableObject {
             showActivity = false
             showScheduled = false
             showDirectory = false
+            showChannelBrowser = false
             filesOpen = false
             if let a = artifacts().first(where: { $0.id == id }), a.channelId != selectedChannelId {
                 // Same park-and-restore as an ordinary channel switch, or the
@@ -475,6 +492,7 @@ final class WindowState: ObservableObject {
         showActivity = false
         showScheduled = false
         showDirectory = false
+        showChannelBrowser = false
         filesOpen = false
         if channelId != selectedChannelId { switchChannel(to: channelId) }
         selectedArtifactId = artifactId
@@ -507,6 +525,15 @@ final class WindowState: ObservableObject {
     func showDirectoryPanel() {
         nav.record(.directory)
         show(.directory)
+    }
+
+    // MARK: - Channel browser (#590)
+
+    /// Show the channel browser — every public channel, with Join and an
+    /// include-archived toggle — reached from "Browse all" under Channels.
+    func showChannelBrowserPanel() {
+        nav.record(.channelBrowser)
+        show(.channelBrowser)
     }
 
     /// Jump to a specific message in a channel of the current workspace — what
@@ -559,6 +586,7 @@ final class WindowState: ObservableObject {
         showActivity = false
         showScheduled = false
         showDirectory = false
+        showChannelBrowser = false
         focusMessageId = nil
         nav = NavHistory()
     }

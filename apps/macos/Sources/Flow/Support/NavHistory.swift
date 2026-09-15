@@ -14,6 +14,8 @@ enum NavView: Equatable {
     /// The Directory (#432) — the workspace member grid. Same treatment again:
     /// it covers the content pane, the channel stays selected behind it.
     case directory
+    /// The channel browser (#590) — every public channel. Same treatment.
+    case channelBrowser
 }
 
 /// Browser-style visit history over `NavView` — what the workspace header's

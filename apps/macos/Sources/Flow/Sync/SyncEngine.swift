@@ -800,6 +800,31 @@ actor SyncEngine {
         return ch
     }
 
+    /// The channel browser's list (#590): every public channel, archived ones
+    /// included, fetched live and never written to the cache — `refreshChannels`
+    /// would prune archived rows anyway, and the sidebar and unreads must not
+    /// see them. The archived rows are handed to AppState so an archived channel
+    /// opened from the browser can resolve its header and read-only state.
+    func browseChannels(workspaceId: String) async throws -> [BrowsableChannel] {
+        let resp: BrowsableChannelsResponse = try await api.get(
+            "/v1/workspaces/\(workspaceId)/channels",
+            query: [URLQueryItem(name: "includeArchived", value: "1")]
+        )
+        let archived = resp.channels.map(\.channel).filter { $0.archivedAt != nil }
+        await appState?.rememberArchivedChannels(archived)
+        return resp.channels
+    }
+
+    /// A channel on screen that the cache doesn't hold — an archived one
+    /// restored by navigation (relaunch, back/forward) rather than opened from
+    /// the browser this session. Looks it up through the browser list so the
+    /// view can resolve it read-only instead of drawing a nameless composer.
+    func resolveUncachedChannel(_ channelId: String, workspaceId: String) async {
+        let cached = try? await db.writer.read { db in try Channel.fetchOne(db, key: channelId) }
+        guard cached == nil, await appState?.archivedChannels[channelId] == nil else { return }
+        _ = try? await browseChannels(workspaceId: workspaceId)
+    }
+
     /// A transcript for `channelId` is on screen — make sure it has one. The
     /// selection-driven fetch below runs only when the *selection changes*
     /// (`WindowState.selectChannel` returns early on the same id) and swallows
