@@ -43,6 +43,21 @@ export function createConnectorServer(connector) {
         res.end(`<!doctype html><title>Slack authorization</title><p>Authorization returned. You can close this window.</p><script nonce="${nonce}">history.replaceState(null,'','/oauth/callback');if(window.opener)window.opener.postMessage(${data},${target});</script>`);
         return;
       }
+      // A Slack upload is the one raw-bytes body (up to the file cap); every
+      // other request body is small JSON.
+      if (path === '/v1/files' && req.method === 'POST') {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > MAX_FILE_BYTES) throw new Fault('file_too_large', 413);
+          chunks.push(chunk);
+        }
+        const query = new URL(req.url, connector.publicOrigin).searchParams;
+        const credential = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
+        respond(200, await connector.upload(credential, { channel: query.get('channel'), name: query.get('name'), type: req.headers['content-type'], bytes: Buffer.concat(chunks) }));
+        return;
+      }
       let raw = Buffer.alloc(0);
       for await (const chunk of req) {
         if (raw.length + chunk.length > 64 * 1024) throw new Fault('body_too_large', 413);

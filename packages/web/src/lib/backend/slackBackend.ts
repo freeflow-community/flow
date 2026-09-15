@@ -15,6 +15,7 @@ import {
   type ThreadPage, type UserDTO, type WorkspaceBackend, type WorkspaceDTO, type WorkspaceMemberDTO,
 } from '@flow/shared';
 import type { ConnectionRuntime } from '../connectionRuntime';
+import { prepareImageForUpload } from '../imagePrep';
 import { slackStatusMessage, type SlackConnection } from '../slackConnector';
 
 /** Connector capability flags (manifest.js grantedCapabilities) -> the UI's
@@ -30,7 +31,7 @@ export function slackCapabilities(granted: Record<string, boolean>): Capabilitie
     edit: granted.sendAsUser ? supported() : scope('send'),
     delete: granted.sendAsUser ? supported() : scope('send'),
     reactions: granted.reactions ? supported() : scope('reaction'),
-    files: granted.files ? limited('Files upload to Slack; previews open in Slack.') : unavailable('File uploads need a Slack permission this app does not have. Attachments open in Slack.'),
+    files: granted.files ? supported() : unavailable('File uploads need a Slack permission this app does not have. Reconnect Slack after it is added.'),
     search: granted.search ? supported() : scope('search'),
     status: granted.setStatus ? supported() : unavailable('Set your status in Slack; this app has not been granted permission to change it.'),
     readState: granted.readState ? supported() : unavailable('Read markers are not shared with Slack; unread state stays on this device.'),
@@ -73,16 +74,18 @@ export class SlackBackend implements WorkspaceBackend {
 
   // ---- transport ------------------------------------------------------------
 
+  /** `body` is JSON, except a Blob, which goes as raw bytes with its own type (uploads). */
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const credential = this.runtime.getToken();
     if (!credential) throw new BackendError('unauthorized', slackStatusMessage('reauthorization_required'));
     if (this.runtime.isDisposed) throw new BackendError('timeout', 'connection closed');
+    const raw = typeof Blob !== 'undefined' && body instanceof Blob;
     let response: Response;
     try {
       response = await fetch(`${this.runtime.origin}${path}`, {
         method, credentials: 'omit', redirect: 'error',
-        headers: { ...(body ? { 'content-type': 'application/json' } : {}), authorization: `Bearer ${credential}` },
-        ...(body ? { body: JSON.stringify(body) } : {}),
+        headers: { ...(body ? { 'content-type': raw ? (body as Blob).type || 'application/octet-stream' : 'application/json' } : {}), authorization: `Bearer ${credential}` },
+        ...(body ? { body: raw ? (body as Blob) : JSON.stringify(body) } : {}),
       });
     } catch (error) {
       throw new BackendError('timeout', error instanceof Error ? error.message : 'Slack connector unreachable');
@@ -179,11 +182,13 @@ export class SlackBackend implements WorkspaceBackend {
   }
 
   async send(input: SendMessageInput): Promise<SendReceipt> {
-    if (input.fileIds?.length) throw new BackendError('unsupported', this.caps.files.reason ?? 'Files are not available.');
+    if (input.fileIds?.length && this.caps.files.state === 'unavailable') throw new BackendError('unsupported', this.caps.files.reason ?? 'Files are not available.');
     // The client id makes the send idempotent at the connector: a retry after
     // a timeout reconciles against Slack instead of posting twice (#546).
+    // Uploaded files are shared by this send, as one message with the text.
     const result = await this.request<{ message: BackendMessage }>('POST', '/v1/messages', {
       channel: input.channelId, text: input.body, client_msg_id: input.clientMsgId, ...(input.threadRootId ? { thread_ts: input.threadRootId } : {}),
+      ...(input.fileIds?.length ? { file_ids: input.fileIds } : {}),
     });
     // Slack does not echo a client message id; the connector's reply carries
     // the real ts, so stamp our idempotency key on it for the optimistic row.
@@ -209,8 +214,13 @@ export class SlackBackend implements WorkspaceBackend {
     await this.request('POST', '/v1/read', { channel: channelId, ts: messageId });
   }
 
-  uploadFile(): Promise<FileDTO> {
-    return Promise.reject(new BackendError('unsupported', this.caps.files.reason ?? 'File uploads are not available.'));
+  /** Bytes to Slack through the connector; the file stays unshared until the
+   * send that carries its id. Large images are downscaled first, as on Flow. */
+  async uploadFile(target: { workspaceId: string; channelId: string }, file: { size: number; type: string; name?: string }): Promise<FileDTO> {
+    if (this.caps.files.state === 'unavailable') throw new BackendError('unsupported', this.caps.files.reason ?? 'File uploads are not available.');
+    const prepared = file instanceof File ? await prepareImageForUpload(file) : (file as Blob);
+    const name = (prepared as File).name || file.name || 'file';
+    return this.request<FileDTO>('POST', `/v1/files?channel=${encodeURIComponent(target.channelId)}&name=${encodeURIComponent(name)}`, prepared);
   }
 
   /** No direct URL: file bytes come through the connector's /v1/files routes,

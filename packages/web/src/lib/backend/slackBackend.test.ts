@@ -14,10 +14,10 @@ const message = (id = TS, extra: Record<string, unknown> = {}) => ({ id, channel
 
 type Reply = { status?: number; body?: unknown; headers?: Record<string, string> };
 function mockFetch(routes: Record<string, Reply | ((init: RequestInit) => Reply)>) {
-  const calls: { path: string; method: string; body?: unknown }[] = [];
+  const calls: { path: string; method: string; body?: unknown; headers?: Record<string, string> }[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname + new URL(url).search;
-    calls.push({ path, method: init.method ?? 'GET', body: init.body ? JSON.parse(String(init.body)) : undefined });
+    calls.push({ path, method: init.method ?? 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body, headers: init.headers as Record<string, string> });
     const key = Object.keys(routes).find((k) => path.startsWith(k));
     const reply = key ? (typeof routes[key] === 'function' ? (routes[key] as (i: RequestInit) => Reply)(init) : routes[key]!) : { status: 404, body: { error: 'not_found' } };
     return new Response(JSON.stringify(reply.body ?? {}), { status: reply.status ?? 200, headers: { 'content-type': 'application/json', ...(reply.headers ?? {}) } });
@@ -106,6 +106,22 @@ describe('SlackBackend', () => {
     expect((await backend.me()).statusText).toBe('Out sick');
     expect(slackCapabilities({}).status.state).toBe('unavailable');
     expect(slackCapabilities({ setStatus: true }).status.state).toBe('supported');
+  });
+
+  it('uploads raw bytes to the connector for the channel, and the send shares them by id', async () => {
+    const file = { id: 'F0UPLOAD1', workspaceId: 'T1', userId: 'U1', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 5, width: null, height: null, hasThumb: false, createdAt: '' };
+    const calls = mockFetch({ '/v1/files': { body: file }, '/v1/messages': { body: { message: message() } } });
+    const backend = new SlackBackend(runtime(), { ...connection, capabilities: { ...connection.capabilities, files: true } }, { autoPoll: false });
+    const blob = new Blob(['hello'], { type: 'text/plain' });
+    expect(await backend.uploadFile({ workspaceId: 'T1', channelId: 'C1' }, Object.assign(blob, { name: 'notes.txt' }))).toEqual(file);
+    expect(calls[0]!.path).toBe('/v1/files?channel=C1&name=notes.txt');
+    expect(calls[0]!.headers?.['content-type']).toBe('text/plain');
+    expect(calls[0]!.body).toBeInstanceOf(Blob);
+    await backend.send({ channelId: 'C1', body: '', clientMsgId: 'cm-12345678', fileIds: ['F0UPLOAD1'] });
+    expect(calls[1]!.body).toMatchObject({ channel: 'C1', text: '', file_ids: ['F0UPLOAD1'] });
+
+    const without = new SlackBackend(runtime(), connection, { autoPoll: false });
+    await expect(without.uploadFile({ workspaceId: 'T1', channelId: 'C1' }, blob)).rejects.toMatchObject({ code: 'unsupported' });
   });
 
   it('a 401 flips auth to reauthorization_required and tells subscribers', async () => {

@@ -327,6 +327,11 @@ struct ComposerView: View {
     /// Non-images and already-small images come back `nil` and upload untouched.
     private func uploadFiles(_ urls: [URL]) {
         guard let wsId = workspaceId else { return }
+        // Paste and drop reach here without the paperclip's gate (#546).
+        guard app.can(.files) else {
+            app.showError(app.capabilities[.files].reason ?? "File attachments are not available here.")
+            return
+        }
         uploading += urls.count
         for url in urls {
             Task { @MainActor in
@@ -339,7 +344,7 @@ struct ComposerView: View {
                 defer { if let prepared { ImagePrep.discard(prepared) } }
                 do {
                     let file = try await app.engine.uploadFile(
-                        workspaceId: wsId, fileURL: prepared ?? url
+                        workspaceId: wsId, channelId: channelId, fileURL: prepared ?? url
                     )
                     if attachments.count < 10 { attachments.append(file) }
                 } catch {

@@ -72,7 +72,7 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             .edit: on("sendAsUser") ? .supported : scope("send"),
             .delete: on("sendAsUser") ? .supported : scope("send"),
             .reactions: on("reactions") ? .supported : scope("reaction"),
-            .files: on("files") ? .limited("Files upload to Slack; previews open in Slack.") : .unavailable("File uploads need a Slack permission this app does not have. Attachments open in Slack."),
+            .files: on("files") ? .supported : .unavailable("File uploads need a Slack permission this app does not have. Reconnect Slack after it is added."),
             .search: on("search") ? .supported : scope("search"),
             .readState: on("readState") ? .supported : .unavailable("Read markers are not shared with Slack; unread state stays on this device."),
             .liveUpdates: on("liveUpdates") ? .limited("New messages arrive through the Flow Slack connector with a short delay.") : .unavailable("Live updates need the Slack app to subscribe to message events."),
@@ -96,7 +96,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         }
     }
 
-    private func raw(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> Data {
+    /// `upload` sends raw bytes with their content type instead of a JSON body
+    /// (the connector's file upload route).
+    private func raw(_ method: String, _ path: String, body: [String: Any]? = nil, upload: (data: Data, contentType: String)? = nil) async throws -> Data {
         guard let token = credential() else { throw BackendError(code: .unauthorized, message: "Slack authorization expired. Reauthorize this connection.") }
         guard let url = URL(string: "\(origin.absoluteString.hasSuffix("/") ? String(origin.absoluteString.dropLast()) : origin.absoluteString)/\(path)") else {
             throw BackendError(code: .invalid, message: "Bad connector path.")
@@ -107,6 +109,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } else if let upload {
+            request.setValue(upload.contentType, forHTTPHeaderField: "Content-Type")
+            request.httpBody = upload.data
         }
         let (data, response): (Data, HTTPURLResponse)
         do { (data, response) = try await transport(request) } catch let error as BackendError { throw error } catch {
@@ -125,6 +130,8 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             throw BackendError(code: .unsupported, message: "This Slack app has not been granted the permission for that.", providerCode: code)
         case 404:
             throw BackendError(code: .notFound, message: "Slack could not find that.", providerCode: code)
+        case 413:
+            throw BackendError(code: .invalid, message: "That file is too large to send to Slack from Flow (50 MB limit).", providerCode: code)
         case 400..<500:
             throw BackendError(code: .invalid, message: "Slack did not allow that action.", providerCode: code)
         default:
@@ -245,11 +252,14 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
 
     private struct SendPayload: Decodable { let message: Message }
     func send(_ input: SendMessageInput) async throws -> Message {
-        if !input.fileIds.isEmpty { throw BackendError(code: .unsupported, message: caps[.files].reason ?? "Files are not available.") }
+        if !input.fileIds.isEmpty, !caps[.files].usable { throw BackendError(code: .unsupported, message: caps[.files].reason ?? "Files are not available.") }
         // The client id makes the send idempotent at the connector (#546): a
         // retry after an unknown outcome reconciles there instead of posting twice.
+        // Uploaded files are shared by this send, with the text as their comment
+        // (the text may be empty when files are attached).
         var body: [String: Any] = ["channel": input.channelId, "text": input.body, "client_msg_id": input.clientMsgId]
         if let threadRootId = input.threadRootId { body["thread_ts"] = threadRootId }
+        if !input.fileIds.isEmpty { body["file_ids"] = input.fileIds }
         var message = try await request("POST", "v1/messages", body: body, as: SendPayload.self).message
         // Slack does not echo a client message id; stamp ours so the pending
         // row reconciles by clientMsgId the way a Flow send does.
@@ -287,8 +297,15 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         return me
     }
 
+    /// The bytes go to the connector, which uploads them to Slack and holds the
+    /// file until `send` shares it into the channel. Nothing is posted yet.
     func uploadFile(workspaceId: String, channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment {
-        throw BackendError(code: .unsupported, message: caps[.files].reason ?? "File uploads are not available.")
+        guard caps[.files].usable else { throw BackendError(code: .unsupported, message: caps[.files].reason ?? "File uploads are not available.") }
+        let path = "v1/files?channel=\(encode(channelId))&name=\(encode(name))"
+        let reply = try await raw("POST", path, upload: (data, mimeType.isEmpty ? "application/octet-stream" : mimeType))
+        do { return try decoder.decode(FileAttachment.self, from: reply) } catch {
+            throw BackendError(code: .providerError, message: "Unreadable reply from the Slack connector.")
+        }
     }
 
     /// No presigned URLs: the connector proxies every file byte.

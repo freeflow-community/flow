@@ -103,6 +103,7 @@ capability gating. A test compares it with the app manifest.
 | Live profile and status changes | None | User | `users:read` | `user_change` |
 | Set the user's own status | `users.profile.set` | User | `users.profile:write` | None |
 | Workspace icon | `team.info` (image fetched without a token) | User | `team:read` | None |
+| Upload files | `files.getUploadURLExternal`, `files.completeUploadExternal`, `files.info` (find the share) | User | `files:write` | None |
 
 Only `chat:write` is requested. Workspace display names come from the OAuth
 response, and user names from `auth.test`; no directory/history scopes are
@@ -135,6 +136,7 @@ credential>`, never cookies. No endpoint accepts a Flow token as its identity.
 | `GET /v1/events` | Grant-scoped lifecycle events, IDs for client deduplication; poll while the connection panel is open |
 | `GET /v1/files/:id[/thumb]` | Slack file bytes fetched with the user token from `files.slack.com` only; `/url` variants return `{url: null}` (always proxied). `emoji:<name>` ids serve custom emoji images, `team-icon:<teamId>` the workspace icon (`avatarUrl` of `GET /v1/workspace`) |
 | `PATCH /v1/me` | `{statusEmoji, statusText}` → sets the user's Slack status (unicode mapped to a Slack shortcode; unknown emoji refused) and returns a Flow-shaped user |
+| `POST /v1/files?channel=&name=` | Raw file bytes (≤ 50 MB, `Content-Type` = the file's type) → reserved Slack upload, bytes sent to Slack's pre-authorized upload URL; returns a FileDTO. Unshared until a send carries its id |
 | `GET /v1/workspaces/:teamId/emoji` | Custom emoji in Flow's `WorkspaceEmojiDTO` shape, aliases resolved, cached 10 minutes per team |
 | `GET /health` | Process health only |
 

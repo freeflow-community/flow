@@ -24,6 +24,7 @@ private func messageJSON(_ id: String, threadRootId: String? = nil, editedAt: St
 /// A fake connector: routes by path, records requests, and can answer 429.
 private final class FakeConnector: @unchecked Sendable {
     var requests: [(method: String, path: String, body: [String: Any]?)] = []
+    var uploads: [(contentType: String?, authorization: String?, data: Data)] = []
     var rateLimitHistory = false
     var streamPages: [String] = []
 
@@ -64,6 +65,9 @@ private final class FakeConnector: @unchecked Sendable {
             return reply(#"{"id":"U1","email":"a@example.test","displayName":"alice","avatarUrl":null,"timezone":"UTC","statusEmoji":"🤒","statusText":"Out sick","website":"","bio":"","title":"","isAgent":false,"sponsorId":null,"notificationPrefs":{},"statusSuppressAlerts":false,"privacyMode":false,"createdAt":""}"#)
         case ("DELETE", "/v1/session"):
             return reply(#"{"ok":true}"#)
+        case ("POST", "/v1/files"):
+            uploads.append((request.value(forHTTPHeaderField: "Content-Type"), request.value(forHTTPHeaderField: "Authorization"), request.httpBody ?? Data()))
+            return reply(#"{"id":"F0UPLOAD1","workspaceId":"T1","userId":"U1","name":"notes one.txt","mimeType":"text/plain","sizeBytes":5,"width":null,"height":null,"hasThumb":false,"createdAt":""}"#)
         case ("GET", "/v1/files/team-icon:T1"):
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
             return (Data([0x47, 0x49, 0x46]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!)
@@ -123,6 +127,25 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         await #expect(throws: BackendError.self) { try await backend.fileData(path: "/v1/history?channel=C1") }
         await #expect(throws: BackendError.self) { try await backend.fileData(path: "v1/files/../session") }
         #expect(fake.requests.count == 1)
+    }
+
+    /// With files:write the bytes go to the connector raw, with their type and
+    /// the channel; the send then shares them, text optional.
+    @Test func uploadsRawBytesToTheConnectorAndSendsFileIds() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake, granted: ["sendAsUser": true, "readConversations": true, "readHistory": true, "liveUpdates": true, "files": true])
+        let file = try await backend.uploadFile(workspaceId: "T1", channelId: "C1", data: Data("hello".utf8), name: "notes one.txt", mimeType: "text/plain")
+        #expect(file.id == "F0UPLOAD1")
+        #expect(fake.requests.last?.path == "/v1/files?channel=C1&name=notes%20one%2Etxt")
+        #expect(fake.uploads.first?.contentType == "text/plain")
+        #expect(fake.uploads.first?.authorization == "Bearer credential-1")
+        #expect(fake.uploads.first?.data == Data("hello".utf8))
+        _ = try await backend.send(SendMessageInput(channelId: "C1", body: "", clientMsgId: "cm-9", fileIds: ["F0UPLOAD1"]))
+        #expect(fake.requests.last?.path == "/v1/messages")
+        #expect(fake.requests.last?.body?["file_ids"] as? [String] == ["F0UPLOAD1"])
+        #expect(fake.requests.last?.body?["text"] as? String == "")
+        #expect(SlackBackend.capabilities(granted: ["files": true])[.files] == .supported)
+        #expect(SlackBackend.capabilities(granted: [:])[.files].reason == "File uploads need a Slack permission this app does not have. Reconnect Slack after it is added.")
     }
 
     @Test func teamIconPathKeepsItsColonAndRendersAsTheWorkspaceMark() async throws {

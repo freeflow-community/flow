@@ -1404,10 +1404,17 @@ actor SyncEngine {
 
     // MARK: - Files
 
-    func uploadFile(workspaceId: String, fileURL: URL) async throws -> FileAttachment {
+    /// `channelId` is where the file will be sent: a provider workspace (Slack)
+    /// uploads through its backend, which needs the channel; a Flow server does not.
+    func uploadFile(workspaceId: String, channelId: String? = nil, fileURL: URL) async throws -> FileAttachment {
         let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let sizeBytes = (attrs[.size] as? Int) ?? 0
         let mime = Self.mimeType(for: fileURL)
+        if let backend {
+            guard let channelId else { throw BackendError(code: .invalid, message: "Choose a conversation before attaching a file.") }
+            let data = try Data(contentsOf: fileURL)
+            return try await backend.uploadFile(workspaceId: workspaceId, channelId: channelId, data: data, name: fileURL.lastPathComponent, mimeType: mime)
+        }
         // presign → PUT the bytes (direct to R2 in prod, server fallback in
         // local dev) → complete (server verifies size + generates thumbnails).
         // The PUT streams from disk — files can be hundreds of MB.

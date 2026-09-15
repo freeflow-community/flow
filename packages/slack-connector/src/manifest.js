@@ -29,7 +29,8 @@ export const capabilities = {
   reactions: { methods: ['reactions.add', 'reactions.remove'], tokenType: 'user', scopes: ['reactions:write', 'reactions:read'], events: ['reaction_added', 'reaction_removed'], requested: false },
   readState: { methods: ['conversations.mark'], tokenType: 'user', scopes: ['channels:write', 'groups:write', 'im:write', 'mpim:write'], events: [], requested: false },
   search: { methods: ['search.messages'], tokenType: 'user', scopes: ['search:read'], events: [], requested: false },
-  files: { methods: ['files.getUploadURLExternal', 'files.completeUploadExternal'], tokenType: 'user', scopes: ['files:write', 'files:read'], events: [], requested: false },
+  // Uploads: bytes go to Slack's upload URL, then complete shares them with the message text.
+  files: { methods: ['files.getUploadURLExternal', 'files.completeUploadExternal'], tokenType: 'user', scopes: ['files:write'], events: [] },
 };
 export const requestedScopes = [...new Set(Object.values(capabilities).filter(c => c.requested !== false).flatMap(c => c.scopes))];
 export const requestedEvents = [...new Set(Object.values(capabilities).filter(c => c.requested !== false).flatMap(c => c.events))];

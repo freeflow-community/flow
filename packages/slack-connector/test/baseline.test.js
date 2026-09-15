@@ -21,7 +21,7 @@ function fixture(t, options = {}) {
   const state = { rateLimitNext: 0 };
   const fetcher = async (url, request) => {
     const method = url.split('/').pop();
-    const params = Object.fromEntries(new URLSearchParams(request.body));
+    const params = Object.fromEntries(new URLSearchParams(request.body instanceof URLSearchParams || typeof request.body === 'string' ? request.body : ''));
     calls.push({ method, params });
     if (options.fetcher) { const override = await options.fetcher(method, params, request, state); if (override) return override instanceof Response ? override : new Response(JSON.stringify(override)); }
     let result;
@@ -475,4 +475,52 @@ test('team icon: workspace avatarUrl points at the connector, which serves the t
   const bare = fixture(t, { scopes: requestedScopes.filter(s => s !== 'team:read') });
   const { credential: other } = await bare.connect();
   assert.equal((await bare.connector.workspace(other)).avatarUrl, null);
+});
+
+test('uploads: bytes go to Slack upload URL, send completes them as one message with the text, retries never re-complete', async t => {
+  const uploaded = [];
+  let shared = true;
+  const f = fixture(t, { scopes: [...requestedScopes], fetcher: async (method, params, request) => {
+    if (method === 'files.getUploadURLExternal') return { ok: true, file_id: 'F0UPLOAD1', upload_url: 'https://files.slack.com/upload/v1/abc123' };
+    if (method === 'abc123') { uploaded.push({ bytes: Buffer.from(request.body).toString(), authorization: request.headers.authorization ?? null }); return new Response('OK - 5'); }
+    if (method === 'files.completeUploadExternal') return { ok: true, files: [{ id: 'F0UPLOAD1', title: 'notes.txt' }] };
+    if (method === 'files.info') return { ok: true, file: { id: params.file, name: 'notes.txt', mimetype: 'text/plain', size: 5, shares: shared ? { public: { C1: [{ ts: '1789180000.000100', channel_name: 'testing' }] } } : {} } };
+  } });
+  f.connector.sleep = async () => {};
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const { credential } = await f.connect();
+  const auth = { authorization: `Bearer ${credential}`, origin: 'https://flow.test' };
+
+  const up = await fetch(`${base}/v1/files?channel=C1&name=notes.txt`, { method: 'POST', headers: { ...auth, 'content-type': 'text/plain' }, body: 'hello' });
+  assert.equal(up.status, 200);
+  const file = await up.json();
+  assert.deepEqual([file.id, file.name, file.mimeType, file.sizeBytes], ['F0UPLOAD1', 'notes.txt', 'text/plain', 5]);
+  assert.deepEqual(uploaded, [{ bytes: 'hello', authorization: null }], 'the upload URL is pre-authorized; the token is not sent');
+  assert.equal(f.calls.find(c => c.method === 'files.getUploadURLExternal').params.length, '5');
+
+  const send = body => fetch(`${base}/v1/messages`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  // A file for another channel is refused.
+  assert.equal((await send({ channel: 'C2', text: '', file_ids: ['F0UPLOAD1'], client_msg_id: 'cm-other-1' })).status, 400);
+  shared = false;
+  const pending = await send({ channel: 'C1', text: 'see *notes*', file_ids: ['F0UPLOAD1'], client_msg_id: 'cm-files-1' });
+  assert.equal(pending.status, 504);
+  const complete = f.calls.filter(c => c.method === 'files.completeUploadExternal');
+  assert.equal(complete.length, 1);
+  assert.deepEqual(JSON.parse(complete[0].params.files), [{ id: 'F0UPLOAD1', title: 'notes.txt' }]);
+  assert.equal(complete[0].params.initial_comment, 'see *notes*');
+  shared = true;
+  const done = await send({ channel: 'C1', text: 'see *notes*', file_ids: ['F0UPLOAD1'], client_msg_id: 'cm-files-1' });
+  assert.equal(done.status, 200);
+  const result = await done.json();
+  assert.equal(result.ts, '1789180000.000100');
+  assert.equal(result.message.body, 'see **notes**');
+  assert.equal(result.message.files[0].id, 'F0UPLOAD1');
+  assert.equal(f.calls.filter(c => c.method === 'files.completeUploadExternal').length, 1, 'the retry only looked again');
+
+  const noScope = fixture(t, { scopes: requestedScopes.filter(s => s !== 'files:write') });
+  const { credential: other } = await noScope.connect();
+  await assert.rejects(noScope.connector.upload(other, { channel: 'C1', name: 'a.txt', type: 'text/plain', bytes: Buffer.from('x') }), /missing_scopes/);
 });

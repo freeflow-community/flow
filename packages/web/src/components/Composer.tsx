@@ -2,12 +2,12 @@ import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO } from '@flow/shared';
 import { emojiMatches } from '@flow/shared';
-import { api, uploadFile } from '../lib/api';
+import { api } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
 import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';
 import { useLive, useSelection } from '../state';
 import { useChannelMembers, useChannels, useEditMessage, useMembers, useSendMessage } from '../hooks';
-import { useCapabilities } from '../lib/backend';
+import { useBackend, useCapabilities } from '../lib/backend';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileImage } from './FileImage';
 import EmojiPicker from './EmojiPicker';
@@ -31,7 +31,8 @@ export default function Composer({
    * body loads here, Enter saves via PATCH, Esc/Cancel restores the draft. */
   editingMessage?: MessageDTO | undefined;
 }) {
-  const { api, uploadFile, scopedStorageKey } = useBoundApi();
+  const { api, scopedStorageKey } = useBoundApi();
+  const backend = useBackend();
   const draftKey = scopedStorageKey(`draft:${channelId}:${threadRootId ?? ''}`);
   const sel = useSelection();
   const live = useLive();
@@ -262,10 +263,16 @@ export default function Composer({
 
   const pickFiles = async (files: FileList | File[] | null) => {
     if (!files || !sel.workspaceId) return;
+    // Paste and drop reach here without the attach button's gate.
+    if (caps.files.state === 'unavailable') {
+      setError(caps.files.reason ?? 'File uploads are not available here.');
+      return;
+    }
     for (const file of Array.from(files)) {
       setUploading((v) => v + 1);
       try {
-        const dto = await uploadFile(sel.workspaceId, file);
+        // Through the backend: a Slack workspace uploads to Slack, never a Flow server.
+        const dto = await backend.uploadFile({ workspaceId: sel.workspaceId, channelId }, file);
         setAttachments((prev) => (prev.length < 10 ? [...prev, dto] : prev));
       } catch (err) {
         setError(err instanceof Error ? err.message : 'upload failed');

@@ -17,13 +17,14 @@ export const emojiNamePattern = /^[a-z0-9_+'.-]{1,100}$/;
 // emoji images are public, so the token is never sent there.
 const SLACK_FILE_HOST = 'https://files.slack.com/';
 const SLACK_EMOJI_HOST = 'https://emoji.slack-edge.com/';
+const SLACK_UPLOAD_HOST = 'https://files.slack.com/upload/';
 const SLACK_AVATAR_HOST = 'https://avatars.slack-edge.com/';
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const terminal = new Map([['token_revoked', 'revoked'], ['invalid_auth', 'reauthorization_required'], ['account_inactive', 'account_deactivated'], ['token_expired', 'reauthorization_required']]);
 
 export class Connector {
-  constructor({ store, clientId, clientSecret, publicOrigin, clientOrigins, signingSecret, fetcher = fetch, now = Date.now }) {
-    Object.assign(this, { store, clientId, clientSecret, publicOrigin, clientOrigins, signingSecret, fetcher, now });
+  constructor({ store, clientId, clientSecret, publicOrigin, clientOrigins, signingSecret, fetcher = fetch, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+    Object.assign(this, { store, clientId, clientSecret, publicOrigin, clientOrigins, signingSecret, fetcher, now, sleep });
     this.locks = new Map();
     this.rateLimits = new Map();
     /** [grantId, fileId] -> Slack file object seen in a read for that grant, so a
@@ -42,7 +43,7 @@ export class Connector {
   }
   sweep() {
     const now = this.now();
-    for (const kind of ['oauth', 'handoff', 'session', 'event', 'stream', 'sent']) {
+    for (const kind of ['oauth', 'handoff', 'session', 'event', 'stream', 'sent', 'upload']) {
       for (const { id, value } of this.store.all(kind)) if (value.expiresAt <= now) this.store.remove(kind, id);
     }
     for (const [key, expiresAt] of this.rateLimits) if (expiresAt <= now) this.rateLimits.delete(key);
@@ -380,7 +381,8 @@ export class Connector {
    * against Slack before anything is posted again. A retry is therefore safe
    * for the client to issue with the same id, and never through another
    * transport. Slack has no idempotency key of its own. */
-  async send(credential, { channel, text, thread_ts: threadTs, client_msg_id: clientMsgId }) {
+  async send(credential, { channel, text, thread_ts: threadTs, client_msg_id: clientMsgId, file_ids: fileIds }) {
+    if (Array.isArray(fileIds) && fileIds.length) return this.sendFiles(credential, { channel, text, threadTs, clientMsgId, fileIds });
     if (!idPattern.test(channel ?? '') || typeof text !== 'string' || !text.trim() || text.length > 4000 || (threadTs != null && !isTs(threadTs))) throw new Fault('invalid_message');
     if (clientMsgId != null && !/^[A-Za-z0-9_-]{8,128}$/.test(clientMsgId)) throw new Fault('invalid_message');
     return this.withGrant(credential, async (grant, grantId) => {
@@ -417,6 +419,72 @@ export class Connector {
         throw new Fault('send_unknown', 504);
       }
     });
+  }
+  /** Step one of a Slack upload: reserve an upload URL for the grant, send the
+   * bytes there (outside the grant lock), and remember the pending file for
+   * the channel. Nothing is visible in Slack until send() completes it. */
+  async upload(credential, { channel, name, type, bytes }) {
+    if (!idPattern.test(channel ?? '') || typeof name !== 'string' || !name.trim() || name.length > 255 || !Buffer.isBuffer(bytes) || !bytes.length) throw new Fault('invalid_request');
+    if (bytes.length > MAX_FILE_BYTES) throw new Fault('file_too_large', 413);
+    const { url, file } = await this.withGrant(credential, async (grant, grantId) => {
+      this.requireCapability(grant, 'files');
+      const reserved = await this.call(grant, 'files.getUploadURLExternal', { filename: name, length: String(bytes.length) });
+      if (!fileIdPattern.test(reserved.file_id ?? '') || typeof reserved.upload_url !== 'string' || !reserved.upload_url.startsWith(SLACK_UPLOAD_HOST)) throw new Fault('slack_unavailable', 502);
+      const mimeType = typeof type === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(type) ? type : 'application/octet-stream';
+      const file = { id: reserved.file_id, workspaceId: grant.identity.teamId, userId: grant.identity.userId, name, mimeType, sizeBytes: bytes.length, width: null, height: null, hasThumb: false, createdAt: '' };
+      this.store.put('upload', hash(JSON.stringify([grantId, reserved.file_id])), { grantId, channel, file, expiresAt: this.now() + 3_600_000 });
+      return { url: reserved.upload_url, file };
+    });
+    let response;
+    try {
+      response = await this.fetcher(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000), headers: { 'content-type': 'application/octet-stream' }, body: bytes });
+    } catch { throw new Fault('slack_unavailable', 502); }
+    if (!response.ok) throw new Fault('slack_unavailable', 502);
+    return file;
+  }
+  /** Step two: share uploaded files into the channel as one message with the
+   * text. Slack's complete call returns no ts and shares a moment later, so
+   * the message is found through files.info; if it is not visible in time the
+   * send is `send_unknown`, and a retry with the same client id only looks
+   * again — it never completes the upload twice. */
+  async sendFiles(credential, { channel, text = '', threadTs, clientMsgId, fileIds }) {
+    if (!idPattern.test(channel ?? '') || typeof text !== 'string' || text.length > 4000 || (threadTs != null && !isTs(threadTs)) || fileIds.length > 10 || !fileIds.every(id => fileIdPattern.test(id))) throw new Fault('invalid_message');
+    if (clientMsgId != null && !/^[A-Za-z0-9_-]{8,128}$/.test(clientMsgId)) throw new Fault('invalid_message');
+    return this.withGrant(credential, async (grant, grantId) => {
+      const granted = grantedCapabilities(grant.scopes);
+      if (!granted.sendAsUser || !granted.files) throw new Fault('missing_scopes', 403);
+      const key = clientMsgId ? hash(JSON.stringify([grantId, 'sent', clientMsgId])) : null;
+      const prior = key ? this.store.get('sent', key) : null;
+      if (prior?.status === 'done' && prior.expiresAt > this.now()) return prior.result;
+      const remember = value => { if (key) this.store.put('sent', key, { ...value, grantId, channel, expiresAt: this.now() + 600_000 }); };
+      if (!(prior?.status === 'unknown' && prior.completed)) {
+        const pending = fileIds.map(id => this.store.get('upload', hash(JSON.stringify([grantId, id]))));
+        if (pending.some(p => !p || p.channel !== channel || p.expiresAt <= this.now())) throw new Fault('invalid_message');
+        const mrkdwn = text.trim() ? markdownToMrkdwn(text) : '';
+        await this.call(grant, 'files.completeUploadExternal', { files: JSON.stringify(pending.map(p => ({ id: p.file.id, title: p.file.name }))), channel_id: channel, ...(threadTs ? { thread_ts: threadTs } : {}), ...(mrkdwn ? { initial_comment: mrkdwn } : {}) });
+        for (const id of fileIds) this.store.remove('upload', hash(JSON.stringify([grantId, id])));
+        remember({ status: 'unknown', completed: true, startedAt: this.now() });
+      }
+      const found = await this.findShare(grant, grantId, { channel, threadTs, fileIds, text });
+      if (!found) throw new Fault('send_unknown', 504);
+      remember({ status: 'done', result: found });
+      return found;
+    });
+  }
+  async findShare(grant, grantId, { channel, threadTs, fileIds, text }) {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (attempt) await this.sleep(500);
+      const infos = [];
+      for (const id of fileIds) infos.push((await this.call(grant, 'files.info', { file: id })).file ?? {});
+      const shares = [...(infos[0].shares?.public?.[channel] ?? []), ...(infos[0].shares?.private?.[channel] ?? [])];
+      const share = shares.filter(s => isTs(s.ts) && (threadTs ? s.thread_ts === threadTs : true)).sort((a, b) => b.ts.localeCompare(a.ts))[0];
+      if (!share) continue;
+      const raw = { type: 'message', subtype: 'file_share', user: grant.identity.userId, ts: share.ts, text: text.trim() ? markdownToMrkdwn(text) : '', files: infos, ...(threadTs ? { thread_ts: threadTs } : {}) };
+      this.rememberFiles(grantId, [raw]);
+      const message = normalizeMessage(raw, { teamId: grant.identity.teamId, channelId: channel, readFiles: grantedCapabilities(grant.scopes).readFiles });
+      return { channel, ts: share.ts, userId: grant.identity.userId, message };
+    }
+    return null;
   }
   /** After an unknown outcome: does Slack already hold this message? One
    * history/replies call (the rare path pays one budget unit), matched on
