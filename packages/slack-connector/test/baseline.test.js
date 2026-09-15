@@ -7,7 +7,7 @@ import { randomBytes, createHmac } from 'node:crypto';
 import { Store } from '../src/store.js';
 import { Connector, hash, opaque } from '../src/connector.js';
 import { requestedScopes, requestedEvents, grantedCapabilities } from '../src/manifest.js';
-import { normalizeMessage, normalizeEvent, isDegraded, emojiFromName, tsToIso } from '../src/normalize.js';
+import { normalizeMessage, normalizeEvent, isDegraded, emojiFromName, expandBodyEmoji, tsToIso } from '../src/normalize.js';
 import { createConnectorServer } from '../src/http.js';
 
 const TS1 = '1789171841.148649', TS2 = '1789171890.271539', TS3 = '1789172009.709539';
@@ -405,4 +405,13 @@ test('custom emoji: Flow-shaped list with aliases resolved; images fetched witho
   assert.deepEqual(seen, [null]);
   assert.equal((await fetch(`${base}/v1/files/emoji:evil`, { headers: auth })).status, 404);
   assert.equal(f.calls.filter(c => c.method === 'emoji.list').length, 1, 'emoji.list is cached');
+});
+
+test('message text emoji shortcodes become unicode; custom names and code stay as text', () => {
+  assert.equal(expandBodyEmoji('Happy birthday :tada::balloon: :thankyou:'), 'Happy birthday 🎉🎈 :thankyou:');
+  assert.equal(expandBodyEmoji('hi :wave::skin-tone-3:'), 'hi 👋🏼');
+  assert.equal(expandBodyEmoji(':thankyou::skin-tone-2:'), ':thankyou:');
+  assert.equal(expandBodyEmoji('run `:tada:` at 10:30:45'), 'run `:tada:` at 10:30:45');
+  const m = normalizeMessage({ ts: '1789171841.148649', user: 'U1', text: 'Happy birthday <@U08JDGF1EAY> :partying_face:' }, { teamId: 'T1', channelId: 'C1' });
+  assert.equal(m.body, 'Happy birthday <@U08JDGF1EAY> 🥳');
 });

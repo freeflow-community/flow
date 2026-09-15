@@ -12,6 +12,7 @@ import {
   NavButton,
   nearestScrollDelta,
   nestChannels,
+  sortChannelsByName,
   openChannelFromSidebar,
   readCollapsedDocs,
   splitAgents,
@@ -44,6 +45,14 @@ const chan = (id: string, parentId: string | null = null): ChannelDTO => ({
 });
 
 const shape = (list: ChannelDTO[]) => nestChannels(list).map((r) => `${r.nested ? '  ' : ''}${r.channel.id}`);
+
+describe('sortChannelsByName', () => {
+  it('sorts A to Z ignoring case, whatever order the backend sent', () => {
+    const named = (id: string, name: string) => ({ ...chan(id), name });
+    const list = [named('1', 'social'), named('2', 'all-biztrip'), named('3', 'Eng'), named('4', 'accounting')];
+    expect(sortChannelsByName(list).map((c) => c.name)).toEqual(['accounting', 'all-biztrip', 'Eng', 'social']);
+  });
+});
 
 describe('nestChannels', () => {
   it('leaves a flat list alone', () => {
