@@ -26,22 +26,30 @@ export const InlineLinkContext = createContext<{ onPinLink?: (url: string) => vo
  * stays text, which is also what an unknown or deleted emoji shows. */
 export const CustomEmojiContext = createContext<Record<string, WorkspaceEmojiDTO>>({});
 
-const SHORTCODE_RE = /:[a-z0-9_+'-]+:/g;
+// A `:shortcode:`, or one unicode emoji: a pictograph or flag pair with its
+// variation selector, skin tone, keycap and ZWJ-joined parts.
+const EMOJI_RE = /(:[a-z0-9_+'-]+:)|((?:\p{Regional_Indicator}{2}|\p{Extended_Pictographic})(?:\uFE0F|\u20E3|\p{Emoji_Modifier}|\u200D(?:\p{Extended_Pictographic})\uFE0F?)*)/gu;
+
+// Emoji in text read at Slack's size: about 1.4x the letters around them,
+// without growing the line they sit on.
+const INLINE_EMOJI_SIZE = '1.4em';
 
 function InlineCustomEmoji({ code }: { code: string }) {
   const emoji = useContext(CustomEmojiContext)[code];
-  return emoji ? <CustomEmojiImage emoji={emoji} size={20} /> : <>{code}</>;
+  return emoji ? <CustomEmojiImage emoji={emoji} size={INLINE_EMOJI_SIZE} /> : <>{code}</>;
 }
 
-/** Plain text with any `:shortcode:` handed to InlineCustomEmoji. */
-function withCustomEmoji(text: string, keyBase: string): ReactNode[] {
-  if (!text.includes(':')) return [text];
+/** Plain text with emoji sized up and any `:shortcode:` handed to InlineCustomEmoji. */
+function withEmoji(text: string, keyBase: string): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let key = 0;
-  for (const m of text.matchAll(SHORTCODE_RE)) {
+  for (const m of text.matchAll(EMOJI_RE)) {
     if (m.index > last) out.push(text.slice(last, m.index));
-    out.push(<InlineCustomEmoji key={`${keyBase}e${key++}`} code={m[0]} />);
+    const k = `${keyBase}e${key++}`;
+    out.push(m[1] !== undefined
+      ? <InlineCustomEmoji key={k} code={m[1]} />
+      : <span key={k} data-emoji className="align-[-0.1em] text-[1.4em] leading-none">{m[2]}</span>);
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
@@ -103,7 +111,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
   let last = 0;
   let key = 0;
   for (const m of text.matchAll(INLINE_RE)) {
-    if (m.index > last) out.push(...withCustomEmoji(text.slice(last, m.index), `${keyBase}p${key}`));
+    if (m.index > last) out.push(...withEmoji(text.slice(last, m.index), `${keyBase}p${key}`));
     const k = `${keyBase}i${key++}`;
     if (m[1] !== undefined) {
       out.push(
@@ -133,7 +141,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
     }
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push(...withCustomEmoji(text.slice(last), `${keyBase}t`));
+  if (last < text.length) out.push(...withEmoji(text.slice(last), `${keyBase}t`));
   return out;
 }
 

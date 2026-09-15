@@ -190,6 +190,18 @@ describe('mermaid blocks (#229)', () => {
   });
 });
 
+describe('emoji in text', () => {
+  it('sizes unicode emoji up like Slack, keeping ZWJ sequences, tones and flags whole', () => {
+    const out = html('great 🙂 and 👍🏽 and 👩‍💻 and 🇺🇸!');
+    expect(out.match(/data-emoji/g)?.length).toBe(4);
+    expect(out).toContain('>👍🏽</span>');
+    expect(out).toContain('>👩‍💻</span>');
+    expect(out).toContain('>🇺🇸</span>');
+    expect(out).toContain('great ');
+    expect(html('no emoji here 10:30')).toBe('no emoji here 10:30');
+  });
+});
+
 describe('custom emoji in text', () => {
   it('draws a known :shortcode: inline and leaves unknown ones, times and code as text', () => {
     const party = { id: 'e1', workspaceId: 'w1', shortcode: 'partyparrot', emoji: ':partyparrot:', fileId: 'emoji:partyparrot', createdBy: '', createdAt: '' };
