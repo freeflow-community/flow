@@ -20,6 +20,7 @@ import {
   useMembers,
   useNameMap,
   useWorkspaces,
+  useSwitcherEntries,
 } from '../hooks';
 import {
   ChannelMenu,
@@ -35,6 +36,7 @@ import { AgentsModal } from './AgentsModal';
 import { EmojiModal } from './EmojiModal';
 import { InviteAgentModal } from './InviteAgentModal';
 import { openServerConnections } from './ServerConnections';
+import { openWorkspace, showsSource } from '../lib/workspaceSwitcher';
 import { FeaturesModal } from './FeaturesModal';
 import { useHoverTooltip } from './HoverTooltip';
 import StatusFooter from './StatusPicker';
@@ -225,6 +227,8 @@ export default function Sidebar() {
   const live = useLive();
   const qc = useQueryClient();
   const workspaces = useWorkspaces();
+  const switcher = useSwitcherEntries();
+  const labelSources = showsSource(switcher);
   const channels = useChannels(sel.workspaceId);
   const artifacts = useArtifacts(sel.workspaceId);
   const appArtifacts = useAppArtifacts(sel.workspaceId);
@@ -417,9 +421,20 @@ export default function Sidebar() {
         <WorkspaceTitle name={ws?.name} onClick={() => setWsMenuOpen((v) => !v)} />
         {wsMenuOpen && (
           <div className="absolute top-12 left-3 right-3 z-20 rounded-lg bg-white py-1 text-ink shadow-[0_12px_40px_rgba(20,8,40,.4)]">
-            {(workspaces.data ?? []).map((w) => (
-              <MenuItem key={w.id} onClick={() => { setWsMenuOpen(false); sel.selectWorkspace(w.id); }}>
-                {w.id === sel.workspaceId ? '✓ ' : ''}{w.name}
+            {/* Every connection's workspaces, Slack teams included; one on
+                another connection switches this window to it. */}
+            {switcher.map((w) => (
+              <MenuItem
+                key={`${w.connectionId}:${w.workspaceId}`}
+                testid={`menu-workspace-${w.workspaceId}`}
+                onClick={() => {
+                  setWsMenuOpen(false);
+                  if (w.foreground) sel.selectWorkspace(w.workspaceId);
+                  else openWorkspace(w.connectionId, w.workspaceId);
+                }}
+              >
+                {w.foreground && w.workspaceId === sel.workspaceId ? '✓ ' : ''}{w.name}
+                {labelSources && <span className="ml-1.5 text-xs text-faint">{w.source}</span>}
               </MenuItem>
             ))}
             <hr className="my-1 border-hairline3" />

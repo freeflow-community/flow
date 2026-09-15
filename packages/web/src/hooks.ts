@@ -36,7 +36,9 @@ import {
   removePendingMessage,
   type LocalMessage,
 } from './lib/messageCache';
-import { backgroundSync } from './lib/backgroundSync';
+import { backgroundSync, useConnectionSync } from './lib/backgroundSync';
+import { connectionManager } from './lib/connectionRuntime';
+import { switcherEntries, type SwitcherEntry } from './lib/workspaceSwitcher';
 import { useBackend, useIsFlow } from './lib/backend';
 import { useAuth, useRuntime } from './state';
 
@@ -45,6 +47,15 @@ import { useAuth, useRuntime } from './state';
 // provider path. Flow-only surfaces (artifacts, apps, invites, scheduling,
 // emoji, pins) keep their REST calls but are disabled on other providers, so
 // an unsupported feature never fires a request at the wrong backend.
+
+/** Every workspace this browser can open — this connection's live list plus
+ * the other Flow servers' and Slack teams' — for the switcher surfaces. */
+export function useSwitcherEntries(): SwitcherEntry[] {
+  const runtime = useRuntime();
+  const workspaces = useWorkspaces();
+  const syncStates = useConnectionSync();
+  return switcherEntries(connectionManager().state, runtime.connectionId, workspaces.data, syncStates);
+}
 
 export function useWorkspaces() {
   const runtime = useRuntime();
