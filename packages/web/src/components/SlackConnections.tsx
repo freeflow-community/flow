@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { connectionManager } from '../lib/connectionRuntime';
 import type { ServerConnection } from '../lib/connections';
 import { connectSlack, slackRequest, slackStatusMessage, type SlackConnection, type SlackHandoff } from '../lib/slackConnector';
+import { buttonDanger, buttonPrimary, buttonSecondary } from './buttonStyles';
 
 /** Slack consent plus the verify-before-adding step, shared by Connect Slack
  * and a team's Reauthorize. */
@@ -45,8 +46,8 @@ function useSlackAuthorize(onChange: () => void) {
       <p>Slack verified <strong>{pending.connection.teamName}</strong> ({pending.connection.identity.teamId}) as <strong>{pending.connection.userName}</strong> ({pending.connection.identity.userId}).</p>
       {pending.connection.status === 'missing_scopes' && <p className="mt-2 text-sm">{slackStatusMessage('missing_scopes')}</p>}
       <p className="my-2 text-sm">Granted: {pending.connection.scopes.join(', ') || 'identity only'}.</p>
-      <button disabled={busy} onClick={() => void confirm(pending)}>Add verified workspace</button>
-      <button className="ml-3" disabled={busy} onClick={() => void perform(cancelPending)}>Discard</button>
+      <button className={buttonPrimary} disabled={busy} onClick={() => void confirm(pending)}>Add verified workspace</button>
+      <button className={`ml-2 ${buttonSecondary}`} disabled={busy} onClick={() => void perform(cancelPending)}>Discard</button>
     </div>}
     {message && <p role="alert" className="mt-2 text-sm text-red-700">{message}</p>}
   </>;
@@ -94,18 +95,18 @@ export function SlackConnectionCard({ connection, onChange, onOpen }: {
     <p className="text-sm text-faint">{userName ?? connection.label}</p>
     {state && <p className="mt-1 text-sm" role="status">{state}</p>}
     <div className="mt-2">
-      <button disabled={auth.busy} data-testid={`open-slack-${connection.connectionId}`} onClick={() => onOpen(connection.connectionId, teamId)}>{binding?.name ?? teamName}</button>
+      <button className={buttonSecondary} disabled={auth.busy} data-testid={`open-slack-${connection.connectionId}`} onClick={() => onOpen(connection.connectionId, teamId)}>{binding?.name ?? teamName}</button>
     </div>
-    <div className="mt-3 flex flex-wrap gap-3 text-sm">
-      <button disabled={auth.busy} onClick={() => void auth.perform(async () => {
+    <div className="mt-3 flex flex-wrap gap-2 text-sm">
+      <button className={buttonSecondary} disabled={auth.busy} onClick={() => void auth.perform(async () => {
         const runtime = manager.runtime(connection.connectionId)!;
         try {
           const result = await slackRequest<SlackConnection>(runtime.origin, '/v1/connection', 'GET', undefined, runtime.getToken() ?? undefined);
           setState(`${result.teamName} · ${result.userName} · ${result.scopes.join(', ') || 'No optional permissions'}`);
         } catch (error) { setState((error as Error).message); }
       })}>Check authorization</button>
-      <button disabled={auth.busy || !!auth.pending} onClick={() => auth.authorize(connection.origin, teamId)}>Reauthorize</button>
-      <button disabled={auth.busy} onClick={() => void auth.perform(disconnect)}>Disconnect this client</button>
+      <button className={buttonSecondary} disabled={auth.busy || !!auth.pending} onClick={() => auth.authorize(connection.origin, teamId)}>Reauthorize</button>
+      <button className={buttonDanger} disabled={auth.busy} onClick={() => void auth.perform(disconnect)}>Disconnect this client</button>
     </div>
     {auth.view}
   </section>;
@@ -119,8 +120,8 @@ export default function ConnectSlack({ onChange }: { onChange(): void }) {
     <h3 className="font-semibold">Connect a Slack workspace</h3>
     <p className="my-2 text-sm text-faint">Sign in with your Slack account. Flow’s connector stores your authorization and handles Slack content on your behalf.</p>
     {configuredOrigin ? <p className="mb-2 break-all text-xs text-faint">Connector: {configuredOrigin}</p> : <p className="mb-2 text-sm">Slack connection is not configured on this Flow deployment. Ask your Flow administrator to enable it.</p>}
-    <button disabled={auth.busy || !configuredOrigin || !!auth.pending} onClick={() => auth.authorize(configuredOrigin)}>Connect Slack</button>
-    {auth.busy && <button className="ml-3" onClick={auth.cancel}>Cancel</button>}
+    <button className={buttonPrimary} disabled={auth.busy || !configuredOrigin || !!auth.pending} onClick={() => auth.authorize(configuredOrigin)}>Connect Slack</button>
+    {auth.busy && <button className={`ml-2 ${buttonSecondary}`} onClick={auth.cancel}>Cancel</button>}
     {auth.view}
   </section>;
 }
