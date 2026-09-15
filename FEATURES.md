@@ -3,6 +3,10 @@
 A plain-language log of user-visible features and improvements, newest first.
 For the full technical changelog see `CHANGELOG.md`.
 
+## 2026-09-14
+
+- **Dictate a message in your browser.** Tap the microphone beside Send, speak, then review or edit the text before you send it. Flow does not record your audio or use a paid speech API.
+
 ## 2026-08-25
 
 - **Owners and admins can make a message disappear completely.** The permanent

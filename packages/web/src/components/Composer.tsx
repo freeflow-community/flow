@@ -4,11 +4,25 @@ import { emojiMatches } from '@flow/shared';
 import { api, uploadFile } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
 import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';
+import { addDictationTranscript, exceedsMessageLength, type DictationDraft } from '../lib/dictationSession';
 import { useLive, useSelection } from '../state';
 import { useChannelMembers, useChannels, useMembers, useSendMessage } from '../hooks';
+import { useDictation } from '../hooks/useDictation';
 import { useQueryClient } from '@tanstack/react-query';
 import { AuthImg } from './Avatar';
 import EmojiPicker from './EmojiPicker';
+import DictationButton from './DictationButton';
+
+interface DictationTransaction extends DictationDraft {
+  expected: string;
+  caret: number;
+}
+
+interface DictationUndo {
+  base: string;
+  expected: string;
+  caret: number;
+}
 
 export default function Composer({
   channelId,
@@ -44,21 +58,36 @@ export default function Composer({
   const [uploading, setUploading] = useState(0);
   const [showEmoji, setShowEmoji] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dictationUndo, setDictationUndo] = useState<DictationUndo | null>(null);
   // Contenteditable editor (phase 3.5 item 2): the DOM is the source of truth
   // for the draft; `text` mirrors it (normalized to "\n" newlines) for the
   // autocomplete/send/disable logic below.
   const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const lastSelection = useRef<{ text: string; start: number; end: number } | null>(null);
+  const dictationTransaction = useRef<DictationTransaction | null>(null);
   const testPrefix = threadRootId ? 'thread-composer' : 'composer';
+  const editingId = editingMessage?.id ?? null;
+
+  /** Remember editor selection before a toolbar button takes focus. */
+  const rememberSelection = () => {
+    const el = editorRef.current;
+    if (!el) return;
+    const value = domToText(el);
+    const offsets = getSelectionOffsets(el);
+    if (offsets) lastSelection.current = { text: value, start: offsets[0], end: offsets[1] };
+  };
 
   /** After a native input event: mirror the DOM into state and restyle lines. */
   const syncFromDom = () => {
+    setDictationUndo(null);
     const el = editorRef.current;
     if (!el) return;
     const value = domToText(el);
     if (maybeAutoCloseFence(el, value)) return; // rebuilt via setDraft
     decorate(el, value);
     setText(value);
+    rememberSelection();
     if (value) live.sendTyping(channelId, threadRootId);
   };
 
@@ -152,19 +181,77 @@ export default function Composer({
     return null;
   };
 
-  /** Programmatic draft change: rebuild the editor DOM, park the caret, keep focus. */
-  const setDraft = (value: string, caret: number = value.length) => {
+  /** Programmatic draft change: rebuild the editor DOM and optionally keep its focus. */
+  const setDraft = (
+    value: string,
+    caret: number = value.length,
+    options: { focus?: boolean; preserveUndo?: boolean } = {},
+  ) => {
+    if (!options.preserveUndo) setDictationUndo(null);
     setText(value);
     const el = editorRef.current;
     if (!el) return;
     rebuild(el, value);
-    el.focus();
-    setCaretAt(el, Math.max(0, Math.min(caret, value.length)));
+    const nextCaret = Math.max(0, Math.min(caret, value.length));
+    if (options.focus !== false) el.focus();
+    setCaretAt(el, nextCaret);
+    lastSelection.current = { text: value, start: nextCaret, end: nextCaret };
   };
+
+  const dictation = useDictation({
+    ownerKey: `${sel.workspaceId ?? ''}|${channelId}|${threadRootId ?? ''}|${editingId ?? 'draft'}`,
+    onSessionStart: () => {
+      const el = editorRef.current;
+      if (!el) return 'Dictation could not find this message box. Try again.';
+      const base = domToText(el);
+      const saved = lastSelection.current;
+      const offsets = saved?.text === base
+        ? [saved.start, saved.end] as [number, number]
+        : getSelectionOffsets(el) ?? [base.length, base.length];
+      dictationTransaction.current = {
+        base,
+        start: Math.max(0, Math.min(offsets[0], base.length)),
+        end: Math.max(0, Math.min(offsets[1], base.length)),
+        dictated: '',
+        expected: base,
+        caret: offsets[1],
+      };
+      setShowEmoji(false);
+      setSuppressedToken(null);
+      setDictationUndo(null);
+      return null;
+    },
+    onFinalTranscript: (transcript) => {
+      const transaction = dictationTransaction.current;
+      const el = editorRef.current;
+      if (!transaction || !el) return 'Dictation ended because this message box changed.';
+      if (domToText(el) !== transaction.expected) return 'Dictation ended because this draft changed.';
+      const next = addDictationTranscript(transaction, transcript);
+      if (exceedsMessageLength(next.text)) return 'Dictation reached the 12,000-character message limit.';
+      dictationTransaction.current = { ...next, expected: next.text };
+      setDraft(next.text, next.caret, { focus: false, preserveUndo: true });
+      if (next.text) live.sendTyping(channelId, threadRootId);
+      return null;
+    },
+    onSessionEnd: (reason) => {
+      const transaction = dictationTransaction.current;
+      dictationTransaction.current = null;
+      if (!transaction) return;
+      const el = editorRef.current;
+      if (transaction.dictated && el && domToText(el) === transaction.expected) {
+        setDictationUndo({ base: transaction.base, expected: transaction.expected, caret: transaction.start });
+      }
+      // Do not focus a composer that is being replaced, hidden, or unmounted.
+      if ((reason === 'stopped' || reason === 'ended' || reason === 'cancelled') && el) {
+        el.focus();
+        setCaretAt(el, transaction.caret);
+        lastSelection.current = { text: transaction.expected, start: transaction.caret, end: transaction.caret };
+      }
+    },
+  });
 
   // Editing reuses this prompt editor (ui_nits). Entering edit mode stashes the
   // in-progress draft and loads the message body; leaving it restores the draft.
-  const editingId = editingMessage?.id ?? null;
   const stashedDraft = useRef('');
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -182,6 +269,7 @@ export default function Composer({
 
   /** Splice text at the current selection (Shift+Enter newline, sanitized text paste). */
   const insertAtCaret = (insert: string) => {
+    if (dictation.isActive) return;
     const el = editorRef.current;
     if (!el) return;
     const value = domToText(el);
@@ -199,12 +287,14 @@ export default function Composer({
   const selected = Math.min(selIndex, Math.max(0, suggestions.length - 1));
 
   const applySuggestion = (insert: string) => {
+    if (dictation.isActive) return;
     if (!token) return;
     setDraft(text.slice(0, text.length - token.length) + insert);
     setSelIndex(0);
   };
 
   const doSend = (override?: string) => {
+    if (dictation.isActive) return;
     const raw = (override ?? text).trim();
     // Editing an existing message: PATCH in place (body is already in stored
     // token form), then leave edit mode — the effect restores the stashed draft.
@@ -239,7 +329,7 @@ export default function Composer({
   };
 
   const pickFiles = async (files: FileList | File[] | null) => {
-    if (!files || !sel.workspaceId) return;
+    if (dictation.isActive || !files || !sel.workspaceId) return;
     for (const file of Array.from(files)) {
       setUploading((v) => v + 1);
       try {
@@ -258,6 +348,10 @@ export default function Composer({
   // Everything else is spliced in as text/plain — no rich HTML can leak into
   // the editor even if "plaintext-only" is unsupported.
   const onPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (dictation.isActive) {
+      e.preventDefault();
+      return;
+    }
     const images = Array.from(e.clipboardData.items)
       .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
       .map((it) => it.getAsFile())
@@ -276,6 +370,15 @@ export default function Composer({
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.nativeEvent.isComposing) return;
+    if (dictation.isActive) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        dictation.cancel();
+      } else if (e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Delete' || (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey)) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (suggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -345,12 +448,31 @@ export default function Composer({
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
-    if (e.dataTransfer.files.length > 0) void pickFiles(e.dataTransfer.files);
+    if (!dictation.isActive && e.dataTransfer.files.length > 0) void pickFiles(e.dataTransfer.files);
   };
+
+  const undoDictation = () => {
+    const el = editorRef.current;
+    if (!dictationUndo || !el || domToText(el) !== dictationUndo.expected) {
+      setDictationUndo(null);
+      return;
+    }
+    setDraft(dictationUndo.base, dictationUndo.caret);
+  };
+
+  const dictationStatus = !dictation.supported
+    ? 'Dictation is unavailable in this browser.'
+    : dictation.state === 'starting'
+      ? 'Starting dictation…'
+      : dictation.state === 'listening'
+        ? 'Listening…'
+        : dictation.state === 'stopping'
+          ? 'Finishing dictation…'
+          : null;
 
   return (
     <div className="relative px-[22px] pb-[22px]">
-      {suggestions.length > 0 && (
+      {!dictation.isActive && suggestions.length > 0 && (
         <div className="mc-scroll absolute bottom-full left-[22px] z-20 mb-1 flex max-h-56 min-w-48 flex-col overflow-y-auto rounded-lg border border-hairline bg-white p-1 shadow-lg">
           {suggestions.map((s, i) => (
             <button
@@ -472,6 +594,7 @@ export default function Composer({
       )}
 
       {error && <p className="mb-1 text-xs text-red-600">{error}</p>}
+      {dictation.error && <p data-testid={`${testPrefix}-dictation-error`} className="mb-1 text-xs text-red-600">{dictation.error}</p>}
 
       <div
         className={`rounded-xl border bg-white px-3.5 py-3 focus-within:border-accent/40 ${dragOver ? 'border-accent' : 'border-hairline2'}`}
@@ -481,6 +604,7 @@ export default function Composer({
         // Clicking anywhere on the card (padding, whitespace) focuses the
         // input; buttons and the editor keep their own click handling.
         onClick={(e) => {
+          if (dictation.isActive) return;
           if ((e.target as HTMLElement).closest('button, [contenteditable]')) return;
           const el = editorRef.current;
           if (el && document.activeElement !== el) {
@@ -491,23 +615,32 @@ export default function Composer({
       >
         <div
           ref={editorRef}
-          contentEditable="plaintext-only"
+          contentEditable={dictation.isActive ? false : 'plaintext-only'}
           suppressContentEditableWarning
           role="textbox"
           aria-multiline="true"
+          aria-readonly={dictation.isActive}
           aria-label={placeholder}
           data-testid={`${testPrefix}-input`}
           data-placeholder={placeholder}
           className="mc-composer mc-scroll max-h-40 w-full overflow-y-auto text-sm outline-none"
           onInput={syncFromDom}
+          onSelect={rememberSelection}
           onKeyDown={onKeyDown}
+          onKeyUp={rememberSelection}
           onPaste={onPaste}
         />
+        {dictation.interimText && (
+          <p data-testid={`${testPrefix}-dictation-interim`} className="mt-1 text-xs text-muted">
+            Hearing: {dictation.interimText}
+          </p>
+        )}
         <div className="mt-1.5 flex items-center gap-3 text-[15px] text-faint">
           <button
             data-testid={`${testPrefix}-attach`}
-            className="hover:text-ink"
+            className="hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
             title="Attach files"
+            disabled={dictation.isActive}
             onClick={() => fileRef.current?.click()}
           >
             ＋
@@ -515,29 +648,59 @@ export default function Composer({
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => void pickFiles(e.target.files)} />
           <button
             data-testid={`${testPrefix}-emoji`}
-            className="hover:text-ink"
+            className="hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
             title="Emoji"
+            disabled={dictation.isActive}
             onClick={() => setShowEmoji((v) => !v)}
           >
             😊
           </button>
           <button
-            className="hover:text-ink"
+            className="hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
             title="Mention someone"
+            disabled={dictation.isActive}
             onClick={() => setDraft(text + '@')}
           >
             @
           </button>
-          <button
-            data-testid={`${testPrefix}-send`}
-            className="ml-auto flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
-            title={editingId ? 'Save edit' : 'Send'}
-            disabled={editingId ? !text.trim() : (!text.trim() && attachments.length === 0) || uploading > 0}
-            onClick={() => doSend()}
-          >
-            {editingId ? '✓' : '➤'}
-          </button>
+          <span className="ml-auto flex items-center gap-1">
+            <DictationButton
+              supported={dictation.supported}
+              state={dictation.state}
+              testId={`${testPrefix}-dictate`}
+              onPointerDown={rememberSelection}
+              onClick={() => {
+                if (dictation.isActive) dictation.stop();
+                else dictation.start();
+              }}
+            />
+            <button
+              data-testid={`${testPrefix}-send`}
+              className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-send text-white disabled:opacity-40"
+              title={editingId ? 'Save edit' : 'Send'}
+              disabled={dictation.isActive || (editingId ? !text.trim() : (!text.trim() && attachments.length === 0) || uploading > 0)}
+              onClick={() => doSend()}
+            >
+              {editingId ? '✓' : '➤'}
+            </button>
+          </span>
         </div>
+        {(dictationStatus || dictation.isActive) && (
+          <p data-testid={`${testPrefix}-dictation-status`} role="status" aria-live="polite" className="mt-1 text-xs text-muted">
+            {dictationStatus}
+            {dictation.isActive && ' Your browser handles speech recognition and may send audio to its speech service.'}
+          </p>
+        )}
+        {dictationUndo && !dictation.isActive && (
+          <button
+            type="button"
+            data-testid={`${testPrefix}-dictation-undo`}
+            className="mt-1 text-xs font-semibold text-accent-soft hover:underline"
+            onClick={undoDictation}
+          >
+            Undo dictation
+          </button>
+        )}
       </div>
 
       {showEmoji && (

@@ -1,5 +1,11 @@
 # Decision log
 
+## 2026-09-14 — Composer dictation uses the browser recognizer (operator)
+
+- The web composer uses the browser's built-in SpeechRecognition API with no Flow speech endpoint, API key, paid SDK, recording storage, or automatic message send.
+- Browser-managed recognition can use the browser vendor's speech service. The composer names that fact while listening rather than claiming all transcription is on-device.
+- A dictation session locks the current draft, commits only finalized phrases at its saved selection, and owns one microphone recognizer per browser document. Navigation, hidden pages, and composer changes cancel the session so late results cannot reach another chat.
+
 ## 2026-08-25 — Permanent message deletion is an owner/admin moderation power (operator)
 
 - Workspace `owner` and `admin` roles may permanently delete any non-system
