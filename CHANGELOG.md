@@ -21,9 +21,6 @@ This file keeps two things:
   and chooser list Slack teams and other servers' workspaces, and Workspaces &
   servers puts Slack teams in the server list; the macOS and iOS switchers were
   not changed.
-- **The channel browser is web only** (#588). macOS and iOS still list unjoined
-  channels inline and cannot open an archived channel; the server side
-  (`includeArchived`, `memberCount`) is ready for them.
 - **The channel Docs list is searchable and collapsible on web only** (#574).
   macOS and iOS list a channel's artifacts as a plain run of rows with no
   group header, filter or fold. Closing it is the same `DocsGroup` shape in
