@@ -5,7 +5,7 @@
 //
 // Identity rules: ids are provider strings, a message id is the exact `ts`,
 // `thread_ts` is preserved, no float conversion anywhere.
-import { mrkdwnToMarkdown, EMOJI_SHORTCODES } from '@flow/shared';
+import { mrkdwnToMarkdown, expandShortcodes, EMOJI_SHORTCODES } from '@flow/shared';
 
 export const TS_RE = /^\d{9,11}\.\d{6}$/;
 export const isTs = value => typeof value === 'string' && TS_RE.test(value);
@@ -26,6 +26,19 @@ export function openUrl(teamId, channelId, ts) {
 export function emojiFromName(name) {
   const bare = String(name ?? '').split('::')[0];
   return EMOJI_SHORTCODES[bare] ?? `:${bare}:`;
+}
+
+const SKIN_TONES = { 2: '\u{1F3FB}', 3: '\u{1F3FC}', 4: '\u{1F3FD}', 5: '\u{1F3FE}', 6: '\u{1F3FF}' };
+const CODE_RE = /(```[\s\S]*?```|`[^`\n]+`)/;
+
+/** Slack writes emoji in message text as `:name:` (`:wave::skin-tone-3:` for
+ * a tone). Known names become unicode outside code; unknown (custom) names
+ * stay as text. A tone follows its emoji as a modifier, or is dropped. */
+export function expandBodyEmoji(text) {
+  if (!text.includes(':')) return text;
+  return text.split(CODE_RE).map((part, i) => i % 2 === 1 ? part : expandShortcodes(part)
+    .replace(/(\p{Extended_Pictographic}\uFE0F?):skin-tone-([2-6]):/gu, (_, emoji, tone) => emoji.replace(/\uFE0F$/, '') + SKIN_TONES[tone])
+    .replace(/:skin-tone-[2-6]:/g, '')).join('');
 }
 
 const KNOWN_BLOCKS = new Set(['rich_text']);
@@ -73,7 +86,7 @@ export function normalizeMessage(message, { teamId, channelId }) {
   return {
     id: ts, channelId: channel, userId: String(message.user ?? message.bot_id ?? ''), threadRootId: threadTs,
     clientMsgId: typeof message.client_msg_id === 'string' ? message.client_msg_id : '',
-    body: mrkdwnToMarkdown(String(message.text ?? '')), createdAt: tsToIso(ts),
+    body: expandBodyEmoji(mrkdwnToMarkdown(String(message.text ?? ''))), createdAt: tsToIso(ts),
     editedAt: message.edited?.ts ? tsToIso(message.edited.ts) : null, deletedAt: null, pinnedAt: null, pinnedBy: null,
     replyCount: Number(message.reply_count ?? 0) || 0, lastReplyAt: isTs(message.latest_reply) ? tsToIso(message.latest_reply) : null,
     systemKind, scheduled: false, replyParticipantUserIds: (message.reply_users ?? []).slice(0, 4).map(String),

@@ -58,6 +58,11 @@ import StatusFooter from './StatusPicker';
  * but one arriving anyway (an old row, a future rule change) renders at top
  * level rather than being indented twice or — worse — silently dropped.
  */
+/** Channels A→Z by name, ignoring case (matches the native `COLLATE NOCASE`). */
+export function sortChannelsByName(list: ChannelDTO[]): ChannelDTO[] {
+  return [...list].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' }));
+}
+
 export function nestChannels(list: ChannelDTO[]): { channel: ChannelDTO; nested: boolean }[] {
   const byId = new Map(list.map((c) => [c.id, c]));
   const parentOf = (c: ChannelDTO) => (c.parentId ? byId.get(c.parentId) : undefined);
@@ -358,8 +363,10 @@ export default function Sidebar() {
       dmChildren.set(c.parentId, [...(dmChildren.get(c.parentId) ?? []), c]);
     }
   }
+  // Sorted here, not trusted from the backend: Slack returns its own order (the
+  // native sidebars sort by name in their local query too).
   const joined = nestChannels(
-    all.filter((c) => c.isMember && c.kind === 'standard' && !(c.parentId && dmIds.has(c.parentId))),
+    sortChannelsByName(all.filter((c) => c.isMember && c.kind === 'standard' && !(c.parentId && dmIds.has(c.parentId)))),
   );
   // The self-DM ("<you> (you)") is a personal scratchpad — it never carries an
   // unread badge (ui_nits): you can't have unread messages from yourself.

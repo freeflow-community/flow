@@ -74,6 +74,12 @@ describe('inline markdown', () => {
     expect(withPill).toContain('@Ann');
     expect(withPill).toContain('ok</code>');
   });
+
+  it('renders a Slack user id mention as a name pill', () => {
+    const slack = renderToStaticMarkup(<>{renderBody('Happy birthday <@U08JDGF1EAY> !', { U08JDGF1EAY: 'Dana' }, undefined)}</>);
+    expect(slack).toContain('@Dana');
+    expect(slack).not.toContain('U08JDGF1EAY&gt;');
+  });
 });
 
 describe('block markdown', () => {
