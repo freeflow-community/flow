@@ -100,6 +100,8 @@ export function createConnectorServer(connector) {
       const query = new URL(req.url, connector.publicOrigin).searchParams;
       if (path === '/v1/workspace' && req.method === 'GET') { respond(200, await connector.workspace(credential)); return; }
       if (path === '/v1/conversations' && req.method === 'GET') { respond(200, { conversations: await connector.conversations(credential) }); return; }
+      const userRoute = req.method === 'GET' && /^\/v1\/users\/([A-Z0-9]+)$/.exec(path);
+      if (userRoute) { respond(200, await connector.user(credential, userRoute[1])); return; }
       if (path === '/v1/members' && req.method === 'GET') { respond(200, { members: await connector.members(credential) }); return; }
       if (path === '/v1/history' && req.method === 'GET') { respond(200, await connector.history(credential, { channel: query.get('channel'), cursor: query.get('cursor'), limit: query.get('limit') })); return; }
       if (path === '/v1/replies' && req.method === 'GET') { respond(200, await connector.replies(credential, { channel: query.get('channel'), ts: query.get('ts'), cursor: query.get('cursor') })); return; }

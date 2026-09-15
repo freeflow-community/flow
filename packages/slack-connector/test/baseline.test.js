@@ -604,3 +604,22 @@ test('Block Kit layout and legacy attachments render as markdown instead of the 
   assert.equal(messageMarkdown(mixed), 'deploy done\n\nDetails\n> **prod** ok');
   assert.equal(messageMarkdown(slackMessage(TS1)), 'hello **world** & <@U2>');
 });
+
+test('profile card: /v1/users/:id answers a person from users.info and an app from the remembered bot', async t => {
+  const f = fixture(t, { fetcher: async (method, params) => {
+    if (method === 'users.info') return params.user === 'U2' ? { ok: true, user: { id: 'U2', name: 'bob', tz: 'America/Chicago', profile: { real_name: 'Bob B', title: 'Engineer', status_text: 'Out sick', status_emoji: ':face_with_thermometer:', image_72: 'https://avatars.slack-edge.com/bob_72.png' } } } : { ok: false, error: 'user_not_found' };
+    if (method === 'conversations.history') return { ok: true, messages: [{ type: 'message', bot_id: 'B0SENTINEL', ts: TS1, text: 'x', bot_profile: { name: 'Sentinel', icons: { image_72: 'https://avatars.slack-edge.com/s.png' } } }], has_more: false };
+  } });
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const { credential } = await f.connect();
+  const get = path => fetch(`${base}${path}`, { headers: { authorization: `Bearer ${credential}`, origin: 'https://flow.test' } });
+  const bob = await (await get('/v1/users/U2')).json();
+  assert.deepEqual([bob.id, bob.displayName, bob.timezone, bob.title, bob.statusText, bob.statusEmoji, bob.website, bob.isAgent], ['U2', 'Bob B', 'America/Chicago', 'Engineer', 'Out sick', '🤒', '', false]);
+  assert.equal((await get('/v1/users/U9')).status, 404);
+  assert.equal((await get('/v1/users/B0SENTINEL')).status, 404, 'an app not seen yet');
+  await f.connector.history(credential, { channel: 'C1', limit: 15 });
+  assert.equal((await (await get('/v1/users/B0SENTINEL')).json()).displayName, 'Sentinel');
+});

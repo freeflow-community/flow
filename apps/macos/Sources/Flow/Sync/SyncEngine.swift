@@ -1598,6 +1598,17 @@ actor SyncEngine {
 
     /// Upsert a DM with the given other members (server dedupes by member set).
     func createDm(workspaceId: String, userIds: [String]) async throws -> Channel {
+        // A provider workspace opens the DM that already exists; Flow cannot
+        // start a new conversation there (no Slack permission to open one).
+        if backend != nil {
+            let me = currentUser?.id
+            let wanted = Set(userIds + [me].compactMap { $0 })
+            let existing = try? await db.reader.read { db in
+                try Channel.filter(Column("workspaceId") == workspaceId && Column("kind") == "dm").fetchAll(db)
+            }.first { Set(($0.memberIds ?? []) + [me].compactMap { $0 }) == wanted }
+            if let existing { return existing }
+            throw BackendError(code: .unsupported, message: "Start this conversation in Slack; Flow can open it once it exists.")
+        }
         let ch: Channel = try await api.post(
             "/v1/workspaces/\(workspaceId)/dms",
             body: CreateDmBody(userIds: userIds)
@@ -1826,7 +1837,7 @@ actor SyncEngine {
     }
 
     func fetchUser(_ userId: String) async throws -> User {
-        let u: User = try await api.get("/v1/users/\(userId)")
+        let u: User = if let backend { try await backend.fetchUser(id: userId) } else { try await api.get("/v1/users/\(userId)") }
         try? await db.writer.write { db in try u.save(db) }
         return u
     }

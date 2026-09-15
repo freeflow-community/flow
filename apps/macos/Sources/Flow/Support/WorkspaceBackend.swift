@@ -197,6 +197,8 @@ protocol WorkspaceBackend: AnyObject, Sendable {
     /// fetched from this provider with its own credential. Image loaders and
     /// downloads for a provider workspace go through here, never the Flow API.
     func fileData(path: String) async throws -> Data
+    /// One person's (or app's) profile for the profile card, in Flow's user shape.
+    func fetchUser(id: String) async throws -> User
 
     /// The normalized live stream. Finishes when the backend is torn down.
     func events() -> AsyncStream<BackendEvent>

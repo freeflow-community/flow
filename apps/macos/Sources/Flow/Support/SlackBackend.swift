@@ -213,6 +213,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         var user: User { User(id: userId, email: email, displayName: displayName, avatarUrl: avatarUrl, statusEmoji: statusEmoji, statusText: statusText, title: title, isAgent: isAgent, isBot: isBot, sponsorId: sponsorId, privacyMode: privacyMode) }
     }
     private struct Members: Decodable { let members: [MemberRow] }
+    func fetchUser(id: String) async throws -> User {
+        try await request("GET", "v1/users/\(encode(id))", as: User.self)
+    }
     func listMembers(workspaceId: String) async throws -> [User] {
         let users = try await request("GET", "v1/members", as: Members.self).members.map(\.user)
         let byId = Dictionary(users.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

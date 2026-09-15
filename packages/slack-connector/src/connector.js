@@ -87,7 +87,7 @@ export class Connector {
     if (!response.ok) throw new Fault('slack_unavailable', 502);
     const result = await response.json();
     if (!result.ok) {
-      const fault = new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required', bad_client_secret: 'connector_misconfigured', invalid_client_id: 'connector_misconfigured', channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', file_not_found: 'not_found', file_deleted: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', msg_too_long: 'invalid_message' }[result.error]) ?? 'slack_request_failed', { not_found: 404, forbidden: 403, missing_scopes: 403 }[terminal.get(result.error) ?? ({ channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', file_not_found: 'not_found', file_deleted: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', missing_scope: 'missing_scopes' }[result.error])] ?? 400);
+      const fault = new Fault(terminal.get(result.error) ?? ({ missing_scope: 'missing_scopes', invalid_refresh_token: 'reauthorization_required', bad_client_secret: 'connector_misconfigured', invalid_client_id: 'connector_misconfigured', channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', file_not_found: 'not_found', user_not_found: 'not_found', file_deleted: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', msg_too_long: 'invalid_message' }[result.error]) ?? 'slack_request_failed', { not_found: 404, forbidden: 403, missing_scopes: 403 }[terminal.get(result.error) ?? ({ channel_not_found: 'not_found', message_not_found: 'not_found', thread_not_found: 'not_found', file_not_found: 'not_found', user_not_found: 'not_found', file_deleted: 'not_found', cant_update_message: 'forbidden', cant_delete_message: 'forbidden', not_in_channel: 'forbidden', is_archived: 'forbidden', missing_scope: 'missing_scopes' }[result.error])] ?? 400);
       // The Slack error code stays on the fault for callers that treat some
       // codes as benign (already_reacted); it is never serialized to clients.
       fault.slackError = result.error;
@@ -175,6 +175,30 @@ export class Connector {
       const rows = await this.paged(grant, 'users.list', { limit: '200' }, r => r.members);
       const people = rows.map(normalizeMember).filter(m => !m.deleted).map(({ deleted, ...m }) => m);
       return [...people, ...(this.bots.get(grant.identity.teamId)?.values() ?? [])];
+    });
+  }
+  /** One person or app as Flow's UserDTO (the profile card): users.info for a
+   * person (time zone, title, status), the remembered bot row for an app. */
+  async user(credential, userId) {
+    if (!/^[UWB][A-Z0-9]{1,20}$/.test(userId ?? '')) throw new Fault('invalid_request');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'readConversations');
+      let member;
+      let timezone = 'UTC';
+      if (userId.startsWith('B')) {
+        member = this.bots.get(grant.identity.teamId)?.get(userId);
+        if (!member) throw new Fault('not_found', 404);
+      } else {
+        const info = (await this.call(grant, 'users.info', { user: userId })).user;
+        if (!info) throw new Fault('not_found', 404);
+        member = normalizeMember(info);
+        if (typeof info.tz === 'string' && info.tz) timezone = info.tz;
+      }
+      return {
+        id: member.userId, email: member.email, displayName: member.displayName, avatarUrl: member.avatarUrl, timezone,
+        statusEmoji: member.statusEmoji, statusText: member.statusText, website: '', bio: '', title: member.title, isAgent: false,
+        sponsorId: null, notificationPrefs: {}, statusSuppressAlerts: false, privacyMode: false, createdAt: '',
+      };
     });
   }
   static cursorOk(cursor) { return cursor == null || cursor === '' || (typeof cursor === 'string' && /^[A-Za-z0-9=_-]{1,512}$/.test(cursor)); }
