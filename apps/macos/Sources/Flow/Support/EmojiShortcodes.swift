@@ -348,6 +348,12 @@ enum EmojiShortcodes {
         ("arrow_backward", "◀️"),
         ("watch", "⌚"),
         ("stopwatch", "⏱️"),
+        ("face_with_thermometer", "🤒"),
+        ("spiral_calendar_pad", "🗓️"),
+        ("knife_fork_plate", "🍽️"),
+        ("no_entry_sign", "🚫"),
+        ("house_with_garden", "🏡"),
+        ("bus", "🚌"),
     ]
     static let byName: [String: String] = Dictionary(ordered.map { ($0.name, $0.emoji) }, uniquingKeysWith: { _, last in last })
     static let byEmoji: [String: String] = Dictionary(ordered.map { ($0.emoji, $0.name) }, uniquingKeysWith: { _, last in last })

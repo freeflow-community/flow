@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
-import { markdownToMrkdwn } from '@flow/shared';
+import { markdownToMrkdwn, EMOJI_SHORTCODES } from '@flow/shared';
 import { requestedScopes, grantedCapabilities } from './manifest.js';
 import { isTs, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
 
@@ -17,6 +17,7 @@ export const emojiNamePattern = /^[a-z0-9_+'.-]{1,100}$/;
 // emoji images are public, so the token is never sent there.
 const SLACK_FILE_HOST = 'https://files.slack.com/';
 const SLACK_EMOJI_HOST = 'https://emoji.slack-edge.com/';
+const SLACK_AVATAR_HOST = 'https://avatars.slack-edge.com/';
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const terminal = new Map([['token_revoked', 'revoked'], ['invalid_auth', 'reauthorization_required'], ['account_inactive', 'account_deactivated'], ['token_expired', 'reauthorization_required']]);
 
@@ -30,6 +31,8 @@ export class Connector {
     this.fileRefs = new Map();
     /** teamId -> { names: Map(name -> image url), expiresAt } from emoji.list. */
     this.emojiCache = new Map();
+    /** teamId -> { url, expiresAt } from team.info. */
+    this.teamIcons = new Map();
   }
   async locked(key, fn) {
     const previous = this.locks.get(key) ?? Promise.resolve();
@@ -110,7 +113,34 @@ export class Connector {
     return rows;
   }
   async workspace(credential) {
-    return this.withGrant(credential, async grant => normalizeWorkspace(grant));
+    return this.withGrant(credential, async grant => {
+      const icon = grantedCapabilities(grant.scopes).teamIcon ? await this.teamIconUrl(grant).catch(() => null) : null;
+      return normalizeWorkspace(grant, { hasIcon: Boolean(icon) });
+    });
+  }
+  /** The team's uploaded icon from team.info, cached an hour; null when the
+   * team still has Slack's generated default. */
+  async teamIconUrl(grant) {
+    const teamId = grant.identity.teamId;
+    const cached = this.teamIcons.get(teamId);
+    if (cached && cached.expiresAt > this.now()) return cached.url;
+    const icon = (await this.call(grant, 'team.info', {})).team?.icon ?? {};
+    const candidate = icon.image_132 ?? icon.image_88 ?? icon.image_68 ?? null;
+    const url = !icon.image_default && typeof candidate === 'string' && candidate.startsWith(SLACK_AVATAR_HOST) ? candidate : null;
+    this.teamIcons.set(teamId, { url, expiresAt: this.now() + 3_600_000 });
+    return url;
+  }
+  async teamIcon(credential, teamId) {
+    const url = await this.withGrant(credential, async grant => {
+      if (teamId !== grant.identity.teamId) throw new Fault('not_found', 404);
+      this.requireCapability(grant, 'teamIcon');
+      const found = await this.teamIconUrl(grant);
+      if (!found) throw new Fault('not_found', 404);
+      return found;
+    });
+    const result = await this.download(url, null);
+    if (!result.contentType.startsWith('image/')) throw new Fault('not_found', 404);
+    return { ...result, name: 'team-icon' };
   }
   async conversations(credential) {
     return this.withGrant(credential, async grant => {
@@ -402,6 +432,25 @@ export class Connector {
     const message = normalizeMessage({ ...match, channel }, { teamId: grant.identity.teamId, channelId: channel });
     return { channel, ts: match.ts, userId: match.user, message, reconciled: true };
   }
+  /** Set (or clear, with both empty) the user's own Slack status. Flow's picker
+   * sends unicode; Slack wants a shortcode, so an emoji Slack has no name for
+   * in the shared table is refused rather than sent as text. Returns the user
+   * in the shape Flow's PATCH /v1/me returns. */
+  async setStatus(credential, { statusEmoji = '', statusText = '' }) {
+    if (typeof statusEmoji !== 'string' || typeof statusText !== 'string' || statusText.length > 100 || statusEmoji.length > 102) throw new Fault('invalid_request');
+    const name = !statusEmoji ? '' : /^:[a-z0-9_+'.-]{1,100}:$/.test(statusEmoji) ? statusEmoji : emojiNameFor(statusEmoji);
+    if (name === null) throw new Fault('unsupported_emoji');
+    return this.withGrant(credential, async grant => {
+      this.requireCapability(grant, 'setStatus');
+      const result = await this.call(grant, 'users.profile.set', { profile: JSON.stringify({ status_text: statusText, status_emoji: name, status_expiration: 0 }) });
+      const member = normalizeMember({ id: grant.identity.userId, name: grant.userName, profile: result.profile ?? {} });
+      return {
+        id: member.userId, email: member.email, displayName: member.displayName, avatarUrl: member.avatarUrl, timezone: 'UTC',
+        statusEmoji: member.statusEmoji, statusText: member.statusText, website: '', bio: '', title: member.title, isAgent: false,
+        sponsorId: null, notificationPrefs: {}, statusSuppressAlerts: false, privacyMode: false, createdAt: '',
+      };
+    });
+  }
   // ---- file bytes and custom emoji ---------------------------------------------
   rememberFiles(grantId, messages) {
     for (const message of messages) {
@@ -523,12 +572,15 @@ export class Connector {
     } catch { this.driftCount = (this.driftCount ?? 0) + 1; return { ok: true }; }
     if (!normalized) return { ok: true };
     const source = envelope.event?.subtype === 'message_changed' ? envelope.event.message : envelope.event;
+    // A profile is visible to everyone on the team, and Slack names only one
+    // authorization per event, so a member update goes to every grant there.
+    const teamWide = normalized.type === 'member.updated';
     const authorized = new Set((envelope.authorizations ?? []).filter(a => !a.is_bot && typeof a.user_id === 'string').map(a => a.user_id));
-    if (!authorized.size) return { ok: true };
+    if (!authorized.size && !teamWide) return { ok: true };
     this.sweep();
     this.store.transaction(() => {
       for (const { id, value: grant } of this.store.all('grant')) {
-        if (grant.appId !== envelope.api_app_id || grant.identity.teamId !== envelope.team_id || grant.status !== 'active' || !authorized.has(grant.identity.userId)) continue;
+        if (grant.appId !== envelope.api_app_id || grant.identity.teamId !== envelope.team_id || grant.status !== 'active' || !(teamWide ? grantedCapabilities(grant.scopes).memberUpdates : authorized.has(grant.identity.userId))) continue;
         const rowId = hash(JSON.stringify([envelope.event_id, id, 'stream']));
         if (this.store.get('stream', rowId)) continue;
         this.streamSeq = (this.streamSeq ?? 0) + 1;
@@ -546,4 +598,14 @@ export class Connector {
     this.sweep();
     return this.store.all('event').filter(row => row.value.grantId === session.grantId && row.value.generation === grant.generation).map(row => ({ eventId: row.value.eventId, status: row.value.status }));
   }
+}
+
+let emojiNames = null;
+/** Unicode emoji -> Slack shortcode (with colons), or null when unknown. */
+export function emojiNameFor(emoji) {
+  // Keyed without variation selectors: 🗓 and 🗓️ are the same emoji.
+  const bare = value => value.replace(/\uFE0F/g, '');
+  if (!emojiNames) emojiNames = new Map(Object.entries(EMOJI_SHORTCODES).map(([name, unicode]) => [bare(unicode), name]));
+  const name = emojiNames.get(bare(emoji));
+  return name ? `:${name}:` : null;
 }

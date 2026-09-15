@@ -93,6 +93,7 @@ export function createConnectorServer(connector) {
       if (path === '/v1/messages' && req.method === 'PATCH') { respond(200, await connector.update(credential, body)); return; }
       if (path === '/v1/messages' && req.method === 'DELETE') { respond(200, await connector.remove(credential, body)); return; }
       if (path === '/v1/reactions' && req.method === 'POST') { respond(200, await connector.reaction(credential, body)); return; }
+      if (path === '/v1/me' && req.method === 'PATCH') { respond(200, await connector.setStatus(credential, body)); return; }
       if (path === '/v1/read' && req.method === 'POST') { respond(200, await connector.markRead(credential, body)); return; }
       // File bytes (image previews, downloads) and custom emoji images, on the
       // same paths a Flow server serves, so clients reuse their file loading.
@@ -101,7 +102,9 @@ export function createConnectorServer(connector) {
       if (fileRoute) {
         const id = decodeURIComponent(fileRoute[1]);
         if (fileRoute[3]) { connector.session(credential); respond(200, { url: null, expiresInSeconds: 0 }); return; }
-        const file = id.startsWith('emoji:') ? await connector.emojiImage(credential, id.slice(6)) : await connector.file(credential, { id, variant: fileRoute[2] ? 'thumb' : 'original' });
+        const file = id.startsWith('emoji:') ? await connector.emojiImage(credential, id.slice(6))
+          : id.startsWith('team-icon:') ? await connector.teamIcon(credential, id.slice(10))
+          : await connector.file(credential, { id, variant: fileRoute[2] ? 'thumb' : 'original' });
         sendFile(res, file);
         return;
       }

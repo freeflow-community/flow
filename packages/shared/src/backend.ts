@@ -30,7 +30,7 @@ export interface Capability {
 export const CAPABILITY_NAMES = [
   'conversations', 'history', 'threads', 'send', 'edit', 'delete', 'reactions', 'files', 'search',
   'readState', 'liveUpdates', 'typing', 'presence', 'pins', 'huddles', 'artifacts', 'agents', 'apps',
-  'admin', 'scheduledMessages', 'notifications', 'channelManagement',
+  'admin', 'scheduledMessages', 'notifications', 'channelManagement', 'status',
 ] as const;
 export type CapabilityName = (typeof CAPABILITY_NAMES)[number];
 export type Capabilities = Record<CapabilityName, Capability>;
@@ -143,6 +143,9 @@ export type BackendEvent =
   | { type: 'channel.read'; channelId: string; lastReadMsgId: string | null }
   | { type: 'typing'; channelId: string; userId: string; threadRootId?: string | null }
   | { type: 'presence'; userId: string; online: boolean }
+  /** A member's profile changed (name, avatar, status). Replaces the cached
+   * member; for the signed-in user it also replaces `me`. */
+  | { type: 'member.updated'; member: WorkspaceMemberDTO }
   | { type: 'auth.changed'; auth: BackendAuthState }
   | { type: 'capabilities.changed'; capabilities: Capabilities }
   /** The live stream is degraded: events may be missing until `resumesAt`.

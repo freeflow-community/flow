@@ -111,7 +111,7 @@ test('manifest: optional capabilities stay out of the authorize URL and read as 
   assert.ok(!requestedScopes.includes('reactions:write'));
   assert.ok(!requestedScopes.includes('search:read'));
   assert.ok(requestedScopes.includes('channels:history'));
-  assert.deepEqual(requestedEvents.sort(), ['app_uninstalled', 'message.channels', 'message.groups', 'message.im', 'message.mpim', 'tokens_revoked']);
+  assert.deepEqual(requestedEvents.sort(), ['app_uninstalled', 'message.channels', 'message.groups', 'message.im', 'message.mpim', 'tokens_revoked', 'user_change']);
   const granted = grantedCapabilities(requestedScopes);
   assert.equal(granted.readHistory, true);
   assert.equal(granted.liveUpdates, true);
@@ -414,4 +414,65 @@ test('message text emoji shortcodes become unicode; custom names and code stay a
   assert.equal(expandBodyEmoji('run `:tada:` at 10:30:45'), 'run `:tada:` at 10:30:45');
   const m = normalizeMessage({ ts: '1789171841.148649', user: 'U1', text: 'Happy birthday <@U08JDGF1EAY> :partying_face:' }, { teamId: 'T1', channelId: 'C1' });
   assert.equal(m.body, 'Happy birthday <@U08JDGF1EAY> 🥳');
+});
+
+test('status: user_change streams member.updated to every grant on the team; PATCH /v1/me sets the Slack status', async t => {
+  const sets = [];
+  const f = fixture(t, { scopes: [...requestedScopes], fetcher: async (method, params) => {
+    if (method === 'users.profile.set') { sets.push(JSON.parse(params.profile)); return { ok: true, profile: { real_name: 'Alice A', display_name: 'alice', email: 'a@example.test', status_emoji: JSON.parse(params.profile).status_emoji, status_text: JSON.parse(params.profile).status_text } }; }
+  } });
+  const { credential } = await f.connect();
+  // Slack names someone else in `authorizations`; a profile change still reaches this grant.
+  f.event({ type: 'user_change', user: { id: 'U2', name: 'bob', profile: { real_name: 'Bob', status_emoji: ':face_with_thermometer:', status_text: 'Out sick' } } }, { authorizations: [{ user_id: 'U9', team_id: 'T1', is_bot: false }] });
+  const stream = f.connector.stream(credential, 0);
+  assert.equal(stream.events.length, 1);
+  assert.equal(stream.events[0].type, 'member.updated');
+  assert.equal(stream.events[0].member.userId, 'U2');
+  assert.equal(stream.events[0].member.statusEmoji, '🤒');
+  assert.equal(stream.events[0].member.statusText, 'Out sick');
+  assert.equal('deleted' in stream.events[0].member, false);
+
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const patch = body => fetch(`${base}/v1/me`, { method: 'PATCH', headers: { authorization: `Bearer ${credential}`, origin: 'https://flow.test', 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const set = await patch({ statusEmoji: '🗓', statusText: 'In a meeting', statusSuppressAlerts: true });
+  assert.equal(set.status, 200);
+  const user = await set.json();
+  assert.equal(user.id, 'U1');
+  assert.equal(user.statusEmoji, '🗓️');
+  assert.equal(user.statusText, 'In a meeting');
+  assert.equal((await patch({ statusEmoji: '', statusText: '' })).status, 200);
+  assert.deepEqual(sets, [{ status_text: 'In a meeting', status_emoji: ':spiral_calendar_pad:', status_expiration: 0 }, { status_text: '', status_emoji: '', status_expiration: 0 }]);
+  assert.deepEqual(await (await patch({ statusEmoji: '🦩🦩', statusText: 'x' })).json(), { error: 'unsupported_emoji' });
+
+  const noScope = fixture(t, { scopes: requestedScopes.filter(s => s !== 'users.profile:write') });
+  const { credential: other } = await noScope.connect();
+  await assert.rejects(noScope.connector.setStatus(other, { statusEmoji: '🤒', statusText: 'Out sick' }), /missing_scopes/);
+});
+
+test('team icon: workspace avatarUrl points at the connector, which serves the team.info icon without a token', async t => {
+  const seen = [];
+  const f = fixture(t, { scopes: [...requestedScopes], fetcher: async (method, params, request) => {
+    if (method === 'team.info') return { ok: true, team: { id: 'T1', icon: { image_132: 'https://avatars.slack-edge.com/2025/icon_132.png', image_default: false } } };
+    if (method === 'icon_132.png') { seen.push(request.headers.authorization ?? null); return new Response(Buffer.from('PNG'), { headers: { 'content-type': 'image/png' } }); }
+  } });
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const { credential } = await f.connect();
+  const auth = { authorization: `Bearer ${credential}`, origin: 'https://flow.test' };
+  const workspace = await (await fetch(`${base}/v1/workspace`, { headers: auth })).json();
+  assert.equal(workspace.avatarUrl, '/v1/files/team-icon:T1');
+  const icon = await fetch(`${base}${workspace.avatarUrl}`, { headers: auth });
+  assert.equal(icon.status, 200);
+  assert.deepEqual(seen, [null]);
+  assert.equal((await fetch(`${base}/v1/files/team-icon:T2`, { headers: auth })).status, 404);
+  assert.equal(f.calls.filter(c => c.method === 'team.info').length, 1, 'team.info is cached');
+
+  const bare = fixture(t, { scopes: requestedScopes.filter(s => s !== 'team:read') });
+  const { credential: other } = await bare.connect();
+  assert.equal((await bare.connector.workspace(other)).avatarUrl, null);
 });

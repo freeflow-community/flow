@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { UserDTO } from '@flow/shared';
 import { api } from '../lib/api';
 import { useAuth, useLive } from '../state';
+import { useCapabilities, useIsFlow } from '../lib/backend';
 import { Avatar } from './Avatar';
 import { ProfileModal } from './modals';
 
@@ -31,6 +32,9 @@ export default function StatusFooter() {
   const [showProfile, setShowProfile] = useState(false);
   const [busy, setBusy] = useState(false);
   const me = auth.user;
+  const caps = useCapabilities();
+  const isFlow = useIsFlow();
+  const canSetStatus = caps.status.state !== 'unavailable';
 
   const setStatus = async (emoji: string, text: string, suppresses = false) => {
     setBusy(true);
@@ -67,7 +71,8 @@ export default function StatusFooter() {
             >
               <span className="w-[22px] text-center text-[17px]">{o.emoji}</span>
               <span className="text-[13.5px] font-semibold text-ink">{o.text}</span>
-              {o.suppresses && <span className="ml-auto text-[11px] text-faint">pauses notifications</span>}
+              {/* Only Flow keeps the notification pause; Slack stores emoji and text. */}
+              {o.suppresses && isFlow && <span className="ml-auto text-[11px] text-faint">pauses notifications</span>}
             </button>
           ))}
           <button
@@ -121,7 +126,9 @@ export default function StatusFooter() {
         </button>
         <button
           data-testid="status-footer"
-          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-white/10"
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-white/10 disabled:hover:bg-transparent"
+          disabled={!canSetStatus}
+          title={canSetStatus ? undefined : caps.status.reason}
           onClick={() => { setOpen((v) => !v); setMenuOpen(false); }}
         >
           <span className="min-w-0 flex-1">
@@ -134,7 +141,7 @@ export default function StatusFooter() {
               />
             </span>
             <span data-testid="status-footer-label" className="block truncate text-xs text-white/70">
-              {me.statusText || 'Set a status'}
+              {me.statusText || (canSetStatus ? 'Set a status' : '')}
             </span>
           </span>
           <span className="text-white/55">▾</span>

@@ -61,7 +61,7 @@ struct WorkspaceSwitcherView: View {
                         win.selectWorkspace(ws.id)
                     } label: {
                         HStack {
-                            if let path = ws.avatarUrl, path.hasPrefix("/v1/avatars/") {
+                            if let path = ws.avatarImagePath {
                                 AuthImage(path: path) {
                                     RoundedRectangle(cornerRadius: 6).fill(.tint)
                                 }

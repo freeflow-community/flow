@@ -59,8 +59,14 @@ private final class FakeConnector: @unchecked Sendable {
         case ("GET", "/v1/stream"):
             let page = streamPages.isEmpty ? #"{"events":[],"seq":0,"gap":false}"# : streamPages.removeFirst()
             return reply(page)
+        case ("PATCH", "/v1/me"):
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
+            return reply(#"{"id":"U1","email":"a@example.test","displayName":"alice","avatarUrl":null,"timezone":"UTC","statusEmoji":"🤒","statusText":"Out sick","website":"","bio":"","title":"","isAgent":false,"sponsorId":null,"notificationPrefs":{},"statusSuppressAlerts":false,"privacyMode":false,"createdAt":""}"#)
         case ("DELETE", "/v1/session"):
             return reply(#"{"ok":true}"#)
+        case ("GET", "/v1/files/team-icon:T1"):
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
+            return (Data([0x47, 0x49, 0x46]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!)
         case ("GET", "/v1/files/F1/thumb"):
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
             return (Data([0x89, 0x50, 0x4E, 0x47]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!)
@@ -117,6 +123,20 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         await #expect(throws: BackendError.self) { try await backend.fileData(path: "/v1/history?channel=C1") }
         await #expect(throws: BackendError.self) { try await backend.fileData(path: "v1/files/../session") }
         #expect(fake.requests.count == 1)
+    }
+
+    @Test func teamIconPathKeepsItsColonAndRendersAsTheWorkspaceMark() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let data = try await backend.fileData(path: "/v1/files/team-icon:T1")
+        #expect(data == Data([0x47, 0x49, 0x46]))
+        #expect(fake.requests.last?.path == "/v1/files/team-icon:T1")
+        let slack = Workspace(id: "T1", slug: "T1", name: "Acme", createdBy: "", createdAt: "", avatarUrl: "/v1/files/team-icon:T1")
+        #expect(slack.avatarImagePath == "/v1/files/team-icon:T1")
+        let flow = Workspace(id: "w1", slug: "w", name: "W", createdBy: "", createdAt: "", avatarUrl: "/v1/avatars/abc")
+        #expect(flow.avatarImagePath == "/v1/avatars/abc")
+        let foreign = Workspace(id: "w2", slug: "x", name: "X", createdBy: "", createdAt: "", avatarUrl: "https://evil.test/a.png")
+        #expect(foreign.avatarImagePath == nil)
     }
 
     @Test func bootsThroughTheConnectorAndSynthesizesTheUser() async throws {
@@ -219,6 +239,38 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         _ = await collector.value
         #expect(received.items == ["created:\(ts2)", "reaction:\(ts1):👀:true", "deleted:\(ts1)", "degraded", "recovered"])
         #expect(fake.requests.filter { $0.path.hasPrefix("/v1/stream") }.map(\.path) == ["/v1/stream?since=0", "/v1/stream?since=3"], "the cursor advances")
+    }
+
+    @Test func memberUpdatedEventsCarryTheNewStatus() async throws {
+        let fake = FakeConnector()
+        fake.streamPages = [
+            #"{"events":[{"type":"member.updated","member":{"userId":"U1","displayName":"alice","email":"a@example.test","avatarUrl":null,"statusEmoji":"🤒","statusText":"Out sick","title":"","isAgent":false,"isBot":false,"sponsorId":null,"privacyMode":false,"role":"admin","joinedAt":""}}],"seq":1,"gap":false}"#,
+        ]
+        let backend = makeBackend(fake, autoPoll: false)
+        let stream = backend.events()
+        let collector = Task { () -> User? in
+            for await event in stream { if case .memberUpdated(let user) = event { return user } }
+            return nil
+        }
+        await backend.pollOnce()
+        let user = await collector.value
+        #expect(user?.id == "U1")
+        #expect(user?.statusEmoji == "🤒")
+        #expect(user?.statusText == "Out sick")
+    }
+
+    @Test func setStatusPatchesTheConnectorAndIsGatedByTheScope() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let me = try await backend.setStatus(emoji: "🤒", text: "Out sick", suppressAlerts: false)
+        #expect(me.statusText == "Out sick")
+        let sent = try #require(fake.requests.last)
+        #expect(sent.method == "PATCH" && sent.path == "/v1/me")
+        #expect(sent.body?["statusEmoji"] as? String == "🤒")
+        #expect(sent.body?["statusText"] as? String == "Out sick")
+        #expect(SlackBackend.capabilities(granted: ["setStatus": true])[.status].state == .supported)
+        #expect(SlackBackend.capabilities(granted: [:])[.status].state == .unavailable)
+        #expect(Capabilities.allSupported[.status].state == .supported, "a Flow server sets status as before")
     }
 
     @Test func openInSlackDeepLinksUseTheTeamAndTs() {

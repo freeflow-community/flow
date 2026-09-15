@@ -78,6 +78,7 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             .liveUpdates: on("liveUpdates") ? .limited("New messages arrive through the Flow Slack connector with a short delay.") : .unavailable("Live updates need the Slack app to subscribe to message events."),
             .typing: .unavailable("Typing indicators are not available for Slack workspaces."),
             .presence: .unavailable("Presence is not available for Slack workspaces."),
+            .status: on("setStatus") ? .supported : .unavailable("Set your status in Slack; this app has not been granted permission to change it."),
             .notifications: on("liveUpdates")
                 ? .limited("Mentions and direct messages alert you only while Flow is open. Slack has no push to Flow when it is closed.")
                 : .unavailable("Slack notifications need the Slack app to subscribe to message events."),
@@ -275,6 +276,17 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         _ = try await raw("POST", "v1/read", body: ["channel": channelId, "ts": messageId])
     }
 
+    /// The status lands in Slack; the connector answers with the updated user
+    /// in Flow's /v1/me shape, and Slack's own user_change event follows on
+    /// the stream for every other client.
+    func setStatus(emoji: String, text: String, suppressAlerts: Bool?) async throws -> User {
+        var body: [String: Any] = ["statusEmoji": emoji, "statusText": text]
+        if let suppressAlerts { body["statusSuppressAlerts"] = suppressAlerts }
+        let me = try await request("PATCH", "v1/me", body: body, as: User.self)
+        synced { members[me.id] = me }
+        return me
+    }
+
     func uploadFile(workspaceId: String, channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment {
         throw BackendError(code: .unsupported, message: caps[.files].reason ?? "File uploads are not available.")
     }
@@ -304,6 +316,7 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         let threadRootId: String?
         let emoji: String?
         let userId: String?
+        let member: MemberRow?
 
         var event: BackendEvent? {
             switch type {
@@ -316,6 +329,7 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             case "reaction.added", "reaction.removed":
                 guard let channelId, let messageId, let emoji, let userId else { return nil }
                 return .reactionChanged(channelId: channelId, messageId: messageId, emoji: emoji, userId: userId, added: type == "reaction.added")
+            case "member.updated": return member.map { .memberUpdated($0.user) }
             default: return nil
             }
         }
@@ -364,7 +378,10 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
                 emit(.streamDegraded(reason: "Missed Slack events while away.", resumesAt: nil))
                 emit(.streamRecovered)
             }
-            for event in page.events.compactMap(\.event) { emit(event) }
+            for event in page.events.compactMap(\.event) {
+                if case .memberUpdated(let user) = event { synced { members[user.id] = user } }
+                emit(event)
+            }
             streamSeq = page.seq
         } catch let error as BackendError where error.code == .rateLimited {
             emit(.streamDegraded(reason: error.message, resumesAt: error.retryAfter.map { Date().addingTimeInterval($0) }))

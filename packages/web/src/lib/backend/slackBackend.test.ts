@@ -87,6 +87,27 @@ describe('SlackBackend', () => {
     expect(backend.dropped).toBe(2);
   });
 
+  it('a member.updated event reaches subscribers and refreshes the member behind me(); status is gated by the scope', async () => {
+    const bob = { userId: 'U1', displayName: 'alice', email: '', avatarUrl: null, statusEmoji: '', statusText: '', title: '', isAgent: false, isBot: false, sponsorId: null, privacyMode: false, role: 'member', joinedAt: '' };
+    mockFetch({
+      '/v1/members': { body: { members: [bob] } },
+      '/v1/connection': { body: { identity: { userId: 'U1' }, teamName: 'Acme', userName: 'alice', capabilities: connection.capabilities, grantStatus: 'active' } },
+      '/v1/stream': { body: { events: [{ type: 'member.updated', member: { ...bob, statusEmoji: '🤒', statusText: 'Out sick' } }, { type: 'member.updated', member: { userId: 'U2' } }], seq: 2, gap: false } },
+      '/v1/events': { body: { events: [] } },
+    });
+    const backend = new SlackBackend(runtime(), connection, { autoPoll: false });
+    await backend.listMembers();
+    const seen: string[] = [];
+    const unsubscribe = backend.subscribe((event) => seen.push(event.type));
+    await backend.pollOnce();
+    unsubscribe();
+    expect(seen).toEqual(['member.updated']);
+    expect(backend.dropped).toBe(1);
+    expect((await backend.me()).statusText).toBe('Out sick');
+    expect(slackCapabilities({}).status.state).toBe('unavailable');
+    expect(slackCapabilities({ setStatus: true }).status.state).toBe('supported');
+  });
+
   it('a 401 flips auth to reauthorization_required and tells subscribers', async () => {
     mockFetch({ '/v1/conversations': { status: 401, body: { error: 'revoked' } } });
     const backend = new SlackBackend(runtime(), connection);

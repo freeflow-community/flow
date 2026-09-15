@@ -100,6 +100,9 @@ capability gating. A test compares it with the app manifest.
 | Grant lifecycle | None | User grant IDs | None | `tokens_revoked`, `app_uninstalled` |
 | View files (image previews, downloads) | `files.info` + `url_private` fetch | User | `files:read` | None |
 | Custom emoji images | `emoji.list` (images fetched without a token) | User | `emoji:read` | None |
+| Live profile and status changes | None | User | `users:read` | `user_change` |
+| Set the user's own status | `users.profile.set` | User | `users.profile:write` | None |
+| Workspace icon | `team.info` (image fetched without a token) | User | `team:read` | None |
 
 Only `chat:write` is requested. Workspace display names come from the OAuth
 response, and user names from `auth.test`; no directory/history scopes are
@@ -130,7 +133,8 @@ credential>`, never cookies. No endpoint accepts a Flow token as its identity.
 | `POST /v1/messages` | Explicit `{channel, text}` test send; no arbitrary methods, URLs, blocks, or author overrides |
 | `POST /slack/events` | Signed lifecycle events from Slack |
 | `GET /v1/events` | Grant-scoped lifecycle events, IDs for client deduplication; poll while the connection panel is open |
-| `GET /v1/files/:id[/thumb]` | Slack file bytes fetched with the user token from `files.slack.com` only; `/url` variants return `{url: null}` (always proxied). `emoji:<name>` ids serve custom emoji images |
+| `GET /v1/files/:id[/thumb]` | Slack file bytes fetched with the user token from `files.slack.com` only; `/url` variants return `{url: null}` (always proxied). `emoji:<name>` ids serve custom emoji images, `team-icon:<teamId>` the workspace icon (`avatarUrl` of `GET /v1/workspace`) |
+| `PATCH /v1/me` | `{statusEmoji, statusText}` → sets the user's Slack status (unicode mapped to a Slack shortcode; unknown emoji refused) and returns a Flow-shaped user |
 | `GET /v1/workspaces/:teamId/emoji` | Custom emoji in Flow's `WorkspaceEmojiDTO` shape, aliases resolved, cached 10 minutes per team |
 | `GET /health` | Process health only |
 

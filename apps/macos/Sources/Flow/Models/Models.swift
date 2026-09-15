@@ -111,8 +111,17 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
     var role: String?
     var sidebarColor: String? // preset id (see SidebarPalette); nil = default
     /// Workspace avatar (#336): a `/v1/avatars/<key>` path, or nil for the
-    /// color/initial mark every workspace drew before.
+    /// color/initial mark every workspace drew before. A Slack team's icon is
+    /// `/v1/files/team-icon:<teamId>` on its connector; see `avatarImagePath`.
     var avatarUrl: String?
+
+    /// The avatar path the image loader can fetch, or nil for the initial
+    /// mark. Only relative API paths qualify, so an absolute URL never reaches
+    /// an authenticated loader.
+    var avatarImagePath: String? {
+        guard let path = avatarUrl, path.hasPrefix("/v1/avatars/") || path.hasPrefix("/v1/files/team-icon:") else { return nil }
+        return path
+    }
     /// Unread messages across the channels I'm in here (#345) — the rail badge.
     /// Only `/v1/me/workspaces` computes it; nil on a row that arrived any
     /// other way means "unknown", which is why the cached value is kept rather

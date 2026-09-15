@@ -1751,13 +1751,19 @@ actor SyncEngine {
     /// Set (or clear, with two empty strings) the user's status emoji + label.
     /// `suppressAlerts` mirrors the web client's DND-family flag; nil leaves
     /// the server's current value alone.
+    /// A provider workspace sets it through its backend, never the Flow API.
     func setStatus(emoji: String, text: String, suppressAlerts: Bool? = nil) async throws {
-        let me: User = try await api.patch(
-            "/v1/me",
-            body: PatchMeBody(
-                statusEmoji: emoji, statusText: text, statusSuppressAlerts: suppressAlerts
+        let me: User
+        if let backend {
+            me = try await backend.setStatus(emoji: emoji, text: text, suppressAlerts: suppressAlerts)
+        } else {
+            me = try await api.patch(
+                "/v1/me",
+                body: PatchMeBody(
+                    statusEmoji: emoji, statusText: text, statusSuppressAlerts: suppressAlerts
+                )
             )
-        )
+        }
         currentUser = me
         try? await db.writer.write { db in try me.save(db) }
         await appState?.setPhase(.signedIn(me))
@@ -2515,6 +2521,15 @@ actor SyncEngine {
             }
         case .channelUpdated(let channel):
             try? await db.writer.write { db in try channel.save(db) }
+        case .memberUpdated(let user):
+            // Profile or status changed in the provider: the row every view
+            // draws names, avatars and statuses from, and the footer's own user.
+            try? await db.writer.write { db in try user.save(db) }
+            if user.id == currentUser?.id {
+                currentUser = user
+                await appState?.setPhase(.signedIn(user))
+            }
+            await pushAvatarPaths()
         case .capabilitiesChanged(let caps):
             await appState?.setCapabilities(caps)
         case .authChanged(let auth):

@@ -1271,6 +1271,9 @@ struct StatusFooterView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // A Slack grant without users.profile:write shows the status
+                // but cannot change it (#546 gating).
+                .capability(.status)
                 .accessibilityIdentifier("sidebar.statusFooter")
                 .accessibilityValue(
                     "\(app.connection.label); \(statusText.isEmpty ? "no status" : statusText)"

@@ -911,7 +911,7 @@ private struct WorkspaceMark: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius)
         Group {
-            if let path = workspace.avatarUrl, path.hasPrefix("/v1/avatars/") {
+            if let path = workspace.avatarImagePath {
                 AuthImage(path: path) { shape.fill(Color.white.opacity(0.15)) }
                     .scaledToFill()
                     .frame(width: size, height: size)

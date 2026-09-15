@@ -86,6 +86,9 @@ export const EMOJI_SHORTCODES: Record<string, string> = {
   cool: '🆒', up: '🆙', top: '🔝', back: '🔙', repeat: '🔁',
   arrows_counterclockwise: '🔄', arrow_forward: '▶️', arrow_backward: '◀️',
   watch: '⌚', stopwatch: '⏱️',
+  // Slack's default status emoji, so a Slack status and Flow's picker round-trip.
+  face_with_thermometer: '🤒', spiral_calendar_pad: '🗓️', knife_fork_plate: '🍽️',
+  no_entry_sign: '🚫', house_with_garden: '🏡', bus: '🚌',
 };
 
 /** The quick-reaction picker set, in display order. */

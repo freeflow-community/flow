@@ -32,6 +32,7 @@ export function slackCapabilities(granted: Record<string, boolean>): Capabilitie
     reactions: granted.reactions ? supported() : scope('reaction'),
     files: granted.files ? limited('Files upload to Slack; previews open in Slack.') : unavailable('File uploads need a Slack permission this app does not have. Attachments open in Slack.'),
     search: granted.search ? supported() : scope('search'),
+    status: granted.setStatus ? supported() : unavailable('Set your status in Slack; this app has not been granted permission to change it.'),
     readState: granted.readState ? supported() : unavailable('Read markers are not shared with Slack; unread state stays on this device.'),
     liveUpdates: granted.liveUpdates ? limited('New messages arrive through the Flow Slack connector with a short delay.') : unavailable('Live updates need the Slack app to subscribe to message events.'),
     typing: unavailable('Typing indicators are not available for Slack workspaces.'),
@@ -244,6 +245,7 @@ export class SlackBackend implements WorkspaceBackend {
       const stream = await this.request<StreamResponse>('GET', `/v1/stream?since=${this.seq}`);
       if (stream.gap) { this.emit({ type: 'stream.degraded', reason: 'Missed Slack events while away.', resumesAtMs: null }); this.emit({ type: 'stream.recovered' }); }
       for (const event of stream.events ?? []) {
+        if (isWellFormed(event) && event.type === 'member.updated') this.members?.set(event.member.userId, event.member);
         if (isWellFormed(event)) this.emit(event);
         else this.dropped += 1;
       }
@@ -289,6 +291,10 @@ export function isWellFormed(event: unknown): event is BackendEvent {
     case 'message.deleted': return typeof e.channelId === 'string' && typeof e.messageId === 'string' && (e.threadRootId === null || typeof e.threadRootId === 'string');
     case 'reaction.added': case 'reaction.removed': return typeof e.channelId === 'string' && typeof e.messageId === 'string' && typeof e.emoji === 'string' && typeof e.userId === 'string';
     case 'channel.updated': return !!e.channel && typeof (e.channel as { id?: unknown }).id === 'string';
+    case 'member.updated': {
+      const m = e.member as Record<string, unknown> | null;
+      return !!m && typeof m.userId === 'string' && typeof m.displayName === 'string' && typeof m.statusEmoji === 'string' && typeof m.statusText === 'string';
+    }
     case 'channel.read': case 'typing': case 'presence': case 'auth.changed': case 'capabilities.changed': case 'stream.degraded': case 'stream.recovered': return true;
     default: return false;
   }

@@ -14,6 +14,7 @@ import type {
   NotificationDTO,
   TypingData,
   PresenceData,
+  WorkspaceMemberDTO,
 } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { applyChannelEmoji, applyHuddle, applyIndicator } from '../lib/channelCache';
@@ -195,6 +196,21 @@ export default function Main() {
               ...(current.threadRootId ? [qc.invalidateQueries({ queryKey: ['thread', current.threadRootId] })] : []),
             ];
             void Promise.all(scoped).finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
+            break;
+          }
+          case 'member.updated': {
+            // Patch the roster in place: a refetch per profile change would spend
+            // the provider's member-list budget on every status anyone sets.
+            const { member } = event;
+            for (const [key, data] of qc.getQueriesData<{ members: WorkspaceMemberDTO[] }>({ queryKey: ['members'] })) {
+              if (data?.members.some((m) => m.userId === member.userId)) {
+                qc.setQueryData(key, { ...data, members: data.members.map((m) => (m.userId === member.userId ? member : m)) });
+              }
+            }
+            const current = authRef.current;
+            if (member.userId === current.user.id) {
+              current.setUser({ ...current.user, displayName: member.displayName, avatarUrl: member.avatarUrl, statusEmoji: member.statusEmoji, statusText: member.statusText, title: member.title });
+            }
             break;
           }
           case 'auth.changed':

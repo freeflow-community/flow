@@ -140,8 +140,11 @@ function emojiStatus(value) {
 }
 
 /** The team a grant belongs to, as the one workspace a Slack connection lists. */
-export function normalizeWorkspace(grant) {
-  return { id: grant.identity.teamId, slug: grant.identity.teamId, name: String(grant.teamName ?? grant.identity.teamId), createdBy: '', createdAt: '', sidebarColor: 'slate', avatarUrl: null, googleSelfRegisterDomain: null, role: 'member' };
+export function normalizeWorkspace(grant, { hasIcon = false } = {}) {
+  // The icon is served by the connector (/v1/files/team-icon:<team>), on the
+  // same path shape as file bytes, so clients load it like any avatar.
+  const avatarUrl = hasIcon ? `/v1/files/team-icon:${grant.identity.teamId}` : null;
+  return { id: grant.identity.teamId, slug: grant.identity.teamId, name: String(grant.teamName ?? grant.identity.teamId), createdBy: '', createdAt: '', sidebarColor: 'slate', avatarUrl, googleSelfRegisterDomain: null, role: 'member' };
 }
 
 /** An Events API `event` -> BackendEvent, or null when it is not a chat event
@@ -159,6 +162,10 @@ export function normalizeEvent(event, { teamId, readFiles = false }) {
     if (!isTs(event.ts)) return null;
     const message = normalizeMessage(event, { teamId, channelId, readFiles });
     return { type: message.threadRootId ? 'thread.reply' : 'message.created', message };
+  }
+  if (event.type === 'user_change' && event.user && typeof event.user.id === 'string') {
+    const { deleted, ...member } = normalizeMember(event.user);
+    return { type: 'member.updated', member };
   }
   if (event.type === 'reaction_added' || event.type === 'reaction_removed') {
     if (event.item?.type !== 'message' || !isTs(event.item.ts)) return null;
