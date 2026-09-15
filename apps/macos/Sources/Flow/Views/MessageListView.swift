@@ -146,21 +146,25 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
-                            let waiting = loadOlderRetryAt.map { $0 > Date() } ?? false
-                            Button("Load earlier messages") {
-                                // Reading history is a decision to leave the
-                                // end: unpin, remember the current top row,
-                                // and restore it once the page lands.
-                                loadOlderAnchorId = messages.first?.id
-                                followBox.model.positionRestored(atBottom: false)
-                                onLoadOlder()
+                            // A limited provider (#545) says its budget on the
+                            // button — the page size, or the wait after a 429 —
+                            // ticking down so the button comes back on its own.
+                            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                                let wait = loadOlderRetryAt.map { max(0, Int($0.timeIntervalSince(timeline.date).rounded(.up))) } ?? 0
+                                Button(context.capabilities.loadOlderLabel(wait: wait)) {
+                                    // Reading history is a decision to leave the
+                                    // end: unpin, remember the current top row,
+                                    // and restore it once the page lands.
+                                    loadOlderAnchorId = messages.first?.id
+                                    followBox.model.positionRestored(atBottom: false)
+                                    onLoadOlder()
+                                }
+                                .buttonStyle(.link)
+                                .flowFont(.callout)
+                                .pointingHandCursor()
+                                .disabled(wait > 0)
+                                .accessibilityIdentifier("transcript.loadOlder")
                             }
-                            .buttonStyle(.link)
-                            .flowFont(.callout)
-                            .pointingHandCursor()
-                            .disabled(waiting)
-                            .help(waiting ? "Slack asked Flow to wait before loading older messages." : "")
-                            .accessibilityIdentifier("transcript.loadOlder")
                             Spacer()
                         }
                         .padding(.vertical, 8)

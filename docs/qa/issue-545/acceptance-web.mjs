@@ -69,14 +69,14 @@ try {
   assert.ok(rendered >= 15, `expected at least 15 messages, saw ${rendered}`);
   assert.ok(await page.locator('[data-testid^="external-attachment-"]').first().isVisible(), 'a Slack file renders as an external attachment');
   assert.ok(await page.locator('[data-testid^="degraded-"]').first().isVisible(), 'a Block Kit message is marked as partly shown');
-  await page.getByTestId('history-limited').waitFor();
+  await page.getByText(/Load earlier messages \(15 max\/min\)/).waitFor();
   await page.screenshot({ path: `${shots}/web-slack-channel.png`, fullPage: false });
 
   // 3. Loading older hits the connector's parked budget: 429 -> countdown, no retry storm.
   await page.getByTestId('history-load-older').click();
-  await page.getByText(/wait \d+s before loading older/).waitFor();
+  await page.getByText(/Load earlier messages \(wait \d+s\)/).waitFor();
   await page.screenshot({ path: `${shots}/web-slack-rate-limited.png`, fullPage: false });
-  await page.getByText('Slack is ready for the next page of history.').waitFor({ timeout: 20_000 });
+  await page.getByText(/Load earlier messages \(15 max\/min\)/).waitFor({ timeout: 20_000 });
   await page.getByTestId('history-load-older').click();
   await page.waitForFunction(() => document.querySelectorAll('[data-testid^="message-1"]').length >= 17);
 

@@ -53,6 +53,14 @@ struct Capabilities: Codable, Equatable, Sendable {
     subscript(_ name: CapabilityName) -> Capability { values[name] ?? .unavailable("Not available for this workspace.") }
     func canUse(_ name: CapabilityName) -> Bool { self[name].usable }
 
+    /// The "Load earlier messages" label (#545). A limited history says its
+    /// budget on the button — the page size, or the wait Slack asked for —
+    /// instead of in a separate banner. Shared by the macOS and iOS lists.
+    func loadOlderLabel(wait: Int) -> String {
+        guard self[.history].state == .limited else { return "Load earlier messages" }
+        return wait > 0 ? "Load earlier messages (wait \(wait)s)" : "Load earlier messages (15 max/min)"
+    }
+
     /// A copy with one capability replaced.
     func overriding(_ name: CapabilityName, with value: Capability) -> Capabilities {
         var copy = self
