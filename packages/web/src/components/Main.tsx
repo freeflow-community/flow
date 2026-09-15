@@ -26,6 +26,7 @@ import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, CHANNEL_BROWSER_VIEW_ID, DIRECTORY_VIE
 import { HuddleProvider, useHuddle, type HuddleState } from '../huddle';
 import { useNameMap, useSwitcherEntries, useWorkspaceInvites, useWorkspaces } from '../hooks';
 import { openWorkspace } from '../lib/workspaceSwitcher';
+import { connectionManager } from '../lib/connectionRuntime';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
@@ -702,7 +703,9 @@ function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp
         // The foreground connection's live row carries avatar and slug.
         const w = e.foreground ? (workspaces.data ?? []).find((ws) => ws.id === e.workspaceId) : undefined;
         const active = e.foreground && e.workspaceId === sel.workspaceId;
-        const avatarUrl = w?.avatarUrl;
+        const avatarUrl = w ? w.avatarUrl : e.avatarUrl;
+        // Another connection's avatar is fetched from, and authorized by, that server.
+        const avatarRuntime = e.foreground ? undefined : connectionManager().runtime(e.connectionId) ?? undefined;
         const testKey = w?.slug ?? e.workspaceId;
         // Unread across this workspace's channels (#345): live for the
         // foreground connection, from background sync for the others.
@@ -734,7 +737,7 @@ function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp
               }}
             >
               {avatarUrl ? (
-                <AuthImg path={avatarUrl} alt={e.name} className="h-10 w-10 object-cover" />
+                <AuthImg path={avatarUrl} alt={e.name} className="h-10 w-10 object-cover" runtime={avatarRuntime} />
               ) : (
                 e.name.slice(0, 1).toUpperCase()
               )}

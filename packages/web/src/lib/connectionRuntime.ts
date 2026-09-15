@@ -526,6 +526,10 @@ export class ConnectionManager {
     this.commit(setWorkspaceBinding(this.registry, binding));
   }
 
+  replaceBindings(bindings: WorkspaceBinding[]): void {
+    this.commit({ ...this.registry, bindings });
+  }
+
   forgetWorkspace(connectionId: string, workspaceId: string): void {
     this.commit({ ...this.registry, bindings: this.registry.bindings.filter(b => b.connectionId !== connectionId || b.workspaceId !== workspaceId) });
   }

@@ -66,6 +66,9 @@ export interface WorkspaceBinding {
   userId: string;
   workspaceId: string;
   name: string;
+  /** The workspace's avatar path on its own backend, so a switcher can draw it
+   * while another connection is on screen. */
+  avatarUrl?: string | null;
   hidden?: boolean;
   order?: number;
 }

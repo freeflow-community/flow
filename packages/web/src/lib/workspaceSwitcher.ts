@@ -3,7 +3,7 @@
 // The foreground connection contributes its live list; every other connection
 // contributes the workspaces bound to it in the registry, which is what the
 // switcher already persists per connection.
-import type { ConnectionRegistry } from './connections';
+import type { ConnectionRegistry, WorkspaceBinding } from './connections';
 import type { ConnectionSyncState } from './backgroundSync';
 import type { ConnectionProvider } from './serverOrigin';
 import { originLabel } from './serverOrigin';
@@ -12,6 +12,7 @@ export interface SwitcherEntry {
   connectionId: string;
   workspaceId: string;
   name: string;
+  avatarUrl: string | null;
   provider: ConnectionProvider;
   /** Where the workspace lives: the server's host name, or "Slack". */
   source: string;
@@ -23,7 +24,7 @@ export interface SwitcherEntry {
 export function switcherEntries(
   registry: ConnectionRegistry,
   foregroundConnectionId: string,
-  foregroundWorkspaces: { id: string; name: string; unreadCount?: number }[] | undefined,
+  foregroundWorkspaces: { id: string; name: string; avatarUrl?: string | null; unreadCount?: number }[] | undefined,
   syncStates: ConnectionSyncState[] = [],
 ): SwitcherEntry[] {
   const entries: SwitcherEntry[] = [];
@@ -39,12 +40,13 @@ export function switcherEntries(
       ? foregroundWorkspaces
       : registry.bindings
         .filter(b => b.connectionId === connection.connectionId && !b.hidden && (!session?.userId || b.userId === session.userId))
-        .map(b => ({ id: b.workspaceId, name: b.name, unreadCount: undefined }));
+        .map(b => ({ id: b.workspaceId, name: b.name, avatarUrl: b.avatarUrl, unreadCount: undefined }));
     for (const ws of workspaces) {
       entries.push({
         connectionId: connection.connectionId,
         workspaceId: ws.id,
         name: ws.name,
+        avatarUrl: ws.avatarUrl ?? null,
         provider: connection.provider,
         source,
         unread: unreadByWorkspace[ws.id] ?? ws.unreadCount ?? 0,
@@ -53,6 +55,28 @@ export function switcherEntries(
     }
   }
   return entries;
+}
+
+/** Bring a connection's bindings in line with its live workspace list, so the
+ * switcher shows the same workspaces, names and avatars for it while another
+ * connection is on screen. Hidden bindings stay hidden; workspaces the account
+ * has left are dropped. Returns null when nothing changed. */
+export function syncedBindings(
+  registry: ConnectionRegistry,
+  connectionId: string,
+  userId: string,
+  workspaces: { id: string; name: string; avatarUrl?: string | null }[],
+): WorkspaceBinding[] | null {
+  const others = registry.bindings.filter(b => b.connectionId !== connectionId);
+  const mine = registry.bindings.filter(b => b.connectionId === connectionId && b.userId === userId);
+  const next = workspaces.map((ws): WorkspaceBinding => {
+    const previous = mine.find(b => b.workspaceId === ws.id);
+    return { ...previous, connectionId, userId, workspaceId: ws.id, name: ws.name, avatarUrl: ws.avatarUrl ?? null };
+  });
+  const key = (b: WorkspaceBinding) => JSON.stringify([b.workspaceId, b.name, b.avatarUrl ?? null, !!b.hidden, b.order ?? null]);
+  const unchanged = next.length === mine.length && next.every((b, i) => key(b) === key(mine[i]!))
+    && registry.bindings.every(b => b.connectionId !== connectionId || b.userId === userId);
+  return unchanged ? null : [...others, ...next];
 }
 
 /** Only worth naming where a workspace lives when there is more than one place. */

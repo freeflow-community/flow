@@ -38,7 +38,7 @@ import {
 } from './lib/messageCache';
 import { backgroundSync, useConnectionSync } from './lib/backgroundSync';
 import { connectionManager } from './lib/connectionRuntime';
-import { switcherEntries, type SwitcherEntry } from './lib/workspaceSwitcher';
+import { switcherEntries, syncedBindings, type SwitcherEntry } from './lib/workspaceSwitcher';
 import { useBackend, useIsFlow } from './lib/backend';
 import { useAuth, useRuntime } from './state';
 
@@ -72,7 +72,14 @@ export function useWorkspaces() {
   // unread state aggregated from per-connection values").
   const workspaces = query.data;
   useEffect(() => {
-    if (workspaces) backgroundSync().reportForeground(runtime.connectionId, workspaces);
+    if (!workspaces) return;
+    backgroundSync().reportForeground(runtime.connectionId, workspaces);
+    // Record what this connection holds, so the rail and menus can list these
+    // workspaces — with their avatars — while another connection is on screen.
+    const manager = connectionManager();
+    const userId = manager.state.sessions.find(s => s.connectionId === runtime.connectionId)?.userId;
+    const next = userId ? syncedBindings(manager.state, runtime.connectionId, userId, workspaces) : null;
+    if (next) manager.replaceBindings(next);
   }, [runtime.connectionId, workspaces]);
   return query;
 }
