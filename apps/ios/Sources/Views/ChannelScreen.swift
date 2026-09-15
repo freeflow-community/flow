@@ -68,6 +68,22 @@ struct ChannelScreen: View {
         )
     }
 
+    /// The cached row, or — for an archived channel opened from the channel
+    /// browser (#590), which is never cached — the browser's in-memory copy.
+    private var resolvedChannel: Channel? {
+        channel.value ?? app.archivedChannels[channelId]
+    }
+
+    /// Archived (#590): full history, read-only — banner, no composer, and the
+    /// transcript's write actions gated off through its capabilities.
+    private var isArchived: Bool { resolvedChannel?.archivedAt != nil }
+
+    /// What this screen's controls may do: the connection's capabilities,
+    /// narrowed to reading in an archived channel.
+    private var capabilities: Capabilities {
+        isArchived ? app.capabilities.archivedReadOnly() : app.capabilities
+    }
+
     private var usersById: [String: User] {
         Dictionary(users.value.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     }
@@ -79,7 +95,7 @@ struct ChannelScreen: View {
     }
 
     private var title: String {
-        guard let ch = channel.value else { return "" }
+        guard let ch = resolvedChannel else { return "" }
         if ch.isDM {
             return ch.displayTitle(userNames: usersById.mapValues { $0.displayNameWithBadge },
                                    currentUserId: app.currentUser?.id)
@@ -91,7 +107,7 @@ struct ChannelScreen: View {
     /// LiveKit huddle because a spoken turn cannot be paired safely with one
     /// responding agent when several people or agents share the room.
     private var agentParticipantId: String? {
-        guard let ch = channel.value else { return nil }
+        guard let ch = resolvedChannel else { return nil }
         return AgentCallEligibility.participantId(
             channelKind: ch.kind,
             memberIds: ch.memberIds,
@@ -107,7 +123,7 @@ struct ChannelScreen: View {
     /// The topic, when there is one worth a line. DMs have none, and an empty
     /// or whitespace topic means "cleared" — not "blank second line".
     private var topic: String? {
-        guard let ch = channel.value, !ch.isDM else { return nil }
+        guard let ch = resolvedChannel, !ch.isDM else { return nil }
         let text = ch.topic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return text.isEmpty ? nil : text
     }
@@ -120,7 +136,7 @@ struct ChannelScreen: View {
     /// (#298 moved the whole header into the pill).
     private var huddleButton: some View {
         Group {
-            if let ch = channel.value, ch.archivedAt == nil {
+            if let ch = resolvedChannel, ch.archivedAt == nil {
                 // Provider gating (#546): no agent call without agents, no
                 // huddle without huddles. Flow has both.
                 if agentParticipantId != nil {
@@ -186,7 +202,7 @@ struct ChannelScreen: View {
             agentCall.show()
             return
         }
-        guard let workspaceId = channel.value?.workspaceId, !startingAgentCall else { return }
+        guard let workspaceId = resolvedChannel?.workspaceId, !startingAgentCall else { return }
         startingAgentCall = true
         Task {
             if app.activeHuddleChannelId != nil {
@@ -227,7 +243,7 @@ struct ChannelScreen: View {
     /// "Open in Slack" for a provider workspace (#546): the channel in the
     /// provider's own client, for everything Flow cannot do here.
     private var providerOpenURL: URL? {
-        guard app.capabilities.isProviderLimited, let ch = channel.value else { return nil }
+        guard app.capabilities.isProviderLimited, let ch = resolvedChannel else { return nil }
         return ProviderLinks.slackURL(workspaceId: ch.workspaceId, channelId: ch.id)
     }
 
@@ -280,7 +296,7 @@ struct ChannelScreen: View {
                 .accessibilityIdentifier("channel.openInSlack.menu")
             }
 
-            if channel.value?.kind == "standard", app.can(.channelManagement) {
+            if resolvedChannel?.kind == "standard", !isArchived, app.can(.channelManagement) {
                 Divider()
                 Button {
                     showInviteToChannel = true
@@ -323,6 +339,29 @@ struct ChannelScreen: View {
             // the results view is greedy, so it fills the rest when it appears.
             VStack(spacing: 0) {
                 headerPill
+                // Archived (#590): the banner floats under the pill — the
+                // transcript runs behind the pill, so a strip at the top of
+                // the chat stack would sit hidden beneath it.
+                if isArchived, !searchOpen {
+                    Text(ChannelBrowser.archivedBanner(archivedAt: resolvedChannel?.archivedAt))
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background {
+                            // Opaque, so the transcript scrolling behind it
+                            // never shows through the tint.
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12).fill(MC.base)
+                                RoundedRectangle(cornerRadius: 12).fill(Color.orange.opacity(0.1))
+                            }
+                        }
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.orange.opacity(0.3), lineWidth: 1))
+                        .padding(.horizontal, 12)
+                        .padding(.top, 6)
+                        .accessibilityIdentifier("channel.archivedBanner")
+                }
                 if searchOpen {
                     // No gap anywhere below the pill: the bar's own background
                     // runs right up to the pill's bottom edge and carries the
@@ -397,12 +436,13 @@ struct ChannelScreen: View {
                         engine: app.engine,
                         avatarPaths: app.avatarPaths,
                         agentIds: app.agentIds,
-                        onOpenScheduled: { app.showScheduledPanel() }
+                        onOpenScheduled: { app.showScheduledPanel() },
+                        capabilities: capabilities
                     ),
                     hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                     isLoadingHistory: app.loadingHistory.contains(channelId),
                     showThreadAffordances: true,
-                    unreadThreadRootIds: Set(channel.value?.unreadThreadRootIds ?? []),
+                    unreadThreadRootIds: Set(resolvedChannel?.unreadThreadRootIds ?? []),
                     onLoadOlder: {
                         // Widen the window first (instant, from cache); go to
                         // the server only once the cache is exhausted.
@@ -426,7 +466,7 @@ struct ChannelScreen: View {
                     onFocused: { app.focusMessageId = nil },
                     scrollKey: app.sessionScope.key("scroll:\(channelId)"),
                     onOpenProfile: { profileRoute = ProfileRoute(userId: $0) },
-                    capabilities: app.capabilities,
+                    capabilities: capabilities,
                     historyLimit: app.historyLimits[channelId]
                 )
                 TypingIndicatorView(channelId: channelId, userNames: usersById.mapValues { $0.displayNameWithBadge })
@@ -437,7 +477,15 @@ struct ChannelScreen: View {
             // out of the way (#570). Left in place it would sit between the
             // results and the keyboard, inviting a tap that types into a box
             // nobody can see.
-            if !searchOpen {
+            if isArchived {
+                Divider()
+                Text("This channel is archived and read-only.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(MC.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .accessibilityIdentifier("channel.archivedNote")
+            } else if !searchOpen {
                 Divider()
                 ComposerView(channelId: channelId)
             }
@@ -452,12 +500,12 @@ struct ChannelScreen: View {
             MemberProfileSheet(userId: route.userId)
         }
         .sheet(isPresented: $showChannelOptions) {
-            if let c = channel.value {
+            if let c = resolvedChannel {
                 ChannelOptionsSheet(channel: c)
             }
         }
         .sheet(isPresented: $showInviteToChannel) {
-            if let c = channel.value {
+            if let c = resolvedChannel {
                 InviteToChannelSheet(channel: c)
             }
         }
@@ -561,6 +609,10 @@ struct ChannelScreen: View {
                     .filter(Column("channelId") == channelId && Column("pinnedAt") != nil)
                     .order(Column("pinnedAt").desc)
                     .fetchAll(db)
+            }
+            // An archived channel restored by navigation isn't cached (#590).
+            if let wsId = app.selectedWorkspaceId {
+                await app.engine.resolveUncachedChannel(channelId, workspaceId: wsId)
             }
             // A transcript on screen must have been asked for at least once —
             // the selection-driven fetch alone can leave this one blank (#269).

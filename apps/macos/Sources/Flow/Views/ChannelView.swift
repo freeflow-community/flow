@@ -89,7 +89,14 @@ struct ChannelView: View {
 
     private var currentChannel: Channel? {
         channel.value(for: channelId, db: app.db, fallback: nil, Self.channelQuery(channelId))
+            // An archived channel opened from the channel browser (#590) is
+            // never cached — it resolves from the browser's in-memory list.
+            ?? app.archivedChannels[channelId]
     }
+
+    /// Archived (#590): full history, read-only — banner, no composer, and the
+    /// transcript's write actions gated off through its capabilities.
+    private var isArchived: Bool { currentChannel?.archivedAt != nil }
 
     private var currentMessages: [Message] {
         messages.value(
@@ -151,6 +158,16 @@ struct ChannelView: View {
                 FindBarView(find: find, total: findMatches.count, onStep: stepFind)
             }
             SyncBar(syncing: app.isSyncing)
+            if isArchived {
+                Text(ChannelBrowser.archivedBanner(archivedAt: currentChannel?.archivedAt))
+                    .flowFont(.caption)
+                    .foregroundStyle(Color.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.08))
+                    .accessibilityIdentifier("channel.archivedBanner")
+            }
             // A provider's limits, said once up here (#546): history budget,
             // paused stream, and the "Open in Slack" way out. Empty on Flow.
             ProviderLimitsBanner(channelId: channelId)
@@ -168,7 +185,7 @@ struct ChannelView: View {
                     onError: { app.showError($0) },
                     onSelectArtifact: { win.selectArtifact($0) },
                     onOpenScheduled: { win.showScheduledPanel() },
-                    capabilities: app.capabilities
+                    capabilities: isArchived ? app.capabilities.archivedReadOnly() : app.capabilities
                 ),
                 hasMore: hasMoreCached || (app.hasMore[channelId] ?? false),
                 isLoadingHistory: app.loadingHistory.contains(channelId),
@@ -207,7 +224,7 @@ struct ChannelView: View {
 
             TypingIndicatorView(channelId: channelId, userNames: userNames)
 
-            if currentChannel?.archivedAt != nil {
+            if isArchived {
                 Text("This channel is archived and read-only.")
                     .flowFont(.callout)
                     .foregroundStyle(.secondary)
@@ -246,6 +263,9 @@ struct ChannelView: View {
                     sql: "SELECT w.role FROM workspace w JOIN channel c ON c.workspaceId = w.id WHERE c.id = ?",
                     arguments: [channelId]
                 )
+            }
+            if let wsId = win.selectedWorkspaceId {
+                await app.engine.resolveUncachedChannel(channelId, workspaceId: wsId)
             }
             await loadChannelMembers()
             // A transcript on screen must have been asked for at least once —
@@ -395,7 +415,7 @@ struct ChannelView: View {
                         }
                         .buttonStyle(.plain)
                         .help("View profile")
-                    } else if currentChannel?.kind == "standard", app.can(.channelManagement) {
+                    } else if currentChannel?.kind == "standard", !isArchived, app.can(.channelManagement) {
                         // Clicking a channel's name opens the name/topic editor
                         // (ui_nits item 5).
                         Button {
@@ -409,6 +429,12 @@ struct ChannelView: View {
                         .buttonStyle(.plain)
                         .help("Edit name & topic")
                         .accessibilityIdentifier("channel.editHeader")
+                    } else if isArchived {
+                        // Same bare name the editable header shows; the icon
+                        // already says it's a channel.
+                        Text(currentChannel?.name ?? "")
+                            .flowFont(size: 15, weight: .bold)
+                            .foregroundStyle(MC.ink)
                     } else {
                         Text(headerTitle)
                             .flowFont(size: 15, weight: .bold)
@@ -537,7 +563,7 @@ struct ChannelView: View {
             .capability(.artifacts)
             .accessibilityIdentifier("channel.artifacts")
 
-            if currentChannel?.kind == "standard", app.can(.channelManagement) {
+            if currentChannel?.kind == "standard", !isArchived, app.can(.channelManagement) {
                 Divider()
                 Button {
                     showChannelEdit = true

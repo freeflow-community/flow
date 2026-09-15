@@ -179,6 +179,9 @@ struct MainView: View {
         } else if win.showDirectory {
             // Directory (#432) — the workspace member grid, same treatment again.
             DirectoryView()
+        } else if win.showChannelBrowser {
+            // Channel browser (#590) — every public channel, same treatment.
+            ChannelBrowserView()
         } else if let channelId = win.selectedChannelId {
             // Tabbed side panel: Thread, Files (#347) and the channel's
             // artifacts (phase 13). GeometryReader measures the space this

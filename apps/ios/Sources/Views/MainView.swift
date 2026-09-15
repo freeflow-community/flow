@@ -119,6 +119,9 @@ struct MainView: View {
                 } else if app.showDirectory {
                     // Directory (#432) — the workspace member grid, same again.
                     DirectoryScreen()
+                } else if app.showChannelBrowser {
+                    // Channel browser (#590) — every public channel, same again.
+                    ChannelBrowserScreen()
                 } else if let channelId = app.selectedChannelId {
                     ChannelScreen(channelId: channelId, onOpenDrawer: { openDrawer() })
                         .id(channelId)
@@ -176,6 +179,7 @@ struct MainView: View {
         if env["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" { app.showActivity = true }
         if env["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" { app.showScheduled = true }
         if env["FLOW_DEBUG_SHOW_DIRECTORY"] == "1" { app.showDirectory = true }
+        if env["FLOW_DEBUG_SHOW_CHANNEL_BROWSER"] == "1" { app.showChannelBrowser = true }
     }
     #endif
 
@@ -192,6 +196,7 @@ struct MainView: View {
         if env["FLOW_DEBUG_SHOW_ACTIVITY"] == "1" { return }
         if env["FLOW_DEBUG_SHOW_SCHEDULED"] == "1" { return }
         if env["FLOW_DEBUG_SHOW_DIRECTORY"] == "1" { return }
+        if env["FLOW_DEBUG_SHOW_CHANNEL_BROWSER"] == "1" { return }
         #endif
         guard let id = app.window.restorableLastChannel(from: channels) else { return }
         app.selectChannel(id)
@@ -204,7 +209,7 @@ struct MainView: View {
     private func debugAutoOpen(_ channels: [Channel]) {
         #if DEBUG
         guard app.selectedChannelId == nil, !app.showActivity, !app.showScheduled,
-              !app.showDirectory,
+              !app.showDirectory, !app.showChannelBrowser,
               let key = ProcessInfo.processInfo.environment["FLOW_DEBUG_OPEN_CHANNEL"], !key.isEmpty,
               let ch = channels.first(where: {
                   ($0.name == key || $0.id == key) && $0.workspaceId == app.selectedWorkspaceId

@@ -52,6 +52,13 @@ struct Capabilities: Codable, Equatable, Sendable {
 
     subscript(_ name: CapabilityName) -> Capability { values[name] ?? .unavailable("Not available for this workspace.") }
     func canUse(_ name: CapabilityName) -> Bool { self[name].usable }
+
+    /// A copy with one capability replaced.
+    func overriding(_ name: CapabilityName, with value: Capability) -> Capabilities {
+        var copy = self
+        copy.values[name] = value
+        return copy
+    }
 }
 
 enum BackendAuthStatus: String, Codable, Sendable {

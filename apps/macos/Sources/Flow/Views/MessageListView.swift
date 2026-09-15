@@ -826,7 +826,7 @@ struct MessageRow: View, @preconcurrency Equatable {
                         sendFailedFooter
                     }
 
-                    if isThinkingRow {
+                    if isThinkingRow, caps.canUse(.agents) {
                         interruptButton
                     }
 
@@ -918,7 +918,9 @@ struct MessageRow: View, @preconcurrency Equatable {
         // (hovering -> false) — unmounting the anchor would tear the popover
         // down (operator-reported bug at the item-6 checkpoint).
         .overlay(alignment: .topTrailing) {
-            if hovering || showReactionPicker || showDeleteConfirm,
+            // No hover menu where nothing can be sent — an archived channel
+            // (#590) is history only, as on web.
+            if hovering || showReactionPicker || showDeleteConfirm, caps.canUse(.send),
                (!message.isDeleted || deleteMode == .permanent), !message.pending, !message.failed {
                 hoverMenu
                     .padding(.trailing, 22)
@@ -1544,6 +1546,9 @@ struct MessageRow: View, @preconcurrency Equatable {
                     )
                 }
                 .buttonStyle(.plain)
+                // Still shown where reacting isn't possible (an archived
+                // channel, #590) — just not tappable.
+                .disabled(!caps.canUse(.reactions))
                 .help((agg.userIds.compactMap { userNames[$0] }).joined(separator: ", "))
                 .accessibilityIdentifier("msg.reaction.\(agg.emoji)")
                 .accessibilityValue("\(agg.count)\(mine ? " including you" : "")")

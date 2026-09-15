@@ -131,10 +131,6 @@ struct SidebarView: View {
         AppsSection.entries(apps: win.appArtifacts(), channels: channels.value)
     }
 
-    private var browsableChannels: [Channel] {
-        channels.value.filter { !$0.isMember && !$0.isPrivate && !$0.isDM }
-    }
-
     private var memberById: [String: MemberInfo] {
         Dictionary(uniqueKeysWithValues: members.value.map { ($0.userId, $0) })
     }
@@ -164,6 +160,11 @@ struct SidebarView: View {
                     channelWithArtifacts(row.channel) {
                         channelRow(row.channel, isNested: row.isNested)
                     }
+                }
+                // Channel browser (#590): one nav row replaces the inline Browse
+                // list of every unjoined channel, which didn't scale. As on web.
+                if app.can(.channelManagement) {
+                    browseAllRow
                 }
 
                 // Apps (#394): every mini app in the workspace, including ones
@@ -235,13 +236,6 @@ struct SidebarView: View {
                     channelWithArtifacts(channel) { dmRow(channel) }
                     ForEach(dmChildren[channel.id] ?? []) { child in
                         channelWithArtifacts(child) { channelRow(child, isNested: true) }
-                    }
-                }
-
-                if !browsableChannels.isEmpty, app.can(.channelManagement) {
-                    sectionHeader("Browse") {}
-                    ForEach(browsableChannels) { channel in
-                        browseRow(channel)
                     }
                 }
 
@@ -630,7 +624,8 @@ struct SidebarView: View {
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
             selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
-            showScheduled: win.showScheduled, showDirectory: win.showDirectory
+            showScheduled: win.showScheduled, showDirectory: win.showDirectory,
+            showChannelBrowser: win.showChannelBrowser
         )
         return SidebarHoverRow { hovering in
             Button {
@@ -713,7 +708,8 @@ struct SidebarView: View {
         let active = AppState.channelRowHighlighted(
             rowId: channel.id, selectedChannelId: win.selectedChannelId,
             selectedArtifactId: win.selectedArtifactId, showActivity: win.showActivity,
-            showScheduled: win.showScheduled, showDirectory: win.showDirectory
+            showScheduled: win.showScheduled, showDirectory: win.showDirectory,
+            showChannelBrowser: win.showChannelBrowser
         )
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { memberById[$0] }
@@ -871,32 +867,33 @@ struct SidebarView: View {
         }
     }
 
-    private func browseRow(_ channel: Channel) -> some View {
-        HStack(spacing: 9) {
-            Text("#")
-                .flowFont(size: 14)
-                .foregroundStyle(.white.opacity(0.6))
-                .frame(width: 14)
-            Text(channel.name ?? "")
-                .flowFont(size: 14)
-                .foregroundStyle(.white.opacity(0.7))
-            Spacer(minLength: 0)
-            Button("Join") {
-                Task {
-                    do {
-                        let ch = try await app.engine.joinChannel(channel.id)
-                        win.selectChannel(ch.id)
-                    } catch {
-                        app.showError(error.localizedDescription)
-                    }
-                }
+    /// "Browse all" at the end of the Channels section (#590) — opens the
+    /// channel browser. Muted, so it reads as a nav affordance, not a channel.
+    private var browseAllRow: some View {
+        let active = win.showChannelBrowser
+        return Button {
+            win.showChannelBrowserPanel()
+        } label: {
+            HStack(spacing: 9) {
+                Text("⋯")
+                    .flowFont(size: 14)
+                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.5))
+                    .frame(width: 14)
+                Text("Browse all")
+                    .flowFont(size: 14, weight: active ? .semibold : .regular)
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.6))
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
-            .flowFont(.caption, weight: .semibold)
-            .foregroundStyle(.white.opacity(0.8))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
+        .buttonStyle(.plain)
+        .help("Browse all channels")
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.browseAll")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     /// The Directory entry under the Direct messages header (#432) — the same

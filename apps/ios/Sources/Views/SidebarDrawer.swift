@@ -133,10 +133,6 @@ struct SidebarDrawer: View {
                     ) == .orderedAscending
             }
     }
-    private var browsable: [Channel] {
-        channels.value.filter { !$0.isMember && !$0.isPrivate && !$0.isDM }
-    }
-
     var body: some View {
         HStack(spacing: 0) {
             WorkspaceRail(
@@ -240,6 +236,11 @@ struct SidebarDrawer: View {
                         .hiddenUnless(.channelManagement, in: app.capabilities)
                     }
                     ForEach(standard, id: \.channel.id) { channelRow($0.channel, isNested: $0.isNested) }
+                    // Channel browser (#590): one nav row at the end of
+                    // Channels replaces the inline Browse list, as on web.
+                    if app.can(.channelManagement) {
+                        browseAllRow
+                    }
 
                     // Agents (#361): one row per workspace agent, between
                     // Channels and Direct Messages, whether or not a DM exists
@@ -284,12 +285,7 @@ struct SidebarDrawer: View {
                         ForEach(dmChildren[dm.id] ?? []) { channelRow($0, isNested: true) }
                     }
 
-                    if !browsable.isEmpty, app.can(.channelManagement) {
-                        sectionHeader("Browse") { EmptyView() }
-                        ForEach(browsable) { browseRow($0) }
-                    }
-
-                    if standard.isEmpty && dms.isEmpty && agents.isEmpty && browsable.isEmpty {
+                    if standard.isEmpty && dms.isEmpty && agents.isEmpty {
                         Text("No channels yet")
                             .font(.system(size: 14))
                             .foregroundStyle(.white.opacity(0.6))
@@ -540,7 +536,7 @@ struct SidebarDrawer: View {
 
     private func channelRow(_ channel: Channel, isNested: Bool = false) -> some View {
         let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
-            && !app.showDirectory
+            && !app.showDirectory && !app.showChannelBrowser
         return Button {
             open(channel)
         } label: {
@@ -605,7 +601,7 @@ struct SidebarDrawer: View {
         let title = label
             ?? channel.displayTitle(userNames: userNames, currentUserId: app.currentUser?.id)
         let active = app.selectedChannelId == channel.id && !app.showActivity && !app.showScheduled
-            && !app.showDirectory
+            && !app.showDirectory && !app.showChannelBrowser
         let otherId = (channel.memberIds ?? []).first { $0 != app.currentUser?.id }
         let otherStatus = otherId.flatMap { usersById[$0] }
         return Button {
@@ -731,27 +727,35 @@ struct SidebarDrawer: View {
         .accessibilityValue(online ? "online" : "offline")
     }
 
-    /// A public channel you're not in yet: tapping Join enrolls and opens it,
-    /// after which it moves up into the Channels section.
-    private func browseRow(_ channel: Channel) -> some View {
-        HStack(spacing: 9) {
-            Text("#")
-                .font(.system(size: 15))
-                .foregroundStyle(.white.opacity(0.6))
-                .frame(width: 18)
-            Text(channel.name ?? "")
-                .font(.system(size: 15))
-                .foregroundStyle(.white.opacity(0.7))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            Button("Join") { join(channel) }
-                .buttonStyle(.plain)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-                .accessibilityIdentifier("channel.join.\(channel.name ?? "")")
+    /// "Browse all" at the end of Channels (#590) — opens the channel browser.
+    /// Muted, so it reads as a nav affordance rather than a channel. Selecting
+    /// it closes the drawer, like any other selection.
+    private var browseAllRow: some View {
+        let active = app.showChannelBrowser
+        return Button {
+            app.showChannelBrowserPanel()
+            onSelect()
+        } label: {
+            HStack(spacing: 9) {
+                Text("⋯")
+                    .font(.system(size: 15))
+                    .foregroundStyle(active ? MC.accentDeep.opacity(0.7) : .white.opacity(0.5))
+                    .frame(width: 18)
+                Text("Browse all")
+                    .font(.system(size: 15, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? MC.accentDeep : .white.opacity(0.6))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 9)
+            .background(rowBackground(active))
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 9)
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebar.browseAll")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     private func presenceDot(online: Bool) -> some View {
@@ -818,17 +822,6 @@ struct SidebarDrawer: View {
         }
     }
 
-    private func join(_ channel: Channel) {
-        Task {
-            do {
-                let joined = try await app.engine.joinChannel(channel.id)
-                open(joined.id)
-            } catch {
-                app.showError(error.localizedDescription)
-            }
-        }
-    }
-
     private func reloadRoster() {
         guard let wsId = app.selectedWorkspaceId else { return }
         // Fetch the roster directly rather than waiting for `selectWorkspace`'s
@@ -866,7 +859,7 @@ struct SidebarDrawer: View {
     private func defaultSelectionAndSelfDm(_ chans: [Channel]) {
         guard let wsId = app.selectedWorkspaceId, !chans.isEmpty else { return }
         if app.selectedChannelId == nil && !app.showActivity && !app.showScheduled
-            && !app.showDirectory {
+            && !app.showDirectory && !app.showChannelBrowser {
             let target = chans.first { $0.isMember && $0.name == "general" }
                 ?? chans.first { $0.isMember && !$0.isDM }
             if let target { app.selectChannel(target.id) }

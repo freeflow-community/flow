@@ -64,6 +64,16 @@ struct ThreadScreen: View {
         }
     }
 
+    /// A thread in an archived channel (#590) is read-only like its channel.
+    /// Archived channels are never cached, so the browser's list is the test.
+    private var isArchived: Bool {
+        channelId.value.map { app.archivedChannels[$0] != nil } ?? false
+    }
+
+    private var capabilities: Capabilities {
+        isArchived ? app.capabilities.archivedReadOnly() : app.capabilities
+    }
+
     private var userNames: [String: String] {
         Dictionary(users.value.map { ($0.id, $0.displayNameWithBadge) }, uniquingKeysWith: { a, _ in a })
     }
@@ -133,7 +143,8 @@ struct ThreadScreen: View {
                                     engine: app.engine,
                                     avatarPaths: app.avatarPaths,
                                     agentIds: app.agentIds,
-                                    onOpenScheduled: { app.showScheduledPanel() }
+                                    onOpenScheduled: { app.showScheduledPanel() },
+                                    capabilities: capabilities
                                 ),
                                 showHeader: true,
                                 showThreadAffordances: false,
@@ -144,7 +155,7 @@ struct ThreadScreen: View {
                                     Task { await app.engine.deleteMessage(id: msg.id, permanently: permanently) }
                                 },
                                 onOpenProfile: { profileRoute = ProfileRoute(userId: $0) },
-                                capabilities: app.capabilities
+                                capabilities: capabilities
                             )
                             .equatable()
                             // See MessageListView: key on clientMsgId so the
@@ -262,7 +273,7 @@ struct ThreadScreen: View {
                 }
             }
             .dismissesKeyboardOnChatInteraction()
-            if let chId = channelId.value {
+            if let chId = channelId.value, !isArchived {
                 TypingIndicatorView(channelId: chId, threadRootId: rootId, userNames: userNames)
                 Divider()
                 ComposerView(channelId: chId, threadRootId: rootId, placeholder: "Reply in thread")
