@@ -19,6 +19,7 @@ async function loadMessage(messageId: string, userId: string) {
   const row = rows[0];
   if (!row) throw notFound('message not found');
   const { chan } = await requireChannelAccess(row.channelId, userId);
+  if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
   if (row.deletedAt) throw badRequest('message_deleted', 'cannot react to a deleted message');
   return { row, chan };
 }

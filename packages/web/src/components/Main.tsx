@@ -22,7 +22,7 @@ import { shouldOpenArtifact } from '../lib/artifactDelivery';
 import { backendFor } from '../lib/backend';
 import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
-import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useRuntime, useSelection } from '../state';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, CHANNEL_BROWSER_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useRuntime, useSelection } from '../state';
 import { HuddleProvider, useHuddle, type HuddleState } from '../huddle';
 import { useNameMap, useWorkspaceInvites, useWorkspaces } from '../hooks';
 import Sidebar from './Sidebar';
@@ -30,6 +30,7 @@ import ChannelView from './ChannelView';
 import AdminView from './AdminView';
 import ActivityView from './ActivityView';
 import DirectoryView from './DirectoryView';
+import ChannelBrowserView from './ChannelBrowserView';
 import ScheduledView from './ScheduledView';
 import SidePanel from './SidePanel';
 import { OpenInAppBanner } from './OpenInApp';
@@ -607,6 +608,8 @@ export default function Main() {
               <ScheduledView />
             ) : sel.channelId === DIRECTORY_VIEW_ID ? (
               <DirectoryView />
+            ) : sel.channelId === CHANNEL_BROWSER_VIEW_ID ? (
+              <ChannelBrowserView />
             ) : sel.channelId ? (
               <>
                 <ChannelView key={sel.channelId} channelId={sel.channelId} />

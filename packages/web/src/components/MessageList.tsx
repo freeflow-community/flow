@@ -65,6 +65,7 @@ export default function MessageList({
   scrollKey: unscopedScrollKey,
   focusMessageId = null,
   onFocused,
+  readOnly = false,
 }: {
   messages: MessageDTO[];
   names: Record<string, string>;
@@ -82,6 +83,8 @@ export default function MessageList({
    * it's rendered, then call onFocused. */
   focusMessageId?: string | null;
   onFocused?: () => void;
+  /** Archived channel (#588): history only — no hover menu, no reacting. */
+  readOnly?: boolean;
 }) {
   const { scopedStorageKey } = useBoundApi();
   const scrollKey = unscopedScrollKey ? scopedStorageKey(`scroll:${unscopedScrollKey}`) : undefined;
@@ -236,6 +239,7 @@ export default function MessageList({
                   showHeader={showsHeader(messages, i)}
                   showThreadAffordances={showThreadAffordances}
                   threadUnread={unreadThreadRootIds.includes(m.id)}
+                  readOnly={readOnly}
                 />
               )}
             </div>
@@ -368,6 +372,7 @@ function MessageRow({
   showHeader,
   showThreadAffordances,
   threadUnread = false,
+  readOnly = false,
 }: {
   message: MessageDTO;
   names: Record<string, string>;
@@ -376,6 +381,7 @@ function MessageRow({
   showThreadAffordances: boolean;
   /** This thread holds an unread notification for me (#270). */
   threadUnread?: boolean;
+  readOnly?: boolean;
 }) {
   const { api } = useBoundApi();
   const auth = useAuth();
@@ -634,6 +640,7 @@ function MessageRow({
                       className={`rounded-[20px] border bg-white px-[9px] py-[2px] text-xs ${
                         mineR ? 'border-accent-soft/40' : 'border-hairline hover:border-hairline2'
                       }`}
+                      disabled={readOnly}
                       onClick={() => toggle.mutate({ message, emoji: r.emoji, mine: mineR })}
                     >
                       <EmojiGlyph emoji={r.emoji} customEmoji={customEmoji} />{' '}
@@ -687,7 +694,7 @@ function MessageRow({
         )}
       </div>
 
-      {!editing && !pending && !failed && (!message.deletedAt || deleteMode === 'permanent') && (
+      {!readOnly && !editing && !pending && !failed && (!message.deletedAt || deleteMode === 'permanent') && (
         <div className="absolute top-0 right-[22px] hidden items-center gap-0.5 rounded-xl border border-hairline bg-white px-1.5 py-1 shadow-sm group-hover:flex">
           {!message.deletedAt && (
             <>

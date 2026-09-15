@@ -17,6 +17,9 @@ This file keeps two things:
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
+- **The channel browser is web only** (#588). macOS and iOS still list unjoined
+  channels inline and cannot open an archived channel; the server side
+  (`includeArchived`, `memberCount`) is ready for them.
 - **The channel Docs list is searchable and collapsible on web only** (#574).
   macOS and iOS list a channel's artifacts as a plain run of rows with no
   group header, filter or fold. Closing it is the same `DocsGroup` shape in

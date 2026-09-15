@@ -499,6 +499,7 @@ async function requirePinnableMessage(messageId: string, userId: string) {
   const row = rows[0];
   if (!row) throw notFound('message not found');
   const { chan, isMember } = await requireChannelAccess(row.channelId, userId);
+  if (chan.archivedAt) throw badRequest('channel_archived', 'channel is archived');
   if (!isMember) throw forbidden('join the channel to manage pinned messages');
   if (row.deletedAt) throw badRequest('message_deleted', 'cannot pin a deleted message');
   if (row.systemKind) throw badRequest('system_message', 'channel event messages cannot be pinned');

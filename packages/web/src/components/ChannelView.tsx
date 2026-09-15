@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
 import { useHuddle } from '../huddle';
-import { useArtifacts, useChannelMembers, useChannels, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
+import { useArtifacts, useChannel, useChannelMembers, useDisplayNameMap, useMarkRead, useMemberMap, useMessages, useNameMap, usePinnedMessages, useTogglePin, flattenMessages } from '../hooks';
 import { dmTitle } from './Sidebar';
 import { Avatar } from './Avatar';
 import ChannelMembersPopover, { type MemberRow } from './ChannelMembersPopover';
@@ -23,7 +23,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const sel = useSelection();
   const live = useLive();
   const huddle = useHuddle();
-  const channels = useChannels(sel.workspaceId);
   const memberMap = useMemberMap(sel.workspaceId);
   const names = useNameMap(sel.workspaceId);
   const displayNames = useDisplayNameMap(sel.workspaceId); // agent names carry the 🤖 badge
@@ -62,7 +61,10 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   // cmd-F find bar (#518) — searches the transcript this pane has loaded.
   const paneRef = useRef<HTMLElement>(null);
 
-  const channel = (channels.data ?? []).find((c) => c.id === channelId);
+  // Falls back to the archived-inclusive list, so an archived channel opened
+  // from the channel browser (#588) resolves — read-only, with its banner.
+  const channel = useChannel(sel.workspaceId, channelId);
+  const archived = !!channel?.archivedAt;
   // This channel's artifacts, for the "⋯" menu's Artifacts section (#188).
   const artifacts = useArtifacts(sel.workspaceId);
   const channelArtifacts = useMemo(
@@ -83,6 +85,9 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   useEffect(() => {
     const sync = () => {
       if (document.hidden) return;
+      // A non-member previewing a public or archived channel (#588) has no
+      // read cursor to move — the server would answer 403.
+      if (channel && !channel.isMember) return;
       if (newestId && newestId !== lastReadRef.current) {
         lastReadRef.current = newestId;
         markRead.mutate({ channelId, lastReadMsgId: newestId });
@@ -92,7 +97,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     document.addEventListener('visibilitychange', sync);
     return () => document.removeEventListener('visibilitychange', sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newestId, channelId]);
+  }, [newestId, channelId, channel?.isMember]);
 
   // Jump-to-message (phase 12): a target from the Activity feed may sit beyond
   // the loaded pages — page older history until it's in the list (MessageList
@@ -154,7 +159,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const huddleParticipants = channel?.huddleParticipants ?? [];
   const inThisHuddle = huddle.channelId === channelId;
   const huddleEligible = !!channel && !channel.archivedAt && caps.huddles.state !== 'unavailable';
-  const canEditChannel = channel?.kind === 'standard' && caps.channelManagement.state !== 'unavailable';
+  const canEditChannel = channel?.kind === 'standard' && !archived && caps.channelManagement.state !== 'unavailable';
   const isDmHuddle = !!channel && channel.kind !== 'standard';
 
   // #392: the header shows the topic on one truncated line — hovering it gives
@@ -203,7 +208,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             </p>
           )}
           {topicTip.tooltip}
-          {channel?.archivedAt && <p className="text-xs text-orange-600">archived</p>}
         </div>
         <div className="relative flex shrink-0 items-center gap-3">
           {huddleEligible && (
@@ -295,7 +299,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
             <ChannelOverflowMenu
               artifacts={channelArtifacts}
               pinCount={pins.data?.length ?? 0}
-              showOptions={channel?.kind === 'standard'}
+              showOptions={channel?.kind === 'standard' && !archived}
               onOpenFiles={() => sel.openFiles(true)}
               onOpenPins={() => setPinsOpen(true)}
               onOpenArtifact={(id) => sel.selectArtifact(id)}
@@ -309,6 +313,18 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       {/* #518: the find bar slides in under the header, above the transcript —
           it pushes the list down rather than floating over the newest message. */}
       {find.open && <FindBar find={find} />}
+
+      {/* #588: archived channels open read-only from the channel browser. */}
+      {archived && (
+        <div
+          data-testid="archived-banner"
+          role="status"
+          className="shrink-0 border-b border-orange-200 bg-orange-50 px-[22px] py-1.5 text-xs text-orange-800"
+        >
+          📦 This channel was archived{channel?.archivedAt ? ` on ${new Date(channel.archivedAt).toLocaleDateString()}` : ''}.
+          Its history is read-only — no one can post, join or react here.
+        </div>
+      )}
 
       {/* Provider-limited history (#545): say so, with the wait, instead of a
           silent end of the transcript or a retry loop against the budget. */}
@@ -366,6 +382,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         hasMore={(messagesQ.hasNextPage ?? false) && !(limitedHistory && waitSeconds > 0)}
         onLoadOlder={() => { if (!limitedHistory || waitSeconds === 0) void messagesQ.fetchNextPage(); }}
         showThreadAffordances
+        readOnly={archived}
         unreadThreadRootIds={channel?.unreadThreadRootIds ?? []}
         focusMessageId={focusId}
         onFocused={() => sel.clearFocusMessage()}
@@ -380,8 +397,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         {typers.length > 1 && <span data-testid="typing-indicator">Several people are typing…</span>}
       </div>
 
-      {channel?.archivedAt ? (
-        <p className="px-[22px] pb-[22px] text-sm text-muted">This channel is archived and read-only.</p>
+      {archived ? (
+        <p data-testid="archived-composer-note" className="px-[22px] pb-[22px] text-sm text-muted">This channel is archived and read-only.</p>
       ) : (
         <Composer
           channelId={channelId}

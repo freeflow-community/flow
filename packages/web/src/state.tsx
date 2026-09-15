@@ -43,6 +43,13 @@ export const SCHEDULED_VIEW_ID = '__scheduled__';
  */
 export const DIRECTORY_VIEW_ID = '__directory__';
 
+/**
+ * Sentinel channel id for the channel browser (#588) — every public channel,
+ * joined or not, with search and an include-archived toggle. Opened from the
+ * "Browse all" row at the end of the sidebar's Channels section.
+ */
+export const CHANNEL_BROWSER_VIEW_ID = '__channel_browser__';
+
 export interface Selection {
   workspaceId: string | null;
   channelId: string | null;

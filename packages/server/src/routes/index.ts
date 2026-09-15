@@ -768,7 +768,9 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.get('/v1/workspaces/:id/channels', { preHandler: requireAuth }, async (req) => {
     const { id } = req.params as { id: string };
-    return { channels: await ch.listChannels(id, req.user.id) };
+    const { includeArchived } = req.query as { includeArchived?: string };
+    const opts = { includeArchived: includeArchived === '1' || includeArchived === 'true' };
+    return { channels: await ch.listChannels(id, req.user.id, opts) };
   });
 
   // DM upsert (phase2.md §1): returns the existing channel for this member set or creates it

@@ -35,6 +35,7 @@ export function toChannelDTO(
     memberIds?: string[] | undefined;
     indicator?: ChannelIndicatorState | null | undefined;
     huddleParticipants?: HuddleParticipantDTO[] | undefined;
+    memberCount?: number | undefined;
   },
 ): ChannelDTO {
   const dto: ChannelDTO = {
@@ -62,6 +63,7 @@ export function toChannelDTO(
   if (opts.oldestUnreadThreadReply) dto.oldestUnreadThreadReply = opts.oldestUnreadThreadReply;
   if (c.emoji) dto.emoji = c.emoji;
   if (opts.memberIds) dto.memberIds = opts.memberIds;
+  if (opts.memberCount !== undefined) dto.memberCount = opts.memberCount;
   // Only sent when something is actually showing: absent means "no spinner",
   // and every other DTO path (create, patch, join…) leaves it out entirely.
   if (opts.indicator) dto.indicator = opts.indicator;
@@ -69,6 +71,17 @@ export function toChannelDTO(
   // every other DTO path (create, patch, join…) leaves this out entirely.
   if (opts.huddleParticipants?.length) dto.huddleParticipants = opts.huddleParticipants;
   return dto;
+}
+
+/** Member counts for standard channels (#588 browser) — one grouped query. */
+async function standardMemberCounts(channelIds: string[]): Promise<Map<string, number>> {
+  if (channelIds.length === 0) return new Map();
+  const rows = await db
+    .select({ channelId: channelMembers.channelId, n: sql<number>`count(*)::int` })
+    .from(channelMembers)
+    .where(inArray(channelMembers.channelId, channelIds))
+    .groupBy(channelMembers.channelId);
+  return new Map(channelIds.map((id) => [id, rows.find((r) => r.channelId === id)?.n ?? 0]));
 }
 
 async function dmMemberIds(channelIds: string[]): Promise<Map<string, string[]>> {
@@ -281,7 +294,16 @@ export async function createDm(workspaceId: string, callerId: string, otherUserI
 }
 
 /** Joined + public channels of a workspace, with unread counts for joined ones. */
-export async function listChannels(workspaceId: string, userId: string): Promise<ChannelDTO[]> {
+/**
+ * The caller's channel list. `includeArchived` (#588, the channel browser) adds
+ * archived *public standard* channels — read-only by design, so they carry no
+ * unreads, spinners or huddles, and private/DM archives stay hidden.
+ */
+export async function listChannels(
+  workspaceId: string,
+  userId: string,
+  opts: { includeArchived?: boolean } = {},
+): Promise<ChannelDTO[]> {
   await requireMembership(workspaceId, userId);
   const rows = await db
     .select({
@@ -295,12 +317,21 @@ export async function listChannels(workspaceId: string, userId: string): Promise
       channelMembers,
       and(eq(channelMembers.channelId, channels.id), eq(channelMembers.userId, userId)),
     )
-    .where(and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)))
+    .where(
+      opts.includeArchived
+        ? eq(channels.workspaceId, workspaceId)
+        : and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)),
+    )
     .orderBy(channels.name);
 
-  const visible = rows.filter((r) => !r.c.isPrivate || r.isMember);
+  const visible = rows.filter((r) =>
+    r.c.archivedAt ? r.c.kind === 'standard' && !r.c.isPrivate : !r.c.isPrivate || r.isMember,
+  );
   const dmIds = visible.filter((r) => r.c.kind !== 'standard').map((r) => r.c.id);
   const dmMembers = await dmMemberIds(dmIds);
+  const memberCounts = await standardMemberCounts(
+    visible.filter((r) => r.c.kind === 'standard').map((r) => r.c.id),
+  );
 
   // Unread notifications per channel — the number the sidebar badge shows
   // (operator ruling 2026-07-26; unread *messages* only embolden the row).
@@ -351,9 +382,10 @@ export async function listChannels(workspaceId: string, userId: string): Promise
 
   const result: ChannelDTO[] = [];
   for (const r of visible) {
+    const archived = r.c.archivedAt !== null;
     let unreadCount = 0;
     let oldestUnreadTopLevel: string | null = null;
-    if (r.isMember) {
+    if (r.isMember && !archived) {
       // Membership lines (join/leave) never contribute to unread — they're
       // courtesy notices, not messages you need to catch up on. A *huddle*
       // line is the opposite (#436): "Missed huddle" is the only trace a call
@@ -383,7 +415,8 @@ export async function listChannels(workspaceId: string, userId: string): Promise
     // An older unread top-level message means the main timeline already shows
     // the user what they missed, so the thread waits its turn (its chip keeps
     // the unread dot either way).
-    const oldestReply = r.isMember ? (oldestUnreadReplyByChannel.get(r.c.id) ?? null) : null;
+    const live = r.isMember && !archived;
+    const oldestReply = live ? (oldestUnreadReplyByChannel.get(r.c.id) ?? null) : null;
     const oldestUnreadThreadReply =
       oldestReply && (!oldestUnreadTopLevel || oldestReply.replyId < oldestUnreadTopLevel)
         ? oldestReply
@@ -393,13 +426,14 @@ export async function listChannels(workspaceId: string, userId: string): Promise
         isMember: r.isMember,
         lastReadMsgId: r.lastReadMsgId,
         unreadCount,
-        unreadNotifications: r.isMember ? (notifByChannel.get(r.c.id) ?? 0) : 0,
-        unreadThreadRootIds: r.isMember ? (threadRootsByChannel.get(r.c.id) ?? []) : [],
+        unreadNotifications: live ? (notifByChannel.get(r.c.id) ?? 0) : 0,
+        unreadThreadRootIds: live ? (threadRootsByChannel.get(r.c.id) ?? []) : [],
         oldestUnreadThreadReply,
         notifyLevel: r.notifyLevel ?? 1,
         memberIds: r.c.kind !== 'standard' ? (dmMembers.get(r.c.id) ?? []) : undefined,
-        indicator: indicators.get(r.c.id) ?? null,
-        huddleParticipants: toParticipantDTOs(huddles.get(r.c.id) ?? []),
+        memberCount: memberCounts.get(r.c.id),
+        indicator: archived ? null : (indicators.get(r.c.id) ?? null),
+        huddleParticipants: archived ? [] : toParticipantDTOs(huddles.get(r.c.id) ?? []),
       }),
     );
   }

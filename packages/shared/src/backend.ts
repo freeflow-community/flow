@@ -168,7 +168,9 @@ export interface WorkspaceBackend {
   signOut(): Promise<void>;
 
   listWorkspaces(): Promise<WorkspaceDTO[]>;
-  listConversations(workspaceId: string): Promise<BackendChannel[]>;
+  /** `includeArchived` (#588): add archived public channels, for the channel
+   * browser. Providers without archives ignore it. */
+  listConversations(workspaceId: string, options?: { includeArchived?: boolean }): Promise<BackendChannel[]>;
   listMembers(workspaceId: string): Promise<WorkspaceMemberDTO[]>;
 
   /** Older messages before `cursor` (null = latest page). Oldest first. */

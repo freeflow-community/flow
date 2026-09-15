@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { typingKey, useAuth, useLive, useMobileNav, useSelection } from '../state';
-import { useMarkRead, useMemberMap, useNameMap, useThread } from '../hooks';
+import { useChannel, useMarkRead, useMemberMap, useNameMap, useThread } from '../hooks';
 import MessageList from './MessageList';
 import Composer, { arrowUpEdit } from './Composer';
 
@@ -34,6 +34,8 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
   }, [thread.data]);
 
   const channelId = thread.data?.root.channelId;
+  // A thread in an archived channel (#588) is read-only like its channel.
+  const archived = !!useChannel(sel.workspaceId, channelId)?.archivedAt;
 
   // Looking at a thread reads its notifications (issue #63) — the channel's own
   // read cursor only tracks top-level messages, so replies need this. Re-runs
@@ -69,6 +71,7 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
         hasMore={false}
         onLoadOlder={() => {}}
         showThreadAffordances={false}
+        readOnly={archived}
         focusMessageId={sel.focusMessageId}
         onFocused={() => sel.clearFocusMessage()}
       />
@@ -81,7 +84,7 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
         )}
       </div>
 
-      {channelId && (
+      {channelId && !archived && (
         <Composer
           channelId={channelId}
           threadRootId={rootId}

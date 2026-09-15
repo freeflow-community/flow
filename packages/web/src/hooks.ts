@@ -122,6 +122,35 @@ export function useChannels(workspaceId: string | null) {
   });
 }
 
+/**
+ * The channel list with archived public channels included (#588) — the channel
+ * browser's data. Keyed under ['channels', workspaceId] so every invalidation
+ * of the sidebar list refreshes this one too.
+ */
+export function useChannelsWithArchived(workspaceId: string | null, enabled = true) {
+  const backend = useBackend();
+  return useQuery({
+    queryKey: ['channels', workspaceId, 'includeArchived'],
+    queryFn: async () => ({
+      channels: (await backend.listConversations(workspaceId!, { includeArchived: true })) as ChannelDTO[],
+    }),
+    select: (d) => d.channels,
+    enabled: workspaceId !== null && enabled,
+  });
+}
+
+/**
+ * One channel by id. Archived channels are not in the sidebar list, so a miss
+ * there falls back to the archived-inclusive list (#588) — that is how an
+ * archived channel opened from the browser resolves, with `archivedAt` set.
+ */
+export function useChannel(workspaceId: string | null, channelId: string | null | undefined) {
+  const channels = useChannels(workspaceId);
+  const found = channelId ? (channels.data ?? []).find((c) => c.id === channelId) : undefined;
+  const withArchived = useChannelsWithArchived(workspaceId, !!channelId && channels.isSuccess && !found);
+  return found ?? (channelId ? (withArchived.data ?? []).find((c) => c.id === channelId) : undefined);
+}
+
 export function useMembers(workspaceId: string | null) {
   const backend = useBackend();
   return useQuery({

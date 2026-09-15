@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import { artifactGlyph } from '../lib/fileKind';
 import { dmTitle, isSelfDm as isSelfDmChannel } from '../lib/channelTitle';
 import { workspaceExit } from '../lib/workspaceExit';
-import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
+import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, CHANNEL_BROWSER_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import type { Selection } from '../state';
 import { useCapabilities } from '../lib/backend';
 import {
@@ -368,7 +368,6 @@ export default function Sidebar() {
     if (list) list.push(a);
     else artifactsByChannel.set(a.channelId, [a]);
   }
-  const browsable = all.filter((c) => !c.isMember && !c.isPrivate && c.kind === 'standard');
   // Apps (#394): workspace-wide mini-app discovery. Server-ordered by name.
   const apps = appEntries(appArtifacts.data ?? [], all);
   /**
@@ -538,6 +537,14 @@ export default function Sidebar() {
             <DocsGroup channelId={c.id} docs={artifactsByChannel.get(c.id) ?? []} />
           </div>
         ))}
+        {/* Channel browser (#588): one nav row replaces the inline Browse list
+            of every unjoined channel, which didn't scale. */}
+        {canManage && (
+          <BrowseAllRow
+            active={sel.channelId === CHANNEL_BROWSER_VIEW_ID}
+            onOpen={() => sel.selectChannel(CHANNEL_BROWSER_VIEW_ID)}
+          />
+        )}
 
         {/* Apps (#394): every mini app in the workspace, including ones in public
             channels this user hasn't joined — clicking joins, then opens the app.
@@ -668,27 +675,6 @@ export default function Sidebar() {
             </div>
           );
         })}
-
-        {browsable.length > 0 && canManage && (
-          <>
-            <SectionHeader label="Browse" />
-            {browsable.map((c) => (
-              <div key={c.id} className="flex items-center justify-between rounded-lg px-2 py-[7px] text-white/70">
-                <span className="truncate"><span className="opacity-60"># </span>{c.name}</span>
-                <button
-                  className="text-xs font-semibold text-white/80 hover:text-white hover:underline"
-                  onClick={async () => {
-                    await api('POST', `/v1/channels/${c.id}/join`);
-                    await qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] });
-                    sel.selectChannel(c.id);
-                  }}
-                >
-                  Join
-                </button>
-              </div>
-            ))}
-          </>
-        )}
 
       </div>
 
@@ -901,6 +887,24 @@ export function ActivityBell({
  * channel). Selectable like a channel; the hover × closes it (pure UI hide,
  * reopen from the workspace menu). Only rendered for admins.
  */
+/** "Browse all" at the end of the Channels section (#588) — opens the channel
+ * browser. Muted, so it reads as a nav affordance rather than a channel. */
+function BrowseAllRow({ active, onOpen }: { active: boolean; onOpen: () => void }) {
+  return (
+    <button
+      data-testid="sidebar-browse-all"
+      title="Browse all channels"
+      className={`flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-left text-[13px] ${
+        active ? 'bg-white text-accent-deep' : 'hover:bg-white/10'
+      }`}
+      onClick={onOpen}
+    >
+      <span className={active ? 'opacity-70' : 'text-white/50'}>⋯</span>
+      <span className={`truncate ${active ? 'font-[650]' : 'text-white/60'}`}>Browse all</span>
+    </button>
+  );
+}
+
 /** The Directory entry under the Direct messages header (#430) — same nav-item
  * shape as the admin row, minus the dismiss button (it is always offered). */
 function DirectoryRow({ active, onOpen }: { active: boolean; onOpen: () => void }) {

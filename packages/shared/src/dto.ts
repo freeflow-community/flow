@@ -343,6 +343,8 @@ export interface ChannelDTO {
   parentId: string | null;
   /** Member user ids — populated for dm/group_dm channels only (clients render DM names from these). */
   memberIds?: string[];
+  /** How many members a standard channel has — the channel browser (#588) shows it. */
+  memberCount?: number;
   /**
    * Live activity indicator (#137) — an agent working in this channel spins a
    * small icon on its sidebar row. Transient server state, never a DB column

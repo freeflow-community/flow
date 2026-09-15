@@ -45,8 +45,9 @@ export class FlowBackend implements WorkspaceBackend {
     return (await this.api<{ workspaces: WorkspaceDTO[] }>('GET', '/v1/me/workspaces')).workspaces;
   }
 
-  async listConversations(workspaceId: string): Promise<BackendChannel[]> {
-    return (await this.api<{ channels: BackendChannel[] }>('GET', `/v1/workspaces/${workspaceId}/channels`)).channels;
+  async listConversations(workspaceId: string, options?: { includeArchived?: boolean }): Promise<BackendChannel[]> {
+    const query = options?.includeArchived ? '?includeArchived=1' : '';
+    return (await this.api<{ channels: BackendChannel[] }>('GET', `/v1/workspaces/${workspaceId}/channels${query}`)).channels;
   }
 
   async listMembers(workspaceId: string): Promise<WorkspaceMemberDTO[]> {
