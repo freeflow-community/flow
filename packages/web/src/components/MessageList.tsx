@@ -2,7 +2,7 @@ import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
+import { bytesLabel, CustomEmojiContext, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
 import { MarkdownReport } from './ArtifactView';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
@@ -555,7 +555,9 @@ function MessageRow({
                 className="text-sm leading-normal break-words whitespace-pre-wrap"
               >
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url), onOpenArtifact: sel.selectArtifact }}>
-                  {renderBlocks(message.body, names, auth.user.id)}
+                  <CustomEmojiContext.Provider value={customEmoji}>
+                    {renderBlocks(message.body, names, auth.user.id)}
+                  </CustomEmojiContext.Provider>
                 </InlineLinkContext.Provider>
                 {message.editedAt && (
                   <span data-search-skip="" className="ml-1 text-xs text-faint">(edited)</span>

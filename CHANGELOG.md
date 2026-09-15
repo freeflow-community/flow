@@ -158,7 +158,7 @@ This file keeps two things:
   correct everywhere (count, who reacted, notifications) — only the glyph is
   missing. Each client needs to fetch `GET /v1/workspaces/:id/emoji` and swap in
   the image (the Slack connector serves the same route, so one port covers
-  Slack teams too). Custom emoji inline in *message text* is unbuilt on every client.
+  Slack teams too). Custom emoji inline in *message text* are web-only as well.
 - Scroll-position memory exists on no client: leaving a channel mid-history and
   coming straight back always re-opens at the newest message. Tried on iOS
   (#159) and removed — tracking the on-screen row needs per-row geometry, which

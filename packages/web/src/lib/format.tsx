@@ -10,15 +10,43 @@
 // wire format stays literal so other clients still show plain markdown.
 import { createContext, Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { WorkspaceMemberDTO } from '@flow/shared';
+import type { WorkspaceEmojiDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { expandShortcodes } from '@flow/shared';
 import { CodeBlock } from '../components/CodeBlock';
 import { MermaidBlock } from '../components/MermaidBlock';
+import { CustomEmojiImage } from '../components/CustomEmoji';
 
 /** Lets a message row offer "Pin as artifact" on every inline link it renders,
  * without threading a callback through the recursive renderer. Rendering sites
  * that don't provide it (previews, etc.) just get plain links. */
 export const InlineLinkContext = createContext<{ onPinLink?: (url: string) => void; onOpenArtifact?: (id: string) => void }>({});
+
+/** The workspace's custom emoji, keyed `:shortcode:`, for `:name:` in message
+ * text (#175 drew them only in reactions). Without a provider every shortcode
+ * stays text, which is also what an unknown or deleted emoji shows. */
+export const CustomEmojiContext = createContext<Record<string, WorkspaceEmojiDTO>>({});
+
+const SHORTCODE_RE = /:[a-z0-9_+'-]+:/g;
+
+function InlineCustomEmoji({ code }: { code: string }) {
+  const emoji = useContext(CustomEmojiContext)[code];
+  return emoji ? <CustomEmojiImage emoji={emoji} size={20} /> : <>{code}</>;
+}
+
+/** Plain text with any `:shortcode:` handed to InlineCustomEmoji. */
+function withCustomEmoji(text: string, keyBase: string): ReactNode[] {
+  if (!text.includes(':')) return [text];
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  for (const m of text.matchAll(SHORTCODE_RE)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<InlineCustomEmoji key={`${keyBase}e${key++}`} code={m[0]} />);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 /** A link in a message body: opens in a new tab, and — when a pin handler is in
  * context — reveals a small 📌 on hover to pin the URL as a co-browsing artifact. */
@@ -75,7 +103,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
   let last = 0;
   let key = 0;
   for (const m of text.matchAll(INLINE_RE)) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) out.push(...withCustomEmoji(text.slice(last, m.index), `${keyBase}p${key}`));
     const k = `${keyBase}i${key++}`;
     if (m[1] !== undefined) {
       out.push(
@@ -105,7 +133,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
     }
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) out.push(...withCustomEmoji(text.slice(last), `${keyBase}t`));
   return out;
 }
 

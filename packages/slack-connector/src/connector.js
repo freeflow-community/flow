@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 import { markdownToMrkdwn, EMOJI_SHORTCODES } from '@flow/shared';
 import { requestedScopes, grantedCapabilities } from './manifest.js';
-import { isTs, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
+import { SLACK_EMOJI, isTs, normalizeChannel, normalizeEvent, normalizeMember, normalizeMessage, normalizeWorkspace, slackThumbUrl } from './normalize.js';
 
 export const opaque = () => randomBytes(32).toString('base64url');
 export const hash = value => createHash('sha256').update(value).digest('base64url');
@@ -605,7 +605,8 @@ let emojiNames = null;
 export function emojiNameFor(emoji) {
   // Keyed without variation selectors: 🗓 and 🗓️ are the same emoji.
   const bare = value => value.replace(/\uFE0F/g, '');
-  if (!emojiNames) emojiNames = new Map(Object.entries(EMOJI_SHORTCODES).map(([name, unicode]) => [bare(unicode), name]));
+  // The shared table last, so its names win (they are what Flow's picker uses).
+  if (!emojiNames) emojiNames = new Map([...Object.entries(SLACK_EMOJI), ...Object.entries(EMOJI_SHORTCODES)].map(([name, unicode]) => [bare(unicode), name]));
   const name = emojiNames.get(bare(emoji));
   return name ? `:${name}:` : null;
 }
