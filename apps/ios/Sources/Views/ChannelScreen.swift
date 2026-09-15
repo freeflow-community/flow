@@ -415,8 +415,8 @@ struct ChannelScreen: View {
     private var chatStack: some View {
         VStack(spacing: 0) {
             SyncBar(syncing: app.isSyncing)
-            // A provider workspace's one strip (#546): paused live updates, or
-            // the history limit, with the way out. Nothing for Flow.
+            // A provider workspace's one strip (#546): paused live updates,
+            // with the way out. Nothing for Flow.
             ProviderNoticeView(
                 capabilities: app.capabilities,
                 streamDegraded: app.streamDegraded,

@@ -410,6 +410,11 @@ test('custom emoji: Flow-shaped list with aliases resolved; images fetched witho
 test('message text emoji shortcodes become unicode; custom names and code stay as text', () => {
   assert.equal(expandBodyEmoji('Happy birthday :tada::balloon: :thankyou:'), 'Happy birthday 🎉🎈 :thankyou:');
   assert.equal(expandBodyEmoji('hi :wave::skin-tone-3:'), 'hi 👋🏼');
+  // Every standard Slack name, not only the shared picker table.
+  assert.equal(expandBodyEmoji(':two_hearts::sparkles::heart_hands: :partyparrot:'), '💕✨🫶 :partyparrot:');
+  assert.equal(emojiFromName('heart_hands'), '🫶');
+  assert.equal(emojiFromName('thumbsup::skin-tone-4'), '👍🏽');
+  assert.equal(emojiFromName('partyparrot'), ':partyparrot:');
   assert.equal(expandBodyEmoji(':thankyou::skin-tone-2:'), ':thankyou:');
   assert.equal(expandBodyEmoji('run `:tada:` at 10:30:45'), 'run `:tada:` at 10:30:45');
   const m = normalizeMessage({ ts: '1789171841.148649', user: 'U1', text: 'Happy birthday <@U08JDGF1EAY> :partying_face:' }, { teamId: 'T1', channelId: 'C1' });

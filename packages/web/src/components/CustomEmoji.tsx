@@ -14,7 +14,8 @@ export function CustomEmojiImage({
   className = '',
 }: {
   emoji: WorkspaceEmojiDTO;
-  size?: number;
+  /** Pixels, or a CSS length such as `1.4em` to follow the surrounding text. */
+  size?: number | string;
   className?: string;
 }) {
   const { blobUrl } = useBoundApi();
@@ -32,15 +33,15 @@ export function CustomEmojiImage({
   }, [emoji.fileId]);
 
   // Reserve the box before the bytes land so reaction pills don't reflow.
-  if (!url) return <span style={{ width: size, height: size }} className="inline-block align-[-3px]" />;
+  if (!url) return <span style={{ width: size, height: size }} className={`inline-block align-[-3px] ${className}`} />;
   return (
     <img
       src={url}
       alt={emoji.emoji}
       title={emoji.emoji}
       data-testid={`custom-emoji-${emoji.shortcode}`}
-      width={size}
-      height={size}
+      width={typeof size === 'number' ? size : undefined}
+      height={typeof size === 'number' ? size : undefined}
       className={`inline-block object-contain align-[-3px] ${className}`}
       style={{ width: size, height: size }}
     />

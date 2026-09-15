@@ -52,7 +52,7 @@ try {
   await page.goto(origin);
   await page.getByTestId('channel-header').waitFor();
   assert.equal(await page.getByTestId('channel-header').innerText(), '# testing');
-  await page.getByTestId('history-limited').waitFor();
+  await page.getByText(/Load earlier messages \(15 max\/min\)/).waitFor();
 
   // 1. Unknown outcome: the first send is stored by Slack but the reply is
   //    lost. The row shows as failed with a Retry; the retry reconciles at the
@@ -85,7 +85,7 @@ try {
 
   // 3. Retention: once the transcript is exhausted it says where the rest lives.
   await page.getByTestId('history-load-older').click();
-  await page.getByText('Slack is ready for the next page of history.').waitFor({ timeout: 20_000 });
+  await page.getByText(/Load earlier messages \(15 max\/min\)/).waitFor({ timeout: 20_000 });
   await page.getByTestId('history-load-older').click();
   await page.getByTestId('history-end-note').waitFor({ timeout: 20_000 });
   assert.match(await page.getByTestId('history-end-note').innerText(), /Older messages may exist in Slack/);

@@ -1,7 +1,13 @@
 // Inline markdown rendering (agent replies): assertions on static HTML output.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// The real image fetches through the connection runtime; the renderer only
+// has to hand the emoji to it.
+vi.mock('../components/CustomEmoji', () => ({
+  CustomEmojiImage: ({ emoji }: { emoji: { shortcode: string } }) => <img data-custom-emoji={emoji.shortcode} alt="" />,
+}));
 import { renderToStaticMarkup } from 'react-dom/server';
-import { fenceLanguage, InlineLinkContext, renderBlocks, renderBody, segmentBody } from './format';
+import { CustomEmojiContext, fenceLanguage, InlineLinkContext, renderBlocks, renderBody, segmentBody } from './format';
 
 const html = (body: string) => renderToStaticMarkup(<>{renderBlocks(body, {}, undefined)}</>);
 
@@ -181,5 +187,35 @@ describe('mermaid blocks (#229)', () => {
 
   it('does not disturb neighbouring blocks', () => {
     expect(kinds('# T\n```mermaid\npie\n```\n- a')).toEqual(['heading', 'mermaid', 'ulist']);
+  });
+});
+
+describe('emoji in text', () => {
+  it('sizes unicode emoji up like Slack, keeping ZWJ sequences, tones and flags whole', () => {
+    const out = html('great 🙂 and 👍🏽 and 👩‍💻 and 🇺🇸!');
+    expect(out.match(/data-emoji/g)?.length).toBe(4);
+    expect(out).toContain('>👍🏽</span>');
+    expect(out).toContain('>👩‍💻</span>');
+    expect(out).toContain('>🇺🇸</span>');
+    expect(out).toContain('great ');
+    expect(html('no emoji here 10:30')).toBe('no emoji here 10:30');
+  });
+});
+
+describe('custom emoji in text', () => {
+  it('draws a known :shortcode: inline and leaves unknown ones, times and code as text', () => {
+    const party = { id: 'e1', workspaceId: 'w1', shortcode: 'partyparrot', emoji: ':partyparrot:', fileId: 'emoji:partyparrot', createdBy: '', createdAt: '' };
+    const out = renderToStaticMarkup(
+      <CustomEmojiContext.Provider value={{ ':partyparrot:': party }}>
+        {renderBlocks('HaPpY **bday** :partyparrot: :nope: at 10:30:45 `:partyparrot:`', {}, undefined)}
+      </CustomEmojiContext.Provider>,
+    );
+    expect(out).toContain('data-custom-emoji="partyparrot"');
+    expect(out).not.toContain(' :partyparrot: ');
+    expect(out).toContain(':nope:');
+    expect(out).toContain('10:30:45');
+    expect(out).toContain('<code');
+    expect(out).toContain(':partyparrot:</code>');
+    expect(html('plain :partyparrot: text')).toBe('plain :partyparrot: text');
   });
 });

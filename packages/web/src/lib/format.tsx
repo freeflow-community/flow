@@ -10,15 +10,51 @@
 // wire format stays literal so other clients still show plain markdown.
 import { createContext, Fragment, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { WorkspaceMemberDTO } from '@flow/shared';
+import type { WorkspaceEmojiDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { expandShortcodes } from '@flow/shared';
 import { CodeBlock } from '../components/CodeBlock';
 import { MermaidBlock } from '../components/MermaidBlock';
+import { CustomEmojiImage } from '../components/CustomEmoji';
 
 /** Lets a message row offer "Pin as artifact" on every inline link it renders,
  * without threading a callback through the recursive renderer. Rendering sites
  * that don't provide it (previews, etc.) just get plain links. */
 export const InlineLinkContext = createContext<{ onPinLink?: (url: string) => void; onOpenArtifact?: (id: string) => void }>({});
+
+/** The workspace's custom emoji, keyed `:shortcode:`, for `:name:` in message
+ * text (#175 drew them only in reactions). Without a provider every shortcode
+ * stays text, which is also what an unknown or deleted emoji shows. */
+export const CustomEmojiContext = createContext<Record<string, WorkspaceEmojiDTO>>({});
+
+// A `:shortcode:`, or one unicode emoji: a pictograph or flag pair with its
+// variation selector, skin tone, keycap and ZWJ-joined parts.
+const EMOJI_RE = /(:[a-z0-9_+'-]+:)|((?:\p{Regional_Indicator}{2}|\p{Extended_Pictographic})(?:\uFE0F|\u20E3|\p{Emoji_Modifier}|\u200D(?:\p{Extended_Pictographic})\uFE0F?)*)/gu;
+
+// Emoji in text read at Slack's size: about 1.4x the letters around them,
+// without growing the line they sit on.
+const INLINE_EMOJI_SIZE = '1.4em';
+
+function InlineCustomEmoji({ code }: { code: string }) {
+  const emoji = useContext(CustomEmojiContext)[code];
+  return emoji ? <CustomEmojiImage emoji={emoji} size={INLINE_EMOJI_SIZE} /> : <>{code}</>;
+}
+
+/** Plain text with emoji sized up and any `:shortcode:` handed to InlineCustomEmoji. */
+function withEmoji(text: string, keyBase: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  for (const m of text.matchAll(EMOJI_RE)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const k = `${keyBase}e${key++}`;
+    out.push(m[1] !== undefined
+      ? <InlineCustomEmoji key={k} code={m[1]} />
+      : <span key={k} data-emoji className="align-[-0.1em] text-[1.4em] leading-none">{m[2]}</span>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 /** A link in a message body: opens in a new tab, and — when a pin handler is in
  * context — reveals a small 📌 on hover to pin the URL as a co-browsing artifact. */
@@ -75,7 +111,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
   let last = 0;
   let key = 0;
   for (const m of text.matchAll(INLINE_RE)) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) out.push(...withEmoji(text.slice(last, m.index), `${keyBase}p${key}`));
     const k = `${keyBase}i${key++}`;
     if (m[1] !== undefined) {
       out.push(
@@ -105,7 +141,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
     }
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) out.push(...withEmoji(text.slice(last), `${keyBase}t`));
   return out;
 }
 

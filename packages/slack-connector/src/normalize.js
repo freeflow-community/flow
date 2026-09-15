@@ -5,7 +5,15 @@
 //
 // Identity rules: ids are provider strings, a message id is the exact `ts`,
 // `thread_ts` is preserved, no float conversion anywhere.
-import { mrkdwnToMarkdown, expandShortcodes, EMOJI_SHORTCODES } from '@flow/shared';
+import { readFileSync } from 'node:fs';
+import { mrkdwnToMarkdown, EMOJI_SHORTCODES } from '@flow/shared';
+
+/** Every standard Slack emoji name -> unicode (scripts/build-slack-emoji.mjs).
+ * The shared table wins where both have a name, so Flow's picker and Slack's
+ * names round-trip to the same character. */
+export const SLACK_EMOJI = JSON.parse(readFileSync(new URL('./slack-emoji.json', import.meta.url), 'utf8'));
+// Skin tones are modifiers, never emoji on their own (`:wave::skin-tone-3:`).
+export const lookupEmoji = name => (/^skin-tone-/.test(name) ? null : EMOJI_SHORTCODES[name] ?? SLACK_EMOJI[name] ?? null);
 
 export const TS_RE = /^\d{9,11}\.\d{6}$/;
 export const isTs = value => typeof value === 'string' && TS_RE.test(value);
@@ -22,13 +30,19 @@ export function openUrl(teamId, channelId, ts) {
   return isTs(ts) ? `${base}/p${ts.replace('.', '')}` : base;
 }
 
-/** ":white_check_mark::skin-tone-2" -> unicode when known, else the shortcode. */
-export function emojiFromName(name) {
-  const bare = String(name ?? '').split('::')[0];
-  return EMOJI_SHORTCODES[bare] ?? `:${bare}:`;
-}
-
 const SKIN_TONES = { 2: '\u{1F3FB}', 3: '\u{1F3FC}', 4: '\u{1F3FD}', 5: '\u{1F3FE}', 6: '\u{1F3FF}' };
+// Slack tags any emoji with the sender's tone; only a modifier base takes it.
+const withTone = (emoji, tone) => (/^\p{Emoji_Modifier_Base}/u.test(emoji) ? emoji.replace(/\uFE0F$/, '') + SKIN_TONES[tone] : emoji);
+
+/** "white_check_mark", "wave::skin-tone-3" -> unicode when known, else the
+ * shortcode (a custom emoji, which clients draw from the emoji list). */
+export function emojiFromName(name) {
+  const [bare, tone] = String(name ?? '').split('::');
+  const emoji = lookupEmoji(bare);
+  if (!emoji) return `:${bare}:`;
+  const level = /^skin-tone-([2-6])$/.exec(tone ?? '')?.[1];
+  return level ? withTone(emoji, level) : emoji;
+}
 const CODE_RE = /(```[\s\S]*?```|`[^`\n]+`)/;
 
 /** Slack writes emoji in message text as `:name:` (`:wave::skin-tone-3:` for
@@ -36,8 +50,9 @@ const CODE_RE = /(```[\s\S]*?```|`[^`\n]+`)/;
  * stay as text. A tone follows its emoji as a modifier, or is dropped. */
 export function expandBodyEmoji(text) {
   if (!text.includes(':')) return text;
-  return text.split(CODE_RE).map((part, i) => i % 2 === 1 ? part : expandShortcodes(part)
-    .replace(/(\p{Extended_Pictographic}\uFE0F?):skin-tone-([2-6]):/gu, (_, emoji, tone) => emoji.replace(/\uFE0F$/, '') + SKIN_TONES[tone])
+  return text.split(CODE_RE).map((part, i) => i % 2 === 1 ? part : part
+    .replace(/:([a-z0-9_+-]+):/g, (raw, name) => lookupEmoji(name) ?? raw)
+    .replace(/(\p{Extended_Pictographic}\uFE0F?):skin-tone-([2-6]):/gu, (_, emoji, tone) => withTone(emoji, tone))
     .replace(/:skin-tone-[2-6]:/g, '')).join('');
 }
 
