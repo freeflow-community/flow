@@ -24,7 +24,8 @@ import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, CHANNEL_BROWSER_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useRuntime, useSelection } from '../state';
 import { HuddleProvider, useHuddle, type HuddleState } from '../huddle';
-import { useNameMap, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { useNameMap, useSwitcherEntries, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { openWorkspace } from '../lib/workspaceSwitcher';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
@@ -660,10 +661,32 @@ function HuddleWiring({
   return null;
 }
 
+/** Marks a Slack team on the rail: a small corner tag, so it reads as Slack
+ * without covering the unread badge on the opposite corner. */
+function RailSlackMark({ ringColor }: { ringColor: string }) {
+  return (
+    <span
+      data-testid="rail-slack-mark"
+      aria-hidden="true"
+      className="pointer-events-none absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white"
+      style={{ boxShadow: `0 0 0 2px ${ringColor}` }}
+    >
+      {/* Slack's four-colour hash, reduced to four bars. */}
+      <svg viewBox="0 0 12 12" className="h-3 w-3">
+        <rect x="2.6" y="0.5" width="2.2" height="11" rx="1.1" fill="#36C5F0" />
+        <rect x="7.2" y="0.5" width="2.2" height="11" rx="1.1" fill="#2EB67D" />
+        <rect x="0.5" y="2.6" width="11" height="2.2" rx="1.1" fill="#ECB22E" />
+        <rect x="0.5" y="7.2" width="11" height="2.2" rx="1.1" fill="#E01E5A" />
+      </svg>
+    </span>
+  );
+}
+
 /** Design 3a column 1: the 64px violet workspace rail. */
 function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp: () => void }) {
   const sel = useSelection();
   const workspaces = useWorkspaces();
+  const switcher = useSwitcherEntries();
   const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const railBg = sidebarColor(activeWs?.sidebarColor).rail;
   const invites = (useWorkspaceInvites().data ?? []).length;
@@ -672,24 +695,31 @@ function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp
       className="flex w-16 shrink-0 flex-col items-center gap-3.5 py-4"
       style={{ background: railBg }}
     >
-      {(workspaces.data ?? []).map((w) => {
-        const active = w.id === sel.workspaceId;
-        // Unread across this workspace's channels (#345). Rides the workspace
-        // list, so it's live for every workspace — including the ones not on
-        // screen, which is the whole point of the badge.
-        const unread = w.unreadCount ?? 0;
+      {/* Every connection's workspaces (#592): Slack teams and other Flow
+          servers sit on the rail with this one's, and picking one on another
+          connection switches this window to it. */}
+      {switcher.map((e) => {
+        // The foreground connection's live row carries avatar and slug.
+        const w = e.foreground ? (workspaces.data ?? []).find((ws) => ws.id === e.workspaceId) : undefined;
+        const active = e.foreground && e.workspaceId === sel.workspaceId;
+        const avatarUrl = w?.avatarUrl;
+        const testKey = w?.slug ?? e.workspaceId;
+        // Unread across this workspace's channels (#345): live for the
+        // foreground connection, from background sync for the others.
+        const unread = e.unread;
+        const where = e.provider === 'slack' ? ' (Slack)' : e.foreground ? '' : ` (${e.source})`;
         // With an avatar (#336) the image *is* the mark, so "active" can't be
         // the white fill any more — a white ring plus full opacity says it.
         return (
           // The badge overhangs the icon's corner, so it can't live inside the
           // button — that one clips its children (overflow-hidden, for round
           // avatars). The wrapper is what it's positioned against.
-          <div key={w.id} className="relative">
+          <div key={`${e.connectionId}:${e.workspaceId}`} className="relative">
             <button
-              data-testid={`rail-workspace-${w.slug}`}
-              title={unread > 0 ? `${w.name} — ${unread} unread` : w.name}
+              data-testid={`rail-workspace-${testKey}`}
+              title={`${e.name}${where}${unread > 0 ? ` — ${unread} unread` : ''}`}
               className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ${
-                w.avatarUrl
+                avatarUrl
                   ? active
                     ? 'ring-2 ring-white'
                     : 'opacity-70 hover:opacity-100'
@@ -697,15 +727,20 @@ function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp
                     ? 'bg-white text-[17px] font-extrabold text-accent'
                     : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
               }`}
-              onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
+              onClick={() => {
+                if (active) return;
+                if (e.foreground) sel.selectWorkspace(e.workspaceId);
+                else openWorkspace(e.connectionId, e.workspaceId);
+              }}
             >
-              {w.avatarUrl ? (
-                <AuthImg path={w.avatarUrl} alt={w.name} className="h-10 w-10 object-cover" />
+              {avatarUrl ? (
+                <AuthImg path={avatarUrl} alt={e.name} className="h-10 w-10 object-cover" />
               ) : (
-                w.name.slice(0, 1).toUpperCase()
+                e.name.slice(0, 1).toUpperCase()
               )}
             </button>
-            <RailUnreadBadge count={unread} ringColor={railBg} testId={`rail-unread-${w.slug}`} />
+            <RailUnreadBadge count={unread} ringColor={railBg} testId={`rail-unread-${testKey}`} />
+            {e.provider === 'slack' && <RailSlackMark ringColor={railBg} />}
           </div>
         );
       })}
