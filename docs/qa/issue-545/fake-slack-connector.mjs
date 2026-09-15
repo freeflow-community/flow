@@ -28,7 +28,7 @@ const signingSecret = 'qa-signing-secret';
 
 const TS = n => `${1789171800 + n}.${String(100000 + n).padStart(6, '0')}`;
 const message = (n, extra = {}) => ({ type: 'message', user: n % 3 === 0 ? 'U2' : 'U1', ts: TS(n), text: n === 3 ? 'hello *bold* &amp; <@U2> see <https://example.test|the docs>' : `Flow acceptance message ${n}`, client_msg_id: `cm-${n}`, team: 'T1', blocks: [{ type: 'rich_text', block_id: `b${n}`, elements: [{ type: 'rich_text_section', elements: [{ type: 'text', text: `Flow acceptance message ${n}` }] }] }], ...extra });
-const history = Array.from({ length: 17 }, (_, i) => message(i + 1, i + 1 === 5 ? { reply_count: 1, reply_users: ['U2'], latest_reply: TS(99), reactions: [{ name: 'white_check_mark', users: ['U2'], count: 1 }] } : i + 1 === 7 ? { files: [{ id: 'F1', name: 'notes.txt', mimetype: 'text/plain', size: 2048, created: 1789172215, user: 'U1' }] } : i + 1 === 9 ? { blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'a Block Kit section' } }] } : {})).reverse(); // newest first, like Slack
+const history = Array.from({ length: 17 }, (_, i) => message(i + 1, i + 1 === 5 ? { reply_count: 1, reply_users: ['U2'], latest_reply: TS(99), reactions: [{ name: 'white_check_mark', users: ['U2'], count: 1 }] } : i + 1 === 7 ? { files: [{ id: 'F1', name: 'notes.txt', mimetype: 'text/plain', size: 2048, created: 1789172215, user: 'U1' }] } : i + 1 === 9 ? { blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'a Block Kit section' } }, { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Approve' } }] }] } : {})).reverse(); // newest first, like Slack
 let historyCalls = 0;
 let rateLimitedUntil = 0;
 let posted = 0;

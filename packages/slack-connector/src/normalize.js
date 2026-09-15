@@ -56,23 +56,136 @@ export function expandBodyEmoji(text) {
     .replace(/:skin-tone-[2-6]:/g, '')).join('');
 }
 
-const KNOWN_BLOCKS = new Set(['rich_text']);
-const KNOWN_RICH = new Set(['rich_text_section', 'rich_text_list', 'rich_text_preformatted', 'rich_text_quote']);
-const KNOWN_RICH_ELEMENTS = new Set(['text', 'link', 'user', 'usergroup', 'channel', 'emoji', 'broadcast', 'date']);
+// ---- Block Kit and legacy attachments -> markdown ------------------------------
+// Slack shows a message's layout blocks instead of its `text` (which is only a
+// fallback), and shows legacy attachments (the colored-bar cards integrations
+// post) under the text. Both become markdown here, so every client renders
+// them with the body; an attachment is a quote, standing in for the color bar.
+// Interactive parts (buttons, menus, inputs) cannot work in Flow: they are
+// left out and mark the message degraded, which offers Open in Slack.
 
-/** True when the message carries content the clients cannot render from
- * `text` alone: non-rich-text blocks, legacy attachments, or rich elements
- * we do not know. The body then becomes Slack's own text fallback. */
-export function isDegraded(message) {
-  if (Array.isArray(message.attachments) && message.attachments.length) return true;
-  for (const block of message.blocks ?? []) {
-    if (!KNOWN_BLOCKS.has(block.type)) return true;
-    for (const section of block.elements ?? []) {
-      if (!KNOWN_RICH.has(section.type)) return true;
-      for (const element of section.elements ?? []) if (!KNOWN_RICH_ELEMENTS.has(element.type)) return true;
+const RICH_SECTIONS = new Set(['rich_text_section', 'rich_text_list', 'rich_text_preformatted', 'rich_text_quote']);
+const RICH_ELEMENTS = new Set(['text', 'link', 'user', 'usergroup', 'channel', 'emoji', 'broadcast', 'date']);
+const LAYOUT_BLOCKS = new Set(['rich_text', 'header', 'section', 'context', 'divider', 'image']);
+const PASSIVE_ACCESSORIES = new Set(['image']);
+
+/** A markdown link; a label holding brackets ("[FIRING] …") cannot be a link
+ * label, so the text stays and a ↗ carries the link. */
+function mdLink(label, url) {
+  return /[[\]]/.test(label) ? `${label} [↗](${url})` : `[${label}](${url})`;
+}
+
+/** A Block Kit text object: mrkdwn converted, plain_text as written. */
+function textObject(value) {
+  if (!value || typeof value.text !== 'string') return '';
+  return value.type === 'mrkdwn' ? mrkdwnToMarkdown(value.text) : value.text;
+}
+
+function richElement(element) {
+  switch (element.type) {
+    case 'text': {
+      let out = String(element.text ?? '');
+      if (!out.trim()) return out;
+      const style = element.style ?? {};
+      if (style.code) return `\`${out}\``;
+      if (style.bold) out = `**${out}**`;
+      if (style.italic) out = `_${out}_`;
+      if (style.strike) out = `~~${out}~~`;
+      return out;
+    }
+    case 'link': return element.text ? mdLink(String(element.text), element.url) : String(element.url ?? '');
+    case 'user': return `<@${element.user_id}>`;
+    case 'broadcast': return `<!${element.range}>`;
+    case 'emoji': return `:${element.name}:`;
+    case 'channel': return '#channel';
+    case 'usergroup': return '@group';
+    case 'date': return String(element.fallback ?? '');
+    default: return '';
+  }
+}
+
+function richText(block) {
+  const lines = [];
+  const inline = section => (section.elements ?? []).map(richElement).join('');
+  for (const section of block.elements ?? []) {
+    if (section.type === 'rich_text_section') lines.push(inline(section));
+    else if (section.type === 'rich_text_quote') lines.push(...inline(section).split('\n').map(line => `> ${line}`));
+    else if (section.type === 'rich_text_preformatted') lines.push('```', inline(section), '```');
+    else if (section.type === 'rich_text_list') {
+      (section.elements ?? []).forEach((item, i) => lines.push(`${section.style === 'ordered' ? `${i + 1}.` : '-'} ${inline(item)}`));
+    }
+  }
+  return lines.join('\n');
+}
+
+/** Layout blocks -> markdown lines; `inQuote` drops dividers, which a quote cannot hold. */
+function blocksToMarkdown(blocks, { inQuote = false } = {}) {
+  const parts = [];
+  for (const block of blocks ?? []) {
+    switch (block.type) {
+      case 'header': parts.push(`**${textObject(block.text)}**`); break;
+      case 'section': {
+        const lines = [];
+        if (block.text) lines.push(textObject(block.text));
+        for (const field of block.fields ?? []) lines.push(textObject(field));
+        parts.push(lines.filter(Boolean).join('\n'));
+        break;
+      }
+      case 'context': parts.push((block.elements ?? []).map(textObject).filter(Boolean).join('  ·  ')); break;
+      case 'divider': if (!inQuote) parts.push('---'); break;
+      case 'image': parts.push(mdLink(String(block.alt_text || block.title?.text || 'image'), block.image_url)); break;
+      case 'rich_text': parts.push(richText(block)); break;
+      default: break;
+    }
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
+/** One legacy attachment -> markdown: pretext above, the card as a quote. */
+function attachmentToMarkdown(attachment) {
+  const card = [];
+  if (attachment.author_name) card.push(String(attachment.author_name));
+  if (attachment.title) card.push(`**${attachment.title_link ? mdLink(String(attachment.title), attachment.title_link) : attachment.title}**`);
+  if (attachment.text) card.push(mrkdwnToMarkdown(String(attachment.text)));
+  for (const field of attachment.fields ?? []) {
+    if (field.title || field.value) card.push(`${field.title ? `**${field.title}:** ` : ''}${mrkdwnToMarkdown(String(field.value ?? ''))}`);
+  }
+  if (attachment.blocks?.length) card.push(blocksToMarkdown(attachment.blocks, { inQuote: true }));
+  if (attachment.image_url) card.push(`[image](${attachment.image_url})`);
+  if (attachment.footer) card.push(mrkdwnToMarkdown(String(attachment.footer)));
+  const body = card.filter(Boolean).join('\n') || (attachment.fallback ? mrkdwnToMarkdown(String(attachment.fallback)) : '');
+  const quoted = body ? body.split('\n').map(line => (line.trim() ? `> ${line}` : '>')).join('\n') : '';
+  return [attachment.pretext ? mrkdwnToMarkdown(String(attachment.pretext)) : '', quoted].filter(Boolean).join('\n');
+}
+
+/** What Slack shows for a message, as markdown: layout blocks in place of the
+ * fallback text when there are any, then each attachment. */
+export function messageMarkdown(message) {
+  const blocks = message.blocks ?? [];
+  const layout = blocks.some(block => block.type !== 'rich_text');
+  const main = layout ? blocksToMarkdown(blocks) : mrkdwnToMarkdown(String(message.text ?? ''));
+  return [main, ...(message.attachments ?? []).map(attachmentToMarkdown)].filter(Boolean).join('\n\n');
+}
+
+function blocksDegraded(blocks) {
+  for (const block of blocks ?? []) {
+    if (!LAYOUT_BLOCKS.has(block.type)) return true;
+    if (block.accessory && !PASSIVE_ACCESSORIES.has(block.accessory.type)) return true;
+    for (const section of block.type === 'rich_text' ? block.elements ?? [] : []) {
+      if (!RICH_SECTIONS.has(section.type)) return true;
+      const items = section.type === 'rich_text_list' ? (section.elements ?? []).flatMap(item => item.elements ?? []) : section.elements ?? [];
+      for (const element of items) if (!RICH_ELEMENTS.has(element.type)) return true;
     }
   }
   return false;
+}
+
+/** True when the message has parts Flow leaves out: interactive blocks or
+ * elements (buttons, menus, inputs), unknown block types, or attachment
+ * actions. The rest renders through messageMarkdown. */
+export function isDegraded(message) {
+  if (blocksDegraded(message.blocks)) return true;
+  return (message.attachments ?? []).some(a => (a.actions?.length ?? 0) > 0 || blocksDegraded(a.blocks));
 }
 
 const SYSTEM_KINDS = { channel_join: 'member_joined', channel_leave: 'member_left', group_join: 'member_joined', group_leave: 'member_left' };
@@ -109,7 +222,7 @@ export function normalizeMessage(message, { teamId, channelId, readFiles = false
   return {
     id: ts, channelId: channel, userId: String(message.user ?? message.bot_id ?? ''), threadRootId: threadTs,
     clientMsgId: typeof message.client_msg_id === 'string' ? message.client_msg_id : '',
-    body: expandBodyEmoji(mrkdwnToMarkdown(String(message.text ?? ''))), createdAt: tsToIso(ts),
+    body: expandBodyEmoji(messageMarkdown(message)), createdAt: tsToIso(ts),
     editedAt: message.edited?.ts ? tsToIso(message.edited.ts) : null, deletedAt: null, pinnedAt: null, pinnedBy: null,
     replyCount: Number(message.reply_count ?? 0) || 0, lastReplyAt: isTs(message.latest_reply) ? tsToIso(message.latest_reply) : null,
     systemKind, scheduled: false, replyParticipantUserIds: (message.reply_users ?? []).slice(0, 4).map(String),

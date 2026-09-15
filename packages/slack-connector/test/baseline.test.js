@@ -7,7 +7,7 @@ import { randomBytes, createHmac } from 'node:crypto';
 import { Store } from '../src/store.js';
 import { Connector, hash, opaque } from '../src/connector.js';
 import { requestedScopes, requestedEvents, grantedCapabilities } from '../src/manifest.js';
-import { botMember, normalizeMessage, normalizeEvent, isDegraded, emojiFromName, expandBodyEmoji, tsToIso } from '../src/normalize.js';
+import { botMember, messageMarkdown, normalizeMessage, normalizeEvent, isDegraded, emojiFromName, expandBodyEmoji, tsToIso } from '../src/normalize.js';
 import { createConnectorServer } from '../src/http.js';
 
 const TS1 = '1789171841.148649', TS2 = '1789171890.271539', TS3 = '1789172009.709539';
@@ -86,8 +86,12 @@ test('normalizer keeps ts verbatim, converts mrkdwn, maps reactions/files/thread
   assert.equal(m.provenance.degraded, false);
   const reply = normalizeMessage(slackMessage(TS3, { thread_ts: TS1 }), { teamId: 'T1', channelId: 'C1' });
   assert.equal(reply.threadRootId, TS1);
-  assert.equal(isDegraded({ blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'x' } }] }), true);
-  assert.equal(isDegraded({ attachments: [{ fallback: 'x' }] }), true);
+  // Layout blocks and attachments render; interactive parts are what Flow leaves out.
+  assert.equal(isDegraded({ blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'x' } }] }), false);
+  assert.equal(isDegraded({ attachments: [{ fallback: 'x' }] }), false);
+  assert.equal(isDegraded({ blocks: [{ type: 'actions', elements: [{ type: 'button' }] }] }), true);
+  assert.equal(isDegraded({ blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'x' }, accessory: { type: 'button' } }] }), true);
+  assert.equal(isDegraded({ attachments: [{ fallback: 'x', actions: [{ type: 'button' }] }] }), true);
   assert.equal(isDegraded(slackMessage(TS1)), false);
   assert.equal(emojiFromName('white_check_mark::skin-tone-2'), '✅');
   assert.equal(emojiFromName('some_custom_emoji'), ':some_custom_emoji:');
@@ -574,4 +578,29 @@ test('bot senders: an app message names its bot in members and on the stream, no
   assert.deepEqual(updates.map(e => e.member.displayName), ['Sentinel']);
   await f.connector.history(credential, { channel: 'C1', limit: 15 });
   assert.equal(f.connector.stream(credential, 0).events.filter(e => e.type === 'member.updated').length, 1, 'seen again: no new event');
+});
+
+test('Block Kit layout and legacy attachments render as markdown instead of the fallback text', () => {
+  // Alertmanager-style legacy attachment: color bar card with a linked title.
+  const firing = { type: 'message', subtype: 'bot_message', bot_id: 'B0SENTINEL', ts: TS1, text: '',
+    attachments: [{ color: '#a30200', fallback: '[FIRING] KubeCPUOvercommit', title: '[FIRING] KubeCPUOvercommit', title_link: 'https://alerts.example.test/1', text: '*KubeCPUOvercommit* — warning Cluster has overcommitted CPU', fields: [{ title: 'Severity', value: 'warning', short: true }], footer: 'Sentinel' }] };
+  assert.equal(messageMarkdown(firing), '> **[FIRING] KubeCPUOvercommit [↗](https://alerts.example.test/1)**\n> **KubeCPUOvercommit** — warning Cluster has overcommitted CPU\n> **Severity:** warning\n> Sentinel');
+  assert.equal(normalizeMessage(firing, { teamId: 'T1', channelId: 'C1' }).provenance.degraded, false);
+
+  // Blocks replace the fallback text: header, fields, divider, context.
+  const scan = { type: 'message', bot_id: 'B0ECR', ts: TS2, text: 'ECR Security Scan Alert fallback',
+    blocks: [
+      { type: 'header', text: { type: 'plain_text', text: ':rotating_light: ECR Security Scan Alert' } },
+      { type: 'section', fields: [{ type: 'mrkdwn', text: '*Repository:*\n`btdash-frontend:prod`' }, { type: 'mrkdwn', text: '*Critical:* 0 | *High:* 1' }] },
+      { type: 'divider' },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: 'Scanned by <https://aws.example.test|Inspector>' }, { type: 'image', image_url: 'https://x.test/i.png', alt_text: 'aws' }] },
+    ] };
+  const body = normalizeMessage(scan, { teamId: 'T1', channelId: 'C1' }).body;
+  assert.equal(body, '**🚨 ECR Security Scan Alert**\n\n**Repository:**\n`btdash-frontend:prod`\n**Critical:** 0 | **High:** 1\n\n---\n\nScanned by [Inspector](https://aws.example.test)');
+  assert.ok(!body.includes('fallback'));
+
+  // Attachment built from blocks, text kept above it; a plain rich_text message still uses text.
+  const mixed = { type: 'message', user: 'U1', ts: TS3, text: 'deploy done', attachments: [{ color: 'good', pretext: 'Details', blocks: [{ type: 'section', text: { type: 'mrkdwn', text: '*prod* ok' } }, { type: 'divider' }] }] };
+  assert.equal(messageMarkdown(mixed), 'deploy done\n\nDetails\n> **prod** ok');
+  assert.equal(messageMarkdown(slackMessage(TS1)), 'hello **world** & <@U2>');
 });
