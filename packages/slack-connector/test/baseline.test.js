@@ -7,7 +7,7 @@ import { randomBytes, createHmac } from 'node:crypto';
 import { Store } from '../src/store.js';
 import { Connector, hash, opaque } from '../src/connector.js';
 import { requestedScopes, requestedEvents, grantedCapabilities } from '../src/manifest.js';
-import { botMember, messageMarkdown, normalizeMessage, normalizeEvent, isDegraded, emojiFromName, expandBodyEmoji, tsToIso } from '../src/normalize.js';
+import { botMember, channelTopic, messageMarkdown, normalizeMessage, normalizeEvent, isDegraded, emojiFromName, expandBodyEmoji, tsToIso } from '../src/normalize.js';
 import { createConnectorServer } from '../src/http.js';
 
 const TS1 = '1789171841.148649', TS2 = '1789171890.271539', TS3 = '1789172009.709539';
@@ -622,4 +622,11 @@ test('profile card: /v1/users/:id answers a person from users.info and an app fr
   assert.equal((await get('/v1/users/B0SENTINEL')).status, 404, 'an app not seen yet');
   await f.connector.history(credential, { channel: 'C1', limit: 15 });
   assert.equal((await (await get('/v1/users/B0SENTINEL')).json()).displayName, 'Sentinel');
+});
+
+test('channel topics are mrkdwn: links, mentions and emoji render like a message', () => {
+  assert.equal(channelTopic('Support emails sent to <mailto:support@biztrip.ai|support@biztrip.ai>'), 'Support emails sent to [support@biztrip.ai](mailto:support@biztrip.ai)');
+  assert.equal(channelTopic('Ship it :rocket: with <@U2>'), 'Ship it 🚀 with <@U2>');
+  assert.equal(channelTopic('  '), null);
+  assert.equal(channelTopic(undefined), null);
 });

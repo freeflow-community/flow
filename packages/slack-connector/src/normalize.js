@@ -231,6 +231,13 @@ export function normalizeMessage(message, { teamId, channelId, readFiles = false
   };
 }
 
+/** A channel topic is mrkdwn too: links, mentions and `:emoji:` in it are
+ * Slack tokens, not the text someone typed. */
+export function channelTopic(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text ? expandBodyEmoji(mrkdwnToMarkdown(text)) : null;
+}
+
 /** users.conversations / conversations.list item -> BackendChannel. */
 export function normalizeChannel(channel, { teamId, selfUserId, handles = null }) {
   const kind = channel.is_im ? 'dm' : channel.is_mpim ? 'group_dm' : 'standard';
@@ -242,7 +249,7 @@ export function normalizeChannel(channel, { teamId, selfUserId, handles = null }
   }
   return {
     id: String(channel.id), workspaceId: teamId, name: kind === 'standard' ? String(channel.name ?? channel.id) : null, kind,
-    topic: channel.topic?.value || null, isPrivate: Boolean(channel.is_private || channel.is_im || channel.is_mpim),
+    topic: channelTopic(channel.topic?.value), isPrivate: Boolean(channel.is_private || channel.is_im || channel.is_mpim),
     createdBy: String(channel.creator ?? ''), createdAt: Number.isFinite(channel.created) ? new Date(channel.created * 1000).toISOString() : '',
     archivedAt: channel.is_archived ? '' : null, isMember: channel.is_member !== false, lastReadMsgId: isTs(channel.last_read) ? channel.last_read : null,
     unreadCount: 0, unreadNotifications: 0, unreadThreadRootIds: [], notifyLevel: 1, parentId: null,

@@ -32,4 +32,15 @@ final class TopicTooltipTests: XCTestCase {
         let long = String(repeating: "a long topic that keeps going ", count: 10)
         XCTAssertEqual(TopicTooltip.text(long), long.trimmingCharacters(in: .whitespaces))
     }
+    /// A Slack topic arrives as markdown; the tooltip is plain text, so a link
+    /// shows its label rather than the bracket syntax (#392).
+    func testMarkdownTopicShowsItsLabel() {
+        XCTAssertEqual(
+            TopicTooltip.text("Support emails sent to [support@biztrip.ai](mailto:support@biztrip.ai)"),
+            "Support emails sent to support@biztrip.ai"
+        )
+        let id = "00000000-0000-0000-0000-0000000000ab"
+        XCTAssertEqual(TopicTooltip.text("ask <@\(id)>", names: [id: "Ada"]), "ask @Ada")
+    }
+
 }
