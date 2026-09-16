@@ -11,8 +11,13 @@ enum TopicTooltip {
     /// The text to show, or nil for "no tooltip at all". A channel with no
     /// topic — and one whose topic is blank, which the server stores as null
     /// but an older row may not — gets no tooltip, not an empty one.
-    static func text(_ raw: String?) -> String? {
-        let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    /// A topic is markdown (a Slack topic arrives converted), and a plain
+    /// tooltip cannot draw a link — so `[label](url)` shows its label, and
+    /// mention tokens show the name, as they do in the header.
+    static func text(_ raw: String?, names: [String: String] = [:]) -> String? {
+        let plain = MentionRendering.plainText(raw ?? "", names: names)
+            .replacing(/\[([^\]\n]+)\]\(([^()\s]+)\)/) { match in String(match.1) }
+        let trimmed = plain.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 }
