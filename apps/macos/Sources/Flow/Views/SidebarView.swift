@@ -23,6 +23,13 @@ struct SidebarView: View {
     @Environment(\.textZoom) private var textZoom
     /// Raises the workspace/server switcher owned by `RootView` (#566).
     @Environment(\.openConnections) private var openConnections
+    /// Opens a workspace on a connection this window is not showing (#592).
+    @Environment(\.openWorkspace) private var openWorkspace
+    /// The menu lists every connection's workspaces, so it has to redraw when
+    /// the registry or another connection's unread count moves.
+    @ObservedObject private var manager: ConnectionManager
+
+    init(manager: ConnectionManager) { self.manager = manager }
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @StateObject private var channels = DBObserved<[Channel]>(initial: [])
     @StateObject private var members = DBObserved<[MemberInfo]>(initial: [])
@@ -1171,15 +1178,21 @@ struct SidebarView: View {
     }
 
     private var workspaceMenu: some View {
-        Menu {
-            ForEach(workspaces.value) { ws in
+        let entries = manager.switcherEntries(foreground: app.connectionId, foregroundWorkspaces: workspaces.value)
+        let namesSource = switcherShowsSource(entries)
+        return Menu {
+            // Every connection's workspaces in one list (#592 on web): Slack
+            // teams and other servers next to this one's.
+            ForEach(entries) { entry in
                 Button {
-                    win.selectWorkspace(ws.id)
+                    if entry.foreground { win.selectWorkspace(entry.workspaceId) }
+                    else { openWorkspace(connectionId: entry.connectionId, workspaceId: entry.workspaceId) }
                 } label: {
-                    if ws.id == win.selectedWorkspaceId {
-                        Label(ws.name, systemImage: "checkmark")
+                    let label = namesSource ? "\(entry.name) — \(entry.source)" : entry.name
+                    if entry.foreground && entry.workspaceId == win.selectedWorkspaceId {
+                        Label(label, systemImage: "checkmark")
                     } else {
-                        Text(ws.name)
+                        Text(label)
                     }
                 }
             }

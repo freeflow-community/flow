@@ -416,6 +416,27 @@ final class ConnectionManager: ObservableObject {
         commit(next)
     }
 
+    /// Every workspace this client can open, across connections: the rail, the
+    /// sidebar's workspace menu and the chooser all draw this one list.
+    /// `foregroundWorkspaces` is the live list of the connection on screen.
+    func switcherEntries(foreground: String?, foregroundWorkspaces: [Workspace]? = nil) -> [SwitcherEntry] {
+        registry.switcherEntries(
+            foregroundConnectionId: foreground,
+            foregroundWorkspaces: foregroundWorkspaces,
+            unreadByWorkspace: unreadByWorkspace
+        )
+    }
+
+    /// Record a connection's live workspace list in its bindings, so the other
+    /// connections' switchers name and draw it correctly. A no-op when nothing
+    /// moved — this runs after every workspace refresh.
+    func syncBindings(connectionId: String, userId: String, workspaces: [Workspace]) {
+        guard let bindings = registry.syncedBindings(connectionId: connectionId, userId: userId, workspaces: workspaces) else { return }
+        var next = registry
+        next.bindings = bindings
+        commit(next)
+    }
+
     func setBinding(_ binding: WorkspaceBinding) {
         var next = registry
         next.setBinding(binding)

@@ -17,10 +17,10 @@ This file keeps two things:
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
-- **One workspace list across connections is web only.** The web workspace
-  rail, sidebar menu and chooser list Slack teams and other servers' workspaces,
-  and Workspaces & servers puts Slack teams in the server list; the macOS and
-  iOS switchers were not changed.
+- **One workspace list across connections is not on iOS.** Web and macOS list
+  every connection's workspaces (Slack teams and other servers) on the rail, in
+  the sidebar menu and in the chooser; the iOS drawer still shows only the
+  foreground connection's.
 - **The channel Docs list is searchable and collapsible on web only** (#574).
   macOS and iOS list a channel's artifacts as a plain run of rows with no
   group header, filter or fold. Closing it is the same `DocsGroup` shape in

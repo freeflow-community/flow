@@ -118,7 +118,11 @@ struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRecord, P
     /// The avatar path the image loader can fetch, or nil for the initial
     /// mark. Only relative API paths qualify, so an absolute URL never reaches
     /// an authenticated loader.
-    var avatarImagePath: String? {
+    var avatarImagePath: String? { Workspace.avatarImagePath(avatarUrl) }
+
+    /// The rule itself, so a switcher row built from a binding applies the
+    /// same one as a workspace row.
+    static func avatarImagePath(_ avatarUrl: String?) -> String? {
         guard let path = avatarUrl, path.hasPrefix("/v1/avatars/") || path.hasPrefix("/v1/files/team-icon:") else { return nil }
         return path
     }

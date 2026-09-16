@@ -67,8 +67,8 @@ struct MainView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            WorkspaceRailView()
-            SidebarView()
+            WorkspaceRailView(manager: app.connections)
+            SidebarView(manager: app.connections)
                 .frame(width: clampedSidebarWidth)
             sidebarResizer
             VStack(spacing: 0) {
@@ -221,16 +221,33 @@ struct MainView: View {
 /// otherwise the initial on a color chip. Active is a white fill for the
 /// initial mark, and a white ring for an avatar — an image can't be tinted.
 struct WorkspaceMark: View {
-    let workspace: Workspace
+    let name: String
+    /// Already filtered to a fetchable API path (`Workspace.avatarImagePath`).
+    let avatarPath: String?
     let size: CGFloat
     var cornerRadius: CGFloat = 12
     var active: Bool = true
+    /// The connection the avatar belongs to, when it is not the one on screen.
+    var loader: ImageLoader?
+
+    init(workspace: Workspace, size: CGFloat, cornerRadius: CGFloat = 12, active: Bool = true) {
+        self.init(name: workspace.name, avatarPath: workspace.avatarImagePath, size: size, cornerRadius: cornerRadius, active: active)
+    }
+
+    init(name: String, avatarPath: String?, size: CGFloat, cornerRadius: CGFloat = 12, active: Bool = true, loader: ImageLoader? = nil) {
+        self.name = name
+        self.avatarPath = avatarPath
+        self.size = size
+        self.cornerRadius = cornerRadius
+        self.active = active
+        self.loader = loader
+    }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius)
         Group {
-            if let path = workspace.avatarImagePath {
-                AuthImage(path: path) { shape.fill(Color.white.opacity(0.15)) }
+            if let path = avatarPath {
+                AuthImage(path: path, loader: loader) { shape.fill(Color.white.opacity(0.15)) }
                     .scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(shape)
@@ -241,7 +258,7 @@ struct WorkspaceMark: View {
                     .fill(active ? Color.white : Color.white.opacity(0.15))
                     .frame(width: size, height: size)
                     .overlay(
-                        Text(String(workspace.name.prefix(1)).uppercased())
+                        Text(String(name.prefix(1)).uppercased())
                             .flowFont(size: active ? size * 0.42 : size * 0.35, weight: active ? .heavy : .bold)
                             .foregroundStyle(active ? MC.accent : .white)
                     )
@@ -254,9 +271,17 @@ struct WorkspaceMark: View {
 struct WorkspaceRailView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var win: WindowState
+    /// Republishes on a registry or unread change, so another connection's
+    /// workspaces appear and their badges move without a relaunch. Passed in
+    /// rather than reached for, so it is this session's manager.
+    @ObservedObject private var manager: ConnectionManager
+    /// Opens a workspace on a connection this window is not showing (#592).
+    @Environment(\.openWorkspace) private var openWorkspace
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @State private var showHelp = false
     @State private var helpHovering = false
+
+    init(manager: ConnectionManager) { self.manager = manager }
 
     /// Rail shade follows the active workspace's palette (violet default).
     private var railColor: Color {
@@ -264,27 +289,40 @@ struct WorkspaceRailView: View {
         return SidebarPalette.palette(for: current?.sidebarColor).rail
     }
 
+    /// Every connection's workspaces, this one's live rows first-hand and the
+    /// others from the registry — the same list the menu and chooser draw.
+    private var entries: [SwitcherEntry] {
+        manager.switcherEntries(foreground: app.connectionId, foregroundWorkspaces: workspaces.value)
+    }
+
     var body: some View {
+        let rows = entries
+        let namesSource = switcherShowsSource(rows)
         VStack(spacing: 14) {
-            ForEach(workspaces.value) { ws in
-                let active = ws.id == win.selectedWorkspaceId
+            ForEach(rows) { entry in
+                let active = entry.foreground && entry.workspaceId == win.selectedWorkspaceId
                 Button {
-                    if !active { win.selectWorkspace(ws.id) }
+                    if active { return }
+                    if entry.foreground { win.selectWorkspace(entry.workspaceId) }
+                    else { openWorkspace(connectionId: entry.connectionId, workspaceId: entry.workspaceId) }
                 } label: {
-                    WorkspaceMark(workspace: ws, size: 40, cornerRadius: 12, active: active)
+                    WorkspaceMark(
+                        name: entry.name, avatarPath: entry.avatarImagePath, size: 40, cornerRadius: 12,
+                        active: active, loader: entry.foreground ? nil : manager.appState(entry.connectionId)?.images
+                    )
                         // Unread across this workspace's channels (#345). The
                         // overlay sits outside the mark's clip shape, so the
                         // badge can overhang the corner as designed.
                         .overlay(alignment: .topTrailing) {
-                            WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: railColor)
+                            WorkspaceUnreadBadge(count: entry.unread, ringColor: railColor)
                                 .offset(x: 7, y: -7)
-                                .accessibilityIdentifier("rail.unread.\(ws.slug)")
+                                .accessibilityIdentifier("rail.unread.\(entry.key)")
                         }
                 }
                 .buttonStyle(.plain)
-                .help(unreadBadgeLabel(ws.unreadCount).map { "\(ws.name) — \($0) unread" } ?? ws.name)
-                .accessibilityIdentifier("rail.workspace.\(ws.slug)")
-                .accessibilityValue((ws.unreadCount ?? 0) > 0 ? "\(ws.unreadCount!) unread" : "read")
+                .help(railTooltip(entry, namesSource: namesSource))
+                .accessibilityIdentifier("rail.workspace.\(entry.key)")
+                .accessibilityValue(entry.unread > 0 ? "\(entry.unread) unread" : "read")
                 .accessibilityAddTraits(active ? [.isSelected] : [])
             }
             Button {
@@ -332,5 +370,12 @@ struct WorkspaceRailView: View {
                 try Workspace.order(Column("name").collating(.nocase)).fetchAll(db)
             }
         }
+    }
+
+    /// "Acme (Slack) — 3 unread": where a workspace lives is only worth saying
+    /// when there is more than one place it could be.
+    private func railTooltip(_ entry: SwitcherEntry, namesSource: Bool) -> String {
+        let name = namesSource ? "\(entry.name) (\(entry.source))" : entry.name
+        return unreadBadgeLabel(entry.unread).map { "\(name) — \($0) unread" } ?? name
     }
 }
