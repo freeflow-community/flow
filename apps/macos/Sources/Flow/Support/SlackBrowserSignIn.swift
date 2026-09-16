@@ -131,10 +131,7 @@ final class SlackBrowserSignIn: NSObject, ASWebAuthenticationPresentationContext
         // without a callback (closed sheet), which polling reports as expiry.
         do {
             _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-                let browser = ASWebAuthenticationSession(url: authorization, callbackURLScheme: "flow") { callback, error in
-                    if let callback { continuation.resume(returning: callback) }
-                    else { continuation.resume(throwing: error ?? URLError(.cancelled)) }
-                }
+                let browser = Self.authSession(url: authorization, continuation: continuation)
                 browser.presentationContextProvider = self
                 browser.prefersEphemeralWebBrowserSession = false
                 session = browser
@@ -157,6 +154,27 @@ final class SlackBrowserSignIn: NSObject, ASWebAuthenticationPresentationContext
             try await Task.sleep(for: .seconds(1))
         }
         throw Failure.expired
+    }
+
+    /// The web-auth session, built outside this @MainActor class on purpose:
+    /// AuthenticationServices calls the completion handler on a background
+    /// queue, and a main-actor-isolated closure there trips Swift's executor
+    /// check and kills the app (crash on Connect Slack, macOS 2.2.105).
+    private nonisolated static func authSession(
+        url: URL, continuation: CheckedContinuation<URL, Error>
+    ) -> ASWebAuthenticationSession {
+        ASWebAuthenticationSession(url: url, callbackURLScheme: "flow") { callback, error in
+            deliver(callback: callback, error: error, to: continuation)
+        }
+    }
+
+    /// The callback body, off any actor — what the session hands back, from
+    /// whichever queue AuthenticationServices uses.
+    nonisolated static func deliver(
+        callback: URL?, error: Error?, to continuation: CheckedContinuation<URL, Error>
+    ) {
+        if let callback { continuation.resume(returning: callback) }
+        else { continuation.resume(throwing: error ?? URLError(.cancelled)) }
     }
 
     nonisolated static func isSlackId(_ value: String) -> Bool {

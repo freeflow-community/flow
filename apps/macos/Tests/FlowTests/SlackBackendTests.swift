@@ -122,6 +122,22 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
     }
 }
 
+@Suite struct SlackSignInTests {
+    /// AuthenticationServices calls back on a background queue. A main-actor
+    /// closure there trips Swift's executor check and kills the app — that was
+    /// the crash on Connect Slack in macOS 2.2.105.
+    @Test func webAuthCallbackIsDeliveredOffTheMainActor() async throws {
+        let expected = URL(string: "flow://slack/connected?operationId=abc")!
+        let callback: URL = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                #expect(!Thread.isMainThread)
+                SlackBrowserSignIn.deliver(callback: expected, error: nil, to: continuation)
+            }
+        }
+        #expect(callback == expected)
+    }
+}
+
 @Suite struct SlackBackendTests {
     /// Slack file bytes come through the connector with its credential, and
     /// only file paths are accepted.

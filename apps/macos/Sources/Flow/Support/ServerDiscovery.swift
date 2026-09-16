@@ -71,6 +71,19 @@ import UIKit
 final class ServerBrowserSignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
 
+    /// Built outside the main actor deliberately: AuthenticationServices calls
+    /// the completion handler on a background queue, where a main-actor-isolated
+    /// closure trips Swift's executor check and kills the app.
+    private nonisolated static func authSession(
+        url: URL, continuation: CheckedContinuation<URL, Error>
+    ) -> ASWebAuthenticationSession {
+        ASWebAuthenticationSession(url: url, callbackURLScheme: "flow") { callback, error in
+            if let error { continuation.resume(throwing: error) }
+            else if let callback { continuation.resume(returning: callback) }
+            else { continuation.resume(throwing: URLError(.cancelled)) }
+        }
+    }
+
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         #if os(macOS)
         return NSApp.keyWindow ?? ASPresentationAnchor()
@@ -120,11 +133,7 @@ final class ServerBrowserSignIn: NSObject, ASWebAuthenticationPresentationContex
         var url = URLComponents(url: origin.url, resolvingAgainstBaseURL: false)!
         url.queryItems = [URLQueryItem(name: "handoff", value: String(data: try JSONSerialization.data(withJSONObject: context), encoding: .utf8))]
         let callback: URL = try await withCheckedThrowingContinuation { continuation in
-            let browser = ASWebAuthenticationSession(url: url.url!, callbackURLScheme: "flow") { callback, error in
-                if let error { continuation.resume(throwing: error) }
-                else if let callback { continuation.resume(returning: callback) }
-                else { continuation.resume(throwing: URLError(.cancelled)) }
-            }
+            let browser = Self.authSession(url: url.url!, continuation: continuation)
             browser.presentationContextProvider = self
             session = browser
             if !browser.start() { continuation.resume(throwing: URLError(.cancelled)) }
