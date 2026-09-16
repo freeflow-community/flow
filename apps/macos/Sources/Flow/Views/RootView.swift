@@ -26,6 +26,18 @@ struct RootView: View {
             // the sidebar's workspace menu, so nothing floats over the composer
             // any more — the same move iOS (#563) and web (#565) already made.
             .environment(\.openConnections, OpenConnectionsAction { showConnections = true })
+            // Opening a workspace on *another* connection (#592 on web): the
+            // rail, the workspace menu and the chooser list every connection's
+            // workspaces, and this window owns which connection it shows — so
+            // they ask it to switch rather than switching themselves.
+            .environment(\.openWorkspace, OpenWorkspaceAction { connectionId, workspaceId in
+                guard let app = active.connections.appState(connectionId) else { return }
+                UserDefaults.standard.set(workspaceId, forKey: app.sessionScope.key("activeWorkspaceId"))
+                notificationTarget = nil
+                workspace = workspaceId
+                selected = app
+                showing(app)
+            })
             .id("\(active.connectionId):\(workspace ?? ""):\(notificationTarget?.messageId ?? "")")
             // Every connected server syncs while the app runs, not just the one
             // this window shows (#542). Bounded and idempotent, so a second
@@ -69,6 +81,30 @@ struct RootView: View {
                     showing(app)
                 }
             }
+    }
+}
+
+/// Opens a workspace on any connection. Published by `RootView`, which owns
+/// this window's foreground connection; a session view asks it to switch.
+struct OpenWorkspaceAction: Sendable {
+    private let open: @MainActor @Sendable (String, String) -> Void
+
+    init(_ open: @escaping @MainActor @Sendable (String, String) -> Void) { self.open = open }
+
+    @MainActor func callAsFunction(connectionId: String, workspaceId: String) {
+        open(connectionId, workspaceId)
+    }
+}
+
+private struct OpenWorkspaceKey: EnvironmentKey {
+    /// No-op above the root, like `openConnections`.
+    static let defaultValue = OpenWorkspaceAction { _, _ in }
+}
+
+extension EnvironmentValues {
+    var openWorkspace: OpenWorkspaceAction {
+        get { self[OpenWorkspaceKey.self] }
+        set { self[OpenWorkspaceKey.self] = newValue }
     }
 }
 
@@ -123,7 +159,7 @@ private struct SessionRootView: View {
                 AuthView()
             case .signedIn:
                 if win.selectedWorkspaceId == nil {
-                    WorkspaceSwitcherView()
+                    WorkspaceSwitcherView(manager: app.connections)
                         .onAppear { win.restoreActiveWorkspace() }
                 } else {
                     MainView()

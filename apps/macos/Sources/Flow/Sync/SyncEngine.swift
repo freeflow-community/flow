@@ -493,6 +493,8 @@ actor SyncEngine {
             try Workspace.filter(!ids.contains(Column("id"))).deleteAll(db)
             for w in workspaces { try w.save(db) }
         }
+        // The other connections' switchers draw this one from its bindings.
+        await appState?.workspacesRefreshed(workspaces)
     }
 
     /// A window switched to this workspace: bring its data up to date. The

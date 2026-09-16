@@ -786,6 +786,14 @@ final class AppState: ObservableObject {
         windows.forEach { $0.channelBecameUnavailable(channelId) }
     }
 
+    /// This connection's workspace list just refreshed: record it in the
+    /// registry's bindings so every other connection's switcher lists this
+    /// one's workspaces with their current names and avatars.
+    func workspacesRefreshed(_ workspaces: [Workspace]) {
+        guard let userId = currentUser?.id else { return }
+        connections.syncBindings(connectionId: connectionId, userId: userId, workspaces: workspaces)
+    }
+
     /// A workspace we left (#340) — every window showing it moves to `landOn`,
     /// or to the chooser when that was the last one. Its Activity badge goes
     /// with it: the count belongs to a workspace we can no longer read.

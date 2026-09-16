@@ -6,6 +6,13 @@ struct WorkspaceSwitcherView: View {
     @EnvironmentObject private var win: WindowState
     /// Raises the workspace/server switcher owned by `RootView` (#566).
     @Environment(\.openConnections) private var openConnections
+    /// Opens a workspace on a connection this window is not showing (#592).
+    @Environment(\.openWorkspace) private var openWorkspace
+    /// This chooser lists every connection's workspaces, so it redraws when
+    /// the registry or another connection's unread count moves.
+    @ObservedObject private var manager: ConnectionManager
+
+    init(manager: ConnectionManager) { self.manager = manager }
     @StateObject private var workspaces = DBObserved<[Workspace]>(initial: [])
     @State private var showCreate = false
     @State private var showAcceptInvite = false
@@ -51,18 +58,25 @@ struct WorkspaceSwitcherView: View {
                 Text(inviteError).flowFont(.callout).foregroundStyle(.red)
             }
 
-            if workspaces.value.isEmpty {
+            // Every connection's workspaces (#592 on web): Slack teams and
+            // other servers' workspaces are choices here too, and picking one
+            // switches this window to its connection.
+            let entries = manager.switcherEntries(foreground: app.connectionId, foregroundWorkspaces: workspaces.value)
+            if entries.isEmpty {
                 Text("You're not in any workspace yet.\nCreate one, or accept an invite.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             } else {
-                List(workspaces.value) { ws in
+                List(entries) { entry in
                     Button {
-                        win.selectWorkspace(ws.id)
+                        if entry.foreground { win.selectWorkspace(entry.workspaceId) }
+                        else { openWorkspace(connectionId: entry.connectionId, workspaceId: entry.workspaceId) }
                     } label: {
                         HStack {
-                            if let path = ws.avatarImagePath {
-                                AuthImage(path: path) {
+                            if let path = entry.avatarImagePath {
+                                // A workspace on another connection loads its
+                                // mark through that connection's loader.
+                                AuthImage(path: path, loader: entry.foreground ? nil : manager.appState(entry.connectionId)?.images) {
                                     RoundedRectangle(cornerRadius: 6).fill(.tint)
                                 }
                                 .scaledToFill()
@@ -73,21 +87,23 @@ struct WorkspaceSwitcherView: View {
                                     .fill(.tint)
                                     .frame(width: 32, height: 32)
                                     .overlay(
-                                        Text(String(ws.name.prefix(1)).uppercased())
+                                        Text(String(entry.name.prefix(1)).uppercased())
                                             .flowFont(.headline)
                                             .foregroundStyle(.white)
                                     )
                             }
                             VStack(alignment: .leading) {
-                                Text(ws.name).flowFont(.headline)
-                                Text(ws.slug).flowFont(.caption).foregroundStyle(.secondary)
+                                Text(entry.name).flowFont(.headline)
+                                // Its own slug where we have it; where it lives
+                                // for a workspace on another connection.
+                                Text(entry.slug ?? entry.source).flowFont(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             // Same unread total as the rail badge (#345) — this
                             // chooser is the other way into a workspace.
-                            WorkspaceUnreadBadge(count: ws.unreadCount, ringColor: .clear)
-                                .accessibilityIdentifier("switcher.unread.\(ws.slug)")
-                            if let role = ws.role {
+                            WorkspaceUnreadBadge(count: entry.unread, ringColor: .clear)
+                                .accessibilityIdentifier("switcher.unread.\(entry.key)")
+                            if let role = entry.role {
                                 Text(role)
                                     .flowFont(.caption)
                                     .foregroundStyle(.secondary)
@@ -99,6 +115,7 @@ struct WorkspaceSwitcherView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.vertical, 2)
+                    .accessibilityIdentifier("switcher.workspace.\(entry.key)")
                 }
                 .frame(maxWidth: 440)
                 .scrollContentBackground(.hidden)
