@@ -827,6 +827,8 @@ actor SyncEngine {
     /// the browser this session. Looks it up through the browser list so the
     /// view can resolve it read-only instead of drawing a nameless composer.
     func resolveUncachedChannel(_ channelId: String, workspaceId: String) async {
+        // Flow's archived-channel browse; a provider's list is the conversation list.
+        guard backend == nil else { return }
         let cached = try? await db.writer.read { db in try Channel.fetchOne(db, key: channelId) }
         guard cached == nil, await appState?.archivedChannels[channelId] == nil else { return }
         _ = try? await browseChannels(workspaceId: workspaceId)
@@ -1314,6 +1316,9 @@ actor SyncEngine {
     /// Fetch every pin in the channel so older pinned messages become part of
     /// the local cache even when normal history pagination has not reached them.
     func loadPinnedMessages(channelId: String) async {
+        // Pins are a Flow feature here: a provider workspace (Slack) has no
+        // pins route, and asking its connector only raised an HTTP 404 alert.
+        guard backend == nil else { return }
         do {
             let response: PinnedMessagesResponse = try await api.get("/v1/channels/\(channelId)/pins")
             // The list is authoritative: clear stale offline-era pins before
@@ -1625,6 +1630,8 @@ actor SyncEngine {
     /// carries `memberIds` for DMs, so standard channels have to ask the
     /// server. Returns [] on failure — callers fall back to what they have.
     func channelMemberIds(channelId: String) async -> [String] {
+        // No roster route on a provider; views keep the DTO's DM members.
+        guard backend == nil else { return [] }
         guard let resp: ChannelMembersResponse = try? await api.get("/v1/channels/\(channelId)/members")
         else { return [] }
         return resp.userIds

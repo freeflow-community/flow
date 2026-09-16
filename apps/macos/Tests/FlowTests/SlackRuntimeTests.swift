@@ -89,6 +89,11 @@ private func makeRuntime(_ fake: RuntimeConnector) throws -> (SyncEngine, AppDat
         let stored: [String] = try await db.reader.read { db in try String.fetchAll(db, sql: "SELECT id FROM message WHERE channelId = 'C1' ORDER BY id") }
         #expect(stored == [rts1, rts2], "Slack ts is the message id, verbatim")
 
+        // What a channel view runs when it opens (ChannelView/ChannelScreen .task).
+        await engine.resolveUncachedChannel("C9", workspaceId: "T1")
+        #expect(await engine.channelMemberIds(channelId: "C1").isEmpty)
+        await engine.loadPinnedMessages(channelId: "C1")
+
         _ = await engine.sendMessage(channelId: "C1", body: "hi from the mac")
         let sent = fake.requests.first { $0.method == "POST" && $0.path == "/v1/messages" }
         #expect(sent != nil)
