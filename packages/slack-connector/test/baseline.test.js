@@ -630,3 +630,21 @@ test('channel topics are mrkdwn: links, mentions and emoji render like a message
   assert.equal(channelTopic('  '), null);
   assert.equal(channelTopic(undefined), null);
 });
+
+test('agent app replies: markdown blocks render, and unknown or empty blocks fall back to the text', () => {
+  const cosmo = { type: 'message', user: 'U0C28SL44AZ', bot_id: 'B0COSMO', ts: TS1, thread_ts: TS1,
+    text: 'Your 4 most recent conversations:\n\n1. *Mala* — "will do tonight."',
+    blocks: [{ type: 'markdown', text: 'Your 4 most recent conversations:\n\n1. **Mala** — "will do tonight."' }] };
+  assert.equal(messageMarkdown(cosmo), 'Your 4 most recent conversations:\n\n1. **Mala** — "will do tonight."');
+  assert.equal(normalizeMessage(cosmo, { teamId: 'T1', channelId: 'C1' }).provenance.degraded, false);
+
+  // A block type Flow does not know: Slack's text stands in, and the message is marked partial.
+  const future = { ...cosmo, blocks: [{ type: 'plan', title: 'Steps', tasks: [] }] };
+  assert.equal(messageMarkdown(future), 'Your 4 most recent conversations:\n\n1. **Mala** — "will do tonight."');
+  assert.equal(normalizeMessage(future, { teamId: 'T1', channelId: 'C1' }).provenance.degraded, true);
+
+  // Blocks that draw to nothing never blank a message that has text.
+  assert.equal(messageMarkdown({ ...cosmo, blocks: [{ type: 'section', fields: [] }] }), 'Your 4 most recent conversations:\n\n1. **Mala** — "will do tonight."');
+  // Buttons are left out without hiding the layout around them.
+  assert.equal(messageMarkdown({ ...cosmo, blocks: [{ type: 'header', text: { type: 'plain_text', text: 'Deploy' } }, { type: 'actions', elements: [{ type: 'button' }] }] }), '**Deploy**');
+});

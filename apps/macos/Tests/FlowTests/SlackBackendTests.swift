@@ -27,8 +27,13 @@ private final class FakeConnector: @unchecked Sendable {
     var uploads: [(contentType: String?, authorization: String?, data: Data)] = []
     var rateLimitHistory = false
     var streamPages: [String] = []
+    var imageRequests: [(host: String, authorization: String?)] = []
 
     func transport(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if let host = request.url?.host, host != "connector.test" {
+            imageRequests.append((host, request.value(forHTTPHeaderField: "Authorization")))
+            return (Data([0x89, 0x50, 0x4E, 0x47]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
         let path = request.url!.path + (request.url!.query.map { "?\($0)" } ?? "")
         let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         requests.append((request.httpMethod ?? "GET", path, body))
@@ -150,6 +155,22 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         await #expect(throws: BackendError.self) { try await backend.fileData(path: "/v1/history?channel=C1") }
         await #expect(throws: BackendError.self) { try await backend.fileData(path: "v1/files/../session") }
         #expect(fake.requests.count == 1)
+    }
+
+    /// Slack profile photos are public https URLs: loaded directly, never with
+    /// the connector credential, and only from Slack's image hosts.
+    @Test func loadsSlackProfilePhotosWithoutTheCredential() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let data = try await backend.fileData(path: "https://avatars.slack-edge.com/2025-01-01/123_abc_72.jpg")
+        #expect(data == Data([0x89, 0x50, 0x4E, 0x47]))
+        #expect(fake.imageRequests.map(\.host) == ["avatars.slack-edge.com"])
+        #expect(fake.imageRequests.first?.authorization == nil)
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "https://evil.example/a.png") }
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "http://avatars.slack-edge.com/a.png") }
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "https://slack-edge.com.evil.example/a.png") }
+        #expect(fake.imageRequests.count == 1)
+        #expect(fake.requests.isEmpty, "the connector is not asked for a public photo")
     }
 
     /// With files:write the bytes go to the connector raw, with their type and

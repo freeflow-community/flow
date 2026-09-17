@@ -66,7 +66,9 @@ export function expandBodyEmoji(text) {
 
 const RICH_SECTIONS = new Set(['rich_text_section', 'rich_text_list', 'rich_text_preformatted', 'rich_text_quote']);
 const RICH_ELEMENTS = new Set(['text', 'link', 'user', 'usergroup', 'channel', 'emoji', 'broadcast', 'date']);
-const LAYOUT_BLOCKS = new Set(['rich_text', 'header', 'section', 'context', 'divider', 'image']);
+const LAYOUT_BLOCKS = new Set(['rich_text', 'header', 'section', 'context', 'divider', 'image', 'markdown']);
+// Controls Flow cannot operate: left out, but they do not hide the rest.
+const INTERACTIVE_BLOCKS = new Set(['actions', 'input']);
 const PASSIVE_ACCESSORIES = new Set(['image']);
 
 /** A markdown link; a label holding brackets ("[FIRING] …") cannot be a link
@@ -135,6 +137,8 @@ function blocksToMarkdown(blocks, { inQuote = false } = {}) {
       case 'divider': if (!inQuote) parts.push('---'); break;
       case 'image': parts.push(mdLink(String(block.alt_text || block.title?.text || 'image'), block.image_url)); break;
       case 'rich_text': parts.push(richText(block)); break;
+      // AI and agent apps post standard markdown (not mrkdwn) in this block.
+      case 'markdown': parts.push(String(block.text ?? '')); break;
       default: break;
     }
   }
@@ -162,8 +166,14 @@ function attachmentToMarkdown(attachment) {
  * fallback text when there are any, then each attachment. */
 export function messageMarkdown(message) {
   const blocks = message.blocks ?? [];
+  const text = () => mrkdwnToMarkdown(String(message.text ?? '')).trim();
   const layout = blocks.some(block => block.type !== 'rich_text');
-  const main = layout ? blocksToMarkdown(blocks) : mrkdwnToMarkdown(String(message.text ?? ''));
+  // A block type Flow cannot draw means the blocks would lose content, so
+  // Slack's own fallback text stands in for all of them — as it does when
+  // drawing them produced nothing.
+  const unknown = blocks.some(block => !LAYOUT_BLOCKS.has(block.type) && !INTERACTIVE_BLOCKS.has(block.type));
+  const drawn = layout && !unknown ? blocksToMarkdown(blocks) : '';
+  const main = drawn.trim() ? drawn : text();
   return [main, ...(message.attachments ?? []).map(attachmentToMarkdown)].filter(Boolean).join('\n\n');
 }
 

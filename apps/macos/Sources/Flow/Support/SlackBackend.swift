@@ -318,7 +318,20 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
     /// grant's token (`hasThumb` is set only when the grant can read files).
     /// Only file paths are accepted, so the credential never leaves for an
     /// arbitrary route and `raw` pins it to the connector origin.
+    /// Hosts Slack serves public images from (profile photos, app icons).
+    static let publicImageHosts = ["slack-edge.com", "gravatar.com"]
+
     func fileData(path: String) async throws -> Data {
+        // A Slack profile photo is a public https URL, not a connector path:
+        // fetched as-is, and never with the connector credential.
+        if let url = URL(string: path), url.scheme != nil {
+            guard url.scheme == "https", let host = url.host?.lowercased(),
+                  Self.publicImageHosts.contains(where: { host == $0 || host.hasSuffix(".\($0)") })
+            else { throw BackendError(code: .invalid, message: "Not a Slack image address.") }
+            let (data, response) = try await transport(URLRequest(url: url))
+            guard response.statusCode == 200 else { throw BackendError(code: .notFound, message: "Image unavailable.") }
+            return data
+        }
         let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
         guard trimmed.hasPrefix("v1/files/"), !trimmed.contains(".."), !trimmed.contains("?") else {
             throw BackendError(code: .invalid, message: "Not a file path.")
