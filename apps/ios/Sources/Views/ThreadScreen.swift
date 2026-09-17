@@ -132,7 +132,7 @@ struct ThreadScreen: View {
                         // reads as a delete + insert whose two views claim one
                         // `.id()`, and the leaving pending view wins — the row
                         // keeps its spinner for as long as the screen is up.
-                        ForEach(thread.value, id: \.clientMsgId) { message in
+                        ForEach(thread.value, id: \.rowKey) { message in
                             MessageRow(
                                 message: message,
                                 userNames: userNames,
@@ -162,7 +162,7 @@ struct ThreadScreen: View {
                             // optimistic reply row survives its server echo
                             // instead of remounting (and re-flashing its
                             // avatar placeholder).
-                            .id(message.clientMsgId)
+                            .id(message.rowKey)
                             if message.id == rootId {
                                 HStack {
                                     Text(replies.isEmpty

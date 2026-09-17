@@ -2672,11 +2672,17 @@ actor SyncEngine {
     private func applyServerMessage(_ m: Message) async -> Bool {
         let isNew: Bool? = try? await db.writer.write { db in
             let existed = try Message.filter(key: m.id).fetchCount(db) > 0
-            let pendingDeleted = try Message
-                .filter(Column("channelId") == m.channelId)
-                .filter(Column("clientMsgId") == m.clientMsgId)
-                .filter(Column("id") != m.id)
-                .deleteAll(db)
+            // An empty clientMsgId (a Slack app/API message, #620) names no
+            // optimistic twin — matching on it would delete every other
+            // key-less message in the channel.
+            var pendingDeleted = 0
+            if !m.clientMsgId.isEmpty {
+                pendingDeleted = try Message
+                    .filter(Column("channelId") == m.channelId)
+                    .filter(Column("clientMsgId") == m.clientMsgId)
+                    .filter(Column("id") != m.id)
+                    .deleteAll(db)
+            }
             try m.save(db)
             let isNew = !existed && pendingDeleted == 0
             if isNew, let root = m.threadRootId {
@@ -2768,13 +2774,16 @@ actor SyncEngine {
                 // (`clientMsgId` is unique per channel server-side). `failed`
                 // as well as `pending`: the stale-pending sweep can flag a
                 // message the server did receive, and its twin arriving here
-                // is the proof — leaving it would show the send twice.
-                try Message
-                    .filter(Column("channelId") == m.channelId)
-                    .filter(Column("clientMsgId") == m.clientMsgId)
-                    .filter(Column("id") != m.id)
-                    .filter(Column("pending") == true || Column("failed") == true)
-                    .deleteAll(db)
+                // is the proof — leaving it would show the send twice. An
+                // empty key has no twin (#620).
+                if !m.clientMsgId.isEmpty {
+                    try Message
+                        .filter(Column("channelId") == m.channelId)
+                        .filter(Column("clientMsgId") == m.clientMsgId)
+                        .filter(Column("id") != m.id)
+                        .filter(Column("pending") == true || Column("failed") == true)
+                        .deleteAll(db)
+                }
                 try m.save(db)
             }
         }

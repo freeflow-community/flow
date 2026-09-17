@@ -173,7 +173,7 @@ struct MessageListView: View {
                     // the optimistic row and its server echo must be one
                     // element with a changed value, not a delete + insert
                     // sharing an `.id()` — see ThreadPanelView (#328).
-                    ForEach(rowCache.rows(for: messages), id: \.message.clientMsgId) { row in
+                    ForEach(rowCache.rows(for: messages), id: \.message.rowKey) { row in
                         VStack(alignment: .leading, spacing: 0) {
                             if row.startsNewDay {
                                 DayDividerView(iso: row.message.createdAt)
@@ -213,7 +213,7 @@ struct MessageListView: View {
                         // its server echo share a clientMsgId but not an id,
                         // so keying on id remounts the row (and its avatar
                         // image) the moment the echo lands.
-                        .id(row.message.clientMsgId)
+                        .id(row.message.rowKey)
                         // Scroll memory's recorder: each row reports itself
                         // when it crosses the viewport top; only one does, so
                         // the preference resolves to the top-visible message.

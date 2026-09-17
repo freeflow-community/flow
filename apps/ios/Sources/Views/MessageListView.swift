@@ -169,7 +169,7 @@ struct MessageListView: View {
                     // claim one `.id()`, and the leaving pending view wins —
                     // the spinner stays on screen. One element with a changed
                     // value re-renders in place instead.
-                    ForEach(rowCache.rows(for: messages), id: \.message.clientMsgId) { row in
+                    ForEach(rowCache.rows(for: messages), id: \.message.rowKey) { row in
                         VStack(alignment: .leading, spacing: 0) {
                             if row.startsNewDay {
                                 DayDividerView(iso: row.message.createdAt)
@@ -205,7 +205,7 @@ struct MessageListView: View {
                         // its server echo share a clientMsgId but not an id,
                         // so keying on id remounts the row (and its avatar
                         // image) the moment the echo lands.
-                        .id(row.message.clientMsgId)
+                        .id(row.message.rowKey)
                         .background(GeometryReader { geometry in
                             let frame = geometry.frame(in: .named(Self.scrollSpace))
                             Color.clear.preference(key: SavedTopMessage.self,

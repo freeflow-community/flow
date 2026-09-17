@@ -9,17 +9,29 @@ import Foundation
 ///
 /// One definition, in one place, so the channel list and the thread panel
 /// cannot drift apart on what a row is called.
+extension Message {
+    /// This message's row identity: its `clientMsgId`, or its `id` when it has
+    /// none. A Slack message carries a `clientMsgId` only when a Slack client
+    /// typed it — app/bot replies and API posts arrive with `""` (#620), and a
+    /// thread of several such rows handed `LazyVStack` duplicate identities: it
+    /// sized and recycled them wrongly, leaving viewport-high blank gaps and
+    /// rows that popped in and out. An empty key never names an optimistic
+    /// twin, so falling back to `id` loses nothing. Web keys the same way
+    /// (`m.clientMsgId || m.id`).
+    var rowKey: String { clientMsgId.isEmpty ? id : clientMsgId }
+}
+
 extension Array where Element == Message {
     /// The row identity for a message id, or nil when that message isn't in
     /// this list — the same "not here (yet)" answer the callers' old
     /// `contains(where:)` guards gave.
     func rowKey(forMessageId id: String) -> String? {
-        first(where: { $0.id == id })?.clientMsgId
+        first(where: { $0.id == id })?.rowKey
     }
 
     /// The row identity of the newest message: the scroll-to-bottom target.
-    var lastRowKey: String? { last?.clientMsgId }
+    var lastRowKey: String? { last?.rowKey }
 
     /// The row identity of the oldest message: the top-of-window target.
-    var firstRowKey: String? { first?.clientMsgId }
+    var firstRowKey: String? { first?.rowKey }
 }
