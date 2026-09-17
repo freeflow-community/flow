@@ -153,4 +153,23 @@ final class WindowStateTests: XCTestCase {
         XCTAssertEqual(app.openChannelIds, ["c1"])
         XCTAssertEqual(app.windows.count, 1)
     }
+    /// SwiftUI re-runs a view's init on every parent re-render. Selecting a
+    /// workspace starts its whole network load, so the window's initial
+    /// selection must happen only when SwiftUI creates the window state —
+    /// never in init itself, which turned each state change into another load
+    /// and flooded the server (macOS 2.2.108).
+    @MainActor
+    func testSessionRootInitDoesNotSelectAWorkspace() {
+        let app = AppState()
+        let key = app.sessionScope.key("activeWorkspaceId")
+        let defaults = UserDefaults.standard
+        let saved = defaults.object(forKey: key)
+        defer { defaults.set(saved, forKey: key) }
+        defaults.set("before", forKey: key)
+        for _ in 0..<3 {
+            _ = SessionRootView(app: app, workspaceId: "ws-from-rail", notification: nil)
+        }
+        XCTAssertEqual(defaults.string(forKey: key), "before", "building the view must not select a workspace")
+    }
+
 }

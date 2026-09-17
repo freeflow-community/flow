@@ -132,7 +132,7 @@ extension EnvironmentValues {
     }
 }
 
-private struct SessionRootView: View {
+struct SessionRootView: View {
     @EnvironmentObject private var app: AppState
     /// This window's own selection state (workspace/channel/thread/…) — a
     /// `@StateObject` here is per window, unlike one on the `App` struct,
@@ -140,13 +140,24 @@ private struct SessionRootView: View {
     @StateObject private var win: WindowState
 
     init(app: AppState, workspaceId: String?, notification: NavigationTarget?) {
+        // Inside the autoclosure, which SwiftUI evaluates once per window
+        // identity. This init runs on every parent re-render (FlowApp observes
+        // the app state), and selecting a workspace starts its whole network
+        // load — done here, a non-nil `workspaceId` turned every state change
+        // into another load, whose results changed state again: a request
+        // storm that starved message sends (macOS 2.2.108, after the rail
+        // began setting `workspaceId` on every cross-connection open).
+        _win = StateObject(wrappedValue: Self.makeWindow(app: app, workspaceId: workspaceId, notification: notification))
+    }
+
+    private static func makeWindow(app: AppState, workspaceId: String?, notification: NavigationTarget?) -> WindowState {
         let window = WindowState(app: app)
         if let workspaceId { window.selectWorkspace(workspaceId) }
         if let notification, let channel = notification.channelId, let message = notification.messageId {
             window.openNotification(workspaceId: notification.workspaceId, channelId: channel,
                                     messageId: message, threadRootId: notification.threadRootId)
         }
-        _win = StateObject(wrappedValue: window)
+        return window
     }
 
     var body: some View {
