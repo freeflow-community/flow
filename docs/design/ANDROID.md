@@ -1,5 +1,17 @@
 # Android client (PROPOSAL)
 
+> **Status 2026-09-21, at merge.** Proposal, not scheduled. Three of the
+> premises below have moved since it was written, in the proposal's favour:
+> the server now has a browser-origin allowlist (`FLOW_ALLOWED_WEB_ORIGINS`,
+> `docs/dev/MULTISERVER.md`) and admits the desktop app's `app://flow`
+> origin; the web client no longer assumes same-origin — it keeps a
+> per-connection origin registry and reaches the host through
+> `packages/web/src/lib/host.ts`; and an Electron desktop client
+> (`docs/specs/desktop-electron.md`, `apps/desktop`) now wraps the web
+> client with exactly the seam a Capacitor shell would use (credentials,
+> external links, deep links, notifications, badge). So "Phase 0 — decouple"
+> is largely done, and the README no longer has a no-Electron stance.
+
 The README lists Android among the platforms with development plans for
 native clients. This document proposes a different *sequencing* for the
 Android half of that — ship the existing web client in a thin native shell
