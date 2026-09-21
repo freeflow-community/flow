@@ -338,10 +338,18 @@ export class ConnectionRuntime {
     if (!cached) {
       const generation = this.generation;
       cached = (async () => {
-        const res = await fetch(this.url(path), {
+        // On a presigning backend (R2 in production) `GET /v1/files/:id` is a
+        // 302 to storage, and the authenticated fetch below refuses redirects
+        // so the bearer can never follow one off-origin. Ask for the storage
+        // URL explicitly, as `fileImageUrl` does, and fetch it bare; a backend
+        // that streams the bytes itself answers with no URL and the
+        // authenticated path is used as before.
+        const fileId = path.match(/^\/v1\/files\/([^/?#]+)$/)?.[1];
+        const direct = fileId ? (await this.fileStreamUrl(fileId)).url : null;
+        const res = await fetch(direct ?? this.url(path), {
           credentials: 'omit',
-      redirect: 'error',
-          headers: this.authHeaders(),
+          redirect: 'error',
+          headers: direct ? {} : this.authHeaders(),
         });
         if (!res.ok) {
           if (res.status === 401) this.reportUnauthorized(generation);

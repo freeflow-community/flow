@@ -39,7 +39,8 @@ const DOCUMENT_CSP = [
   "connect-src 'self' https: http: wss: ws: blob: data:",
   "frame-src 'self' https: http: blob: data:",
   "worker-src 'self' blob:",
-  "object-src 'none'",
+  // PDF previews are an <embed> of an object URL (the browser's own viewer).
+  "object-src 'self' blob:",
   "base-uri 'self'",
 ].join('; ');
 
