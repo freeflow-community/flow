@@ -165,6 +165,10 @@ export function registerRoutes(app: FastifyInstance): void {
         authHandoff: config.handoffReturnUrls.length > 0,
         push: config.pushDriver === 'apns' && !!(config.apnsKey && config.apnsKeyId && config.apnsTeamId),
         pushRouting: true,
+        // This server admits the desktop app's `app://flow` origin
+        // (docs/specs/desktop-electron.md). A server without it refuses the
+        // desktop at discovery, and the app says so instead of failing later.
+        desktop: true,
       },
     };
   });

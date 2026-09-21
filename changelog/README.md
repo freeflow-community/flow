@@ -19,8 +19,8 @@ are ignored by the generator.
 # One-line title of the change
 
 - `[server]` `[web]` What changed, one or two lines, same succinct style and
-  platform tags as before: `[server]` `[web]` `[macos]` `[ios]` `[bridge]`
-  `[qa]`.
+  platform tags as before: `[server]` `[web]` `[macos]` `[ios]` `[desktop]`
+  `[bridge]` `[qa]`.
 - Another bullet if needed.
 
 ## Feature

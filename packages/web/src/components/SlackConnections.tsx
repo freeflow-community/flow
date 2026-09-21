@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { connectionManager } from '../lib/connectionRuntime';
 import type { ServerConnection } from '../lib/connections';
 import { connectSlack, slackRequest, slackStatusMessage, type SlackConnection, type SlackHandoff } from '../lib/slackConnector';
+import { isDesktop } from '../lib/host';
 import { buttonDanger, buttonPrimary, buttonSecondary } from './buttonStyles';
 
 /** Slack consent plus the verify-before-adding step, shared by Connect Slack
@@ -19,8 +20,9 @@ function useSlackAuthorize(onChange: () => void) {
     finally { setBusy(false); }
   };
   const authorize = (origin: string, expectedTeamId?: string) => {
-    const popup = window.open('about:blank', 'flow-slack-signin', 'width=560,height=760');
-    if (!popup) { setMessage('Allow a popup to authorize Slack.'); return; }
+    // The desktop shell has no popups: consent runs in the system browser.
+    const popup = isDesktop() ? null : window.open('about:blank', 'flow-slack-signin', 'width=560,height=760');
+    if (!popup && !isDesktop()) { setMessage('Allow a popup to authorize Slack.'); return; }
     operation.current?.abort();
     const controller = new AbortController(); operation.current = controller;
     void perform(async () => { setPending(await connectSlack(origin, popup, controller.signal, expectedTeamId)); });

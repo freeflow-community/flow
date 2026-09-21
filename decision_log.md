@@ -1,5 +1,23 @@
 # Decision log
 
+## 2026-09-20 — Desktop client is an Electron shell around the web client
+
+- Electron, not Tauri: one Chromium on every OS, so the desktop client
+  behaves like the Chromium web client QA already tests and does not inherit
+  the WebKit gaps (mini apps in a frame, screen-share audio).
+- The shell bundles `packages/web/dist` and serves it from `app://flow`; it
+  does not load the live site. The server and the Slack connector admit that
+  origin without operator configuration, and the sign-in handoff treats it as
+  a native client (null client origin, `flow://signin` return).
+- Sign-in with Google, another Flow server and Slack goes through the system
+  browser and back by `flow://` link, as on macOS. Google refuses embedded
+  browsers, so this is required, not a choice.
+- Windows ships unsigned for now; the SmartScreen warning is accepted.
+- No CI tooling: the release will be a local script on the Mac that builds
+  all three targets, like `release-macos.sh`. Revisit with a Windows
+  certificate.
+- Design and milestones: `docs/specs/desktop-electron.md`.
+
 ## 2026-09-03 — Agent calls borrow the huddle lifecycle, not LiveKit transport
 
 - A one-to-one agent DM's huddle control starts an ongoing iOS agent call. The

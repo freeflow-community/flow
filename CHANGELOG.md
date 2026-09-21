@@ -17,6 +17,13 @@ This file keeps two things:
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
+- **The desktop (Electron) client signs in and chats, and that is all so far**
+  (`docs/specs/desktop-electron.md` M1–M2). It runs from source on macOS,
+  Windows and Linux and has no OS banners, badge, tray, screen-share picker,
+  multi-window or installer yet — those are M3–M5. The web client's features
+  are all there because it *is* the web client; the macOS parity items it
+  already closes: registration and password reset in-app, Google through the
+  system browser, credentials in the OS store.
 - **One workspace list across connections is not on iOS.** Web and macOS list
   every connection's workspaces (Slack teams and other servers) on the rail, in
   the sidebar menu and in the chooser; the iOS drawer still shows only the

@@ -4,6 +4,9 @@ import ServerConnections from './components/ServerConnections';
 import { REGISTRY_KEY } from './lib/connections';
 import { OPEN_WORKSPACE_EVENT } from './lib/workspaceSwitcher';
 import { consumeHandoffCallback, pendingHandoff } from './lib/authHandoff';
+import { installDeepLinks, type DeepLink } from './lib/deepLinks';
+import { getHost } from './lib/host';
+import { originLabel } from './lib/serverOrigin';
 import { BackendError, type ArtifactDTO, type UserDTO, type AuthResponse, type WorkspaceDTO } from '@flow/shared';
 import { backgroundSync } from './lib/backgroundSync';
 import { backendFor } from './lib/backend';
@@ -118,6 +121,15 @@ export default function App() {
     sync.start();
     return () => sync.stop();
   }, [sync]);
+  // Desktop shell only (a browser host reports no links): route `flow://`
+  // links, and name the window the way the macOS app does when a profile is
+  // set, so two QA fixtures side by side can be told apart.
+  useEffect(() => {
+    installDeepLinks();
+    const host = getHost();
+    if (!host.isDesktop) return;
+    host.window.setTitle(host.profile ? `Flow — ${host.profile} @ ${originLabel(runtime.origin)}` : 'Flow');
+  }, [runtime.origin]);
   useEffect(() => {
     sync.setForeground(runtime.connectionId);
   }, [sync, runtime.connectionId]);
@@ -300,6 +312,7 @@ function SessionApp({ runtime }: { runtime: ConnectionRuntime }) {
     if (user?.avatarUrl) void runtime.blobUrl(user.avatarUrl).catch(() => {});
   }, [runtime, user?.avatarUrl]);
 
+  const [inviteNonce, bumpInvite] = useState(0);
   // Accept a stashed emailed invite as soon as we have a signed-in user
   // (fresh registration or existing account alike), then land in that
   // workspace. Any failure (expired/used/bad token) burns the stash — the
@@ -320,7 +333,8 @@ function SessionApp({ runtime }: { runtime: ConnectionRuntime }) {
         runtime.write(PENDING_INVITE, null);
       }
     })();
-  }, [runtime, user, qc]);
+  }, [runtime, user, qc, inviteNonce]);
+
 
   // A stashed join link (issue #85) takes over the whole screen until it's
   // resolved — see JoinScreen. Read once at boot so the token is picked up
@@ -371,6 +385,33 @@ function SessionApp({ runtime }: { runtime: ConnectionRuntime }) {
       );
     }
   }, [replaceToken, runtime, qc, threadMemory]);
+
+  // A `flow://` link nobody was waiting for (see lib/deepLinks.ts): an invite
+  // to accept, or a sign-in code minted on the web. The rules follow the
+  // macOS app's `handleDeepLink`: a code signs in this connection only when
+  // it is the sole Flow server, because the link does not say which server
+  // minted it; an invite is stashed and accepted by the effect above once a
+  // user is signed in.
+  useEffect(() => {
+    const onLink = (event: Event) => {
+      const link = (event as CustomEvent<DeepLink>).detail;
+      if (link.kind === 'invite') {
+        runtime.write(PENDING_INVITE, link.token);
+        bumpInvite(n => n + 1);
+        return;
+      }
+      if (link.kind !== 'signin-code') return;
+      const flowServers = connectionManager().connections.filter(c => c.provider === 'flow');
+      if (flowServers.length !== 1) {
+        setNotice('This sign-in link does not say which server it is for. Sign in from Workspaces & servers instead.');
+        return;
+      }
+      void runtime.api<AuthResponse>('POST', '/v1/auth/app-link/exchange', { code: link.code })
+        .then(signIn, (err: Error) => setNotice(`Sign-in link failed: ${err.message}`));
+    };
+    window.addEventListener('flow:deeplink', onLink);
+    return () => window.removeEventListener('flow:deeplink', onLink);
+  }, [runtime, signIn]);
 
   // Where this connection+identity is parked, so a NavigationTarget survives
   // restart per session rather than as one global "last channel".

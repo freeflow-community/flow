@@ -3,6 +3,7 @@
 // exchanges it for its own session (raw tokens never ride in the URL).
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { isDesktop } from '../lib/host';
 
 const DISMISS_KEY = 'flow.appCtaDismissed';
 
@@ -70,6 +71,7 @@ function DownloadLink({ className = '' }: { className?: string }) {
 /** Prominent CTA for the workspace chooser. */
 export function OpenInAppButton() {
   const [noApp, setNoApp] = useState(false);
+  if (isDesktop()) return null;
   return (
     <div className="flex flex-col items-center gap-1">
       <button
@@ -92,7 +94,7 @@ export function OpenInAppButton() {
 export function OpenInAppBanner() {
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1');
   const [noApp, setNoApp] = useState(false);
-  if (dismissed) return null;
+  if (dismissed || isDesktop()) return null;
   return (
     <div
       data-testid="open-in-app-banner"

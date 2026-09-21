@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
+import { DESKTOP_ORIGIN } from '@flow/shared';
 import { Fault, MAX_FILE_BYTES } from './connector.js';
 
 export function createConnectorServer(connector) {
@@ -12,7 +13,11 @@ export function createConnectorServer(connector) {
     try {
       const path = new URL(req.url, connector.publicOrigin).pathname;
       const origin = req.headers.origin;
-      if (origin && !connector.clientOrigins.includes(origin)) throw new Fault('client_origin_not_allowed', 403);
+      // The desktop app's renderer (docs/specs/desktop-electron.md) is a
+      // bundled client like the native apps and is admitted without
+      // configuration; it still gets CORS headers because Chromium checks them.
+      const desktop = origin === DESKTOP_ORIGIN;
+      if (origin && !desktop && !connector.clientOrigins.includes(origin)) throw new Fault('client_origin_not_allowed', 403);
       if (origin) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
@@ -75,7 +80,9 @@ export function createConnectorServer(connector) {
       // A browser proves its origin with the Origin header. A native client
       // sends none; it may name a configured `flow://` client origin instead,
       // which is not an authentication claim either way — the verifier is.
-      const claimsClient = () => origin === body.clientOrigin || (!origin && connector.isNativeOrigin(body.clientOrigin));
+      // The desktop app sends its own Origin but returns through the native
+      // `flow://slack` route, like the macOS app.
+      const claimsClient = () => origin === body.clientOrigin || ((!origin || desktop) && connector.isNativeOrigin(body.clientOrigin));
       if (path === '/v1/oauth/start' && req.method === 'POST') {
         if (!claimsClient()) throw new Fault('origin_mismatch', 403);
         respond(200, connector.start(body)); return;

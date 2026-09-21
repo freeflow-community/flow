@@ -346,6 +346,31 @@ test('HTTP: a native client signs in without an Origin header and returns to its
   assert.equal(me.status, 200);
 });
 
+test('HTTP: the desktop app is admitted with its own Origin and signs in through the native flow://slack route', async t => {
+  const f = fixture(t, { clientOrigins: ['flow://slack'] });
+  const server = createConnectorServer(f.connector);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const desktop = { origin: 'app://flow', 'content-type': 'application/json' };
+  const post = (path, body, headers = desktop) => fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  const verifier = opaque();
+  // Admitted without being configured, and the CORS answer names it back.
+  const started = await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://slack' });
+  assert.equal(started.status, 200);
+  assert.equal(started.headers.get('access-control-allow-origin'), 'app://flow');
+  const { operationId } = await started.json();
+  // The desktop can only claim a configured native origin, never a browser one or an unknown scheme.
+  assert.equal((await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'https://flow.test' })).status, 403);
+  assert.equal((await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://other' })).status, 403);
+  // Look-alike origins are still refused outright.
+  assert.equal((await post('/v1/oauth/start', { challenge: hash(verifier), clientOrigin: 'flow://slack' }, { origin: 'app://flow.evil', 'content-type': 'application/json' })).status, 403);
+  assert.deepEqual(await (await post('/v1/oauth/poll', { verifier, operationId, clientOrigin: 'flow://slack' })).json(), { status: 'pending' });
+  const preflight = await fetch(`${base}/v1/oauth/poll`, { method: 'OPTIONS', headers: { origin: 'app://flow' } });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'app://flow');
+});
+
 test('file previews: images get hasThumb only with files:read; bytes come through the connector with the user token', async t => {
   const image = { id: 'F0IMAGE1', name: 'image.png', mimetype: 'image/png', size: 183000, original_w: 800, original_h: 600, url_private: 'https://files.slack.com/files-pri/T1-F0IMAGE1/image.png', thumb_720: 'https://files.slack.com/files-tmb/T1-F0IMAGE1-x/image_720.png' };
   assert.equal(normalizeMessage(slackMessage(TS1, { files: [image] }), { teamId: 'T1', channelId: 'C1' }).files[0].hasThumb, false);

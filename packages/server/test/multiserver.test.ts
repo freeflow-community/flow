@@ -167,6 +167,54 @@ describe('initiated PKCE handoff', () => {
     const body = await approved(ctx);
     expect((await post('/v1/auth/handoff/exchange', body, false, null)).statusCode).toBe(200);
   });
+  // The desktop app (docs/specs/desktop-electron.md) is admitted without
+  // operator configuration, gets CORS headers because Chromium checks them,
+  // and signs in exactly like a native client: null client origin, flow://
+  // return, its own Origin ignored by the handoff binding.
+  it('admits the desktop origin everywhere and lets it use the native handoff shape', async () => {
+    const desktop = 'app://flow';
+    const info = await app.inject({ url: '/v1/client-info', headers: { origin: desktop } });
+    expect(info.statusCode).toBe(200);
+    expect(info.headers['access-control-allow-origin']).toBe(desktop);
+    expect(info.json().capabilities.desktop).toBe(true);
+    expect((await app.inject({ url: '/v1/me', headers: { origin: desktop, authorization: `Bearer ${token}` } })).statusCode).toBe(200);
+    // Look-alikes get nothing: the constant is exact, never prefix-matched.
+    for (const bad of ['app://flow/', 'app://flow.evil', 'apps://flow', 'APP://FLOW']) {
+      expect((await app.inject({ url: '/v1/client-info', headers: { origin: bad } })).statusCode).toBe(403);
+    }
+    const preflight = await app.inject({ method: 'OPTIONS', url: '/v1/me', headers: { origin: desktop, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization, content-type' } });
+    expect(preflight.statusCode).toBe(204);
+    const ctx = { ...context(), clientOrigin: null, returnUrl: 'flow://signin' };
+    const started = await post('/v1/auth/handoff/start', { ...ctx, codeChallenge: createHash('sha256').update(verifier).digest('base64url'), codeChallengeMethod: 'S256' }, false, desktop);
+    expect(started.statusCode).toBe(201);
+    const pending = { ...ctx, requestId: started.json().requestId as string };
+    const approve = await post('/v1/auth/handoff/approve', pending, true, 'https://backend.example');
+    expect(approve.statusCode).toBe(200);
+    const code = new URL(approve.json().callbackUrl).searchParams.get('code')!;
+    // A browser page cannot borrow the native shape…
+    expect((await post('/v1/auth/handoff/exchange', { ...pending, code, codeVerifier: verifier }, false, origin)).statusCode).toBe(400);
+    // …but the desktop can, and a desktop-started operation still binds a null client origin.
+    expect((await post('/v1/auth/handoff/exchange', { ...pending, code, codeVerifier: verifier }, false, desktop)).statusCode).toBe(200);
+    const legacy = await post('/v1/auth/app-link', {}, true, desktop);
+    expect(legacy.statusCode).toBe(201);
+    expect((await post('/v1/auth/app-link/exchange', { code: legacy.json().code }, false, desktop)).statusCode).toBe(200);
+  });
+  it('admits the desktop origin on the WebSocket upgrade', async () => {
+    const server = createServer(); const wss = new WebSocketServer({ noServer: true });
+    routeUpgrade(server, '/v1/ws', wss);
+    wss.on('connection', ws => ws.close());
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    const address = server.address() as { port: number };
+    const connect = (from: string) => new Promise<number>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${address.port}/v1/ws`, { origin: from });
+      ws.on('open', () => { ws.close(); resolve(101); });
+      ws.on('unexpected-response', (_req, response) => { response.resume(); ws.terminate(); resolve(response.statusCode!); });
+      ws.on('error', () => resolve(403));
+      setTimeout(() => { ws.terminate(); reject(new Error('WS timed out')); }, 3000).unref();
+    });
+    try { expect(await connect('app://flow')).toBe(101); expect(await connect('app://flow.evil')).toBe(403); }
+    finally { await new Promise<void>(r => wss.close(() => r())); await new Promise<void>(r => server.close(() => r())); }
+  });
 });
 
 describe('connection push contract', () => {

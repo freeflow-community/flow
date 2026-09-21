@@ -1,6 +1,7 @@
 import ConnectSlack, { SlackConnectionCard } from './SlackConnections';
 import { useEffect, useRef, useState } from 'react';
-import { browserSignIn } from '../lib/authHandoff';
+import { browserSignIn, desktopSignIn, DESKTOP_RETURN_URL } from '../lib/authHandoff';
+import { isDesktop } from '../lib/host';
 import type { AuthResponse, UserDTO, WorkspaceDTO } from '@flow/shared';
 import { useConnectionSync } from '../lib/backgroundSync';
 import { connectionManager, type ConnectionRuntime } from '../lib/connectionRuntime';
@@ -175,14 +176,16 @@ export default function ServerConnections({ onSelect, onClose }: {
             <button className={`mt-3 ${buttonPrimary}`} disabled={busy}>Sign in</button>
           </>}
           {discovery.info.capabilities.authHandoff && <button type="button" className={`mt-3 block ${buttonSecondary}`} disabled={busy} onClick={() => {
-            const popup = window.open('about:blank', 'flow-server-signin', 'width=520,height=700');
-            if (!popup) { setError('Allow a popup to sign in on this server.'); return; }
+            // The desktop shell signs in through the system browser and a
+            // flow://signin return, like the macOS app; a browser tab uses a popup.
+            const popup = isDesktop() ? null : window.open('about:blank', 'flow-server-signin', 'width=520,height=700');
+            if (!popup && !isDesktop()) { setError('Allow a popup to sign in on this server.'); return; }
             operation.current?.abort();
             const controller = new AbortController();
             operation.current = controller;
-            void perform(async () => loadWorkspaces(await browserSignIn(discovery.origin, popup, controller.signal)));
+            void perform(async () => loadWorkspaces(await (popup ? browserSignIn(discovery.origin, popup, controller.signal) : desktopSignIn(discovery.origin, controller.signal))));
           }}>Sign in on {originLabel(discovery.origin)} ({discovery.info.authMethods.join(', ')})</button>}
-          {!discovery.info.capabilities.authHandoff && discovery.info.authMethods.some(method => method !== 'password') && <p className="mt-2 text-sm">Browser sign-in requires this server’s operator to allow the return address {location.origin}/.</p>}
+          {!discovery.info.capabilities.authHandoff && discovery.info.authMethods.some(method => method !== 'password') && <p className="mt-2 text-sm">Browser sign-in requires this server’s operator to allow the return address {isDesktop() ? DESKTOP_RETURN_URL : `${location.origin}/`}.</p>}
         </form> : <>
           <p className="mt-2 text-sm">{auth.user.email}</p>
           {!workspaces.length && <p className="mt-2 text-sm">This account has no workspaces. Ask an administrator on {originLabel(discovery.origin)} for an invite.</p>}

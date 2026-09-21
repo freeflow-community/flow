@@ -33,7 +33,20 @@ import {
   type ServerConnection,
 } from './connections';
 import type { SlackConnection } from './slackConnector';
+import { getHost } from './host';
 import { isSameOrigin, socketUrlFor } from './serverOrigin';
+
+/** Where bearers live: `localStorage` in a browser, the OS credential store
+ * behind the desktop shell (docs/specs/desktop-electron.md). Read through
+ * the host on every call rather than captured, so a test can swap it. */
+const credentials = () => getHost().secrets;
+
+/** The server a fresh client connects to: the shell's baked default on
+ * desktop (the page origin there is `app://flow`, not a server), the page's
+ * own origin in a browser. */
+export function defaultServerOrigin(): string {
+  return getHost().defaultServerOrigin ?? location.origin;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -93,7 +106,7 @@ export class ConnectionRuntime {
     this.storageKey = init.storageKey;
     this.identity = init.userId;
     this.generation = init.authGeneration;
-    this.token = localStorage.getItem(credentialRefFor(init.storageKey));
+    this.token = credentials().get(credentialRefFor(init.storageKey));
   }
 
   get userId(): string | null {
@@ -143,8 +156,8 @@ export class ConnectionRuntime {
     this.token = token;
     this.generation += 1;
     const ref = credentialRefFor(this.storageKey);
-    if (token) localStorage.setItem(ref, token);
-    else localStorage.removeItem(ref);
+    if (token) credentials().set(ref, token);
+    else credentials().delete(ref);
     return this.generation;
   }
 
@@ -164,7 +177,7 @@ export class ConnectionRuntime {
   adoptStorageKey(storageKey: string): void {
     if (storageKey === this.storageKey) return;
     this.storageKey = storageKey;
-    this.token = localStorage.getItem(credentialRefFor(storageKey));
+    this.token = credentials().get(credentialRefFor(storageKey));
     this.dropCaches();
   }
 
@@ -394,7 +407,7 @@ export class ConnectionManager {
   private runtimes = new Map<string, ConnectionRuntime>();
   private selected: string | null;
 
-  constructor(origin: string = location.origin) {
+  constructor(origin: string = defaultServerOrigin()) {
     this.registry = loadOrMigrateRegistry(origin);
     this.selected = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem('flow.selectedConnection');
     // Any provider can be the foreground connection (#545); a Flow server is
@@ -432,7 +445,7 @@ export class ConnectionManager {
       const session = sessionFor(next, id);
       if (!session || session.storageKey !== old?.storageKey ||
           session.authGeneration !== old?.authGeneration || session.status !== old?.status ||
-          localStorage.getItem(session.credentialRef) !== runtime.getToken()) {
+          credentials().get(session.credentialRef) !== runtime.getToken()) {
         runtime.dispose();
         this.runtimes.delete(id);
         invalidated.push(id);
@@ -468,7 +481,7 @@ export class ConnectionManager {
     if (runtime) return runtime;
     // Only reachable if the registry was emptied under us; rebuilding the
     // default connection is better than throwing on every render.
-    const { registry, connection } = addFlowConnection(this.registry, { origin: location.origin });
+    const { registry, connection } = addFlowConnection(this.registry, { origin: defaultServerOrigin() });
     this.commit({ ...registry, activeConnectionId: connection.connectionId });
     this.selected = connection.connectionId;
     return this.runtime(connection.connectionId)!;

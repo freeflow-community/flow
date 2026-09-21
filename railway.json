@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "RAILPACK",
-    "buildCommand": "pnpm -r build"
+    "buildCommand": "pnpm -r --filter '!@flow/desktop' build"
   },
   "deploy": {
     "startCommand": "node packages/server/dist/index.js",

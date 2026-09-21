@@ -1,3 +1,4 @@
+import { getHost } from './host';
 import { canonicalizeOrigin } from './serverOrigin';
 
 export interface SlackIdentity { environment: 'slack'; enterpriseId: string | null; teamId: string; userId: string }
@@ -30,15 +31,23 @@ export async function slackRequest<T>(origin: string, path: string, method = 'GE
 }
 const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 
-export async function connectSlack(address: string, popup: Window, signal: AbortSignal, expectedTeamId?: string): Promise<{ origin: string; connection: SlackHandoff }> {
+/** Slack consent. In a browser the caller opens a popup first and hands it
+ * in; in the desktop shell there is no popup (`null`): consent opens in the
+ * system browser and the connector returns to `flow://slack`, the native
+ * client origin the macOS app uses (docs/specs/desktop-electron.md). Either
+ * way the handoff is redeemed by polling with the private verifier. */
+export const DESKTOP_SLACK_CLIENT_ORIGIN = 'flow://slack';
+
+export async function connectSlack(address: string, popup: Window | null, signal: AbortSignal, expectedTeamId?: string): Promise<{ origin: string; connection: SlackHandoff }> {
   let origin: string;
+  const clientOrigin = popup ? location.origin : DESKTOP_SLACK_CLIENT_ORIGIN;
   try {
     origin = canonicalizeOrigin(address).origin;
     if (!origin.startsWith('https://')) throw new Error('Use an HTTPS Slack connector.');
     if (signal.aborted) throw new Error(slackStatusMessage('canceled'));
     const verifier = encode(crypto.getRandomValues(new Uint8Array(32)));
     const challenge = encode(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
-    const start = await slackRequest<{ authorizationUrl: string; operationId: string }>(origin, '/v1/oauth/start', 'POST', { challenge, clientOrigin: location.origin, expectedTeamId }, undefined, signal);
+    const start = await slackRequest<{ authorizationUrl: string; operationId: string }>(origin, '/v1/oauth/start', 'POST', { challenge, clientOrigin, expectedTeamId }, undefined, signal);
     const authorization = new URL(start.authorizationUrl);
     if (authorization.origin !== 'https://slack.com' || authorization.pathname !== '/oauth/v2/authorize') throw new Error('Invalid Slack authorization destination.');
     if (signal.aborted) throw new Error(slackStatusMessage('canceled'));
@@ -46,13 +55,14 @@ export async function connectSlack(address: string, popup: Window, signal: Abort
     // case popup.closed is true even while consent continues. Redeem directly
     // from the connector using the private verifier; never infer cancellation
     // from the popup handle or depend on postMessage delivery.
-    popup.location.href = authorization.href;
+    if (popup) popup.location.href = authorization.href;
+    else getHost().links.openExternal(authorization.href);
     const deadline = Date.now() + 600_000;
     let connection: SlackHandoff;
     while (true) {
       if (signal.aborted) throw new Error(slackStatusMessage('canceled'));
       if (Date.now() >= deadline) throw new Error(slackStatusMessage('authorization_expired'));
-      connection = await slackRequest<SlackHandoff>(origin, '/v1/oauth/poll', 'POST', { verifier, operationId: start.operationId, clientOrigin: location.origin }, undefined, signal);
+      connection = await slackRequest<SlackHandoff>(origin, '/v1/oauth/poll', 'POST', { verifier, operationId: start.operationId, clientOrigin }, undefined, signal);
       if (connection.status !== 'pending') break;
       await new Promise<void>((resolve, reject) => {
         const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(new Error(slackStatusMessage('canceled'))); };
@@ -64,5 +74,5 @@ export async function connectSlack(address: string, popup: Window, signal: Abort
     if (!connection.credential || !['connected', 'missing_scopes'].includes(connection.status)) throw new Error(slackStatusMessage(connection.status));
     if (connection.identity?.environment !== 'slack' || !/^[A-Z][A-Z0-9]+$/.test(connection.identity.teamId) || !/^[A-Z][A-Z0-9]+$/.test(connection.identity.userId)) throw new Error('Invalid Slack identity.');
     return { origin, connection };
-  } finally { try { popup.close(); } catch { /* A COOP-isolated window cannot be closed by its former opener. */ } }
+  } finally { try { popup?.close(); } catch { /* A COOP-isolated window cannot be closed by its former opener. */ } }
 }

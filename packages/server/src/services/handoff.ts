@@ -5,7 +5,7 @@ import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
 import { hashToken, newToken } from '../lib/tokens.js';
 import { badRequest, unauthorized } from '../lib/errors.js';
-import { originAllowed, validOrigin } from '../lib/browserPolicy.js';
+import { isDesktopOrigin, originAllowed, validOrigin } from '../lib/browserPolicy.js';
 import { toUserDTO } from './auth.js';
 
 const opaque = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/);
@@ -29,7 +29,12 @@ export const HandoffExchange = HandoffApprove.extend({
 type Context = z.infer<typeof HandoffContext>;
 const { authHandoffs, users, sessions } = schema;
 
-function validateContext(body: Context, origin: string | undefined, checkClient: boolean): void {
+function validateContext(body: Context, requestOrigin: string | undefined, checkClient: boolean): void {
+  // The desktop app signs in the way the native apps do — a null client
+  // origin and a `flow://` return URL the OS routes back to it — but unlike
+  // them it sends an Origin header. Treat it as no origin here; the browser
+  // policy already admitted it.
+  const origin = isDesktopOrigin(requestOrigin) ? undefined : requestOrigin;
   if (body.serverOrigin !== new URL(config.webUrlBase).origin) {
     throw badRequest('handoff_origin', 'Handoff must be exchanged at its initiating Flow server');
   }
