@@ -29,7 +29,7 @@ workspace to extend its capabilities.
 |---|---|
 | Web | [app.freeflow.im](https://app.freeflow.im) — nothing to install |
 | macOS | [Download the Mac app](https://app.freeflow.im/download/mac) — native Swift app, updates itself |
-| iPhone / iPad | Flow is on the App Store; search for **Flow by freeflow.im** |
+| iPhone / iPad | Flow is on the App Store (search for Flow, by BizTrip AI) |
 | Windows / Linux | Coming: an Electron desktop app is in progress ([spec](docs/specs/desktop-electron.md)). No installer yet — it runs from source today, see [apps/desktop/README.md](apps/desktop/README.md). Download links will appear here when it ships. |
 
 ## Why you should _use_ Flow
