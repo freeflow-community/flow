@@ -1,3 +1,5 @@
+import { isSpreadsheetFile, SPREADSHEET_MAX_BYTES } from '../lib/spreadsheet';
+import { SpreadsheetView, useWorkbook } from './SpreadsheetPreview';
 import { useBoundApi } from '../lib/useBoundApi';
 // Channel Files panel (#347): every file shared in a channel, as one vertical
 // list in the existing side panel — the same surface threads and artifacts
@@ -312,7 +314,9 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
   const image = isImageFile(file);
   const video = isVideoFile(file);
   const pdf = file.mimeType === 'application/pdf';
-  const inline = image || video || pdf;
+  const sheet = isSpreadsheetFile(file) && file.sizeBytes <= SPREADSHEET_MAX_BYTES;
+  const inline = image || video || pdf || sheet;
+  const workbook = useWorkbook(file.id, sheet);
   const imageSource = useFileImageSource(file.id, 'original', image);
 
   useEffect(() => {
@@ -321,7 +325,7 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
       void download().finally(() => { if (alive) onClose(); });
       return () => { alive = false; };
     }
-    if (image) return () => { alive = false; };
+    if (image || sheet) return () => { alive = false; };
     // Video prefers the presigned stream URL (seekable, no full download);
     // PDF and the local-dev fallback read the bytes.
     const load = video
@@ -367,6 +371,14 @@ function FilePreview({ file, onClose }: { file: ChannelFileDTO; onClose: () => v
           </div>
         ) : (
           <span className="text-sm text-white/70">Loading…</span>
+        )
+      ) : sheet ? (
+        workbook.status === 'ready' ? (
+          <div className="h-[85vh] w-[80vw] overflow-hidden rounded-lg">
+            <SpreadsheetView workbook={workbook.workbook} testId="files-preview-sheet" />
+          </div>
+        ) : (
+          <span className="text-sm text-white/70">{workbook.status === 'failed' ? 'Preview unavailable' : 'Loading…'}</span>
         )
       ) : !url ? (
         <span className="text-sm text-white/70">Loading…</span>
