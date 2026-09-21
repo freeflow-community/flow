@@ -72,12 +72,13 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             .edit: on("sendAsUser") ? .supported : scope("send"),
             .delete: on("sendAsUser") ? .supported : scope("send"),
             .reactions: on("reactions") ? .supported : scope("reaction"),
-            .files: on("files") ? .limited("Files upload to Slack; previews open in Slack.") : .unavailable("File uploads need a Slack permission this app does not have. Attachments open in Slack."),
+            .files: on("files") ? .supported : .unavailable("File uploads need a Slack permission this app does not have. Reconnect Slack after it is added."),
             .search: on("search") ? .supported : scope("search"),
             .readState: on("readState") ? .supported : .unavailable("Read markers are not shared with Slack; unread state stays on this device."),
             .liveUpdates: on("liveUpdates") ? .limited("New messages arrive through the Flow Slack connector with a short delay.") : .unavailable("Live updates need the Slack app to subscribe to message events."),
             .typing: .unavailable("Typing indicators are not available for Slack workspaces."),
             .presence: .unavailable("Presence is not available for Slack workspaces."),
+            .status: on("setStatus") ? .supported : .unavailable("Set your status in Slack; this app has not been granted permission to change it."),
             .notifications: on("liveUpdates")
                 ? .limited("Mentions and direct messages alert you only while Flow is open. Slack has no push to Flow when it is closed.")
                 : .unavailable("Slack notifications need the Slack app to subscribe to message events."),
@@ -95,7 +96,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         }
     }
 
-    private func raw(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> Data {
+    /// `upload` sends raw bytes with their content type instead of a JSON body
+    /// (the connector's file upload route).
+    private func raw(_ method: String, _ path: String, body: [String: Any]? = nil, upload: (data: Data, contentType: String)? = nil) async throws -> Data {
         guard let token = credential() else { throw BackendError(code: .unauthorized, message: "Slack authorization expired. Reauthorize this connection.") }
         guard let url = URL(string: "\(origin.absoluteString.hasSuffix("/") ? String(origin.absoluteString.dropLast()) : origin.absoluteString)/\(path)") else {
             throw BackendError(code: .invalid, message: "Bad connector path.")
@@ -106,6 +109,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } else if let upload {
+            request.setValue(upload.contentType, forHTTPHeaderField: "Content-Type")
+            request.httpBody = upload.data
         }
         let (data, response): (Data, HTTPURLResponse)
         do { (data, response) = try await transport(request) } catch let error as BackendError { throw error } catch {
@@ -124,6 +130,8 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             throw BackendError(code: .unsupported, message: "This Slack app has not been granted the permission for that.", providerCode: code)
         case 404:
             throw BackendError(code: .notFound, message: "Slack could not find that.", providerCode: code)
+        case 413:
+            throw BackendError(code: .invalid, message: "That file is too large to send to Slack from Flow (50 MB limit).", providerCode: code)
         case 400..<500:
             throw BackendError(code: .invalid, message: "Slack did not allow that action.", providerCode: code)
         default:
@@ -205,6 +213,9 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         var user: User { User(id: userId, email: email, displayName: displayName, avatarUrl: avatarUrl, statusEmoji: statusEmoji, statusText: statusText, title: title, isAgent: isAgent, isBot: isBot, sponsorId: sponsorId, privacyMode: privacyMode) }
     }
     private struct Members: Decodable { let members: [MemberRow] }
+    func fetchUser(id: String) async throws -> User {
+        try await request("GET", "v1/users/\(encode(id))", as: User.self)
+    }
     func listMembers(workspaceId: String) async throws -> [User] {
         let users = try await request("GET", "v1/members", as: Members.self).members.map(\.user)
         let byId = Dictionary(users.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -244,11 +255,14 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
 
     private struct SendPayload: Decodable { let message: Message }
     func send(_ input: SendMessageInput) async throws -> Message {
-        if !input.fileIds.isEmpty { throw BackendError(code: .unsupported, message: caps[.files].reason ?? "Files are not available.") }
+        if !input.fileIds.isEmpty, !caps[.files].usable { throw BackendError(code: .unsupported, message: caps[.files].reason ?? "Files are not available.") }
         // The client id makes the send idempotent at the connector (#546): a
         // retry after an unknown outcome reconciles there instead of posting twice.
+        // Uploaded files are shared by this send, with the text as their comment
+        // (the text may be empty when files are attached).
         var body: [String: Any] = ["channel": input.channelId, "text": input.body, "client_msg_id": input.clientMsgId]
         if let threadRootId = input.threadRootId { body["thread_ts"] = threadRootId }
+        if !input.fileIds.isEmpty { body["file_ids"] = input.fileIds }
         var message = try await request("POST", "v1/messages", body: body, as: SendPayload.self).message
         // Slack does not echo a client message id; stamp ours so the pending
         // row reconciles by clientMsgId the way a Flow send does.
@@ -275,12 +289,55 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         _ = try await raw("POST", "v1/read", body: ["channel": channelId, "ts": messageId])
     }
 
-    func uploadFile(workspaceId: String, channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment {
-        throw BackendError(code: .unsupported, message: caps[.files].reason ?? "File uploads are not available.")
+    /// The status lands in Slack; the connector answers with the updated user
+    /// in Flow's /v1/me shape, and Slack's own user_change event follows on
+    /// the stream for every other client.
+    func setStatus(emoji: String, text: String, suppressAlerts: Bool?) async throws -> User {
+        var body: [String: Any] = ["statusEmoji": emoji, "statusText": text]
+        if let suppressAlerts { body["statusSuppressAlerts"] = suppressAlerts }
+        let me = try await request("PATCH", "v1/me", body: body, as: User.self)
+        synced { members[me.id] = me }
+        return me
     }
 
-    /// No file bytes flow through Flow: previews and downloads open in Slack.
+    /// The bytes go to the connector, which uploads them to Slack and holds the
+    /// file until `send` shares it into the channel. Nothing is posted yet.
+    func uploadFile(workspaceId: String, channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment {
+        guard caps[.files].usable else { throw BackendError(code: .unsupported, message: caps[.files].reason ?? "File uploads are not available.") }
+        let path = "v1/files?channel=\(encode(channelId))&name=\(encode(name))"
+        let reply = try await raw("POST", path, upload: (data, mimeType.isEmpty ? "application/octet-stream" : mimeType))
+        do { return try decoder.decode(FileAttachment.self, from: reply) } catch {
+            throw BackendError(code: .providerError, message: "Unreadable reply from the Slack connector.")
+        }
+    }
+
+    /// No presigned URLs: the connector proxies every file byte.
     func fileURL(_ file: FileAttachment) -> URL? { nil }
+
+    /// File bytes through the connector, which fetches them from Slack with the
+    /// grant's token (`hasThumb` is set only when the grant can read files).
+    /// Only file paths are accepted, so the credential never leaves for an
+    /// arbitrary route and `raw` pins it to the connector origin.
+    /// Hosts Slack serves public images from (profile photos, app icons).
+    static let publicImageHosts = ["slack-edge.com", "gravatar.com"]
+
+    func fileData(path: String) async throws -> Data {
+        // A Slack profile photo is a public https URL, not a connector path:
+        // fetched as-is, and never with the connector credential.
+        if let url = URL(string: path), url.scheme != nil {
+            guard url.scheme == "https", let host = url.host?.lowercased(),
+                  Self.publicImageHosts.contains(where: { host == $0 || host.hasSuffix(".\($0)") })
+            else { throw BackendError(code: .invalid, message: "Not a Slack image address.") }
+            let (data, response) = try await transport(URLRequest(url: url))
+            guard response.statusCode == 200 else { throw BackendError(code: .notFound, message: "Image unavailable.") }
+            return data
+        }
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        guard trimmed.hasPrefix("v1/files/"), !trimmed.contains(".."), !trimmed.contains("?") else {
+            throw BackendError(code: .invalid, message: "Not a file path.")
+        }
+        return try await raw("GET", trimmed)
+    }
 
     private struct StreamPayload: Decodable { let events: [StreamEvent]; let seq: Int; let gap: Bool }
     /// The connector's BackendEvent JSON, decoded by `type`.
@@ -292,6 +349,8 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
         let threadRootId: String?
         let emoji: String?
         let userId: String?
+        let member: MemberRow?
+        let lastActivityAt: String?
 
         var event: BackendEvent? {
             switch type {
@@ -304,6 +363,10 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
             case "reaction.added", "reaction.removed":
                 guard let channelId, let messageId, let emoji, let userId else { return nil }
                 return .reactionChanged(channelId: channelId, messageId: messageId, emoji: emoji, userId: userId, added: type == "reaction.added")
+            case "member.updated": return member.map { .memberUpdated($0.user) }
+            case "channel.activity":
+                guard let channelId, let lastActivityAt else { return nil }
+                return .channelActivity(channelId: channelId, lastActivityAt: lastActivityAt)
             default: return nil
             }
         }
@@ -352,7 +415,10 @@ final class SlackBackend: WorkspaceBackend, @unchecked Sendable {
                 emit(.streamDegraded(reason: "Missed Slack events while away.", resumesAt: nil))
                 emit(.streamRecovered)
             }
-            for event in page.events.compactMap(\.event) { emit(event) }
+            for event in page.events.compactMap(\.event) {
+                if case .memberUpdated(let user) = event { synced { members[user.id] = user } }
+                emit(event)
+            }
             streamSeq = page.seq
         } catch let error as BackendError where error.code == .rateLimited {
             emit(.streamDegraded(reason: error.message, resumesAt: error.retryAfter.map { Date().addingTimeInterval($0) }))

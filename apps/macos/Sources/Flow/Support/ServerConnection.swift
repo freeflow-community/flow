@@ -88,6 +88,10 @@ struct WorkspaceBinding: Codable, Equatable, Sendable {
     var name: String
     var hidden: Bool?
     var order: Int?
+    /// The workspace's avatar path, recorded so another connection's switcher
+    /// can draw this one's mark without opening its database (#592 on web).
+    /// Absent on a record written before the unified switcher.
+    var avatarUrl: String?
 }
 
 struct NavigationTarget: Codable, Equatable, Sendable {

@@ -146,21 +146,25 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
-                            let waiting = loadOlderRetryAt.map { $0 > Date() } ?? false
-                            Button("Load earlier messages") {
-                                // Reading history is a decision to leave the
-                                // end: unpin, remember the current top row,
-                                // and restore it once the page lands.
-                                loadOlderAnchorId = messages.first?.id
-                                followBox.model.positionRestored(atBottom: false)
-                                onLoadOlder()
+                            // A limited provider (#545) says its budget on the
+                            // button — the page size, or the wait after a 429 —
+                            // ticking down so the button comes back on its own.
+                            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                                let wait = loadOlderRetryAt.map { max(0, Int($0.timeIntervalSince(timeline.date).rounded(.up))) } ?? 0
+                                Button(context.capabilities.loadOlderLabel(wait: wait)) {
+                                    // Reading history is a decision to leave the
+                                    // end: unpin, remember the current top row,
+                                    // and restore it once the page lands.
+                                    loadOlderAnchorId = messages.first?.id
+                                    followBox.model.positionRestored(atBottom: false)
+                                    onLoadOlder()
+                                }
+                                .buttonStyle(.link)
+                                .flowFont(.callout)
+                                .pointingHandCursor()
+                                .disabled(wait > 0)
+                                .accessibilityIdentifier("transcript.loadOlder")
                             }
-                            .buttonStyle(.link)
-                            .flowFont(.callout)
-                            .pointingHandCursor()
-                            .disabled(waiting)
-                            .help(waiting ? "Slack asked Flow to wait before loading older messages." : "")
-                            .accessibilityIdentifier("transcript.loadOlder")
                             Spacer()
                         }
                         .padding(.vertical, 8)
@@ -169,7 +173,7 @@ struct MessageListView: View {
                     // the optimistic row and its server echo must be one
                     // element with a changed value, not a delete + insert
                     // sharing an `.id()` — see ThreadPanelView (#328).
-                    ForEach(rowCache.rows(for: messages), id: \.message.clientMsgId) { row in
+                    ForEach(rowCache.rows(for: messages), id: \.message.rowKey) { row in
                         VStack(alignment: .leading, spacing: 0) {
                             if row.startsNewDay {
                                 DayDividerView(iso: row.message.createdAt)
@@ -209,7 +213,7 @@ struct MessageListView: View {
                         // its server echo share a clientMsgId but not an id,
                         // so keying on id remounts the row (and its avatar
                         // image) the moment the echo lands.
-                        .id(row.message.clientMsgId)
+                        .id(row.message.rowKey)
                         // Scroll memory's recorder: each row reports itself
                         // when it crosses the viewport top; only one does, so
                         // the preference resolves to the top-visible message.

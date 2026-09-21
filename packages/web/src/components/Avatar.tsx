@@ -1,3 +1,4 @@
+import type { ConnectionRuntime } from '../lib/connectionRuntime';
 import { useBoundApi } from '../lib/useBoundApi';
 // Initials-on-color avatar chips (design 3a) with real-image fallback, and the
 // bearer-auth <img> helper shared by attachments and profile views.
@@ -68,13 +69,19 @@ export function AuthImg({
   alt,
   className,
   style,
+  runtime,
 }: {
   path: string;
   alt: string;
   className?: string;
   style?: React.CSSProperties;
+  /** Load through this connection instead of the one on screen — a workspace
+   * avatar in the switcher belongs to its own server. */
+  runtime?: ConnectionRuntime;
 }) {
-  const { blobUrl, cachedBlobUrl } = useBoundApi();
+  const bound = useBoundApi();
+  const blobUrl = runtime ? runtime.blobUrl.bind(runtime) : bound.blobUrl;
+  const cachedBlobUrl = runtime ? runtime.cachedBlobUrl.bind(runtime) : bound.cachedBlobUrl;
   const [url, setUrl] = useState<string | null>(() => cachedBlobUrl(path) ?? null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {

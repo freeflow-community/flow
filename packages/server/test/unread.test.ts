@@ -107,6 +107,33 @@ describe('unread counts ignore your own messages', () => {
   });
 });
 
+// The counts for a whole list come from one grouped query: every channel must
+// still be measured against its own read cursor, not a neighbour's.
+describe('one list, several read cursors', () => {
+  it('counts each joined channel past its own cursor', async () => {
+    const a = await ch.createChannel(workspaceId, aliceId, `cursor-a-${randomUUID().slice(0, 6)}`);
+    const b = await ch.createChannel(workspaceId, aliceId, `cursor-b-${randomUUID().slice(0, 6)}`);
+    const c = await ch.createChannel(workspaceId, aliceId, `cursor-c-${randomUUID().slice(0, 6)}`);
+    for (const id of [a.id, b.id, c.id]) await ch.addMember(id, aliceId, bobId);
+    const send = (id: string, text: string) => msg.sendMessage(id, aliceId, randomUUID(), text);
+    const a1 = await send(a.id, 'a1'); await send(a.id, 'a2'); await send(a.id, 'a3');
+    await send(b.id, 'b1'); const b2 = await send(b.id, 'b2');
+    await send(c.id, 'c1'); await send(c.id, 'c2');
+    const setCursor = (id: string, to: string | null) => db.update(channelMembers).set({ lastReadMsgId: to })
+      .where(and(eq(channelMembers.channelId, id), eq(channelMembers.userId, bobId)));
+    await setCursor(a.id, a1.id); // two unread after it
+    await setCursor(b.id, b2.id); // read to the end
+    await setCursor(c.id, null); // never read: everything counts
+
+    const list = await ch.listChannels(workspaceId, bobId);
+    const byId = new Map(list.map((x) => [x.id, x]));
+    expect(byId.get(a.id)?.unreadCount).toBe(2);
+    expect(byId.get(b.id)?.unreadCount).toBe(0);
+    expect(byId.get(c.id)?.unreadCount).toBe(2);
+    expect(byId.get(a.id)?.oldestUnreadThreadReply ?? null).toBeNull();
+  });
+});
+
 describe('sending advances the read cursor', () => {
   it('a top-level send moves lastReadMsgId to that message', async () => {
     const m = await msg.sendMessage(channelId, bobId, randomUUID(), 'bob checking in');

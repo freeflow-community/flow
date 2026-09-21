@@ -1,11 +1,13 @@
 import ConnectSlack, { SlackConnectionCard } from './SlackConnections';
 import { useEffect, useRef, useState } from 'react';
-import { browserSignIn } from '../lib/authHandoff';
+import { browserSignIn, desktopSignIn, DESKTOP_RETURN_URL } from '../lib/authHandoff';
+import { isDesktop } from '../lib/host';
 import type { AuthResponse, UserDTO, WorkspaceDTO } from '@flow/shared';
 import { useConnectionSync } from '../lib/backgroundSync';
 import { connectionManager, type ConnectionRuntime } from '../lib/connectionRuntime';
 import { discoverServer } from '../lib/connectServer';
 import { originLabel } from '../lib/serverOrigin';
+import { buttonDanger, buttonPrimary, buttonSecondary } from './buttonStyles';
 
 export function openServerConnections() {
   window.dispatchEvent(new Event('flow:connections'));
@@ -130,7 +132,7 @@ export default function ServerConnections({ onSelect, onClose }: {
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Workspaces and servers">
     <div className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl bg-white p-6 text-ink shadow-xl">
-      <div className="mb-4 flex justify-between"><h2 className="text-lg font-semibold">Workspaces and servers</h2><button onClick={onClose} disabled={busy}>Close</button></div>
+      <div className="mb-4 flex justify-between"><h2 className="text-lg font-semibold">Workspaces and servers</h2><button className={buttonSecondary} onClick={onClose} disabled={busy}>Close</button></div>
       {/* Flow servers and Slack teams in one list, in the order they were added. */}
       {manager.connections.map(connection => {
         if (connection.provider === 'slack') return <SlackConnectionCard key={connection.connectionId} connection={connection}
@@ -149,13 +151,13 @@ export default function ServerConnections({ onSelect, onClose }: {
           <h3 className="font-semibold">{originLabel(connection.origin)}{(syncFor(connection.connectionId)?.unread ?? 0) > 0 && <span className="ml-2 rounded bg-violet-100 px-2 text-xs font-normal" aria-label={`${syncFor(connection.connectionId)!.unread} unread on this server`}>{syncFor(connection.connectionId)!.unread}</span>}</h3>
           <p className="text-sm text-faint">{account?.user?.email ?? session?.userId ?? 'Not signed in'}{needsSignIn ? ' · Sign in required' : syncFor(connection.connectionId)?.status === 'offline' || account?.offline ? ' · Offline' : ''}</p>
           {bindings.map(binding => <div className="mt-2 flex items-center justify-between" key={binding.workspaceId}>
-            <button disabled={busy || needsSignIn} onClick={() => { onSelect(connection.connectionId, binding.workspaceId); onClose(); }}>{binding.name}{unreadFor(connection.connectionId, binding.workspaceId) > 0 && <span className="ml-2 rounded bg-violet-100 px-2 text-xs" aria-label="Unread notifications">{unreadFor(connection.connectionId, binding.workspaceId)}</span>}</button>
-            <button disabled={busy} className="text-xs text-faint" onClick={() => { manager.setBinding({ ...binding, hidden: true }); refresh(n => n + 1); }}>Hide workspace</button>
+            <button className={buttonSecondary} disabled={busy || needsSignIn} onClick={() => { onSelect(connection.connectionId, binding.workspaceId); onClose(); }}>{binding.name}{unreadFor(connection.connectionId, binding.workspaceId) > 0 && <span className="ml-2 rounded bg-violet-100 px-2 text-xs" aria-label="Unread notifications">{unreadFor(connection.connectionId, binding.workspaceId)}</span>}</button>
+            <button disabled={busy} className={buttonSecondary} onClick={() => { manager.setBinding({ ...binding, hidden: true }); refresh(n => n + 1); }}>Hide workspace</button>
           </div>)}
-          <div className="mt-3 flex flex-wrap gap-3 text-sm">
-            <button disabled={busy} onClick={() => { setSelected([]); setWorkspaces([]); setAddress(connection.origin); setDiscovery(null); setAuth(null); }}>Add workspace{needsSignIn ? ' / Sign in' : ''}</button>
-            {!needsSignIn && <button disabled={busy} onClick={() => void perform(() => signOut(manager.runtime(connection.connectionId)!, false))}>Sign out of {originLabel(connection.origin)}</button>}
-            <button disabled={busy} onClick={() => void perform(() => signOut(manager.runtime(connection.connectionId)!, true))}>Remove server</button>
+          <div className="mt-3 flex flex-wrap gap-2 text-sm">
+            <button className={buttonSecondary} disabled={busy} onClick={() => { setSelected([]); setWorkspaces([]); setAddress(connection.origin); setDiscovery(null); setAuth(null); }}>Add workspace{needsSignIn ? ' / Sign in' : ''}</button>
+            {!needsSignIn && <button className={buttonSecondary} disabled={busy} onClick={() => void perform(() => signOut(manager.runtime(connection.connectionId)!, false))}>Sign out of {originLabel(connection.origin)}</button>}
+            <button className={buttonDanger} disabled={busy} onClick={() => void perform(() => signOut(manager.runtime(connection.connectionId)!, true))}>Remove server</button>
           </div>
         </section>;
       })}
@@ -163,7 +165,7 @@ export default function ServerConnections({ onSelect, onClose }: {
       <h3 className="mb-2 font-semibold">Connect another Flow server</h3>
       <form onSubmit={e => { e.preventDefault(); void connect(); }} className="flex gap-2">
         <input className="min-w-0 flex-1 rounded border p-2" disabled={busy} aria-label="Server or invite URL" placeholder="https://flow.example.com or invite URL" value={address} onChange={e => { setAddress(e.target.value); setDiscovery(null); setAuth(null); setSelected([]); setWorkspaces([]); }} />
-        <button disabled={busy || !address.trim()}>Check server</button>
+        <button className={buttonPrimary} disabled={busy || !address.trim()}>Check server</button>
       </form>
       {discovery && <section className="mt-4 rounded border p-3">
         <p>Sign in to <strong>{originLabel(discovery.origin)}</strong></p>
@@ -171,22 +173,24 @@ export default function ServerConnections({ onSelect, onClose }: {
           {discovery.info.authMethods.includes('password') && <>
             <input className="mt-3 w-full rounded border p-2" type="email" autoComplete="off" aria-label="Email on this server" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" required />
             <input className="mt-2 w-full rounded border p-2" type="password" autoComplete="new-password" aria-label="Password on this server" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" required />
-            <button className="mt-3" disabled={busy}>Sign in</button>
+            <button className={`mt-3 ${buttonPrimary}`} disabled={busy}>Sign in</button>
           </>}
-          {discovery.info.capabilities.authHandoff && <button type="button" className="mt-3 block" disabled={busy} onClick={() => {
-            const popup = window.open('about:blank', 'flow-server-signin', 'width=520,height=700');
-            if (!popup) { setError('Allow a popup to sign in on this server.'); return; }
+          {discovery.info.capabilities.authHandoff && <button type="button" className={`mt-3 block ${buttonSecondary}`} disabled={busy} onClick={() => {
+            // The desktop shell signs in through the system browser and a
+            // flow://signin return, like the macOS app; a browser tab uses a popup.
+            const popup = isDesktop() ? null : window.open('about:blank', 'flow-server-signin', 'width=520,height=700');
+            if (!popup && !isDesktop()) { setError('Allow a popup to sign in on this server.'); return; }
             operation.current?.abort();
             const controller = new AbortController();
             operation.current = controller;
-            void perform(async () => loadWorkspaces(await browserSignIn(discovery.origin, popup, controller.signal)));
+            void perform(async () => loadWorkspaces(await (popup ? browserSignIn(discovery.origin, popup, controller.signal) : desktopSignIn(discovery.origin, controller.signal))));
           }}>Sign in on {originLabel(discovery.origin)} ({discovery.info.authMethods.join(', ')})</button>}
-          {!discovery.info.capabilities.authHandoff && discovery.info.authMethods.some(method => method !== 'password') && <p className="mt-2 text-sm">Browser sign-in requires this server’s operator to allow the return address {location.origin}/.</p>}
+          {!discovery.info.capabilities.authHandoff && discovery.info.authMethods.some(method => method !== 'password') && <p className="mt-2 text-sm">Browser sign-in requires this server’s operator to allow the return address {isDesktop() ? DESKTOP_RETURN_URL : `${location.origin}/`}.</p>}
         </form> : <>
           <p className="mt-2 text-sm">{auth.user.email}</p>
           {!workspaces.length && <p className="mt-2 text-sm">This account has no workspaces. Ask an administrator on {originLabel(discovery.origin)} for an invite.</p>}
           {workspaces.map(ws => <label className="mt-2 block" key={ws.id}><input type="checkbox" checked={selected.includes(ws.id)} onChange={e => setSelected(ids => e.target.checked ? [...ids, ws.id] : ids.filter(id => id !== ws.id))} /> {ws.name}</label>)}
-          <button className="mt-3" disabled={busy || (!selected.length && !discovery.inviteToken && !discovery.joinToken)} onClick={() => void add()}>{discovery.inviteToken || discovery.joinToken ? 'Join invited workspace' : 'Add selected workspaces'}</button>
+          <button className={`mt-3 ${buttonPrimary}`} disabled={busy || (!selected.length && !discovery.inviteToken && !discovery.joinToken)} onClick={() => void add()}>{discovery.inviteToken || discovery.joinToken ? 'Join invited workspace' : 'Add selected workspaces'}</button>
         </>}
       </section>}
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}

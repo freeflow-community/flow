@@ -1,8 +1,26 @@
 // Google Identity Services (phase16 §5). GIS hands the browser a signed ID
 // token; we post it to /v1/auth/google and the server verifies it. Nothing
 // secret lives here — an OAuth *web* client id is public by design.
-import type { PublicConfigDTO } from '@flow/shared';
+import type { AuthResponse, GoogleAuthResponse, PublicConfigDTO } from '@flow/shared';
 import { activeRuntime, type ConnectionRuntime } from './connectionRuntime';
+import { awaitSignInCode, installDeepLinks } from './deepLinks';
+import { getHost } from './host';
+
+/** "Continue with Google" in the desktop shell (docs/specs/desktop-electron.md).
+ * Google refuses to sign in inside an embedded browser, so the shell does what
+ * the macOS app does: open the server's native handoff page in the system
+ * browser, wait for the `flow://signin?code=` link it bounces back, and trade
+ * the one-time code for a session. No Google script is loaded in the app. */
+export async function desktopGoogleSignIn(runtime: ConnectionRuntime, signal: AbortSignal): Promise<GoogleAuthResponse> {
+  installDeepLinks();
+  const pending = awaitSignInCode(signal);
+  getHost().links.openExternal(`${runtime.origin}/?native=google`);
+  const { code } = await pending;
+  const session = await runtime.api<AuthResponse>('POST', '/v1/auth/app-link/exchange', { code });
+  // The app-link exchange issues a plain session; domain auto-join happened
+  // (or not) on the web side, and the workspace list shows the result.
+  return { ...session, autoJoined: [] };
+}
 
 const GSI_SRC = 'https://accounts.google.com/gsi/client';
 

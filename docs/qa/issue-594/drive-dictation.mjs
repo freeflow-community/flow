@@ -1,6 +1,10 @@
-import { chromium } from '/private/tmp/node_modules/playwright/index.mjs';
-const base = 'http://127.0.0.1:58879';
-const token = 'ePmzMvVseUaUT-UAGiQDJ245O97WcWGhSNaxiShFqo8', ws = '01a0a2d3-7293-7140-b5a4-a77023380af4';
+// Needs `playwright` resolvable from the cwd (e.g. run from apps/desktop, which
+// has it as a dev dependency) and a qa:up stack: pass its base URL, a bearer
+// token and a workspace id through the environment.
+import { chromium } from 'playwright';
+const base = process.env.FLOW_QA_BASE ?? 'http://127.0.0.1:8787';
+const token = process.env.FLOW_QA_TOKEN ?? '', ws = process.env.FLOW_QA_WORKSPACE ?? '';
+if (!token || !ws) throw new Error('set FLOW_QA_TOKEN and FLOW_QA_WORKSPACE');
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1100, height: 720 }, deviceScaleFactor: 2 });
 page.on('console', m => { if (m.type() === 'error') console.log('console:', m.text()); });

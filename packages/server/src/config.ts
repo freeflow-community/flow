@@ -11,6 +11,13 @@ if (fs.existsSync(rootEnv)) process.loadEnvFile(rootEnv);
 
 export const config = {
   get serverDisplayName(): string { return process.env.FLOW_SERVER_NAME ?? 'Flow'; },
+  /** The Slack connector this deployment offers, advertised to clients that
+   * cannot be built with it baked in (the native apps). The web build reads
+   * the same value at build time as VITE_SLACK_CONNECTOR_ORIGIN. */
+  get slackConnectorOrigin(): string | null {
+    const raw = (process.env.SLACK_CONNECTOR_ORIGIN ?? process.env.VITE_SLACK_CONNECTOR_ORIGIN ?? '').trim();
+    return raw.startsWith('https://') ? raw.replace(/\/+$/, '') : null;
+  },
   get allowedWebOrigins(): string[] {
     return (process.env.FLOW_ALLOWED_WEB_ORIGINS ?? '').split(',').map(v => v.trim()).filter(Boolean);
   },

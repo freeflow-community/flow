@@ -13,29 +13,35 @@ enum WebAuthSession {
     /// presentation-context provider is held weakly — park both here.
     private static var active: (ASWebAuthenticationSession, Presenter)?
 
+    /// Built outside the main actor deliberately: AuthenticationServices calls
+    /// the completion handler on a background queue, where a main-actor-isolated
+    /// closure trips Swift's executor check and kills the app.
+    private nonisolated static func authSession(
+        url: URL, continuation: CheckedContinuation<String?, Error>
+    ) -> ASWebAuthenticationSession {
+        ASWebAuthenticationSession(url: url, callbackURLScheme: "flow") { callback, error in
+            Task { @MainActor in Self.active = nil }
+            if let error {
+                if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+                    continuation.resume(returning: nil)
+                } else {
+                    continuation.resume(throwing: error)
+                }
+                return
+            }
+            let code = callback.flatMap {
+                URLComponents(url: $0, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first { $0.name == "code" }?.value
+            }
+            continuation.resume(returning: code)
+        }
+    }
+
     /// Opens `url` in the auth sheet and returns the one-time app-link code
     /// from the `flow://signin` callback, or nil when the user cancels.
     static func signInCode(startingAt url: URL) async throws -> String? {
         try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(
-                url: url,
-                callbackURLScheme: "flow"
-            ) { callback, error in
-                Task { @MainActor in Self.active = nil }
-                if let error {
-                    if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
-                        continuation.resume(returning: nil)
-                    } else {
-                        continuation.resume(throwing: error)
-                    }
-                    return
-                }
-                let code = callback.flatMap {
-                    URLComponents(url: $0, resolvingAgainstBaseURL: false)?
-                        .queryItems?.first { $0.name == "code" }?.value
-                }
-                continuation.resume(returning: code)
-            }
+            let session = Self.authSession(url: url, continuation: continuation)
             let presenter = Presenter()
             session.presentationContextProvider = presenter
             // Share Safari's cookies on purpose (#279). The bug was never the

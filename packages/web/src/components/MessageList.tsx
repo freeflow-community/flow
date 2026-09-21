@@ -2,8 +2,10 @@ import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
-import { bytesLabel, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
+import { bytesLabel, CustomEmojiContext, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
+import { isSpreadsheetFile, SPREADSHEET_MAX_BYTES } from '../lib/spreadsheet';
+import { CARD_LIMITS, SheetTable, SpreadsheetView, useWorkbook } from './SpreadsheetPreview';
 import { MarkdownReport } from './ArtifactView';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { burstConfetti, celebrationsAdded } from '../lib/confetti';
@@ -60,6 +62,7 @@ export default function MessageList({
   membersById = {},
   hasMore,
   onLoadOlder,
+  loadOlder,
   showThreadAffordances,
   unreadThreadRootIds = [],
   scrollKey: unscopedScrollKey,
@@ -72,6 +75,8 @@ export default function MessageList({
   membersById?: Record<string, WorkspaceMemberDTO>;
   hasMore: boolean;
   onLoadOlder: () => void;
+  /** A provider-limited label and disabled state (page size, or the wait). */
+  loadOlder?: { label: string; disabled: boolean };
   showThreadAffordances: boolean;
   /** Thread roots with an unread notification for me (#270) — their reply
    * chips get a dot, so a reply that needs you is visible here and not only
@@ -218,8 +223,13 @@ export default function MessageList({
         <div ref={contentRef}>
           {hasMore && (
             <div className="py-1 text-center">
-              <button className="text-sm font-semibold text-accent-soft hover:underline" onClick={onLoadOlder}>
-                Load earlier messages
+              <button
+                data-testid="history-load-older"
+                className="text-sm font-semibold text-accent-soft hover:underline disabled:opacity-40 disabled:hover:no-underline"
+                disabled={loadOlder?.disabled}
+                onClick={onLoadOlder}
+              >
+                {loadOlder?.label ?? 'Load earlier messages'}
               </button>
             </div>
           )}
@@ -555,7 +565,9 @@ function MessageRow({
                 className="text-sm leading-normal break-words whitespace-pre-wrap"
               >
                 <InlineLinkContext.Provider value={{ onPinLink: (url) => void pinUrl(url), onOpenArtifact: sel.selectArtifact }}>
-                  {renderBlocks(message.body, names, auth.user.id)}
+                  <CustomEmojiContext.Provider value={customEmoji}>
+                    {renderBlocks(message.body, names, auth.user.id)}
+                  </CustomEmojiContext.Provider>
                 </InlineLinkContext.Provider>
                 {message.editedAt && (
                   <span data-search-skip="" className="ml-1 text-xs text-faint">(edited)</span>
@@ -581,7 +593,9 @@ function MessageRow({
               </div>
             )}
             {message.files.map((f) => (
-              provenance ? <ExternalAttachment key={f.id} file={f} openUrl={provenance.openUrl} provider={provenance.provider} /> : <Attachment key={f.id} file={f} />
+              // A provider file previews here only when the backend can serve its
+              // bytes (Slack: an image and the files:read scope set hasThumb).
+              provenance && !f.hasThumb ? <ExternalAttachment key={f.id} file={f} openUrl={provenance.openUrl} provider={provenance.provider} /> : <Attachment key={f.id} file={f} />
             ))}
             {provenance?.degraded && (
               <p data-testid={`degraded-${message.id}`} className="mt-1 text-xs text-muted">
@@ -927,8 +941,63 @@ function Attachment({ file }: { file: FileDTO }) {
   if (file.hasThumb) return <ImageAttachment file={file} />;
   if (isVideoFile(file)) return <VideoAttachment file={file} />;
   if (file.mimeType === 'application/pdf') return <PdfAttachment file={file} />;
+  // Before text: a CSV is a spreadsheet first and a text file second.
+  if (isSpreadsheetFile(file) && file.sizeBytes <= SPREADSHEET_MAX_BYTES) return <SpreadsheetAttachment file={file} />;
   if (isTextFile(file)) return <TextAttachment file={file} />;
   return <FileChip file={file} />;
+}
+
+/** Inline spreadsheet card: the first sheet's top-left corner as a small
+ * grid; click opens the full reader with sheet tabs. A file the parser
+ * cannot read falls back to the chip. */
+function SpreadsheetAttachment({ file }: { file: FileDTO }) {
+  const [collapsed, toggleCollapsed] = useCollapsed(file.id);
+  const [reader, setReader] = useState(false);
+  const download = useDownload(file);
+  const state = useWorkbook(file.id, !collapsed);
+
+  if (state.status === 'failed') return <FileChip file={file} />;
+  const first = state.workbook?.sheets[0];
+
+  return (
+    <div className="mt-1 max-w-[560px]">
+      <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
+      {!collapsed && (
+        <div className="group/att relative mt-0.5">
+          <div className="mc-scroll overflow-x-auto rounded-lg border border-hairline bg-white" data-testid={`file-sheet-${file.name}`}>
+            {first ? (
+              <SheetTable sheet={first} limits={CARD_LIMITS} compact />
+            ) : (
+              <div className="px-3 py-2 text-xs text-faint">{state.status === 'loading' ? 'Loading…' : 'Empty workbook'}</div>
+            )}
+          </div>
+          {state.workbook && (
+            <button
+              data-testid={`file-${file.name}`}
+              className="absolute inset-0 cursor-pointer"
+              title={`Open ${file.name}`}
+              onClick={() => setReader(true)}
+            />
+          )}
+          <DownloadHoverButton file={file} onDownload={download} />
+        </div>
+      )}
+      {reader && state.workbook && (
+        <LightboxShell
+          testId="sheet-reader"
+          onClose={() => setReader(false)}
+          caption={file.name}
+          actions={
+            <LightboxButton testId="sheet-reader-download" title="Download" onClick={() => void download()}>⤓</LightboxButton>
+          }
+        >
+          <div className="h-[85vh] w-[80vw] overflow-hidden rounded-lg" onMouseDown={(e) => e.stopPropagation()}>
+            <SpreadsheetView workbook={state.workbook} testId="sheet-reader-view" />
+          </div>
+        </LightboxShell>
+      )}
+    </div>
+  );
 }
 
 function ImageAttachment({ file }: { file: FileDTO }) {

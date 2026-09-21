@@ -9,6 +9,7 @@
 // forms usually mean the user pasted an invite link or a reverse-proxy subpath,
 // and silently discarding the part that made it wrong would point credentials
 // at a server they did not name.
+import { getHost } from './host';
 
 /** Providers a connection can speak. Only `flow` is created today; the field
  * exists from the start so the registry schema does not have to change when
@@ -76,6 +77,9 @@ export interface CanonicalizeOptions {
  * loopback, which is the rule that protects anybody. */
 export function insecureLoopbackAllowed(): boolean {
   if (import.meta.env.DEV) return true;
+  // The desktop shell's page origin is `app://flow`, which says nothing about
+  // the server; a development build baked with a loopback server says yes.
+  if (getHost().allowsInsecureLoopback) return true;
   if (typeof location === 'undefined') return false;
   return isPlaintextLoopbackPage(location.protocol, location.hostname);
 }

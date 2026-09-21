@@ -1,3 +1,4 @@
+import { isDesktop } from './host';
 import { canonicalizeOrigin } from './serverOrigin';
 
 export interface ServerDiscovery {
@@ -32,6 +33,9 @@ export async function discoverServer(input: string, signal?: AbortSignal) {
     if (signal?.aborted) throw error;
     throw new Error('Cannot reach this server. Check its address and browser allowed-origin configuration. Redirects are not accepted; enter the destination address explicitly.');
   }
+  // An older server refuses the desktop app's origin outright
+  // (docs/specs/desktop-electron.md); say so rather than "HTTP 403".
+  if (response.status === 403 && isDesktop()) throw new Error('This server does not accept desktop clients yet. Ask its operator to upgrade Flow.');
   if (!response.ok) throw new Error(`Discovery failed (HTTP ${response.status}).`);
   const info = await response.json() as ServerDiscovery;
   if (info.protocolVersion !== 1 || !Array.isArray(info.authMethods) ||

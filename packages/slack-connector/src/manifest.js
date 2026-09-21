@@ -15,11 +15,22 @@ export const capabilities = {
   // user events (operator step); the scopes are the history scopes above.
   liveUpdates: { methods: [], tokenType: 'user', scopes: ['channels:history', 'groups:history', 'im:history', 'mpim:history'], events: ['message.channels', 'message.groups', 'message.im', 'message.mpim'] },
   lifecycle: { methods: [], tokenType: 'user', scopes: [], events: ['tokens_revoked', 'app_uninstalled'] },
+  // View Slack files (image previews, downloads) and custom emoji images. The
+  // connector fetches the bytes with the user token; clients never see Slack URLs.
+  readFiles: { methods: ['files.info'], tokenType: 'user', scopes: ['files:read'], events: [] },
+  customEmoji: { methods: ['emoji.list'], tokenType: 'user', scopes: ['emoji:read'], events: [] },
+  // Profile and status changes, live (user_change), and setting the user's own
+  // status from Flow. users:read is already part of readConversations.
+  memberUpdates: { methods: [], tokenType: 'user', scopes: ['users:read'], events: ['user_change'] },
+  setStatus: { methods: ['users.profile.set'], tokenType: 'user', scopes: ['users.profile:write'], events: [] },
+  // The workspace icon on the rail (team.info); the image itself is public.
+  teamIcon: { methods: ['team.info'], tokenType: 'user', scopes: ['team:read'], events: [] },
   // Not granted to the test app yet (#544 §6): kept out of the authorize URL.
   reactions: { methods: ['reactions.add', 'reactions.remove'], tokenType: 'user', scopes: ['reactions:write', 'reactions:read'], events: ['reaction_added', 'reaction_removed'], requested: false },
   readState: { methods: ['conversations.mark'], tokenType: 'user', scopes: ['channels:write', 'groups:write', 'im:write', 'mpim:write'], events: [], requested: false },
   search: { methods: ['search.messages'], tokenType: 'user', scopes: ['search:read'], events: [], requested: false },
-  files: { methods: ['files.getUploadURLExternal', 'files.completeUploadExternal'], tokenType: 'user', scopes: ['files:write', 'files:read'], events: [], requested: false },
+  // Uploads: bytes go to Slack's upload URL, then complete shares them with the message text.
+  files: { methods: ['files.getUploadURLExternal', 'files.completeUploadExternal'], tokenType: 'user', scopes: ['files:write'], events: [] },
 };
 export const requestedScopes = [...new Set(Object.values(capabilities).filter(c => c.requested !== false).flatMap(c => c.scopes))];
 export const requestedEvents = [...new Set(Object.values(capabilities).filter(c => c.requested !== false).flatMap(c => c.events))];

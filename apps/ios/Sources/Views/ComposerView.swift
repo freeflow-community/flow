@@ -313,9 +313,13 @@ struct ComposerView: View {
             app.showError("Couldn't upload: workspace unknown")
             return
         }
+        guard app.can(.files) else {
+            app.showError(app.capabilities[.files].reason ?? "File attachments are not available here.")
+            return
+        }
         let fileURL = ImagePrep.prepareForUpload(fileURL) ?? fileURL
         do {
-            let file = try await app.engine.uploadFile(workspaceId: wsId, fileURL: fileURL)
+            let file = try await app.engine.uploadFile(workspaceId: wsId, channelId: channelId, fileURL: fileURL)
             if attachments.count < 10 { attachments.append(file) }
         } catch {
             app.showError("Couldn't upload \(fileURL.lastPathComponent): \(error.localizedDescription)")

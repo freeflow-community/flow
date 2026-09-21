@@ -1,3 +1,4 @@
+import { isDesktop } from '../lib/host';
 import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -22,7 +23,8 @@ import type {
 } from '@flow/shared';
 import { ApiError, api, uploadAvatar, uploadWorkspaceAvatar } from '../lib/api';
 import { useAuth, useSelection } from '../state';
-import { useChannelMembers, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
+import { useChannelMembers, useChannels, useMemberMap, useMembers, useSelfRegisterDomain, useWorkspaces } from '../hooks';
+import { useIsFlow } from '../lib/backend';
 import { AuthImg, Avatar } from './Avatar';
 
 export function Modal({
@@ -1048,8 +1050,10 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.channelInvite !== false} onChange={(v) => void setPref('channelInvite', v)} />
       <PrefToggle testid="pref-sound" label="Play a sound" hint="with every banner"
         checked={prefs.sound !== false} onChange={(v) => void setPref('sound', v)} />
-      <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
-        checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
+      {/* In the desktop shell how long a banner stays is an OS setting, as on
+          macOS and iOS; the preference round-trips untouched there. */}
+      {!isDesktop() && <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
+        checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />}
 
       {/* #489. The address sits in this section rather than up with the
           editable fields because it is not editable — and because "here is
@@ -1234,6 +1238,13 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
   const sel = useSelection();
   const qc = useQueryClient();
   const memberMap = useMemberMap(sel.workspaceId);
+  const isFlow = useIsFlow();
+  const channels = useChannels(sel.workspaceId);
+  // A provider workspace (Slack) opens the DM you already have; Flow cannot
+  // start a new Slack conversation, so without one there is no Message button.
+  const existingDm = isFlow ? undefined : (channels.data ?? []).find(
+    (c) => c.kind === 'dm' && (c.memberIds ?? []).includes(userId) && userId !== auth.user.id,
+  );
   const [user, setUser] = useState<UserDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1258,6 +1269,7 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
 
   const message = async () => {
     if (!sel.workspaceId) return;
+    if (existingDm) { onClose(); sel.selectChannel(existingDm.id); return; }
     try {
       const ch = await api<ChannelDTO>('POST', `/v1/workspaces/${sel.workspaceId}/dms`, { userIds: [userId] });
       await qc.invalidateQueries({ queryKey: ['channels', sel.workspaceId] });
@@ -1272,7 +1284,10 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
     <Modal onClose={onClose} testid="user-card">
       {user ? (
         <div className="flex flex-col items-center gap-2 text-center">
-          {user.avatarUrl ? (
+          {user.avatarUrl && /^https?:\/\//.test(user.avatarUrl) ? (
+            // A provider's avatar is a public image URL, not a path on this server.
+            <img src={user.avatarUrl} alt="avatar" className="h-16 w-16 rounded-full object-cover" />
+          ) : user.avatarUrl ? (
             <AuthImg path={user.avatarUrl} alt="avatar" className="h-16 w-16 rounded-full object-cover" />
           ) : (
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-daypill text-xl font-bold text-muted">
@@ -1332,13 +1347,13 @@ export function UserCard({ userId, onClose }: { userId: string; onClose: () => v
             </div>
           )}
           <div className="mt-2 flex flex-wrap justify-center gap-2">
-            {userId !== auth.user.id && (
+            {userId !== auth.user.id && (isFlow || existingDm) && (
               <button data-testid="user-card-message"
                 className="rounded bg-accent px-4 py-1.5 text-sm font-semibold text-white"
                 onClick={() => void message()}>Message</button>
             )}
             {/* Never on your own profile: you are already in your workspaces. */}
-            {userId !== auth.user.id && (
+            {userId !== auth.user.id && isFlow && (
               <InviteToWorkspace
                 user={user}
                 onDone={() => void qc.invalidateQueries({ queryKey: ['workspaces'] })}

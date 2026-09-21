@@ -228,6 +228,32 @@ describe('disposal', () => {
     expect(b.cachedBlobUrl('/v1/files/f/thumb')).toBe(bUrl);
   });
 
+  it('fetches a file\'s bytes from the storage URL the backend presigns, without the bearer', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:${Math.random()}`);
+    const { a } = twoConnections();
+    a.setToken('token-a');
+    const calls: { url: string; auth: string | undefined }[] = [];
+    fetchMock.mockImplementation(async (url: string, init: { headers?: Record<string, string> }) => {
+      calls.push({ url, auth: init.headers?.authorization });
+      if (url.endsWith('/url')) return okJson({ url: url.includes('/direct/') ? 'https://storage.example/o/direct?sig=1' : null, expiresInSeconds: 60 });
+      return { ok: true, status: 200, blob: async () => new Blob(['x']) };
+    });
+    // Presigning backend: the storage URL is fetched bare.
+    await a.blobUrl('/v1/files/direct');
+    expect(calls.map(c => c.url)).toContain(`${A}/v1/files/direct/url`);
+    const storage = calls.find(c => c.url.startsWith('https://storage.example/'));
+    expect(storage?.auth).toBeUndefined();
+    // Streaming backend (no URL): the authenticated path, as before.
+    calls.length = 0;
+    await a.blobUrl('/v1/files/local');
+    expect(calls.map(c => c.url)).toEqual([`${A}/v1/files/local/url`, `${A}/v1/files/local`]);
+    expect(calls[1]?.auth).toBe('Bearer token-a');
+    // A thumbnail path is not a file id and never asks for a URL.
+    calls.length = 0;
+    await a.blobUrl('/v1/files/local/thumb');
+    expect(calls.map(c => c.url)).toEqual([`${A}/v1/files/local/thumb`]);
+  });
+
   it('revokes an object URL that lands after disposal instead of caching it', async () => {
     const revoked: string[] = [];
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:late');

@@ -195,20 +195,21 @@ all on) and `status_suppress_alerts` (boolean, set by DND-family statuses).
 | Writes rows inside the message transaction | `services/messages.ts` → `insertNotifications` |
 | Reaction fan-out (post-commit, never fails the reaction) | `services/reactions.ts` → `notifyReaction` |
 | Read-on-visit, per-channel badge count | `services/channels.ts` → `markRead`, `listChannels` |
-| Web feed / badge / banners | `packages/web/src/components/ActivityView.tsx`, `Sidebar.tsx`, `Main.tsx` |
+| Web feed / badge / banners | `packages/web/src/components/ActivityView.tsx`, `Sidebar.tsx`, `Main.tsx` (banners and the app badge go through `lib/host.ts`) |
+| Desktop shell banners / badge / tray | `apps/desktop/src/main/notifications.ts`, `badge.ts`, `tray.ts` |
 | Native feed / badge / banners | `apps/*/…/ActivityFeedView.swift`, `SidebarView.swift`, `Sync/SyncEngine.swift`, `Support/Banners.swift` |
 | Tests | `packages/server/test/notifications.test.ts`, `scripts/notify-e2e.mjs` (one assertion per behaviour, against a running server) |
 
 ## Per-client state
 
-| | web | macOS | iOS |
-|---|---|---|---|
-| Activity feed | ✅ | ✅ | ✅ (no thread route from a row — Parity) |
-| Sidebar badge = notifications | ✅ | ✅ | ✅ |
-| App badge | — | dock (needs the `.app` bundle; bare `swift run` is a no-op) | app icon |
-| OS banners | Notification API | `UNUserNotificationCenter`, honours `suppressAlert` | **none** — awaits APNs |
-| Preference UI | ✅ all toggles | ✅ in My Profile (#464) | ✅ Settings ▸ Notifications (#251) |
-| Push when the app isn't running | n/a | n/a | ❌ `PUSH_APNS.md` |
+| | web | desktop (Electron) | macOS | iOS |
+|---|---|---|---|---|
+| Activity feed | ✅ | ✅ (the web client) | ✅ | ✅ (no thread route from a row — Parity) |
+| Sidebar badge = notifications | ✅ | ✅ | ✅ | ✅ |
+| App badge | — | Dock / Linux launcher count, summed across connections; Windows a dot + tooltip | dock (needs the `.app` bundle; bare `swift run` is a no-op) | app icon |
+| OS banners | Notification API | Electron `Notification` via the shell, subtitle on macOS, foreground connection only | `UNUserNotificationCenter`, honours `suppressAlert` | **none** — awaits APNs |
+| Preference UI | ✅ all toggles | ✅ (persistent-banners toggle hidden) | ✅ in My Profile (#464) | ✅ Settings ▸ Notifications (#251) |
+| Push when the app isn't running | n/a | n/a (tray keeps it running on Windows/Linux) | n/a | ❌ `PUSH_APNS.md` |
 
 Prefs are per-user and server-enforced, so all three clients read and write the
 same object: a flip on any one of them silences the other two. The one key that
@@ -223,6 +224,8 @@ round-trips untouched through the native clients rather than being dropped.
 - **`scenePhase` is an approximation.** A macOS window that is frontmost but
   fully covered still reports `.active`, so we may treat a hidden-behind-another
   -window channel as seen. The same approximation the web makes with
-  `document.hidden`; it errs toward notifying rather than swallowing.
+  `document.hidden`; it errs toward notifying rather than swallowing. The
+  desktop shell adds a window-focus gate on top of visibility (`isLookingAtApp`
+  in `lib/host.ts`), the closest browser equivalent of the app-active rule.
 - **A channel you can see but haven't joined gives no signal at all** — no bold,
   no number. Slack's answer is a small dot for "unread, nothing for you".

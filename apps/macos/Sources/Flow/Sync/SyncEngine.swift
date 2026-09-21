@@ -493,6 +493,8 @@ actor SyncEngine {
             try Workspace.filter(!ids.contains(Column("id"))).deleteAll(db)
             for w in workspaces { try w.save(db) }
         }
+        // The other connections' switchers draw this one from its bindings.
+        await appState?.workspacesRefreshed(workspaces)
     }
 
     /// A window switched to this workspace: bring its data up to date. The
@@ -746,7 +748,12 @@ actor SyncEngine {
                     // Unread state is local for a provider without read-marker
                     // sync: keep the cached count rather than the list's zero.
                     var row = c
-                    if let cached = try Channel.fetchOne(db, key: c.id) { row.unreadCount = cached.unreadCount; row.lastReadMsgId = cached.lastReadMsgId }
+                    if let cached = try Channel.fetchOne(db, key: c.id) {
+                        row.unreadCount = cached.unreadCount; row.lastReadMsgId = cached.lastReadMsgId
+                        // Activity the stream delivered since the list was built is newer
+                        // knowledge; the list's value wins only when it has one.
+                        if row.lastActivityAt == nil { row.lastActivityAt = cached.lastActivityAt }
+                    }
                     try row.save(db)
                 }
             }
@@ -820,6 +827,8 @@ actor SyncEngine {
     /// the browser this session. Looks it up through the browser list so the
     /// view can resolve it read-only instead of drawing a nameless composer.
     func resolveUncachedChannel(_ channelId: String, workspaceId: String) async {
+        // Flow's archived-channel browse; a provider's list is the conversation list.
+        guard backend == nil else { return }
         let cached = try? await db.writer.read { db in try Channel.fetchOne(db, key: channelId) }
         guard cached == nil, await appState?.archivedChannels[channelId] == nil else { return }
         _ = try? await browseChannels(workspaceId: workspaceId)
@@ -1307,6 +1316,9 @@ actor SyncEngine {
     /// Fetch every pin in the channel so older pinned messages become part of
     /// the local cache even when normal history pagination has not reached them.
     func loadPinnedMessages(channelId: String) async {
+        // Pins are a Flow feature here: a provider workspace (Slack) has no
+        // pins route, and asking its connector only raised an HTTP 404 alert.
+        guard backend == nil else { return }
         do {
             let response: PinnedMessagesResponse = try await api.get("/v1/channels/\(channelId)/pins")
             // The list is authoritative: clear stale offline-era pins before
@@ -1347,6 +1359,7 @@ actor SyncEngine {
     /// same access check as a download). nil when the storage driver can't
     /// presign — callers must have a no-network fallback.
     func streamURL(fileId: String) async -> URL? {
+        guard backend == nil else { return nil } // a provider's connector proxies bytes; no presigned URLs
         guard let response: StreamUrlResponse = try? await api.get("/v1/files/\(fileId)/url"),
               let raw = response.url else { return nil }
         return URL(string: raw)
@@ -1403,10 +1416,17 @@ actor SyncEngine {
 
     // MARK: - Files
 
-    func uploadFile(workspaceId: String, fileURL: URL) async throws -> FileAttachment {
+    /// `channelId` is where the file will be sent: a provider workspace (Slack)
+    /// uploads through its backend, which needs the channel; a Flow server does not.
+    func uploadFile(workspaceId: String, channelId: String? = nil, fileURL: URL) async throws -> FileAttachment {
         let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let sizeBytes = (attrs[.size] as? Int) ?? 0
         let mime = Self.mimeType(for: fileURL)
+        if let backend {
+            guard let channelId else { throw BackendError(code: .invalid, message: "Choose a conversation before attaching a file.") }
+            let data = try Data(contentsOf: fileURL)
+            return try await backend.uploadFile(workspaceId: workspaceId, channelId: channelId, data: data, name: fileURL.lastPathComponent, mimeType: mime)
+        }
         // presign → PUT the bytes (direct to R2 in prod, server fallback in
         // local dev) → complete (server verifies size + generates thumbnails).
         // The PUT streams from disk — files can be hundreds of MB.
@@ -1423,11 +1443,24 @@ actor SyncEngine {
         return try await api.post("/v1/files/\(pres.file.id)/complete")
     }
 
+    /// A file's original bytes from whichever backend owns it.
+    private func fileBytes(_ file: FileAttachment) async throws -> Data {
+        if let backend { return try await backend.fileData(path: "/v1/files/\(file.id)") }
+        return try await api.getData("/v1/files/\(file.id)")
+    }
+
     /// Downloads a file to a temp path (original filename preserved) and
     /// returns the local URL — used for "open" on attachments.
     func downloadFile(_ file: FileAttachment) async throws -> URL {
-        // streamed to disk — videos can be hundreds of MB
-        let tmp = try await api.downloadToFile("/v1/files/\(file.id)")
+        let tmp: URL
+        if let backend {
+            // A provider's bytes come through its connector, never the Flow API.
+            tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try await backend.fileData(path: "/v1/files/\(file.id)").write(to: tmp)
+        } else {
+            // streamed to disk — videos can be hundreds of MB
+            tmp = try await api.downloadToFile("/v1/files/\(file.id)")
+        }
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FlowDownloads-\(file.id)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1440,14 +1473,14 @@ actor SyncEngine {
     /// Fetches a text-ish file's original bytes decoded as UTF-8 (lossy on
     /// invalid sequences) — backs the inline text preview.
     func fileText(_ file: FileAttachment) async throws -> String {
-        let data = try await api.getData("/v1/files/\(file.id)")
+        let data = try await fileBytes(file)
         return String(decoding: data, as: UTF8.self)
     }
 
     /// Saves a file's original bytes into ~/Downloads (uniqued name on
     /// collision) — backs the attachment/lightbox Download buttons.
     func saveToDownloads(_ file: FileAttachment) async throws -> URL {
-        let data = try await api.getData("/v1/files/\(file.id)")
+        let data = try await fileBytes(file)
         let dir = try FileManager.default.url(
             for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )
@@ -1572,6 +1605,17 @@ actor SyncEngine {
 
     /// Upsert a DM with the given other members (server dedupes by member set).
     func createDm(workspaceId: String, userIds: [String]) async throws -> Channel {
+        // A provider workspace opens the DM that already exists; Flow cannot
+        // start a new conversation there (no Slack permission to open one).
+        if backend != nil {
+            let me = currentUser?.id
+            let wanted = Set(userIds + [me].compactMap { $0 })
+            let existing = try? await db.reader.read { db in
+                try Channel.filter(Column("workspaceId") == workspaceId && Column("kind") == "dm").fetchAll(db)
+            }.first { Set(($0.memberIds ?? []) + [me].compactMap { $0 }) == wanted }
+            if let existing { return existing }
+            throw BackendError(code: .unsupported, message: "Start this conversation in Slack; Flow can open it once it exists.")
+        }
         let ch: Channel = try await api.post(
             "/v1/workspaces/\(workspaceId)/dms",
             body: CreateDmBody(userIds: userIds)
@@ -1586,6 +1630,8 @@ actor SyncEngine {
     /// carries `memberIds` for DMs, so standard channels have to ask the
     /// server. Returns [] on failure — callers fall back to what they have.
     func channelMemberIds(channelId: String) async -> [String] {
+        // No roster route on a provider; views keep the DTO's DM members.
+        guard backend == nil else { return [] }
         guard let resp: ChannelMembersResponse = try? await api.get("/v1/channels/\(channelId)/members")
         else { return [] }
         return resp.userIds
@@ -1737,13 +1783,19 @@ actor SyncEngine {
     /// Set (or clear, with two empty strings) the user's status emoji + label.
     /// `suppressAlerts` mirrors the web client's DND-family flag; nil leaves
     /// the server's current value alone.
+    /// A provider workspace sets it through its backend, never the Flow API.
     func setStatus(emoji: String, text: String, suppressAlerts: Bool? = nil) async throws {
-        let me: User = try await api.patch(
-            "/v1/me",
-            body: PatchMeBody(
-                statusEmoji: emoji, statusText: text, statusSuppressAlerts: suppressAlerts
+        let me: User
+        if let backend {
+            me = try await backend.setStatus(emoji: emoji, text: text, suppressAlerts: suppressAlerts)
+        } else {
+            me = try await api.patch(
+                "/v1/me",
+                body: PatchMeBody(
+                    statusEmoji: emoji, statusText: text, statusSuppressAlerts: suppressAlerts
+                )
             )
-        )
+        }
         currentUser = me
         try? await db.writer.write { db in try me.save(db) }
         await appState?.setPhase(.signedIn(me))
@@ -1794,7 +1846,7 @@ actor SyncEngine {
     }
 
     func fetchUser(_ userId: String) async throws -> User {
-        let u: User = try await api.get("/v1/users/\(userId)")
+        let u: User = if let backend { try await backend.fetchUser(id: userId) } else { try await api.get("/v1/users/\(userId)") }
         try? await db.writer.write { db in try u.save(db) }
         return u
     }
@@ -2501,6 +2553,19 @@ actor SyncEngine {
             }
         case .channelUpdated(let channel):
             try? await db.writer.write { db in try channel.save(db) }
+        case .channelActivity(let channelId, let lastActivityAt):
+            try? await db.writer.write { db in
+                try db.execute(sql: "UPDATE channel SET lastActivityAt = ? WHERE id = ?", arguments: [lastActivityAt, channelId])
+            }
+        case .memberUpdated(let user):
+            // Profile or status changed in the provider: the row every view
+            // draws names, avatars and statuses from, and the footer's own user.
+            try? await db.writer.write { db in try user.save(db) }
+            if user.id == currentUser?.id {
+                currentUser = user
+                await appState?.setPhase(.signedIn(user))
+            }
+            await pushAvatarPaths()
         case .capabilitiesChanged(let caps):
             await appState?.setCapabilities(caps)
         case .authChanged(let auth):
@@ -2607,11 +2672,17 @@ actor SyncEngine {
     private func applyServerMessage(_ m: Message) async -> Bool {
         let isNew: Bool? = try? await db.writer.write { db in
             let existed = try Message.filter(key: m.id).fetchCount(db) > 0
-            let pendingDeleted = try Message
-                .filter(Column("channelId") == m.channelId)
-                .filter(Column("clientMsgId") == m.clientMsgId)
-                .filter(Column("id") != m.id)
-                .deleteAll(db)
+            // An empty clientMsgId (a Slack app/API message, #620) names no
+            // optimistic twin — matching on it would delete every other
+            // key-less message in the channel.
+            var pendingDeleted = 0
+            if !m.clientMsgId.isEmpty {
+                pendingDeleted = try Message
+                    .filter(Column("channelId") == m.channelId)
+                    .filter(Column("clientMsgId") == m.clientMsgId)
+                    .filter(Column("id") != m.id)
+                    .deleteAll(db)
+            }
             try m.save(db)
             let isNew = !existed && pendingDeleted == 0
             if isNew, let root = m.threadRootId {
@@ -2703,13 +2774,16 @@ actor SyncEngine {
                 // (`clientMsgId` is unique per channel server-side). `failed`
                 // as well as `pending`: the stale-pending sweep can flag a
                 // message the server did receive, and its twin arriving here
-                // is the proof — leaving it would show the send twice.
-                try Message
-                    .filter(Column("channelId") == m.channelId)
-                    .filter(Column("clientMsgId") == m.clientMsgId)
-                    .filter(Column("id") != m.id)
-                    .filter(Column("pending") == true || Column("failed") == true)
-                    .deleteAll(db)
+                // is the proof — leaving it would show the send twice. An
+                // empty key has no twin (#620).
+                if !m.clientMsgId.isEmpty {
+                    try Message
+                        .filter(Column("channelId") == m.channelId)
+                        .filter(Column("clientMsgId") == m.clientMsgId)
+                        .filter(Column("id") != m.id)
+                        .filter(Column("pending") == true || Column("failed") == true)
+                        .deleteAll(db)
+                }
                 try m.save(db)
             }
         }

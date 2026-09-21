@@ -1,4 +1,6 @@
 import type { AuthResponse } from '@flow/shared';
+import { awaitHandoffCallback, installDeepLinks } from './deepLinks';
+import { getHost } from './host';
 
 export interface HandoffContext {
   connectionId: string;
@@ -52,6 +54,41 @@ export async function browserSignIn(origin: string, popup: Window, signal: Abort
     popup.location.href = target.href;
   });
 }
+
+/** The desktop shell's version of `browserSignIn` (docs/specs/desktop-electron.md):
+ * the same PKCE handoff, but the sign-in page opens in the system browser and
+ * the approval comes back as a `flow://signin` link, like the macOS app. The
+ * context binds a null client origin and the `flow://signin` return, which
+ * the server accepts from the desktop origin as it does from a native client. */
+export async function desktopSignIn(origin: string, signal: AbortSignal): Promise<AuthResponse> {
+  if (signal.aborted) throw new Error('Sign-in canceled.');
+  const verifier = opaque();
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const context = { connectionId: crypto.randomUUID(), operationId: opaque(), state: opaque(), serverOrigin: origin,
+    clientOrigin: null, returnUrl: DESKTOP_RETURN_URL };
+  const post = async (path: string, body: unknown) => {
+    const result = await fetch(`${origin}${path}`, { method: 'POST', credentials: 'omit', redirect: 'error', signal,
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const json = await result.json();
+    if (!result.ok) throw new Error(json.error?.message ?? 'Sign-in handoff failed.');
+    return json;
+  };
+  const { requestId } = await post('/v1/auth/handoff/start', { ...context, codeChallenge: challenge, codeChallengeMethod: 'S256' });
+  if (signal.aborted) throw new Error('Sign-in canceled.');
+  const bound = { ...context, requestId };
+  const target = new URL('/', origin);
+  target.searchParams.set('handoff', JSON.stringify(bound));
+  installDeepLinks();
+  const callback = awaitHandoffCallback(context.operationId, context.state, signal);
+  getHost().links.openExternal(target.href);
+  const { code } = await callback;
+  return post('/v1/auth/handoff/exchange', { ...bound, code, codeVerifier: verifier });
+}
+
+/** Where a server sends the desktop app back to. Must be in that server's
+ * `FLOW_HANDOFF_RETURN_URLS`, as it already is for the macOS app. */
+export const DESKTOP_RETURN_URL = 'flow://signin';
 
 export function consumeHandoffCallback(): boolean {
   const params = new URLSearchParams(location.search);

@@ -30,7 +30,7 @@ export interface Capability {
 export const CAPABILITY_NAMES = [
   'conversations', 'history', 'threads', 'send', 'edit', 'delete', 'reactions', 'files', 'search',
   'readState', 'liveUpdates', 'typing', 'presence', 'pins', 'huddles', 'artifacts', 'agents', 'apps',
-  'admin', 'scheduledMessages', 'notifications', 'channelManagement',
+  'admin', 'scheduledMessages', 'notifications', 'channelManagement', 'status',
 ] as const;
 export type CapabilityName = (typeof CAPABILITY_NAMES)[number];
 export type Capabilities = Record<CapabilityName, Capability>;
@@ -86,7 +86,25 @@ export interface MessageProvenance {
 }
 
 export type BackendMessage = MessageDTO & { provenance?: MessageProvenance };
-export type BackendChannel = ChannelDTO & { provenance?: Pick<MessageProvenance, 'provider' | 'openUrl'> };
+export type BackendChannel = ChannelDTO & {
+  provenance?: Pick<MessageProvenance, 'provider' | 'openUrl'>;
+  /** A provider conversation's newest known message (ISO), or null when the
+   * provider has not learned it yet. Absent for Flow channels. */
+  lastActivityAt?: string | null;
+};
+
+/** Slack's sidebar default: a conversation with no new message in 30 days is hidden. */
+export const INACTIVE_AFTER_MS = 30 * 86_400_000;
+
+/** True when a provider conversation should fold away as inactive: no known
+ * message in the last 30 days (unknown counts as inactive), nothing unread,
+ * and not the one open. Flow channels are never hidden. */
+export function hiddenAsInactive(channel: BackendChannel, selectedChannelId: string | null, now = Date.now()): boolean {
+  if (!channel.provenance) return false;
+  if (channel.id === selectedChannelId || channel.unreadCount > 0 || channel.unreadNotifications > 0) return false;
+  const at = channel.lastActivityAt ? Date.parse(channel.lastActivityAt) : NaN;
+  return !(Number.isFinite(at) && now - at <= INACTIVE_AFTER_MS);
+}
 
 export interface HistoryPage {
   /** Oldest first, like the transcript. */
@@ -140,9 +158,14 @@ export type BackendEvent =
   | { type: 'thread.reply'; message: BackendMessage }
   | { type: 'reaction.added' | 'reaction.removed'; channelId: string; messageId: string; emoji: string; userId: string }
   | { type: 'channel.updated'; channel: BackendChannel }
+  /** A provider conversation's newest known message moved (sidebar activity). */
+  | { type: 'channel.activity'; channelId: string; lastActivityAt: string }
   | { type: 'channel.read'; channelId: string; lastReadMsgId: string | null }
   | { type: 'typing'; channelId: string; userId: string; threadRootId?: string | null }
   | { type: 'presence'; userId: string; online: boolean }
+  /** A member's profile changed (name, avatar, status). Replaces the cached
+   * member; for the signed-in user it also replaces `me`. */
+  | { type: 'member.updated'; member: WorkspaceMemberDTO }
   | { type: 'auth.changed'; auth: BackendAuthState }
   | { type: 'capabilities.changed'; capabilities: Capabilities }
   /** The live stream is degraded: events may be missing until `resumesAt`.

@@ -26,6 +26,18 @@ struct RootView: View {
             // the sidebar's workspace menu, so nothing floats over the composer
             // any more — the same move iOS (#563) and web (#565) already made.
             .environment(\.openConnections, OpenConnectionsAction { showConnections = true })
+            // Opening a workspace on *another* connection (#592 on web): the
+            // rail, the workspace menu and the chooser list every connection's
+            // workspaces, and this window owns which connection it shows — so
+            // they ask it to switch rather than switching themselves.
+            .environment(\.openWorkspace, OpenWorkspaceAction { connectionId, workspaceId in
+                guard let app = active.connections.appState(connectionId) else { return }
+                UserDefaults.standard.set(workspaceId, forKey: app.sessionScope.key("activeWorkspaceId"))
+                notificationTarget = nil
+                workspace = workspaceId
+                selected = app
+                showing(app)
+            })
             .id("\(active.connectionId):\(workspace ?? ""):\(notificationTarget?.messageId ?? "")")
             // Every connected server syncs while the app runs, not just the one
             // this window shows (#542). Bounded and idempotent, so a second
@@ -72,6 +84,30 @@ struct RootView: View {
     }
 }
 
+/// Opens a workspace on any connection. Published by `RootView`, which owns
+/// this window's foreground connection; a session view asks it to switch.
+struct OpenWorkspaceAction: Sendable {
+    private let open: @MainActor @Sendable (String, String) -> Void
+
+    init(_ open: @escaping @MainActor @Sendable (String, String) -> Void) { self.open = open }
+
+    @MainActor func callAsFunction(connectionId: String, workspaceId: String) {
+        open(connectionId, workspaceId)
+    }
+}
+
+private struct OpenWorkspaceKey: EnvironmentKey {
+    /// No-op above the root, like `openConnections`.
+    static let defaultValue = OpenWorkspaceAction { _, _ in }
+}
+
+extension EnvironmentValues {
+    var openWorkspace: OpenWorkspaceAction {
+        get { self[OpenWorkspaceKey.self] }
+        set { self[OpenWorkspaceKey.self] = newValue }
+    }
+}
+
 /// Opens the workspace/server switcher (#566). Published by `RootView`, which
 /// owns the sheet, so the sidebar menu — or a screen with no sidebar at all —
 /// can raise it without a button floating over the conversation.
@@ -96,7 +132,7 @@ extension EnvironmentValues {
     }
 }
 
-private struct SessionRootView: View {
+struct SessionRootView: View {
     @EnvironmentObject private var app: AppState
     /// This window's own selection state (workspace/channel/thread/…) — a
     /// `@StateObject` here is per window, unlike one on the `App` struct,
@@ -104,13 +140,24 @@ private struct SessionRootView: View {
     @StateObject private var win: WindowState
 
     init(app: AppState, workspaceId: String?, notification: NavigationTarget?) {
+        // Inside the autoclosure, which SwiftUI evaluates once per window
+        // identity. This init runs on every parent re-render (FlowApp observes
+        // the app state), and selecting a workspace starts its whole network
+        // load — done here, a non-nil `workspaceId` turned every state change
+        // into another load, whose results changed state again: a request
+        // storm that starved message sends (macOS 2.2.108, after the rail
+        // began setting `workspaceId` on every cross-connection open).
+        _win = StateObject(wrappedValue: Self.makeWindow(app: app, workspaceId: workspaceId, notification: notification))
+    }
+
+    private static func makeWindow(app: AppState, workspaceId: String?, notification: NavigationTarget?) -> WindowState {
         let window = WindowState(app: app)
         if let workspaceId { window.selectWorkspace(workspaceId) }
         if let notification, let channel = notification.channelId, let message = notification.messageId {
             window.openNotification(workspaceId: notification.workspaceId, channelId: channel,
                                     messageId: message, threadRootId: notification.threadRootId)
         }
-        _win = StateObject(wrappedValue: window)
+        return window
     }
 
     var body: some View {
@@ -123,7 +170,7 @@ private struct SessionRootView: View {
                 AuthView()
             case .signedIn:
                 if win.selectedWorkspaceId == nil {
-                    WorkspaceSwitcherView()
+                    WorkspaceSwitcherView(manager: app.connections)
                         .onAppear { win.restoreActiveWorkspace() }
                 } else {
                     MainView()

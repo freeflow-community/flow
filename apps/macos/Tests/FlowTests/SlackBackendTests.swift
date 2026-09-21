@@ -24,10 +24,16 @@ private func messageJSON(_ id: String, threadRootId: String? = nil, editedAt: St
 /// A fake connector: routes by path, records requests, and can answer 429.
 private final class FakeConnector: @unchecked Sendable {
     var requests: [(method: String, path: String, body: [String: Any]?)] = []
+    var uploads: [(contentType: String?, authorization: String?, data: Data)] = []
     var rateLimitHistory = false
     var streamPages: [String] = []
+    var imageRequests: [(host: String, authorization: String?)] = []
 
     func transport(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if let host = request.url?.host, host != "connector.test" {
+            imageRequests.append((host, request.value(forHTTPHeaderField: "Authorization")))
+            return (Data([0x89, 0x50, 0x4E, 0x47]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
         let path = request.url!.path + (request.url!.query.map { "?\($0)" } ?? "")
         let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         requests.append((request.httpMethod ?? "GET", path, body))
@@ -59,8 +65,20 @@ private final class FakeConnector: @unchecked Sendable {
         case ("GET", "/v1/stream"):
             let page = streamPages.isEmpty ? #"{"events":[],"seq":0,"gap":false}"# : streamPages.removeFirst()
             return reply(page)
+        case ("PATCH", "/v1/me"):
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
+            return reply(#"{"id":"U1","email":"a@example.test","displayName":"alice","avatarUrl":null,"timezone":"UTC","statusEmoji":"🤒","statusText":"Out sick","website":"","bio":"","title":"","isAgent":false,"sponsorId":null,"notificationPrefs":{},"statusSuppressAlerts":false,"privacyMode":false,"createdAt":""}"#)
         case ("DELETE", "/v1/session"):
             return reply(#"{"ok":true}"#)
+        case ("POST", "/v1/files"):
+            uploads.append((request.value(forHTTPHeaderField: "Content-Type"), request.value(forHTTPHeaderField: "Authorization"), request.httpBody ?? Data()))
+            return reply(#"{"id":"F0UPLOAD1","workspaceId":"T1","userId":"U1","name":"notes one.txt","mimeType":"text/plain","sizeBytes":5,"width":null,"height":null,"hasThumb":false,"createdAt":""}"#)
+        case ("GET", "/v1/files/team-icon:T1"):
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
+            return (Data([0x47, 0x49, 0x46]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!)
+        case ("GET", "/v1/files/F1/thumb"):
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer credential-1")
+            return (Data([0x89, 0x50, 0x4E, 0x47]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!)
         default:
             return reply(#"{"error":"not_found"}"#, status: 404)
         }
@@ -94,6 +112,13 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         #expect(Capabilities.allSupported[.artifacts] == .supported)
     }
 
+    @Test func loadOlderButtonSaysTheHistoryBudget() {
+        let slack = SlackBackend.capabilities(granted: ["readHistory": true])
+        #expect(slack.loadOlderLabel(wait: 0) == "Load earlier messages (15 max/min)")
+        #expect(slack.loadOlderLabel(wait: 42) == "Load earlier messages (wait 42s)")
+        #expect(Capabilities.allSupported.loadOlderLabel(wait: 0) == "Load earlier messages")
+    }
+
     @Test func mapsEmojiBothWays() {
         #expect(SlackBackend.shortcode(for: "✅") == "white_check_mark")
         #expect(SlackBackend.shortcode(for: ":custom_thing:") == "custom_thing")
@@ -102,7 +127,85 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
     }
 }
 
+@Suite struct SlackSignInTests {
+    /// AuthenticationServices calls back on a background queue. A main-actor
+    /// closure there trips Swift's executor check and kills the app — that was
+    /// the crash on Connect Slack in macOS 2.2.105.
+    @Test func webAuthCallbackIsDeliveredOffTheMainActor() async throws {
+        let expected = URL(string: "flow://slack/connected?operationId=abc")!
+        let callback: URL = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                #expect(!Thread.isMainThread)
+                SlackBrowserSignIn.deliver(callback: expected, error: nil, to: continuation)
+            }
+        }
+        #expect(callback == expected)
+    }
+}
+
 @Suite struct SlackBackendTests {
+    /// Slack file bytes come through the connector with its credential, and
+    /// only file paths are accepted.
+    @Test func fetchesFileBytesThroughTheConnectorOnly() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let data = try await backend.fileData(path: "/v1/files/F1/thumb")
+        #expect(data == Data([0x89, 0x50, 0x4E, 0x47]))
+        #expect(fake.requests.last?.path == "/v1/files/F1/thumb")
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "/v1/history?channel=C1") }
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "v1/files/../session") }
+        #expect(fake.requests.count == 1)
+    }
+
+    /// Slack profile photos are public https URLs: loaded directly, never with
+    /// the connector credential, and only from Slack's image hosts.
+    @Test func loadsSlackProfilePhotosWithoutTheCredential() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let data = try await backend.fileData(path: "https://avatars.slack-edge.com/2025-01-01/123_abc_72.jpg")
+        #expect(data == Data([0x89, 0x50, 0x4E, 0x47]))
+        #expect(fake.imageRequests.map(\.host) == ["avatars.slack-edge.com"])
+        #expect(fake.imageRequests.first?.authorization == nil)
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "https://evil.example/a.png") }
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "http://avatars.slack-edge.com/a.png") }
+        await #expect(throws: BackendError.self) { try await backend.fileData(path: "https://slack-edge.com.evil.example/a.png") }
+        #expect(fake.imageRequests.count == 1)
+        #expect(fake.requests.isEmpty, "the connector is not asked for a public photo")
+    }
+
+    /// With files:write the bytes go to the connector raw, with their type and
+    /// the channel; the send then shares them, text optional.
+    @Test func uploadsRawBytesToTheConnectorAndSendsFileIds() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake, granted: ["sendAsUser": true, "readConversations": true, "readHistory": true, "liveUpdates": true, "files": true])
+        let file = try await backend.uploadFile(workspaceId: "T1", channelId: "C1", data: Data("hello".utf8), name: "notes one.txt", mimeType: "text/plain")
+        #expect(file.id == "F0UPLOAD1")
+        #expect(fake.requests.last?.path == "/v1/files?channel=C1&name=notes%20one%2Etxt")
+        #expect(fake.uploads.first?.contentType == "text/plain")
+        #expect(fake.uploads.first?.authorization == "Bearer credential-1")
+        #expect(fake.uploads.first?.data == Data("hello".utf8))
+        _ = try await backend.send(SendMessageInput(channelId: "C1", body: "", clientMsgId: "cm-9", fileIds: ["F0UPLOAD1"]))
+        #expect(fake.requests.last?.path == "/v1/messages")
+        #expect(fake.requests.last?.body?["file_ids"] as? [String] == ["F0UPLOAD1"])
+        #expect(fake.requests.last?.body?["text"] as? String == "")
+        #expect(SlackBackend.capabilities(granted: ["files": true])[.files] == .supported)
+        #expect(SlackBackend.capabilities(granted: [:])[.files].reason == "File uploads need a Slack permission this app does not have. Reconnect Slack after it is added.")
+    }
+
+    @Test func teamIconPathKeepsItsColonAndRendersAsTheWorkspaceMark() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let data = try await backend.fileData(path: "/v1/files/team-icon:T1")
+        #expect(data == Data([0x47, 0x49, 0x46]))
+        #expect(fake.requests.last?.path == "/v1/files/team-icon:T1")
+        let slack = Workspace(id: "T1", slug: "T1", name: "Acme", createdBy: "", createdAt: "", avatarUrl: "/v1/files/team-icon:T1")
+        #expect(slack.avatarImagePath == "/v1/files/team-icon:T1")
+        let flow = Workspace(id: "w1", slug: "w", name: "W", createdBy: "", createdAt: "", avatarUrl: "/v1/avatars/abc")
+        #expect(flow.avatarImagePath == "/v1/avatars/abc")
+        let foreign = Workspace(id: "w2", slug: "x", name: "X", createdBy: "", createdAt: "", avatarUrl: "https://evil.test/a.png")
+        #expect(foreign.avatarImagePath == nil)
+    }
+
     @Test func bootsThroughTheConnectorAndSynthesizesTheUser() async throws {
         let fake = FakeConnector()
         let backend = makeBackend(fake)
@@ -205,6 +308,55 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         #expect(fake.requests.filter { $0.path.hasPrefix("/v1/stream") }.map(\.path) == ["/v1/stream?since=0", "/v1/stream?since=3"], "the cursor advances")
     }
 
+    @Test func memberUpdatedEventsCarryTheNewStatus() async throws {
+        let fake = FakeConnector()
+        fake.streamPages = [
+            #"{"events":[{"type":"member.updated","member":{"userId":"U1","displayName":"alice","email":"a@example.test","avatarUrl":null,"statusEmoji":"🤒","statusText":"Out sick","title":"","isAgent":false,"isBot":false,"sponsorId":null,"privacyMode":false,"role":"admin","joinedAt":""}}],"seq":1,"gap":false}"#,
+        ]
+        let backend = makeBackend(fake, autoPoll: false)
+        let stream = backend.events()
+        let collector = Task { () -> User? in
+            for await event in stream { if case .memberUpdated(let user) = event { return user } }
+            return nil
+        }
+        await backend.pollOnce()
+        let user = await collector.value
+        #expect(user?.id == "U1")
+        #expect(user?.statusEmoji == "🤒")
+        #expect(user?.statusText == "Out sick")
+    }
+
+    @Test func channelActivityEventsCarryTheNewTime() async throws {
+        let fake = FakeConnector()
+        fake.streamPages = [
+            #"{"events":[{"type":"channel.activity","channelId":"C1","lastActivityAt":"2026-09-15T17:00:00.000Z"},{"type":"channel.activity","channelId":"C2"}],"seq":2,"gap":false}"#,
+        ]
+        let backend = makeBackend(fake, autoPoll: false)
+        let stream = backend.events()
+        let collector = Task { () -> (String, String)? in
+            for await event in stream { if case .channelActivity(let id, let at) = event { return (id, at) } }
+            return nil
+        }
+        await backend.pollOnce()
+        let got = await collector.value
+        #expect(got?.0 == "C1")
+        #expect(got?.1 == "2026-09-15T17:00:00.000Z")
+    }
+
+    @Test func setStatusPatchesTheConnectorAndIsGatedByTheScope() async throws {
+        let fake = FakeConnector()
+        let backend = makeBackend(fake)
+        let me = try await backend.setStatus(emoji: "🤒", text: "Out sick", suppressAlerts: false)
+        #expect(me.statusText == "Out sick")
+        let sent = try #require(fake.requests.last)
+        #expect(sent.method == "PATCH" && sent.path == "/v1/me")
+        #expect(sent.body?["statusEmoji"] as? String == "🤒")
+        #expect(sent.body?["statusText"] as? String == "Out sick")
+        #expect(SlackBackend.capabilities(granted: ["setStatus": true])[.status].state == .supported)
+        #expect(SlackBackend.capabilities(granted: [:])[.status].state == .unavailable)
+        #expect(Capabilities.allSupported[.status].state == .supported, "a Flow server sets status as before")
+    }
+
     @Test func openInSlackDeepLinksUseTheTeamAndTs() {
         let backend = makeBackend(FakeConnector())
         #expect(backend.openURL(channelId: "C1", messageId: nil)?.absoluteString == "https://app.slack.com/client/T1/C1")
@@ -251,5 +403,44 @@ private func makeBackend(_ fake: FakeConnector, granted: [String: Bool] = ["send
         #expect(SlackIdentity.messageKey(connectionId: "c", teamId: "T1", channelId: "C1", ts: "1789171841.100000") == "slack:c:T1:C1:1789171841.100000")
         #expect(SlackIdentity.messageKey(connectionId: "c", teamId: "T1", channelId: "C1", ts: "bad") == nil)
         #expect(SlackIdentity.date(fromTs: "1789171841.148649")?.timeIntervalSince1970 == 1789171841.148)
+    }
+}
+
+
+/// Slack inactive conversations: hidden unless known active in 30 days,
+/// unread, or open; a Flow workspace is never split.
+@Suite struct InactiveConversationTests {
+    private let now = Channel.parseActivityDate("2026-09-15T12:00:00.000Z")!
+
+    private func channel(_ id: String, activity: String? = nil, unread: Int = 0, notifications: Int = 0) -> Channel {
+        Channel(id: id, workspaceId: "T1", name: id, topic: nil, isPrivate: false, createdBy: "", createdAt: "",
+                archivedAt: nil, isMember: true, lastReadMsgId: nil, unreadCount: unread,
+                unreadNotifications: notifications, lastActivityAt: activity)
+    }
+
+    @Test func rule() {
+        #expect(!channel("unknown").isRecentlyActive(selectedId: nil, now: now))
+        #expect(channel("recent", activity: "2026-08-17T12:00:00.000Z").isRecentlyActive(selectedId: nil, now: now), "29 days")
+        #expect(!channel("old", activity: "2026-08-15T11:00:00Z").isRecentlyActive(selectedId: nil, now: now), "31 days")
+        #expect(channel("unread", unread: 2).isRecentlyActive(selectedId: nil, now: now))
+        #expect(channel("mention", notifications: 1).isRecentlyActive(selectedId: nil, now: now))
+        #expect(channel("open").isRecentlyActive(selectedId: "open", now: now))
+    }
+
+    @Test func splitOnlyForAProvider() {
+        let list = [channel("a", activity: "2026-09-14T00:00:00.000Z"), channel("b"), channel("c", activity: "2025-01-01T00:00:00.000Z")]
+        let slack = Channel.splitInactive(list, isProvider: true, selectedId: nil, now: now)
+        #expect(slack.active.map(\.id) == ["a"])
+        #expect(slack.inactiveCount == 2)
+        let flow = Channel.splitInactive(list, isProvider: false, selectedId: nil, now: now)
+        #expect(flow.active.count == 3 && flow.inactiveCount == 0)
+    }
+
+    @Test func decodesLastActivityAt() throws {
+        let json = #"{"id":"C1","workspaceId":"T1","name":"eng","kind":"standard","createdBy":"","createdAt":"","lastActivityAt":"2026-09-15T17:00:00.000Z"}"#
+        let decoded = try JSONDecoder().decode(Channel.self, from: Data(json.utf8))
+        #expect(decoded.lastActivityAt == "2026-09-15T17:00:00.000Z")
+        let flow = try JSONDecoder().decode(Channel.self, from: Data(#"{"id":"c1","workspaceId":"w1","name":"eng","createdBy":"","createdAt":""}"#.utf8))
+        #expect(flow.lastActivityAt == nil)
     }
 }

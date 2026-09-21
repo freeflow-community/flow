@@ -46,18 +46,16 @@ enum ProviderLinks {
 }
 
 /// The one strip a provider workspace gets at the top of a conversation: the
-/// live-updates state when the stream is paused, else the history limit's
-/// reason. Nothing renders for a Flow workspace.
+/// live-updates state when the stream is paused. The history limit is said on
+/// the "Load earlier messages" button. Nothing renders for a Flow workspace.
 struct ProviderNoticeView: View {
     let capabilities: Capabilities
     let streamDegraded: Bool
     let openURL: URL?
 
     private var text: String? {
-        if streamDegraded { return "Live updates paused; showing cached messages." }
-        let history = capabilities[.history]
-        if history.state == .limited { return history.reason }
-        return nil
+        // The history budget is said on "Load earlier messages" itself.
+        streamDegraded ? "Live updates paused; showing cached messages." : nil
     }
 
     var body: some View {
@@ -83,30 +81,23 @@ struct ProviderNoticeView: View {
     }
 }
 
-/// The transcript's top edge in a history-limited channel (#546): the wait,
-/// counted down, in place of a "Load earlier" that would only be refused.
+/// The transcript's top edge in a history-limited channel (#546): one button
+/// that says the budget, or counts down the wait, instead of a "Load earlier"
+/// that would only be refused.
 struct HistoryLimitFooter: View {
     let limit: AppState.HistoryLimit
-    let reason: String?
+    let capabilities: Capabilities
     let onLoadOlder: () -> Void
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             let wait = max(0, Int((limit.retryAfter ?? .distantPast).timeIntervalSince(timeline.date).rounded(.up)))
-            VStack(spacing: 4) {
-                Text(wait > 0
-                     ? "Slack asked Flow to wait \(wait)s before loading older messages."
-                     : (reason ?? "Older messages load one page at a time."))
-                    .font(.caption)
-                    .foregroundStyle(MC.faint)
-                    .multilineTextAlignment(.center)
-                Button("Load earlier messages", action: onLoadOlder)
-                    .font(.callout)
-                    .disabled(wait > 0)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .accessibilityIdentifier("msg.historyLimited")
+            Button(capabilities.loadOlderLabel(wait: wait), action: onLoadOlder)
+                .font(.callout)
+                .disabled(wait > 0)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .accessibilityIdentifier("msg.historyLimited")
         }
     }
 }

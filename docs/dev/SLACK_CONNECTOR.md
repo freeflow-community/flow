@@ -98,6 +98,12 @@ capability gating. A test compares it with the app manifest.
 | Verify identity | `auth.test` | User | None | None |
 | Send explicit test message | `chat.postMessage` | User | `chat:write` | None |
 | Grant lifecycle | None | User grant IDs | None | `tokens_revoked`, `app_uninstalled` |
+| View files (image previews, downloads) | `files.info` + `url_private` fetch | User | `files:read` | None |
+| Custom emoji images | `emoji.list` (images fetched without a token) | User | `emoji:read` | None |
+| Live profile and status changes | None | User | `users:read` | `user_change` |
+| Set the user's own status | `users.profile.set` | User | `users.profile:write` | None |
+| Workspace icon | `team.info` (image fetched without a token) | User | `team:read` | None |
+| Upload files | `files.getUploadURLExternal`, `files.completeUploadExternal`, `files.info` (find the share) | User | `files:write` | None |
 
 Only `chat:write` is requested. Workspace display names come from the OAuth
 response, and user names from `auth.test`; no directory/history scopes are
@@ -128,7 +134,19 @@ credential>`, never cookies. No endpoint accepts a Flow token as its identity.
 | `POST /v1/messages` | Explicit `{channel, text}` test send; no arbitrary methods, URLs, blocks, or author overrides |
 | `POST /slack/events` | Signed lifecycle events from Slack |
 | `GET /v1/events` | Grant-scoped lifecycle events, IDs for client deduplication; poll while the connection panel is open |
+| `GET /v1/files/:id[/thumb]` | Slack file bytes fetched with the user token from `files.slack.com` only; `/url` variants return `{url: null}` (always proxied). `emoji:<name>` ids serve custom emoji images, `team-icon:<teamId>` the workspace icon (`avatarUrl` of `GET /v1/workspace`) |
+| `PATCH /v1/me` | `{statusEmoji, statusText}` → sets the user's Slack status (unicode mapped to a Slack shortcode; unknown emoji refused) and returns a Flow-shaped user |
+| `POST /v1/files?channel=&name=` | Raw file bytes (≤ 50 MB, `Content-Type` = the file's type) → reserved Slack upload, bytes sent to Slack's pre-authorized upload URL; returns a FileDTO. Unshared until a send carries its id |
+| `GET /v1/conversations` → `lastActivityAt` | Newest known message per conversation (ISO or null). Learned from live message events, the latest history page a client loads, and a background check (`conversations.history`, limit 1): one call per 20 s tick at most, channels before group DMs before DMs, skipped for 2 minutes after anyone on the team loads history and while the budget is parked; rechecked weekly. Changes stream as `channel.activity` |
+| `GET /v1/workspaces/:teamId/emoji` | Custom emoji in Flow's `WorkspaceEmojiDTO` shape, aliases resolved, cached 10 minutes per team |
 | `GET /health` | Process health only |
+
+The Flow server advertises its connector at `GET /v1/client-info` as
+`slackConnectorOrigin` (from `SLACK_CONNECTOR_ORIGIN`, else the web build's
+`VITE_SLACK_CONNECTOR_ORIGIN`; https only, null when absent). The web client
+uses its build-time value; the native apps use `FLOW_SLACK_CONNECTOR_ORIGIN`
+or the `FlowSlackConnectorOrigin` Info.plist key when set, and otherwise what
+the server advertises — a shipped app has neither baked in.
 
 Do not execute a live message send without an explicit operator request. The web
 PoC intentionally has no send button. Later chat phases must add their own scope,

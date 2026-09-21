@@ -1,3 +1,4 @@
+import { isLookingAtApp, onLookingChange } from '../lib/host';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
@@ -37,7 +38,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const openUrl = backend.openUrl({ channelId });
   const limitedHistory = caps.history.state === 'limited';
   const historyError = messagesQ.error instanceof BackendError ? messagesQ.error : null;
-  const lastPage = messagesQ.data?.pages[messagesQ.data.pages.length - 1];
   const [retryAt, setRetryAt] = useState<number | null>(null);
   useEffect(() => {
     if (historyError?.code === 'rate_limited') setRetryAt(Date.now() + (historyError.retryAfterMs ?? 60_000));
@@ -49,6 +49,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
     const timer = window.setInterval(() => tick((n) => n + 1), 1000);
     return () => window.clearInterval(timer);
   }, [retryAt]);
+  // Slack's measured budget for this app: one history page a minute, 15 messages each.
+  const SLACK_HISTORY_PAGE = 15;
   const waitSeconds = retryAt === null ? 0 : Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
   const lastReadRef = useRef<string | null>(null);
   const [cardUserId, setCardUserId] = useState<string | null>(null);
@@ -84,7 +86,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const newestId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
     const sync = () => {
-      if (document.hidden) return;
+      if (!isLookingAtApp()) return;
       // A non-member previewing a public or archived channel (#588) has no
       // read cursor to move — the server would answer 403.
       if (channel && !channel.isMember) return;
@@ -94,8 +96,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       }
     };
     sync();
-    document.addEventListener('visibilitychange', sync);
-    return () => document.removeEventListener('visibilitychange', sync);
+    return onLookingChange(sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newestId, channelId, channel?.isMember]);
 
@@ -326,28 +327,6 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         </div>
       )}
 
-      {/* Provider-limited history (#545): say so, with the wait, instead of a
-          silent end of the transcript or a retry loop against the budget. */}
-      {limitedHistory && (historyError?.code === 'rate_limited' || messagesQ.hasNextPage || lastPage?.partial) && (
-        <div data-testid="history-limited" role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline bg-amber-50 px-[22px] py-1.5 text-xs text-ink-soft">
-          <span>
-            {historyError?.code === 'rate_limited'
-              ? waitSeconds > 0 ? `Slack asked Flow to wait ${waitSeconds}s before loading older messages.` : 'Slack is ready for the next page of history.'
-              : caps.history.reason}
-          </span>
-          {(messagesQ.hasNextPage || historyError) && (
-            <button
-              data-testid="history-load-older"
-              className="shrink-0 font-semibold text-accent-soft hover:underline disabled:opacity-40"
-              disabled={messagesQ.isFetchingNextPage || waitSeconds > 0}
-              onClick={() => void messagesQ.fetchNextPage()}
-            >
-              Load older
-            </button>
-          )}
-        </div>
-      )}
-
       {/* A provider with retention or read limits never gets to look like an
           empty, complete archive (#546): when its history is exhausted, say
           where the rest lives — at the old end, under the header, where the
@@ -370,6 +349,8 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         </div>
       )}
 
+      {/* Provider-limited history (#545) says so on the load button itself:
+          the page size, or the wait after a 429 — never a retry loop. */}
       {/* key: fresh list per channel so the mount effect re-runs — it restores
           this channel's remembered scroll position (or lands at the bottom when
           there's none / it's stale), keyed by channelId in scrollMemory. */}
@@ -379,8 +360,12 @@ export default function ChannelView({ channelId }: { channelId: string }) {
         messages={messages}
         names={names}
         membersById={memberMap}
-        hasMore={(messagesQ.hasNextPage ?? false) && !(limitedHistory && waitSeconds > 0)}
+        hasMore={(messagesQ.hasNextPage ?? false) || historyError?.code === 'rate_limited'}
         onLoadOlder={() => { if (!limitedHistory || waitSeconds === 0) void messagesQ.fetchNextPage(); }}
+        loadOlder={limitedHistory ? {
+          label: waitSeconds > 0 ? `Load earlier messages (wait ${waitSeconds}s)` : `Load earlier messages (${SLACK_HISTORY_PAGE} max/min)`,
+          disabled: waitSeconds > 0 || messagesQ.isFetchingNextPage,
+        } : undefined}
         showThreadAffordances
         readOnly={archived}
         unreadThreadRootIds={channel?.unreadThreadRootIds ?? []}

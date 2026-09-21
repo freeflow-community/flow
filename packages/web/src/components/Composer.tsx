@@ -2,7 +2,7 @@ import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FileDTO, MessageDTO } from '@flow/shared';
 import { emojiMatches } from '@flow/shared';
-import { api, uploadFile } from '../lib/api';
+import { api } from '../lib/api';
 import { transformOutgoing } from '../lib/format';
 import { decorate, domToText, getSelectionOffsets, rebuild, setCaretAt } from '../lib/composerDom';
 import { addDictationTranscript, exceedsMessageLength, type DictationDraft } from '../lib/dictationSession';
@@ -10,12 +10,13 @@ import { createDeferredEditorFocus } from '../lib/dictationFocus';
 import { useDictation } from '../lib/useDictation';
 import { useLive, useSelection } from '../state';
 import { useChannelMembers, useChannels, useEditMessage, useMembers, useSendMessage } from '../hooks';
-import { useCapabilities } from '../lib/backend';
+import { useBackend, useCapabilities } from '../lib/backend';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileImage } from './FileImage';
 import EmojiPicker from './EmojiPicker';
 import { ScheduleMessageModal } from './ScheduleMessageModal';
 import DictationButton from './DictationButton';
+import { isDesktop } from '../lib/host';
 
 interface DictationTransaction extends DictationDraft {
   ownerKey: string;
@@ -47,7 +48,8 @@ export default function Composer({
    * body loads here, Enter saves via PATCH, Esc/Cancel restores the draft. */
   editingMessage?: MessageDTO | undefined;
 }) {
-  const { api, uploadFile, scopedStorageKey, serverOrigin } = useBoundApi();
+  const { api, scopedStorageKey, serverOrigin } = useBoundApi();
+  const backend = useBackend();
   const draftKey = scopedStorageKey(`draft:${channelId}:${threadRootId ?? ''}`);
   const sel = useSelection();
   const live = useLive();
@@ -359,10 +361,16 @@ export default function Composer({
 
   const pickFiles = async (files: FileList | File[] | null) => {
     if (dictation.isActive || !files || !sel.workspaceId) return;
+    // Paste and drop reach here without the attach button's gate.
+    if (caps.files.state === 'unavailable') {
+      setError(caps.files.reason ?? 'File uploads are not available here.');
+      return;
+    }
     for (const file of Array.from(files)) {
       setUploading((v) => v + 1);
       try {
-        const dto = await uploadFile(sel.workspaceId, file);
+        // Through the backend: a Slack workspace uploads to Slack, never a Flow server.
+        const dto = await backend.uploadFile({ workspaceId: sel.workspaceId, channelId }, file);
         setAttachments((prev) => (prev.length < 10 ? [...prev, dto] : prev));
       } catch (err) {
         setError(err instanceof Error ? err.message : 'upload failed');
@@ -672,7 +680,10 @@ export default function Composer({
           )}
           <span className="ml-auto flex items-center gap-1">
             <DictationButton
-              supported={dictation.supported}
+              // Not in the desktop shell: Electron's Chromium exposes the
+              // speech API but ships no speech service behind it, so the
+              // button would appear and then fail on every press.
+              supported={dictation.supported && !isDesktop()}
               state={dictation.state}
               testId={`${testPrefix}-dictate`}
               onPointerDown={rememberSelection}

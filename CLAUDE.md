@@ -3,7 +3,7 @@
 - **Every feature or fix PR adds one file to `changelog/`** — named
   `YYYY-MM-DD-short-slug.md`, format in `changelog/README.md`: a `#` title,
   then succinct bullets with platform tags (`[server]` `[web]` `[macos]`
-  `[ios]` `[bridge]` `[qa]`). One file per PR, never edit another PR's file —
+  `[ios]` `[desktop]` `[bridge]` `[qa]`). One file per PR, never edit another PR's file —
   that is what makes concurrent PRs conflict-free. Do NOT append entries to
   CHANGELOG.md; its history is frozen in the `CHANGES_ARCHIVE_*.log` files.
   A shipped change with no entry file fails the QA close-out.
@@ -28,7 +28,7 @@
   omit the section. Mention a platform only when the feature is specific to
   it. `scripts/build-features.mjs` builds FEATURES.md (gitignored) from those
   sections on every web predev/prebuild and in `make-app.sh`.
-- **Every PR description carries a client-impact checklist.** List all four
+- **Every PR description carries a client-impact checklist.** List all five
   surfaces and tick the ones where someone should see a difference:
 
   ```
@@ -36,13 +36,14 @@
   - [ ] web client
   - [ ] macOS client
   - [ ] iOS client
+  - [ ] desktop client (Electron)
   - [ ] agent bridge
   ```
 
   Tick for *visible* impact — behaviour a person or an agent can observe —
   regardless of which layer the change lives in: a server-only change that
   alters what every client renders ticks three boxes, and a refactor behind an
-  unchanged surface ticks none. All four unticked is a legitimate answer that
+  unchanged surface ticks none. All five unticked is a legitimate answer that
   says "nothing to look at", not "I forgot". The point is that gaps get stated
   rather than inferred: an unticked box a reviewer expected ticked is exactly
   the divergence the CHANGELOG **Parity** section exists to track, and the

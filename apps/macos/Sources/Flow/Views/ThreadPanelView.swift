@@ -94,7 +94,7 @@ struct ThreadPanelView: View {
                         // views claim one `.id()` — and the leaving pending row
                         // wins, leaving the spinner up over a delivered message
                         // (#328) until something forces a remount.
-                        ForEach(thread.value, id: \.clientMsgId) { message in
+                        ForEach(thread.value, id: \.rowKey) { message in
                             MessageRow(
                                 message: message,
                                 userNames: userNames.value,
@@ -124,7 +124,7 @@ struct ThreadPanelView: View {
                             // optimistic reply row survives its server echo
                             // instead of remounting (and re-flashing its
                             // avatar placeholder).
-                            .id(message.clientMsgId)
+                            .id(message.rowKey)
                             if message.id == rootId {
                                 HStack {
                                     Text(replies.isEmpty

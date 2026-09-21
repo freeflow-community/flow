@@ -32,7 +32,7 @@ struct Capability: Codable, Equatable, Sendable {
 enum CapabilityName: String, Codable, CaseIterable, Sendable {
     case conversations, history, threads, send, edit, delete, reactions, files, search
     case readState, liveUpdates, typing, presence, pins, huddles, artifacts, agents, apps
-    case admin, scheduledMessages, notifications, channelManagement
+    case admin, scheduledMessages, notifications, channelManagement, status
 }
 
 struct Capabilities: Codable, Equatable, Sendable {
@@ -52,6 +52,14 @@ struct Capabilities: Codable, Equatable, Sendable {
 
     subscript(_ name: CapabilityName) -> Capability { values[name] ?? .unavailable("Not available for this workspace.") }
     func canUse(_ name: CapabilityName) -> Bool { self[name].usable }
+
+    /// The "Load earlier messages" label (#545). A limited history says its
+    /// budget on the button — the page size, or the wait Slack asked for —
+    /// instead of in a separate banner. Shared by the macOS and iOS lists.
+    func loadOlderLabel(wait: Int) -> String {
+        guard self[.history].state == .limited else { return "Load earlier messages" }
+        return wait > 0 ? "Load earlier messages (wait \(wait)s)" : "Load earlier messages (15 max/min)"
+    }
 
     /// A copy with one capability replaced.
     func overriding(_ name: CapabilityName, with value: Capability) -> Capabilities {
@@ -123,9 +131,14 @@ enum BackendEvent: Sendable {
     case threadReply(Message)
     case reactionChanged(channelId: String, messageId: String, emoji: String, userId: String, added: Bool)
     case channelUpdated(Channel)
+    /// A provider conversation's newest top-level message time moved (Slack).
+    case channelActivity(channelId: String, lastActivityAt: String)
     case channelRead(channelId: String, lastReadMsgId: String?)
     case typing(channelId: String, userId: String, threadRootId: String?)
     case presence(userId: String, online: Bool)
+    /// A member's profile changed (name, avatar, status). Replaces the cached
+    /// member; for the signed-in user it also replaces `currentUser`.
+    case memberUpdated(User)
     case authChanged(BackendAuthState)
     case capabilitiesChanged(Capabilities)
     /// The live stream is degraded: events may be missing until `resumesAt`.
@@ -174,9 +187,18 @@ protocol WorkspaceBackend: AnyObject, Sendable {
     func setReaction(channelId: String, messageId: String, emoji: String, on: Bool) async throws
     /// With `threadRootId` it means "I am looking at this thread".
     func markRead(channelId: String, messageId: String, threadRootId: String?) async throws
+    /// Set (or clear, with two empty strings) the signed-in user's status on
+    /// the provider. Returns the updated user.
+    func setStatus(emoji: String, text: String, suppressAlerts: Bool?) async throws -> User
 
     func uploadFile(workspaceId: String, channelId: String, data: Data, name: String, mimeType: String) async throws -> FileAttachment
     func fileURL(_ file: FileAttachment) -> URL?
+    /// Bytes for a Flow-shaped file path (`/v1/files/<id>` or `…/thumb`),
+    /// fetched from this provider with its own credential. Image loaders and
+    /// downloads for a provider workspace go through here, never the Flow API.
+    func fileData(path: String) async throws -> Data
+    /// One person's (or app's) profile for the profile card, in Flow's user shape.
+    func fetchUser(id: String) async throws -> User
 
     /// The normalized live stream. Finishes when the backend is torn down.
     func events() -> AsyncStream<BackendEvent>

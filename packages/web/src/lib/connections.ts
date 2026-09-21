@@ -18,6 +18,7 @@
 // backends that hand out deliberately colliding user/workspace UUIDs still get
 // disjoint namespaces.
 import { slackIdentityKey, type SlackConnection } from './slackConnector';
+import { getHost } from './host';
 import { canonicalizeOrigin, originLabel, type ConnectionProvider } from './serverOrigin';
 
 export const REGISTRY_KEY = 'flow.connections';
@@ -66,6 +67,9 @@ export interface WorkspaceBinding {
   userId: string;
   workspaceId: string;
   name: string;
+  /** The workspace's avatar path on its own backend, so a switcher can draw it
+   * while another connection is on screen. */
+  avatarUrl?: string | null;
   hidden?: boolean;
   order?: number;
 }
@@ -360,6 +364,9 @@ const NAMESPACED_NAMES = [
 ];
 
 export function clearNamespace(storageKey: string): void {
+  // The bearer lives wherever the host keeps credentials (the OS store on
+  // desktop), never only in localStorage.
+  getHost().secrets.delete(credentialRefFor(storageKey));
   for (const name of NAMESPACED_NAMES) localStorage.removeItem(scopedKey(storageKey, name));
   const prefixes = ['draft:', 'navigation:', 'scroll:'].map(name => scopedKey(storageKey, name));
   for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -403,7 +410,7 @@ export function migrateLegacyState(origin: string = location.origin): Connection
     credentialRef: LEGACY_TOKEN_KEY,
     storageKey: LEGACY_STORAGE_KEY,
     authGeneration: 0,
-    status: localStorage.getItem(LEGACY_TOKEN_KEY) ? 'authenticated' : 'signed-out',
+    status: getHost().secrets.get(LEGACY_TOKEN_KEY) ? 'authenticated' : 'signed-out',
   };
   const registry: ConnectionRegistry = {
     ...base,

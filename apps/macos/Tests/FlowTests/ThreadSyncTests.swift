@@ -212,6 +212,56 @@ final class ThreadSyncTests: XCTestCase {
         XCTAssertNotNil(try message(db, "r001"))
     }
 
+    // MARK: Key-less provider messages (#620)
+
+    /// Slack app/bot replies arrive with an empty `clientMsgId`. A live one
+    /// used to "reconcile" against every other key-less row in the channel —
+    /// deleting the rest of the thread it was replying to.
+    func testALiveKeylessReplyDeletesNoOtherKeylessMessage() async throws {
+        server = try StubHTTPServer { _, _ in .json("{\"ok\":true}") }
+        let (engine, db) = try makeEngine(server.url)
+        try insertChannel(db)
+        try insertMessage(db, id: "m-root", clientMsgId: "", replyCount: 1)
+        try insertMessage(db, id: "r001", clientMsgId: "", threadRootId: "m-root")
+
+        let reply = Message(
+            id: "r002", channelId: "c1", userId: "u2", threadRootId: "m-root", clientMsgId: "",
+            body: "app reply", createdAt: "2026-08-24T00:00:02.000Z", editedAt: nil, deletedAt: nil,
+            replyCount: 0, lastReplyAt: nil, pending: false
+        )
+        await engine.apply(.threadReply(reply))
+
+        XCTAssertNotNil(try message(db, "m-root"), "a key-less reply deleted its own root")
+        XCTAssertNotNil(try message(db, "r001"), "a key-less reply deleted its sibling")
+        XCTAssertNotNil(try message(db, "r002"))
+        XCTAssertEqual(try message(db, "m-root")?.replyCount, 2, "the new reply wasn't counted as new")
+    }
+
+    /// The same guard on the bulk path: a history page of key-less rows
+    /// doesn't sweep a key-less failed row that is not its twin.
+    func testAKeylessHistoryRowSweepsNoUnrelatedFailedRow() async throws {
+        server = try StubHTTPServer { _, target in
+            target.hasPrefix("/v1/messages/m-root/thread")
+                ? .json(Self.threadJSON(
+                    rootReplyCount: 1,
+                    replies: [Self.messageJSON(id: "r001", clientMsgId: "", threadRootId: "m-root")],
+                    hasMore: false))
+                : .json("{\"ok\":true}")
+        }
+        let (engine, db) = try makeEngine(server.url)
+        try insertChannel(db)
+        try insertMessage(db, id: "m-root", replyCount: 1)
+        try insertMessage(
+            db, id: "local-1", clientMsgId: "", threadRootId: "m-root",
+            createdAt: iso(minutesAgo: 10), pending: false, failed: true
+        )
+
+        await engine.openThread(rootId: "m-root")
+
+        XCTAssertNotNil(try message(db, "local-1"), "an unrelated failed row was swept by an empty key")
+        XCTAssertNotNil(try message(db, "r001"))
+    }
+
     // MARK: The failure UPDATE
 
     /// Acceptance 3: the WS echo confirms the send, then the POST times out.

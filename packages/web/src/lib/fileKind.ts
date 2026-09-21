@@ -1,6 +1,7 @@
 // File-type detection shared by chat attachments (MessageList) and the
 // artifact panel (phase 9). Mime first, extension as fallback.
 import type { FileDTO } from '@flow/shared';
+import { isSpreadsheetFile } from './spreadsheet';
 
 /** Everything here keys off name + mime, so callers with a lighter row than a
  * full FileDTO (the channel Files panel, #347) can use it too. */
@@ -64,6 +65,7 @@ export function fileGlyph(file: FileDTO | null): string {
   if (isVideoFile(file)) return '🎬';
   if (file.mimeType === 'application/pdf') return '📕';
   if (isHtmlFile(file)) return '🌐';
+  if (isSpreadsheetFile(file)) return '📊';
   if (isTextFile(file)) return '📝';
   return '📄';
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BackendError } from '@flow/shared';
+import { BackendError, hiddenAsInactive } from '@flow/shared';
 import type { ConnectionRuntime } from '../connectionRuntime';
 import { SlackBackend, shortcodeFor, slackCapabilities } from './slackBackend';
 
@@ -14,10 +14,10 @@ const message = (id = TS, extra: Record<string, unknown> = {}) => ({ id, channel
 
 type Reply = { status?: number; body?: unknown; headers?: Record<string, string> };
 function mockFetch(routes: Record<string, Reply | ((init: RequestInit) => Reply)>) {
-  const calls: { path: string; method: string; body?: unknown }[] = [];
+  const calls: { path: string; method: string; body?: unknown; headers?: Record<string, string> }[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname + new URL(url).search;
-    calls.push({ path, method: init.method ?? 'GET', body: init.body ? JSON.parse(String(init.body)) : undefined });
+    calls.push({ path, method: init.method ?? 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body, headers: init.headers as Record<string, string> });
     const key = Object.keys(routes).find((k) => path.startsWith(k));
     const reply = key ? (typeof routes[key] === 'function' ? (routes[key] as (i: RequestInit) => Reply)(init) : routes[key]!) : { status: 404, body: { error: 'not_found' } };
     return new Response(JSON.stringify(reply.body ?? {}), { status: reply.status ?? 200, headers: { 'content-type': 'application/json', ...(reply.headers ?? {}) } });
@@ -87,6 +87,43 @@ describe('SlackBackend', () => {
     expect(backend.dropped).toBe(2);
   });
 
+  it('a member.updated event reaches subscribers and refreshes the member behind me(); status is gated by the scope', async () => {
+    const bob = { userId: 'U1', displayName: 'alice', email: '', avatarUrl: null, statusEmoji: '', statusText: '', title: '', isAgent: false, isBot: false, sponsorId: null, privacyMode: false, role: 'member', joinedAt: '' };
+    mockFetch({
+      '/v1/members': { body: { members: [bob] } },
+      '/v1/connection': { body: { identity: { userId: 'U1' }, teamName: 'Acme', userName: 'alice', capabilities: connection.capabilities, grantStatus: 'active' } },
+      '/v1/stream': { body: { events: [{ type: 'member.updated', member: { ...bob, statusEmoji: '🤒', statusText: 'Out sick' } }, { type: 'member.updated', member: { userId: 'U2' } }], seq: 2, gap: false } },
+      '/v1/events': { body: { events: [] } },
+    });
+    const backend = new SlackBackend(runtime(), connection, { autoPoll: false });
+    await backend.listMembers();
+    const seen: string[] = [];
+    const unsubscribe = backend.subscribe((event) => seen.push(event.type));
+    await backend.pollOnce();
+    unsubscribe();
+    expect(seen).toEqual(['member.updated']);
+    expect(backend.dropped).toBe(1);
+    expect((await backend.me()).statusText).toBe('Out sick');
+    expect(slackCapabilities({}).status.state).toBe('unavailable');
+    expect(slackCapabilities({ setStatus: true }).status.state).toBe('supported');
+  });
+
+  it('uploads raw bytes to the connector for the channel, and the send shares them by id', async () => {
+    const file = { id: 'F0UPLOAD1', workspaceId: 'T1', userId: 'U1', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 5, width: null, height: null, hasThumb: false, createdAt: '' };
+    const calls = mockFetch({ '/v1/files': { body: file }, '/v1/messages': { body: { message: message() } } });
+    const backend = new SlackBackend(runtime(), { ...connection, capabilities: { ...connection.capabilities, files: true } }, { autoPoll: false });
+    const blob = new Blob(['hello'], { type: 'text/plain' });
+    expect(await backend.uploadFile({ workspaceId: 'T1', channelId: 'C1' }, Object.assign(blob, { name: 'notes.txt' }))).toEqual(file);
+    expect(calls[0]!.path).toBe('/v1/files?channel=C1&name=notes.txt');
+    expect(calls[0]!.headers?.['content-type']).toBe('text/plain');
+    expect(calls[0]!.body).toBeInstanceOf(Blob);
+    await backend.send({ channelId: 'C1', body: '', clientMsgId: 'cm-12345678', fileIds: ['F0UPLOAD1'] });
+    expect(calls[1]!.body).toMatchObject({ channel: 'C1', text: '', file_ids: ['F0UPLOAD1'] });
+
+    const without = new SlackBackend(runtime(), connection, { autoPoll: false });
+    await expect(without.uploadFile({ workspaceId: 'T1', channelId: 'C1' }, blob)).rejects.toMatchObject({ code: 'unsupported' });
+  });
+
   it('a 401 flips auth to reauthorization_required and tells subscribers', async () => {
     mockFetch({ '/v1/conversations': { status: 401, body: { error: 'revoked' } } });
     const backend = new SlackBackend(runtime(), connection);
@@ -96,5 +133,22 @@ describe('SlackBackend', () => {
     expect(backend.auth().status).toBe('reauthorization_required');
     expect(backend.auth().detail).toMatch(/revoked/i);
     expect(events).toContain('auth.changed');
+  });
+});
+
+describe('hiddenAsInactive', () => {
+  const now = Date.parse('2026-09-15T12:00:00.000Z');
+  const days = (n: number) => new Date(now - n * 86_400_000).toISOString();
+  const slack = (over: Record<string, unknown> = {}) => ({ id: 'C1', workspaceId: 'T1', name: 'eng', kind: 'standard', topic: null, isPrivate: false, createdBy: '', createdAt: '', archivedAt: null, isMember: true, lastReadMsgId: null, unreadCount: 0, unreadNotifications: 0, unreadThreadRootIds: [], notifyLevel: 1, parentId: null, provenance: { provider: 'slack' as const, openUrl: null }, lastActivityAt: null, ...over }) as unknown as Parameters<typeof hiddenAsInactive>[0];
+  it('hides a Slack conversation unless it is known active, unread, or open', () => {
+    expect(hiddenAsInactive(slack(), null, now)).toBe(true);
+    expect(hiddenAsInactive(slack({ lastActivityAt: days(29) }), null, now)).toBe(false);
+    expect(hiddenAsInactive(slack({ lastActivityAt: days(31) }), null, now)).toBe(true);
+    expect(hiddenAsInactive(slack({ unreadCount: 2 }), null, now)).toBe(false);
+    expect(hiddenAsInactive(slack({ unreadNotifications: 1 }), null, now)).toBe(false);
+    expect(hiddenAsInactive(slack(), 'C1', now)).toBe(false);
+  });
+  it('never hides a Flow channel', () => {
+    expect(hiddenAsInactive(slack({ provenance: undefined }), null, now)).toBe(false);
   });
 });

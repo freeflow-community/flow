@@ -8,9 +8,11 @@ import type {
   WorkspaceDTO,
 } from '@flow/shared';
 import { api, scopedStorageKey } from '../lib/api';
-import { loadGoogleIdentity, publicConfig } from '../lib/google';
+import { desktopGoogleSignIn, loadGoogleIdentity, publicConfig } from '../lib/google';
+import { isDesktop } from '../lib/host';
 import { MAC_DOWNLOAD_URL } from './OpenInApp';
 import { openServerConnections } from './ServerConnections';
+import { useRuntime } from '../state';
 
 type Mode =
   | 'signin'
@@ -33,7 +35,72 @@ const submitCls =
  * until /v1/config says Google is configured — with GOOGLE_CLIENT_ID unset the
  * deployment shows no Google affordance at all.
  */
-export function GoogleButton({
+export function GoogleButton(props: {
+  onSignedIn: (r: GoogleAuthResponse) => void;
+  showDivider: boolean;
+}) {
+  return isDesktop() ? <DesktopGoogleButton {...props} /> : <BrowserGoogleButton {...props} />;
+}
+
+/** The desktop shell cannot host Google's sign-in (see `desktopGoogleSignIn`):
+ * one plain button that sends the person to the system browser and waits. */
+function DesktopGoogleButton({
+  onSignedIn,
+  showDivider,
+}: {
+  onSignedIn: (r: GoogleAuthResponse) => void;
+  showDivider: boolean;
+}) {
+  const runtime = useRuntime();
+  const [config, setConfig] = useState<PublicConfigDTO | null>(null);
+  const [waiting, setWaiting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const operation = useRef<AbortController | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void publicConfig(runtime).then((cfg) => { if (alive) setConfig(cfg); });
+    return () => { alive = false; operation.current?.abort(); };
+  }, [runtime]);
+  if (!config?.google) return null;
+  const start = () => {
+    operation.current?.abort();
+    const controller = new AbortController();
+    operation.current = controller;
+    setWaiting(true);
+    setError(null);
+    desktopGoogleSignIn(runtime, controller.signal).then(onSignedIn, (err: unknown) => {
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Google sign-in failed');
+    }).finally(() => { if (operation.current === controller) setWaiting(false); });
+  };
+  return (
+    <div data-testid="auth-google">
+      {showDivider && (
+        <div className="my-3 flex items-center gap-2 text-xs text-faint">
+          <span className="h-px flex-1 bg-hairline2" />
+          or
+          <span className="h-px flex-1 bg-hairline2" />
+        </div>
+      )}
+      <button
+        type="button"
+        data-testid="auth-google-desktop"
+        className="mb-2 w-full rounded border border-hairline2 py-2 text-sm font-semibold text-ink hover:bg-base disabled:opacity-50"
+        disabled={waiting}
+        onClick={start}
+      >
+        {waiting ? 'Waiting for your browser…' : 'Continue with Google'}
+      </button>
+      {waiting && (
+        <button type="button" className="mb-2 w-full text-xs text-muted hover:text-ink" onClick={() => operation.current?.abort()}>
+          Cancel
+        </button>
+      )}
+      {error && <p className="mt-2 text-center text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function BrowserGoogleButton({
   onSignedIn,
   showDivider,
 }: {
@@ -481,13 +548,13 @@ export default function AuthScreen({
       >
         Workspaces &amp; servers…
       </button>
-      <a
+      {!isDesktop() && <a
         data-testid="download-mac-app"
         href={MAC_DOWNLOAD_URL}
         className="text-sm font-semibold text-accent-soft hover:underline"
       >
         Download the Mac app ↓
-      </a>
+      </a>}
     </div>
   );
 }

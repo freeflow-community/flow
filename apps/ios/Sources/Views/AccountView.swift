@@ -74,6 +74,9 @@ struct AccountSheet: View {
                         .accessibilityIdentifier("status.clear")
                     }
                 }
+                // A Slack grant without users.profile:write shows the status in
+                // the header but has no picker (#546 gating, web parity).
+                .hiddenUnless(.status, in: app.capabilities)
 
                 Section {
                     NavigationLink {

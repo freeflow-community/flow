@@ -12,20 +12,38 @@ This file keeps two things:
 
 ## Parity
 
-- Slack chat (#545, #546) is on web, macOS and iOS: Connect Slack, channels, DMs, limited history, threads, send/edit/delete, live updates, capability gating. Two deliberate platform constraints remain: **Slack alerts reach a client only while it is open** on every platform (no connector→push route exists; design recorded in `docs/dev/SLACK_CONNECTOR.md`), and **the iOS share extension sends text only** to a Slack team (file upload needs a scope the app is not granted). The agent bridge has no Slack backend, by design: it speaks to one Flow server per process.
+- Slack chat (#545, #546) is on web, macOS and iOS: Connect Slack, channels, DMs, limited history, threads, send/edit/delete, live updates, capability gating. Two deliberate platform constraints remain: **Slack alerts reach a client only while it is open** on every platform (no connector→push route exists; design recorded in `docs/dev/SLACK_CONNECTOR.md`), and **the iOS share extension sends text only** to a Slack team (the apps upload files to Slack since the connector gained `files:write`; the extension still uses its own Flow presign path — a gap to close). The agent bridge has no Slack backend, by design: it speaks to one Flow server per process.
 - Multi-server huddles (#541): web leaves the room when switching server; native keeps it running with a return control. Both limit the client to one joined room.
-- Web composer dictation (#594) is web only, by design: it wraps the browser's SpeechRecognition API, while macOS and iOS already get system dictation in their text fields (Fn-Fn / keyboard mic). Native in-app dictation would need separate Speech framework work, and no ticket asks for it.
+- Web composer dictation (#594) is browser-web only, by design: it wraps the browser's SpeechRecognition API, while macOS and iOS already get system dictation in their text fields (Fn-Fn / keyboard mic). **The desktop (Electron) app hides the mic button**: Electron's Chromium exposes the API but has no speech service behind it, and macOS/Windows system dictation works in its text fields anyway. Native in-app dictation would need separate Speech framework work, and no ticket asks for it.
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
-- **One workspace list across connections is web only.** The web sidebar menu
-  and chooser list Slack teams and other servers' workspaces, and Workspaces &
-  servers puts Slack teams in the server list; the macOS and iOS switchers were
-  not changed.
+- **Spreadsheet previews are web + desktop only.** A message with an xlsx,
+  ods or csv attachment shows a grid and opens a full reader with sheet tabs
+  on web (and so in the Electron shell); macOS and iOS show the plain file
+  chip. Closing it needs a native parser (CoreXLSX or similar) and a grid
+  view; no ticket asks for it yet.
+- **The desktop (Electron) client signs in, chats and notifies; no installer
+  yet** (`docs/specs/desktop-electron.md` M1–M3). It runs from source on
+  macOS, Windows and Linux with OS banners, an app badge summed across
+  connections, and a tray on Windows/Linux. Still open (M4–M5): screen-share
+  picker, downloads to the Downloads folder (a save dialog today), mini-app
+  windows, multi-window, installers and the updater. Two banner gaps against
+  macOS: **banners come from the foreground connection only** (the web client
+  raises none for background servers; macOS banners every connection), and
+  **Windows shows a dot, not a number**, on the taskbar (no numeric badge API).
+  The macOS parity items it closes: registration and password reset in-app,
+  Google through the system browser, credentials in the OS store, and the
+  channel name as a banner subtitle (#460).
+- **One workspace list across connections is not on iOS.** Web and macOS list
+  every connection's workspaces (Slack teams and other servers) on the rail, in
+  the sidebar menu and in the chooser; the iOS drawer still shows only the
+  foreground connection's.
 - **The channel Docs list is searchable and collapsible on web only** (#574).
   macOS and iOS list a channel's artifacts as a plain run of rows with no
-  group header, filter or fold. Closing it is the same `DocsGroup` shape in
-  each native sidebar; no ticket asks for it yet.
+  group header, filter or fold. Web now matches that for one to three docs
+  and shows the header from four up. Closing it is the same `DocsGroup` shape
+  in each native sidebar; no ticket asks for it yet.
 - **The aggregate switcher badge has no bridge equivalent** (#542). The agent
   bridge speaks to one backend per process, so "how much is waiting on your
   other servers" has no meaning there yet. Closing it needs a bridge-side
@@ -158,7 +176,10 @@ This file keeps two things:
   the literal text `:shortcode:` rather than the image. The reaction itself is
   correct everywhere (count, who reacted, notifications) — only the glyph is
   missing. Each client needs to fetch `GET /v1/workspaces/:id/emoji` and swap in
-  the image. Custom emoji inline in *message text* is unbuilt on every client.
+  the image (the Slack connector serves the same route, so one port covers
+  Slack teams too). Custom emoji inline in *message text* are web-only as well.
+- Emoji inside message text draw at 1.4x the text size on web only (Slack's
+  look); macOS and iOS still draw them at text size.
 - Scroll-position memory exists on no client: leaving a channel mid-history and
   coming straight back always re-opens at the newest message. Tried on iOS
   (#159) and removed — tracking the on-screen row needs per-row geometry, which

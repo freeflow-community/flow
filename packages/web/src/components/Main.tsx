@@ -14,6 +14,7 @@ import type {
   NotificationDTO,
   TypingData,
   PresenceData,
+  WorkspaceMemberDTO,
 } from '@flow/shared';
 import { applyMessageEvent, removeMessageFromCache } from '../lib/messageCache';
 import { applyChannelEmoji, applyHuddle, applyIndicator } from '../lib/channelCache';
@@ -24,7 +25,12 @@ import { SocketClient, type SocketStatus } from '../lib/ws';
 import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, CHANNEL_BROWSER_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useRuntime, useSelection } from '../state';
 import { HuddleProvider, useHuddle, type HuddleState } from '../huddle';
-import { useNameMap, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { useNameMap, useSwitcherEntries, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { getHost, isLookingAtApp, onLookingChange } from '../lib/host';
+import { useConnectionSync } from '../lib/backgroundSync';
+import type { NotificationRouting } from '@flow/shared';
+import { openWorkspace } from '../lib/workspaceSwitcher';
+import { connectionManager } from '../lib/connectionRuntime';
 import Sidebar from './Sidebar';
 import ChannelView from './ChannelView';
 import AdminView from './AdminView';
@@ -86,10 +92,46 @@ export default function Main() {
   namesRef.current = names;
 
   useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
+    if (!getHost().isDesktop && 'Notification' in window && Notification.permission === 'default') {
       void Notification.requestPermission();
     }
   }, []);
+
+  // A banner click lands here (docs/specs/desktop-electron.md, "Notifications"):
+  // the same navigation the in-app Activity row does, then the row is read.
+  // Registered once; the ref keeps it pointed at the current selection.
+  useEffect(() => {
+    return getHost().notifications.onClick((routing: NotificationRouting) => {
+      if (routing.routingId !== runtime.connectionId) return; // another connection's banner
+      const s = selRef.current;
+      if (s.workspaceId !== routing.workspaceId) s.selectWorkspace(routing.workspaceId);
+      s.jumpToMessage(routing.channelId, routing.messageId, routing.threadRootId);
+      void api('POST', '/v1/me/notifications/read', { id: routing.notificationId }).then(() =>
+        qc.invalidateQueries({ queryKey: ['notifications'] }),
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime.connectionId]);
+
+  // The app badge (dock, taskbar, launcher): unread notifications across
+  // every connection — this one's per-workspace numbers plus what the
+  // background supervisor reports for the others — the sum
+  // `refreshAggregateBadge()` computes on macOS. Re-asked when the window
+  // comes back to the front, so a count that moved on the phone catches up.
+  const workspacesForBadge = useWorkspaces();
+  const syncStates = useConnectionSync();
+  useEffect(() => {
+    if (!getHost().isDesktop) return;
+    const own = (workspacesForBadge.data ?? []).reduce((sum, ws) => sum + (ws.unreadCount ?? 0), 0);
+    const others = syncStates.filter((s) => s.connectionId !== runtime.connectionId).reduce((sum, s) => sum + s.unread, 0);
+    getHost().badge.set(own + others);
+  }, [workspacesForBadge.data, syncStates, runtime.connectionId]);
+  useEffect(() => {
+    if (!getHost().isDesktop) return;
+    return onLookingChange(() => {
+      if (isLookingAtApp()) void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    });
+  }, [qc]);
 
   // The Activity badge counts this workspace only — the feed behind it is
   // scoped the same way. Refetched on every workspace switch, and whenever the
@@ -169,6 +211,13 @@ export default function Main() {
           case 'channel.updated':
             void qc.invalidateQueries({ queryKey: ['channels'] });
             break;
+          case 'channel.activity':
+            // Patched in place: a sidebar row may unfold, and a list refetch
+            // per message would spend the provider's conversation budget.
+            qc.setQueriesData<{ channels: ChannelDTO[] }>({ queryKey: ['channels'] }, (data) =>
+              data ? { ...data, channels: data.channels.map((c) => (c.id === event.channelId ? { ...c, lastActivityAt: event.lastActivityAt } : c)) } : data,
+            );
+            break;
           case 'stream.degraded':
             setStatus('reconnecting');
             break;
@@ -193,6 +242,22 @@ export default function Main() {
               ...(current.threadRootId ? [qc.invalidateQueries({ queryKey: ['thread', current.threadRootId] })] : []),
             ];
             void Promise.all(scoped).finally(() => setCatchUpCount((n) => Math.max(0, n - 1)));
+            break;
+          }
+          case 'member.updated': {
+            // Patch the roster in place: a refetch per profile change would spend
+            // the provider's member-list budget on every status anyone sets.
+            const { member } = event;
+            // A sender the roster has not seen yet (a Slack app's first message) is added.
+            for (const [key, data] of qc.getQueriesData<{ members: WorkspaceMemberDTO[] }>({ queryKey: ['members'] })) {
+              if (!data) continue;
+              const known = data.members.some((m) => m.userId === member.userId);
+              qc.setQueryData(key, { ...data, members: known ? data.members.map((m) => (m.userId === member.userId ? member : m)) : [...data.members, member] });
+            }
+            const current = authRef.current;
+            if (member.userId === current.user.id) {
+              current.setUser({ ...current.user, displayName: member.displayName, avatarUrl: member.avatarUrl, statusEmoji: member.statusEmoji, statusText: member.statusText, title: member.title });
+            }
             break;
           }
           case 'auth.changed':
@@ -455,7 +520,7 @@ export default function Main() {
         // path uses (threadRootId IS NULL).
         const viewing =
           n.channelId === cur.channelId &&
-          !document.hidden &&
+          isLookingAtApp() &&
           (n.message.threadRootId == null || n.message.threadRootId === cur.threadRootId);
         if (viewing) {
           // Read it now (issue #63): messages clear via the read cursor, but a
@@ -503,11 +568,13 @@ export default function Main() {
     }
   }
 
+  /** An OS banner through the host: the browser's Notification API in a tab,
+   * the shell's notifier on desktop (docs/specs/desktop-electron.md). What
+   * qualifies is decided here and on the server, never by the shell. */
   function maybeBanner(n: NotificationDTO): void {
-    if (!('Notification' in window) || Notification.permission !== 'granted') return;
     // phase 10: the server computed the alert decision (prefs + status)
     if (n.suppressAlert) return;
-    if (!document.hidden && n.channelId === selRef.current.channelId) return;
+    if (isLookingAtApp() && n.channelId === selRef.current.channelId) return;
     // The actor is the reactor for kind 4, the author otherwise.
     const sender = namesRef.current[n.actorId ?? n.message.userId] ?? 'Someone';
     const title =
@@ -516,32 +583,29 @@ export default function Main() {
       : n.kind === 4 ? `${sender} reacted ${n.reactionEmoji ?? ''}`.trim()
       : n.kind === 5 ? `${sender} added you to a channel`
       : `${sender} mentioned you`;
-    try {
-      const banner = new Notification(title, {
-        body: plainBody(n.message.body, namesRef.current),
-        tag: n.id,
-        // presentation pref: persist until dismissed (browser permitting)
-        requireInteraction: authRef.current.user.notificationPrefs.persistentBanners === true,
-        // #251: the same `sound` pref the phone honours. Chromium respects
-        // `silent`; the browsers that don't were never going to make a noise
-        // here anyway, so the pref costs nothing where it is ignored.
-        silent: authRef.current.user.notificationPrefs.sound === false,
-      });
-      // Clicking the OS banner should focus this tab and jump straight to the
-      // triggering message — same navigation the in-app Activity list does.
-      banner.onclick = () => {
-        window.focus();
-        banner.close();
-        const s = selRef.current;
-        if (s.workspaceId !== n.workspaceId) s.selectWorkspace(n.workspaceId);
-        s.jumpToMessage(n.channelId, n.messageId, n.message.threadRootId);
-        void api('POST', '/v1/me/notifications/read', { id: n.id }).then(() =>
-          qc.invalidateQueries({ queryKey: ['notifications'] }),
-        );
-      };
-    } catch {
-      /* banner is best-effort */
-    }
+    // Name the conversation (#460's subtitle): the channel when it has a
+    // name; a DM already names its sender in the title.
+    const channel = qc.getQueryData<{ channels: ChannelDTO[] }>(['channels', n.workspaceId])?.channels.find((c) => c.id === n.channelId);
+    const prefs = authRef.current.user.notificationPrefs;
+    getHost().notifications.show({
+      id: n.id,
+      title,
+      ...(channel?.name ? { subtitle: `#${channel.name}` } : {}),
+      body: plainBody(n.message.body, namesRef.current),
+      // #251: the same `sound` pref the phone honours.
+      silent: prefs.sound === false,
+      // Browser only: keep the banner up until dismissed (the desktop shell
+      // leaves that to the OS, as macOS and iOS do).
+      ...({ persistent: prefs.persistentBanners === true } as object),
+      routing: {
+        routingId: runtime.connectionId,
+        workspaceId: n.workspaceId,
+        channelId: n.channelId,
+        messageId: n.messageId,
+        threadRootId: n.message.threadRootId ?? null,
+        notificationId: n.id,
+      },
+    });
   }
 
   const live = useMemo(
@@ -660,10 +724,32 @@ function HuddleWiring({
   return null;
 }
 
+/** Marks a Slack team on the rail: a small corner tag, so it reads as Slack
+ * without covering the unread badge on the opposite corner. */
+function RailSlackMark({ ringColor }: { ringColor: string }) {
+  return (
+    <span
+      data-testid="rail-slack-mark"
+      aria-hidden="true"
+      className="pointer-events-none absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white"
+      style={{ boxShadow: `0 0 0 2px ${ringColor}` }}
+    >
+      {/* Slack's four-colour hash, reduced to four bars. */}
+      <svg viewBox="0 0 12 12" className="h-3 w-3">
+        <rect x="2.6" y="0.5" width="2.2" height="11" rx="1.1" fill="#36C5F0" />
+        <rect x="7.2" y="0.5" width="2.2" height="11" rx="1.1" fill="#2EB67D" />
+        <rect x="0.5" y="2.6" width="11" height="2.2" rx="1.1" fill="#ECB22E" />
+        <rect x="0.5" y="7.2" width="11" height="2.2" rx="1.1" fill="#E01E5A" />
+      </svg>
+    </span>
+  );
+}
+
 /** Design 3a column 1: the 64px violet workspace rail. */
 function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp: () => void }) {
   const sel = useSelection();
   const workspaces = useWorkspaces();
+  const switcher = useSwitcherEntries();
   const activeWs = (workspaces.data ?? []).find((w) => w.id === sel.workspaceId);
   const railBg = sidebarColor(activeWs?.sidebarColor).rail;
   const invites = (useWorkspaceInvites().data ?? []).length;
@@ -672,24 +758,33 @@ function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp
       className="flex w-16 shrink-0 flex-col items-center gap-3.5 py-4"
       style={{ background: railBg }}
     >
-      {(workspaces.data ?? []).map((w) => {
-        const active = w.id === sel.workspaceId;
-        // Unread across this workspace's channels (#345). Rides the workspace
-        // list, so it's live for every workspace — including the ones not on
-        // screen, which is the whole point of the badge.
-        const unread = w.unreadCount ?? 0;
+      {/* Every connection's workspaces (#592): Slack teams and other Flow
+          servers sit on the rail with this one's, and picking one on another
+          connection switches this window to it. */}
+      {switcher.map((e) => {
+        // The foreground connection's live row carries avatar and slug.
+        const w = e.foreground ? (workspaces.data ?? []).find((ws) => ws.id === e.workspaceId) : undefined;
+        const active = e.foreground && e.workspaceId === sel.workspaceId;
+        const avatarUrl = w ? w.avatarUrl : e.avatarUrl;
+        // Another connection's avatar is fetched from, and authorized by, that server.
+        const avatarRuntime = e.foreground ? undefined : connectionManager().runtime(e.connectionId) ?? undefined;
+        const testKey = w?.slug ?? e.workspaceId;
+        // Unread across this workspace's channels (#345): live for the
+        // foreground connection, from background sync for the others.
+        const unread = e.unread;
+        const where = e.provider === 'slack' ? ' (Slack)' : e.foreground ? '' : ` (${e.source})`;
         // With an avatar (#336) the image *is* the mark, so "active" can't be
         // the white fill any more — a white ring plus full opacity says it.
         return (
           // The badge overhangs the icon's corner, so it can't live inside the
           // button — that one clips its children (overflow-hidden, for round
           // avatars). The wrapper is what it's positioned against.
-          <div key={w.id} className="relative">
+          <div key={`${e.connectionId}:${e.workspaceId}`} className="relative">
             <button
-              data-testid={`rail-workspace-${w.slug}`}
-              title={unread > 0 ? `${w.name} — ${unread} unread` : w.name}
+              data-testid={`rail-workspace-${testKey}`}
+              title={`${e.name}${where}${unread > 0 ? ` — ${unread} unread` : ''}`}
               className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ${
-                w.avatarUrl
+                avatarUrl
                   ? active
                     ? 'ring-2 ring-white'
                     : 'opacity-70 hover:opacity-100'
@@ -697,15 +792,20 @@ function WorkspaceRail({ showHelp, onOpenHelp }: { showHelp: boolean; onOpenHelp
                     ? 'bg-white text-[17px] font-extrabold text-accent'
                     : 'bg-white/15 text-sm font-bold text-white hover:bg-white/25'
               }`}
-              onClick={() => { if (!active) sel.selectWorkspace(w.id); }}
+              onClick={() => {
+                if (active) return;
+                if (e.foreground) sel.selectWorkspace(e.workspaceId);
+                else openWorkspace(e.connectionId, e.workspaceId);
+              }}
             >
-              {w.avatarUrl ? (
-                <AuthImg path={w.avatarUrl} alt={w.name} className="h-10 w-10 object-cover" />
+              {avatarUrl ? (
+                <AuthImg path={avatarUrl} alt={e.name} className="h-10 w-10 object-cover" runtime={avatarRuntime} />
               ) : (
-                w.name.slice(0, 1).toUpperCase()
+                e.name.slice(0, 1).toUpperCase()
               )}
             </button>
-            <RailUnreadBadge count={unread} ringColor={railBg} testId={`rail-unread-${w.slug}`} />
+            <RailUnreadBadge count={unread} ringColor={railBg} testId={`rail-unread-${testKey}`} />
+            {e.provider === 'slack' && <RailSlackMark ringColor={railBg} />}
           </div>
         );
       })}

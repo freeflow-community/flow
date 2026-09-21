@@ -336,11 +336,14 @@ final class AppState: ObservableObject {
         self.db = runtime.db
         self.engine = runtime.engine
         let api = runtime.api
+        let backend = runtime.backend
         connections.register(self)
         let engine = self.engine
         let images = self.images
         bootstrapTask = Task { [weak self] in
-            await images.configure(api: api)
+            // A provider workspace's images come from its own backend; the
+            // runtime's API client carries no credential for that origin.
+            if let backend { await images.configure(backend: backend) } else { await images.configure(api: api) }
             guard let self else { return }
             await engine.attach(self)
             await engine.bootstrap()
@@ -484,6 +487,9 @@ final class AppState: ObservableObject {
     }
 
     func can(_ name: CapabilityName) -> Bool { capabilities.canUse(name) }
+
+    /// A provider connection (Slack) rather than a Flow server.
+    var isProviderWorkspace: Bool { runtime.backend != nil }
 
     /// The provider's own deep link for a conversation or message ("Open in
     /// Slack"); nil on a Flow connection, which has nowhere else to open.
@@ -778,6 +784,14 @@ final class AppState: ObservableObject {
     /// selection (each checks its own).
     func channelBecameUnavailable(_ channelId: String) {
         windows.forEach { $0.channelBecameUnavailable(channelId) }
+    }
+
+    /// This connection's workspace list just refreshed: record it in the
+    /// registry's bindings so every other connection's switcher lists this
+    /// one's workspaces with their current names and avatars.
+    func workspacesRefreshed(_ workspaces: [Workspace]) {
+        guard let userId = currentUser?.id else { return }
+        connections.syncBindings(connectionId: connectionId, userId: userId, workspaces: workspaces)
     }
 
     /// A workspace we left (#340) — every window showing it moves to `landOn`,

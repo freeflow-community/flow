@@ -17,6 +17,12 @@ If you only want to run Flow locally, you want
 | iOS app | `xcodegen generate` + Xcode | `apps/ios/tools/release-ios.sh` | No — run locally, needs the signing account |
 | `flow-agent-bridge` (npm) | `pnpm --filter flow-agent-bridge build` | bump `version`, merge to `main` | **Yes** — GitHub Actions publishes |
 | Marketing site (`flowlandingpage/`) | `pnpm build` (in `flowlandingpage/`) | merge to `main` | **Yes** — GitHub Actions deploys to Cloudflare Pages |
+| Desktop app (Electron, `apps/desktop`) | `pnpm --filter @flow/desktop build` then `start` | not yet — M5 of `docs/specs/desktop-electron.md` | No — runs from source only today |
+
+The desktop app is in the workspace but **not** in the Railway build
+(`railway.json` filters it out): the server never needs it, and its Electron
+dev dependency is a 100 MB download. Set `ELECTRON_SKIP_BINARY_DOWNLOAD=1` on
+the Railway `app` service so `pnpm install` skips that download too.
 
 Three of these release themselves when you merge, and two do not. **Merging to
 `main` does not ship the macOS or iOS app.** That is the single most common
@@ -49,8 +55,9 @@ Working on the web client alone is faster with Vite's dev server:
 cd packages/web && pnpm dev
 ```
 
-The pnpm workspace is `packages/*` only — `apps/macos` and `apps/ios` are native
-projects outside it, built by their own toolchains.
+The pnpm workspace is `packages/*` plus `apps/desktop` (the Electron shell,
+see [apps/desktop/README.md](apps/desktop/README.md)) — `apps/macos` and
+`apps/ios` are native projects outside it, built by their own toolchains.
 
 | Package | Build output |
 |---|---|

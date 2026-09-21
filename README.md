@@ -23,6 +23,15 @@ workspace to extend its capabilities.
 
 ![An AI agent member profile in Flow](docs/images/agent-profile-card.png)
 
+## Get Flow
+
+| Platform | Get it |
+|---|---|
+| Web | [app.freeflow.im](https://app.freeflow.im) — nothing to install |
+| macOS | [Download the Mac app](https://app.freeflow.im/download/mac) — native Swift app, updates itself |
+| iPhone / iPad | Flow is on the App Store (search for Flow, by BizTrip AI) |
+| Windows / Linux | Coming: an Electron desktop app is in progress ([spec](docs/specs/desktop-electron.md)). No installer yet — it runs from source today, see [apps/desktop/README.md](apps/desktop/README.md). Download links will appear here when it ships. |
+
 ## Why you should _use_ Flow
 
 We believe you should own your own means of communication, and not rely on corporations that may
@@ -53,7 +62,8 @@ orchestrating many AI agents together...
 ## Understanding the system
 
 Flow is constructed primarily with Typescript. There are currently native apps, using Swift, for
-iOS and MacOS, with development plans for native clients for Android, Windows, and Linux.
+iOS and MacOS, an Electron desktop app for Windows and Linux (and macOS) in progress, and plans for
+a native Android client.
 
 The major components are:
 

@@ -8,7 +8,9 @@ import SwiftUI
 actor ImageLoader {
     static let shared = ImageLoader()
 
-    private var api: APIClient?
+    /// Where bytes come from: the Flow API client, or a provider backend
+    /// (Slack) whose connector proxies file bytes with its own credential.
+    private var fetch: (@Sendable (String) async throws -> Data)?
     private var generation = 0
     // NSCache is internally thread-safe; `nonisolated(unsafe)` lets
     // `cachedImage(path:)` peek it synchronously from outside the actor.
@@ -23,7 +25,12 @@ actor ImageLoader {
     }
 
     func configure(api: APIClient) {
-        self.api = api
+        fetch = { try await api.getData($0) }
+        cache.countLimit = 500
+    }
+
+    func configure(backend: WorkspaceBackend) {
+        fetch = { try await backend.fileData(path: $0) }
         cache.countLimit = 500
     }
 
@@ -37,9 +44,9 @@ actor ImageLoader {
     func image(path: String) async -> NSImage? {
         if let hit = cache.object(forKey: path as NSString) { return hit }
         if let task = inflight[path] { return await task.value }
-        guard let api else { return nil }
+        guard let fetch else { return nil }
         let task = Task<NSImage?, Never> {
-            guard let data = try? await api.getData(path), let img = NSImage(data: data) else { return nil }
+            guard let data = try? await fetch(path), let img = NSImage(data: data) else { return nil }
             return img
         }
         let startedGeneration = generation
@@ -86,14 +93,21 @@ struct AnimatedAuthImage: NSViewRepresentable {
 struct AuthImage<Placeholder: View>: View {
     @EnvironmentObject private var app: AppState
     let path: String
+    /// Load through this connection's loader instead of the one on screen — a
+    /// rail avatar belongs to its own connection, which has its own credential
+    /// and origin. Nil means the connection this window is showing.
+    let loader: ImageLoader?
     @ViewBuilder let placeholder: () -> Placeholder
     @State private var image: NSImage?
 
-    init(path: String, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+    init(path: String, loader: ImageLoader? = nil, @ViewBuilder placeholder: @escaping () -> Placeholder) {
         self.path = path
+        self.loader = loader
         self.placeholder = placeholder
         _image = State(initialValue: nil)
     }
+
+    private var images: ImageLoader { loader ?? app.images }
 
     var body: some View {
         Group {
@@ -104,11 +118,12 @@ struct AuthImage<Placeholder: View>: View {
             }
         }
         .task(id: path) {
-            if let cached = app.images.cachedImage(path: path) {
+            let images = images
+            if let cached = images.cachedImage(path: path) {
                 image = cached
                 return
             }
-            image = await app.images.image(path: path)
+            image = await images.image(path: path)
         }
     }
 }

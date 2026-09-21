@@ -318,6 +318,15 @@ struct AppDatabase: Sendable {
             }
         }
 
+        // Provider conversation activity (Slack inactive channels): newest
+        // top-level message time from the connector. Nullable — nil means
+        // unknown, which a provider sidebar treats as inactive.
+        migrator.registerMigration("v25") { db in
+            try db.alter(table: "channel") { t in
+                t.add(column: "lastActivityAt", .text)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

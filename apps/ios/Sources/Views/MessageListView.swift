@@ -141,7 +141,7 @@ struct MessageListView: View {
                     if isLoadingHistory, !messages.isEmpty {
                         loadingRow("Loading earlier messages…")
                     } else if let limit = historyLimit, limit.limited, hasMore || limit.retryAfter.map({ $0 > Date() }) == true {
-                        HistoryLimitFooter(limit: limit, reason: capabilities[.history].reason) {
+                        HistoryLimitFooter(limit: limit, capabilities: capabilities) {
                             loadOlderAnchorId = messages.first?.id
                             followBox.model.positionRestored(atBottom: false)
                             onLoadOlder()
@@ -149,7 +149,7 @@ struct MessageListView: View {
                     } else if hasMore {
                         HStack {
                             Spacer()
-                            Button("Load earlier messages") {
+                            Button(capabilities.loadOlderLabel(wait: 0)) {
                                 // Reading history is a decision to leave the
                                 // end: unpin, remember the current top row,
                                 // and restore it once the page lands.
@@ -169,7 +169,7 @@ struct MessageListView: View {
                     // claim one `.id()`, and the leaving pending view wins —
                     // the spinner stays on screen. One element with a changed
                     // value re-renders in place instead.
-                    ForEach(rowCache.rows(for: messages), id: \.message.clientMsgId) { row in
+                    ForEach(rowCache.rows(for: messages), id: \.message.rowKey) { row in
                         VStack(alignment: .leading, spacing: 0) {
                             if row.startsNewDay {
                                 DayDividerView(iso: row.message.createdAt)
@@ -205,7 +205,7 @@ struct MessageListView: View {
                         // its server echo share a clientMsgId but not an id,
                         // so keying on id remounts the row (and its avatar
                         // image) the moment the echo lands.
-                        .id(row.message.clientMsgId)
+                        .id(row.message.rowKey)
                         .background(GeometryReader { geometry in
                             let frame = geometry.frame(in: .named(Self.scrollSpace))
                             Color.clear.preference(key: SavedTopMessage.self,
