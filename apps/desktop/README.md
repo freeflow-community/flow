@@ -24,6 +24,21 @@ Environment, the same names the macOS build script uses:
 | `FLOW_PROFILE` | A separate profile (`Flow Desktop-<name>` under the app-data directory), with its own credentials and window state, and named in the window title. |
 | `FLOW_WEB_DIST` | Serve a web build from somewhere other than `packages/web/dist`. |
 
+## Notifications while running from source (macOS)
+
+The Electron binary pnpm installs is only ad-hoc signed, and macOS's
+notification API refuses banners from an app without a real signing
+identity (`UNErrorDomain error 1`, and no permission prompt). Once per
+`pnpm install`, sign it with any identity in your login keychain:
+
+```sh
+apps/desktop/scripts/sign-dev-electron.sh        # default: "MyChat Dev Signing"
+```
+
+Then relaunch; macOS asks to allow notifications for "Electron" on the first
+banner. A packaged release (spec M5) is signed with the Developer ID and
+needs none of this.
+
 ## How it fits together
 
 - `src/main/` — the Electron main process. `appProtocol.ts` serves the web
