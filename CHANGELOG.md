@@ -17,6 +17,11 @@ This file keeps two things:
 - Background sync across connected servers (#542) is web + macOS, by design: iOS keeps its foreground/background lifecycle and push when suspended, and the spec promises no continuously running background sockets there. That is why the iOS aggregate badge is a client-side sum reconciled on foreground, with no exact icon badge while suspended.
 
 ### Gaps to close
+- **Spreadsheet previews are web + desktop only.** A message with an xlsx,
+  ods or csv attachment shows a grid and opens a full reader with sheet tabs
+  on web (and so in the Electron shell); macOS and iOS show the plain file
+  chip. Closing it needs a native parser (CoreXLSX or similar) and a grid
+  view; no ticket asks for it yet.
 - **The desktop (Electron) client signs in and chats, and that is all so far**
   (`docs/specs/desktop-electron.md` M1–M2). It runs from source on macOS,
   Windows and Linux and has no OS banners, badge, tray, screen-share picker,

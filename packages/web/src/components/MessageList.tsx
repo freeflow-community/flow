@@ -4,6 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ArtifactDTO, FileDTO, MessageDTO, WorkspaceMemberDTO } from '@flow/shared';
 import { bytesLabel, CustomEmojiContext, displayTime, InlineLinkContext, renderBlocks } from '../lib/format';
 import { isMarkdownFile, isTextFile, isVideoFile } from '../lib/fileKind';
+import { isSpreadsheetFile, SPREADSHEET_MAX_BYTES } from '../lib/spreadsheet';
+import { CARD_LIMITS, SheetTable, SpreadsheetView, useWorkbook } from './SpreadsheetPreview';
 import { MarkdownReport } from './ArtifactView';
 import { INTERRUPT_EMOJI, isThinkingStatus } from '../lib/agentStatus';
 import { burstConfetti, celebrationsAdded } from '../lib/confetti';
@@ -939,8 +941,63 @@ function Attachment({ file }: { file: FileDTO }) {
   if (file.hasThumb) return <ImageAttachment file={file} />;
   if (isVideoFile(file)) return <VideoAttachment file={file} />;
   if (file.mimeType === 'application/pdf') return <PdfAttachment file={file} />;
+  // Before text: a CSV is a spreadsheet first and a text file second.
+  if (isSpreadsheetFile(file) && file.sizeBytes <= SPREADSHEET_MAX_BYTES) return <SpreadsheetAttachment file={file} />;
   if (isTextFile(file)) return <TextAttachment file={file} />;
   return <FileChip file={file} />;
+}
+
+/** Inline spreadsheet card: the first sheet's top-left corner as a small
+ * grid; click opens the full reader with sheet tabs. A file the parser
+ * cannot read falls back to the chip. */
+function SpreadsheetAttachment({ file }: { file: FileDTO }) {
+  const [collapsed, toggleCollapsed] = useCollapsed(file.id);
+  const [reader, setReader] = useState(false);
+  const download = useDownload(file);
+  const state = useWorkbook(file.id, !collapsed);
+
+  if (state.status === 'failed') return <FileChip file={file} />;
+  const first = state.workbook?.sheets[0];
+
+  return (
+    <div className="mt-1 max-w-[560px]">
+      <CardHeader file={file} collapsed={collapsed} onToggle={toggleCollapsed} />
+      {!collapsed && (
+        <div className="group/att relative mt-0.5">
+          <div className="mc-scroll overflow-x-auto rounded-lg border border-hairline bg-white" data-testid={`file-sheet-${file.name}`}>
+            {first ? (
+              <SheetTable sheet={first} limits={CARD_LIMITS} compact />
+            ) : (
+              <div className="px-3 py-2 text-xs text-faint">{state.status === 'loading' ? 'Loading…' : 'Empty workbook'}</div>
+            )}
+          </div>
+          {state.workbook && (
+            <button
+              data-testid={`file-${file.name}`}
+              className="absolute inset-0 cursor-pointer"
+              title={`Open ${file.name}`}
+              onClick={() => setReader(true)}
+            />
+          )}
+          <DownloadHoverButton file={file} onDownload={download} />
+        </div>
+      )}
+      {reader && state.workbook && (
+        <LightboxShell
+          testId="sheet-reader"
+          onClose={() => setReader(false)}
+          caption={file.name}
+          actions={
+            <LightboxButton testId="sheet-reader-download" title="Download" onClick={() => void download()}>⤓</LightboxButton>
+          }
+        >
+          <div className="h-[85vh] w-[80vw] overflow-hidden rounded-lg" onMouseDown={(e) => e.stopPropagation()}>
+            <SpreadsheetView workbook={state.workbook} testId="sheet-reader-view" />
+          </div>
+        </LightboxShell>
+      )}
+    </div>
+  );
 }
 
 function ImageAttachment({ file }: { file: FileDTO }) {
