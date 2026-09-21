@@ -44,6 +44,10 @@ export class Notifier {
       silent: n.silent,
     });
     notification.on('click', () => this.click(n.id));
+    // macOS refuses an ad-hoc-signed app (UNErrorDomain 1); say so in the
+    // log instead of failing silently — see scripts/sign-dev-electron.sh.
+    notification.on('failed', (_event, error) => console.error(`[flow-desktop] banner failed: ${error}`));
+    if (process.env.FLOW_DESKTOP_DEBUG === '1') notification.on('show', () => console.log(`[flow-desktop] banner shown ${n.id}`));
     notification.on('close', () => { const e = this.shown.get(n.id); if (e) e.notification = null; });
     this.shown.set(n.id, { at: now, notification, routingId: n.routing.routingId });
     notification.show();

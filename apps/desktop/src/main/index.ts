@@ -185,6 +185,7 @@ function installIpc(): void {
   ipcMain.on('zoom:set', (_event, level: unknown) => { if (typeof level === 'number') applyZoom(level); });
   ipcMain.on('notifications:show', (_event, raw: unknown) => {
     const n = raw as Partial<DesktopNotification> | null;
+    if (process.env.FLOW_DESKTOP_DEBUG === '1') console.log(`[flow-desktop] notifications:show ${JSON.stringify(raw)}`);
     if (!n || typeof n.id !== 'string' || typeof n.title !== 'string' || typeof n.body !== 'string' || !n.routing) return;
     const r = n.routing as Partial<DesktopNotification['routing']>;
     if (typeof r.routingId !== 'string' || typeof r.workspaceId !== 'string' || typeof r.channelId !== 'string' || typeof r.messageId !== 'string' || typeof r.notificationId !== 'string') return;
