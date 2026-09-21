@@ -40,8 +40,9 @@ This file keeps two things:
   foreground connection's.
 - **The channel Docs list is searchable and collapsible on web only** (#574).
   macOS and iOS list a channel's artifacts as a plain run of rows with no
-  group header, filter or fold. Closing it is the same `DocsGroup` shape in
-  each native sidebar; no ticket asks for it yet.
+  group header, filter or fold. Web now matches that for one to three docs
+  and shows the header from four up. Closing it is the same `DocsGroup` shape
+  in each native sidebar; no ticket asks for it yet.
 - **The aggregate switcher badge has no bridge equivalent** (#542). The agent
   bridge speaks to one backend per process, so "how much is waiting on your
   other servers" has no meaning there yet. Closing it needs a bridge-side

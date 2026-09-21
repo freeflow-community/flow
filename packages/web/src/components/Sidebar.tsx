@@ -164,6 +164,11 @@ const APPS_COLLAPSED_KEY = 'flow.sidebarAppsCollapsed';
  * reads as "my docs are gone", not as "a filter is on".
  */
 const DOCS_COLLAPSED_KEY = 'flow.sidebarDocsCollapsed';
+/** Below this many docs the group has no header: a caret, a label, a count
+ * and a filter to present one or two rows is more chrome than content, and
+ * the rows alone are what the macOS client shows. From here up the list can
+ * push other channels off the screen, which is what the header is for. */
+export const DOCS_GROUP_MIN = 4;
 
 /** Case-insensitive substring match on an artifact name. An empty or
  * whitespace-only query matches everything, so clearing the box restores the
@@ -1041,6 +1046,14 @@ export function DocsGroup({ channelId, docs }: { channelId: string; docs: Artifa
   }, [searching]);
 
   if (docs.length === 0) return null;
+  // A short list is just the rows, nested under the channel like before #574.
+  if (docs.length < DOCS_GROUP_MIN) {
+    return (
+      <div className="ml-3" data-testid={`sidebar-docs-plain-${channelId}`}>
+        {docs.map((a) => <ArtifactRow key={a.id} artifact={a} />)}
+      </div>
+    );
+  }
   const shown = filterDocs(docs, query);
   const closeSearch = () => {
     setSearching(false);

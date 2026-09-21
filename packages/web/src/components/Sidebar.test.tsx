@@ -513,13 +513,13 @@ describe('DocsGroup', () => {
     expect(renderToStaticMarkup(<DocsGroup channelId="factory" docs={[]} />)).toBe('');
   });
 
+  const many = [doc('d1', 'Q3 roadmap'), doc('d2', 'Onboarding'), doc('d3', 'Runbook'), doc('d4', 'Budget')];
+
   it('folds the rows away but keeps the count visible when collapsed', () => {
     store['flow.sidebarDocsCollapsed'] = JSON.stringify(['factory']);
-    const html = renderToStaticMarkup(
-      <DocsGroup channelId="factory" docs={[doc('d1', 'Q3 roadmap'), doc('d2', 'Onboarding')]} />,
-    );
+    const html = renderToStaticMarkup(<DocsGroup channelId="factory" docs={many} />);
     expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('2'); // the count is what says there is something hidden
+    expect(html).toContain('4'); // the count is what says there is something hidden
     expect(html).not.toContain('Q3 roadmap');
   });
 
@@ -536,10 +536,24 @@ describe('DocsGroup', () => {
 
   it('lists every doc when the channel is not collapsed', () => {
     store['flow.sidebarDocsCollapsed'] = JSON.stringify(['general']); // a different channel
-    const html = renderExpanded('factory', [doc('d1', 'Q3 roadmap'), doc('d2', 'Onboarding')]);
+    const html = renderExpanded('factory', many);
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('Q3 roadmap');
-    expect(html).toContain('Onboarding');
+    expect(html).toContain('Budget');
+  });
+
+  it('shows a short list as plain rows with no header, even if the channel was folded before', () => {
+    // One to three docs: the rows alone, nested under the channel, as the
+    // macOS client draws them. The header's chrome is for a list long enough
+    // to need folding or filtering.
+    store['flow.sidebarDocsCollapsed'] = JSON.stringify(['factory']);
+    const html = renderExpanded('factory', [doc('d1', 'Task Board'), doc('d2', 'Onboarding'), doc('d3', 'Runbook')]);
+    expect(html).toContain('sidebar-docs-plain-factory');
+    expect(html).not.toContain('aria-expanded');
+    expect(html).not.toContain('Docs');
+    expect(html).not.toContain('sidebar-docs-search-factory');
+    expect(html).toContain('Task Board');
+    expect(html).toContain('Runbook');
   });
 
   it('keeps the artifact row test ids, so opening a doc is unchanged', () => {
