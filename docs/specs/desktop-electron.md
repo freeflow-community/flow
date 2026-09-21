@@ -1,8 +1,8 @@
 # Desktop client (Electron) for macOS, Windows and Linux
 
-Status: Approved · 2026-09-20. **M1 and M2 built** on branch
-`desktop-electron-m1-m2` (host seam, server/connector origin admission,
-`apps/desktop` shell that signs in and chats). M3–M5 open.
+Status: Approved · 2026-09-20. **M1–M2 merged (#622)**: host seam,
+server/connector origin admission, `apps/desktop` shell that signs in and
+chats. **M3 built** (notifications, badge, tray). M4–M5 open.
 Platforms: desktop (new), with changes to web and server
 
 ## Outcome and scope

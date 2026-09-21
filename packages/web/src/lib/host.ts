@@ -10,7 +10,17 @@
 // `isDesktop()` exists for the few places whose *product* behaviour differs
 // (sign-in goes through the system browser, the "open the desktop app" pitch
 // is pointless inside the desktop app), not for capability checks.
-import type { DesktopLinks, DesktopSecrets, DesktopWindow, DesktopZoom, FlowDesktopBridge } from '@flow/shared';
+import type {
+  DesktopBadge,
+  DesktopLinks,
+  DesktopNotification,
+  DesktopNotifications,
+  DesktopSecrets,
+  DesktopWindow,
+  DesktopZoom,
+  FlowDesktopBridge,
+  NotificationRouting,
+} from '@flow/shared';
 
 export interface FlowHost {
   readonly isDesktop: boolean;
@@ -28,7 +38,62 @@ export interface FlowHost {
   readonly links: DesktopLinks;
   readonly window: DesktopWindow;
   readonly zoom: DesktopZoom;
+  readonly notifications: DesktopNotifications;
+  readonly badge: DesktopBadge;
 }
+
+/** "Looking at it" (docs/design/NOTIFICATIONS.md): the page is visible, and
+ * in the desktop shell the window is also focused — the same app-active gate
+ * the macOS `scenePhase` handler applies. A browser tab keeps the visibility
+ * rule alone, unchanged. */
+export function isLookingAtApp(): boolean {
+  if (typeof document === 'undefined' || document.hidden) return false;
+  const host = getHost();
+  return !host.isDesktop || host.window.isFocused();
+}
+
+/** Run `listener` whenever `isLookingAtApp()` may have changed. */
+export function onLookingChange(listener: () => void): () => void {
+  document.addEventListener('visibilitychange', listener);
+  const off = getHost().isDesktop ? getHost().window.onFocusChange(() => listener()) : () => {};
+  return () => { document.removeEventListener('visibilitychange', listener); off(); };
+}
+
+/** The browser's own Notification API: one banner per row (`tag`), click
+ * focuses the tab and hands the routing back. `persistent` maps to
+ * `requireInteraction`, the web-only "keep banners on screen" preference. */
+function browserNotifications(): DesktopNotifications {
+  const listeners = new Set<(routing: NotificationRouting) => void>();
+  return {
+    show: (n: DesktopNotification & { persistent?: boolean }) => {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+      try {
+        const banner = new Notification(n.subtitle ? `${n.title} · ${n.subtitle}` : n.title, {
+          body: n.body,
+          tag: n.id,
+          requireInteraction: n.persistent === true,
+          silent: n.silent,
+        });
+        banner.onclick = () => {
+          window.focus();
+          banner.close();
+          for (const listener of listeners) listener(n.routing);
+        };
+      } catch { /* banner is best-effort */ }
+    },
+    onClick: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    clearDelivered: () => {},
+  };
+}
+
+/** The Badging API where a browser offers it (an installed PWA); silently
+ * nothing elsewhere. */
+const browserBadge: DesktopBadge = {
+  set: (count) => {
+    const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    try { void (count > 0 ? nav.setAppBadge?.(count) : nav.clearAppBadge?.()); } catch { /* unsupported */ }
+  },
+};
 
 function browserSecrets(): DesktopSecrets {
   return {
@@ -75,6 +140,8 @@ function browserHost(): FlowHost {
     links: browserLinks(),
     window: browserWindow(),
     zoom: browserZoom,
+    notifications: browserNotifications(),
+    badge: browserBadge,
   };
 }
 
@@ -98,6 +165,8 @@ function desktopHost(bridge: FlowDesktopBridge): FlowHost {
       },
     },
     zoom: bridge.zoom,
+    notifications: bridge.notifications,
+    badge: bridge.badge,
   };
 }
 

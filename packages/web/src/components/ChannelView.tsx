@@ -1,3 +1,4 @@
+import { isLookingAtApp, onLookingChange } from '../lib/host';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageDTO } from '@flow/shared';
 import { typingKey, useAuth, useLive, useSelection } from '../state';
@@ -85,7 +86,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
   const newestId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
     const sync = () => {
-      if (document.hidden) return;
+      if (!isLookingAtApp()) return;
       // A non-member previewing a public or archived channel (#588) has no
       // read cursor to move — the server would answer 403.
       if (channel && !channel.isMember) return;
@@ -95,8 +96,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
       }
     };
     sync();
-    document.addEventListener('visibilitychange', sync);
-    return () => document.removeEventListener('visibilitychange', sync);
+    return onLookingChange(sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newestId, channelId, channel?.isMember]);
 

@@ -1,3 +1,4 @@
+import { isDesktop } from '../lib/host';
 import { useBoundApi } from '../lib/useBoundApi';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -1049,8 +1050,10 @@ export function ProfileModal({ onClose }: { onClose: () => void }) {
         checked={prefs.channelInvite !== false} onChange={(v) => void setPref('channelInvite', v)} />
       <PrefToggle testid="pref-sound" label="Play a sound" hint="with every banner"
         checked={prefs.sound !== false} onChange={(v) => void setPref('sound', v)} />
-      <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
-        checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />
+      {/* In the desktop shell how long a banner stays is an OS setting, as on
+          macOS and iOS; the preference round-trips untouched there. */}
+      {!isDesktop() && <PrefToggle testid="pref-persistent" label="Keep banners on screen" hint="until dismissed (browser permitting)"
+        checked={prefs.persistentBanners === true} onChange={(v) => void setPref('persistentBanners', v)} />}
 
       {/* #489. The address sits in this section rather than up with the
           editable fields because it is not editable — and because "here is

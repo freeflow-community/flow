@@ -22,13 +22,18 @@ This file keeps two things:
   on web (and so in the Electron shell); macOS and iOS show the plain file
   chip. Closing it needs a native parser (CoreXLSX or similar) and a grid
   view; no ticket asks for it yet.
-- **The desktop (Electron) client signs in and chats, and that is all so far**
-  (`docs/specs/desktop-electron.md` M1–M2). It runs from source on macOS,
-  Windows and Linux and has no OS banners, badge, tray, screen-share picker,
-  multi-window or installer yet — those are M3–M5. The web client's features
-  are all there because it *is* the web client; the macOS parity items it
-  already closes: registration and password reset in-app, Google through the
-  system browser, credentials in the OS store.
+- **The desktop (Electron) client signs in, chats and notifies; no installer
+  yet** (`docs/specs/desktop-electron.md` M1–M3). It runs from source on
+  macOS, Windows and Linux with OS banners, an app badge summed across
+  connections, and a tray on Windows/Linux. Still open (M4–M5): screen-share
+  picker, downloads to the Downloads folder (a save dialog today), mini-app
+  windows, multi-window, installers and the updater. Two banner gaps against
+  macOS: **banners come from the foreground connection only** (the web client
+  raises none for background servers; macOS banners every connection), and
+  **Windows shows a dot, not a number**, on the taskbar (no numeric badge API).
+  The macOS parity items it closes: registration and password reset in-app,
+  Google through the system browser, credentials in the OS store, and the
+  channel name as a banner subtitle (#460).
 - **One workspace list across connections is not on iOS.** Web and macOS list
   every connection's workspaces (Slack teams and other servers) on the rail, in
   the sidebar menu and in the chooser; the iOS drawer still shows only the

@@ -61,12 +61,53 @@ export interface DesktopZoom {
   set(level: number): void;
 }
 
+/** Where a banner leads when clicked — the same keys the macOS app packs
+ * into a notification's userInfo (`Banners.swift`). `routingId` is the
+ * connection the row belongs to. */
+export interface NotificationRouting {
+  routingId: string;
+  workspaceId: string;
+  channelId: string;
+  messageId: string;
+  threadRootId: string | null;
+  /** The notification row, so a click can mark it read. */
+  notificationId: string;
+}
+
+export interface DesktopNotification {
+  /** Notification row id; the shell shows one banner per id. */
+  id: string;
+  title: string;
+  /** The conversation: shown as the macOS subtitle, folded into the title
+   * elsewhere. */
+  subtitle?: string;
+  body: string;
+  silent: boolean;
+  routing: NotificationRouting;
+}
+
+export interface DesktopNotifications {
+  show(notification: DesktopNotification): void;
+  /** Clicks on banners. A click that arrived before the first listener
+   * registered (cold start) is replayed to it. Returns an unsubscribe. */
+  onClick(listener: (routing: NotificationRouting) => void): () => void;
+  /** Take down every delivered banner for a connection (sign-out). */
+  clearDelivered(routingId: string): void;
+}
+
+export interface DesktopBadge {
+  /** The unread-notifications total across every connection; 0 clears. */
+  set(count: number): void;
+}
+
 export interface FlowDesktopBridge {
   readonly info: DesktopInfo;
   readonly secrets: DesktopSecrets;
   readonly links: DesktopLinks;
   readonly window: DesktopWindow;
   readonly zoom: DesktopZoom;
+  readonly notifications: DesktopNotifications;
+  readonly badge: DesktopBadge;
 }
 
 declare global {

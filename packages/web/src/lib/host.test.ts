@@ -17,6 +17,8 @@ function bridge(defaultServerOrigin: string): FlowDesktopBridge {
     links: { openExternal: () => {}, onDeepLink: () => () => {} },
     window: { isFocused: () => true, onFocusChange: () => () => {}, setTitle: () => {} },
     zoom: { get: () => 0, set: () => {} },
+    notifications: { show: () => {}, onClick: () => () => {}, clearDelivered: () => {} },
+    badge: { set: () => {} },
   };
 }
 

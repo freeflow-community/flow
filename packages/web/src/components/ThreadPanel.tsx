@@ -1,3 +1,4 @@
+import { isLookingAtApp, onLookingChange } from '../lib/host';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { typingKey, useAuth, useLive, useMobileNav, useSelection } from '../state';
 import { useChannel, useMarkRead, useMemberMap, useNameMap, useThread } from '../hooks';
@@ -45,13 +46,12 @@ export default function ThreadPanel({ rootId, embedded = false }: { rootId: stri
   const newestId = messages.length > 0 ? messages[messages.length - 1]!.id : null;
   useEffect(() => {
     const sync = () => {
-      if (document.hidden || !channelId || !newestId || readRef.current === newestId) return;
+      if (!isLookingAtApp() || !channelId || !newestId || readRef.current === newestId) return;
       readRef.current = newestId;
       markRead.mutate({ channelId, lastReadMsgId: newestId, threadRootId: rootId });
     };
     sync();
-    document.addEventListener('visibilitychange', sync);
-    return () => document.removeEventListener('visibilitychange', sync);
+    return onLookingChange(sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId, newestId, rootId]);
 

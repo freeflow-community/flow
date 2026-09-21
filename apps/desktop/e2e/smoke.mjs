@@ -26,7 +26,7 @@ const profile = `smoke-${Date.now().toString(36)}`;
 
 const app = await electron.launch({
   args: [root],
-  env: { ...process.env, FLOW_SERVER_URL: server, FLOW_PROFILE: profile },
+  env: { ...process.env, FLOW_SERVER_URL: server, FLOW_PROFILE: profile, FLOW_DESKTOP_TEST_HOOKS: '1' },
 });
 try {
   const page = await app.firstWindow();
@@ -99,6 +99,32 @@ try {
   await page.evaluate(() => { window.open('file:///never-opened', '_blank'); });
   await page.waitForTimeout(500);
   assert.equal((await app.windows()).length, before, 'window.open did not create an Electron window');
+
+  // Banners go through the shell, one per id, and a click comes back with
+  // its routing. Recorded rather than shown (FLOW_DESKTOP_TEST_HOOKS).
+  await page.evaluate(() => {
+    window.__clicks = [];
+    window.flowDesktop.notifications.onClick(r => window.__clicks.push(r));
+    const routing = { routingId: 'conn-1', workspaceId: 'w1', channelId: 'c1', messageId: 'm1', threadRootId: null, notificationId: 'n1' };
+    window.flowDesktop.notifications.show({ id: 'n1', title: 'Alice (DM)', subtitle: '#general', body: 'hi', silent: false, routing });
+    window.flowDesktop.notifications.show({ id: 'n1', title: 'Alice (DM)', body: 'hi again', silent: false, routing });
+  });
+  await page.waitForTimeout(300);
+  const shown = await app.evaluate(() => globalThis.__flowDesktopTest.notifications.map(n => ({ id: n.id, title: n.title, subtitle: n.subtitle })));
+  assert.deepEqual(shown, [{ id: 'n1', title: 'Alice (DM)', subtitle: '#general' }], 'one banner per id');
+  await app.evaluate(() => globalThis.__flowDesktopTest.click('n1'));
+  await page.waitForFunction(() => window.__clicks.length > 0, null, { timeout: 5_000 });
+  assert.equal((await page.evaluate(() => window.__clicks))[0].notificationId, 'n1');
+  console.log('banner shown once and click routed');
+
+  // The badge reaches the OS (the Dock count on macOS).
+  await page.evaluate(() => window.flowDesktop.badge.set(3));
+  await page.waitForTimeout(300);
+  if (process.platform === 'darwin') assert.equal(await app.evaluate(({ app }) => app.getBadgeCount()), 3, 'dock badge');
+  await page.evaluate(() => window.flowDesktop.badge.set(0));
+  await page.waitForTimeout(300);
+  if (process.platform === 'darwin') assert.equal(await app.evaluate(({ app }) => app.getBadgeCount()), 0, 'dock badge cleared');
+  console.log('badge ok');
 
   console.log('SMOKE OK');
 } catch (error) {

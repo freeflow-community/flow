@@ -6,8 +6,12 @@
 // profile/server conventions the macOS app already has.
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, nativeTheme, session, shell } from 'electron';
-import { DESKTOP_ORIGIN, type DesktopInfo } from '@flow/shared';
+import { DESKTOP_ORIGIN, type DesktopInfo, type DesktopNotification } from '@flow/shared';
 import { APP_SCHEME, isAppUrl, registerAppScheme, serveWebClient } from './appProtocol.js';
+import { setBadge } from './badge.js';
+import { Notifier } from './notifications.js';
+import { loadPrefs } from './prefs.js';
+import { installTray, setTrayUnread, traySupported } from './tray.js';
 import { defaultServerOrigin, distRoot, profileName, webRoot } from './config.js';
 import { installContextMenu } from './contextMenu.js';
 import { deepLinkFromArgv, isFlowLink, isOpenableExternally } from './lib/argv.js';
@@ -40,6 +44,19 @@ else if (process.argv[1]) app.setAsDefaultProtocolClient('flow', process.execPat
 // ---- state -----------------------------------------------------------------
 
 const secrets = new SecretStore();
+/** Test seam (`FLOW_DESKTOP_TEST_HOOKS=1`): banners are recorded, not shown,
+ * and a test can click one by id through `globalThis.__flowDesktopTest`. */
+const testHooks = process.env.FLOW_DESKTOP_TEST_HOOKS === '1';
+const recorded: DesktopNotification[] = [];
+const notifier = new Notifier(testHooks ? { record: (n) => { recorded.push(n); } } : {});
+if (testHooks) {
+  (globalThis as { __flowDesktopTest?: unknown }).__flowDesktopTest = {
+    notifications: recorded,
+    click: (id: string) => notifier.click(id),
+  };
+}
+/** Set once the app is really quitting, so close-to-tray lets the window go. */
+let quitting = false;
 let mainWindow: BrowserWindow | null = null;
 /** Links that arrived before the renderer could take them (cold start). */
 const pendingLinks: string[] = [];
@@ -130,7 +147,17 @@ function createWindow(): BrowserWindow {
   win.on('focus', () => win.webContents.send('window:focus', true));
   win.on('blur', () => win.webContents.send('window:focus', false));
   win.once('ready-to-show', () => win.show());
+  // Windows and Linux: closing hides to the tray so banners and the badge
+  // keep working, unless the person turned that off in the tray menu.
+  win.on('close', (event) => {
+    if (quitting || !traySupported() || loadPrefs().quitOnClose === true) return;
+    event.preventDefault();
+    win.hide();
+  });
   win.on('closed', () => { if (mainWindow === win) mainWindow = null; });
+  // Banner clicks reach whichever renderer is current; a click with no
+  // renderer yet is held by the notifier until one registers.
+  notifier.setClickListener((routing) => { showMainWindow(); win.webContents.send('notifications:click', routing); });
 
   void win.loadURL(`${DESKTOP_ORIGIN}/`);
   return win;
@@ -156,6 +183,24 @@ function installIpc(): void {
   });
   ipcMain.on('zoom:get', (event) => { event.returnValue = event.sender.getZoomLevel(); });
   ipcMain.on('zoom:set', (_event, level: unknown) => { if (typeof level === 'number') applyZoom(level); });
+  ipcMain.on('notifications:show', (_event, raw: unknown) => {
+    const n = raw as Partial<DesktopNotification> | null;
+    if (!n || typeof n.id !== 'string' || typeof n.title !== 'string' || typeof n.body !== 'string' || !n.routing) return;
+    const r = n.routing as Partial<DesktopNotification['routing']>;
+    if (typeof r.routingId !== 'string' || typeof r.workspaceId !== 'string' || typeof r.channelId !== 'string' || typeof r.messageId !== 'string' || typeof r.notificationId !== 'string') return;
+    notifier.show({
+      id: n.id, title: n.title.slice(0, 200), body: n.body.slice(0, 1000), silent: n.silent === true,
+      ...(typeof n.subtitle === 'string' ? { subtitle: n.subtitle.slice(0, 120) } : {}),
+      routing: { routingId: r.routingId, workspaceId: r.workspaceId, channelId: r.channelId, messageId: r.messageId,
+        threadRootId: typeof r.threadRootId === 'string' ? r.threadRootId : null, notificationId: r.notificationId },
+    });
+  });
+  ipcMain.on('notifications:clearDelivered', (_event, routingId: unknown) => { if (typeof routingId === 'string') notifier.clearDelivered(routingId); });
+  ipcMain.on('badge:set', (_event, count: unknown) => {
+    if (typeof count !== 'number' || !Number.isFinite(count)) return;
+    setBadge(count);
+    setTrayUnread(Math.max(0, Math.floor(count)));
+  });
 }
 
 // ---- session hardening -----------------------------------------------------
@@ -183,6 +228,7 @@ void app.whenReady().then(() => {
   serveWebClient(webRoot());
   installIpc();
   installMenu({ helpUrl: `${defaultServerOrigin()}/` });
+  installTray({ showWindow: showMainWindow, quit: () => { quitting = true; app.quit(); } });
   createWindow();
   const link = deepLinkFromArgv(process.argv);
   if (link) deliverDeepLink(link);
@@ -190,9 +236,12 @@ void app.whenReady().then(() => {
 
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else showMainWindow(); });
 
+app.on('before-quit', () => { quitting = true; });
+
 app.on('window-all-closed', () => {
-  // macOS keeps running in the Dock like the native app. Windows and Linux
-  // quit until M3 adds the tray that keeps notifications flowing.
+  // macOS keeps running in the Dock like the native app. On Windows and
+  // Linux the window normally hides to the tray instead of closing; when it
+  // really closed (quit-on-close is on, or no tray), the app quits.
   if (process.platform !== 'darwin') app.quit();
 });
 

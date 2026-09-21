@@ -26,6 +26,9 @@ import { plainBody } from '../lib/format';
 import { ACTIVITY_VIEW_ID, ADMIN_VIEW_ID, CHANNEL_BROWSER_VIEW_ID, DIRECTORY_VIEW_ID, SCHEDULED_VIEW_ID, LiveContext, MobileNavContext, typingKey, useAuth, useRuntime, useSelection } from '../state';
 import { HuddleProvider, useHuddle, type HuddleState } from '../huddle';
 import { useNameMap, useSwitcherEntries, useWorkspaceInvites, useWorkspaces } from '../hooks';
+import { getHost, isLookingAtApp, onLookingChange } from '../lib/host';
+import { useConnectionSync } from '../lib/backgroundSync';
+import type { NotificationRouting } from '@flow/shared';
 import { openWorkspace } from '../lib/workspaceSwitcher';
 import { connectionManager } from '../lib/connectionRuntime';
 import Sidebar from './Sidebar';
@@ -89,10 +92,46 @@ export default function Main() {
   namesRef.current = names;
 
   useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
+    if (!getHost().isDesktop && 'Notification' in window && Notification.permission === 'default') {
       void Notification.requestPermission();
     }
   }, []);
+
+  // A banner click lands here (docs/specs/desktop-electron.md, "Notifications"):
+  // the same navigation the in-app Activity row does, then the row is read.
+  // Registered once; the ref keeps it pointed at the current selection.
+  useEffect(() => {
+    return getHost().notifications.onClick((routing: NotificationRouting) => {
+      if (routing.routingId !== runtime.connectionId) return; // another connection's banner
+      const s = selRef.current;
+      if (s.workspaceId !== routing.workspaceId) s.selectWorkspace(routing.workspaceId);
+      s.jumpToMessage(routing.channelId, routing.messageId, routing.threadRootId);
+      void api('POST', '/v1/me/notifications/read', { id: routing.notificationId }).then(() =>
+        qc.invalidateQueries({ queryKey: ['notifications'] }),
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime.connectionId]);
+
+  // The app badge (dock, taskbar, launcher): unread notifications across
+  // every connection — this one's per-workspace numbers plus what the
+  // background supervisor reports for the others — the sum
+  // `refreshAggregateBadge()` computes on macOS. Re-asked when the window
+  // comes back to the front, so a count that moved on the phone catches up.
+  const workspacesForBadge = useWorkspaces();
+  const syncStates = useConnectionSync();
+  useEffect(() => {
+    if (!getHost().isDesktop) return;
+    const own = (workspacesForBadge.data ?? []).reduce((sum, ws) => sum + (ws.unreadCount ?? 0), 0);
+    const others = syncStates.filter((s) => s.connectionId !== runtime.connectionId).reduce((sum, s) => sum + s.unread, 0);
+    getHost().badge.set(own + others);
+  }, [workspacesForBadge.data, syncStates, runtime.connectionId]);
+  useEffect(() => {
+    if (!getHost().isDesktop) return;
+    return onLookingChange(() => {
+      if (isLookingAtApp()) void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    });
+  }, [qc]);
 
   // The Activity badge counts this workspace only — the feed behind it is
   // scoped the same way. Refetched on every workspace switch, and whenever the
@@ -481,7 +520,7 @@ export default function Main() {
         // path uses (threadRootId IS NULL).
         const viewing =
           n.channelId === cur.channelId &&
-          !document.hidden &&
+          isLookingAtApp() &&
           (n.message.threadRootId == null || n.message.threadRootId === cur.threadRootId);
         if (viewing) {
           // Read it now (issue #63): messages clear via the read cursor, but a
@@ -529,11 +568,13 @@ export default function Main() {
     }
   }
 
+  /** An OS banner through the host: the browser's Notification API in a tab,
+   * the shell's notifier on desktop (docs/specs/desktop-electron.md). What
+   * qualifies is decided here and on the server, never by the shell. */
   function maybeBanner(n: NotificationDTO): void {
-    if (!('Notification' in window) || Notification.permission !== 'granted') return;
     // phase 10: the server computed the alert decision (prefs + status)
     if (n.suppressAlert) return;
-    if (!document.hidden && n.channelId === selRef.current.channelId) return;
+    if (isLookingAtApp() && n.channelId === selRef.current.channelId) return;
     // The actor is the reactor for kind 4, the author otherwise.
     const sender = namesRef.current[n.actorId ?? n.message.userId] ?? 'Someone';
     const title =
@@ -542,32 +583,29 @@ export default function Main() {
       : n.kind === 4 ? `${sender} reacted ${n.reactionEmoji ?? ''}`.trim()
       : n.kind === 5 ? `${sender} added you to a channel`
       : `${sender} mentioned you`;
-    try {
-      const banner = new Notification(title, {
-        body: plainBody(n.message.body, namesRef.current),
-        tag: n.id,
-        // presentation pref: persist until dismissed (browser permitting)
-        requireInteraction: authRef.current.user.notificationPrefs.persistentBanners === true,
-        // #251: the same `sound` pref the phone honours. Chromium respects
-        // `silent`; the browsers that don't were never going to make a noise
-        // here anyway, so the pref costs nothing where it is ignored.
-        silent: authRef.current.user.notificationPrefs.sound === false,
-      });
-      // Clicking the OS banner should focus this tab and jump straight to the
-      // triggering message — same navigation the in-app Activity list does.
-      banner.onclick = () => {
-        window.focus();
-        banner.close();
-        const s = selRef.current;
-        if (s.workspaceId !== n.workspaceId) s.selectWorkspace(n.workspaceId);
-        s.jumpToMessage(n.channelId, n.messageId, n.message.threadRootId);
-        void api('POST', '/v1/me/notifications/read', { id: n.id }).then(() =>
-          qc.invalidateQueries({ queryKey: ['notifications'] }),
-        );
-      };
-    } catch {
-      /* banner is best-effort */
-    }
+    // Name the conversation (#460's subtitle): the channel when it has a
+    // name; a DM already names its sender in the title.
+    const channel = qc.getQueryData<{ channels: ChannelDTO[] }>(['channels', n.workspaceId])?.channels.find((c) => c.id === n.channelId);
+    const prefs = authRef.current.user.notificationPrefs;
+    getHost().notifications.show({
+      id: n.id,
+      title,
+      ...(channel?.name ? { subtitle: `#${channel.name}` } : {}),
+      body: plainBody(n.message.body, namesRef.current),
+      // #251: the same `sound` pref the phone honours.
+      silent: prefs.sound === false,
+      // Browser only: keep the banner up until dismissed (the desktop shell
+      // leaves that to the OS, as macOS and iOS do).
+      ...({ persistent: prefs.persistentBanners === true } as object),
+      routing: {
+        routingId: runtime.connectionId,
+        workspaceId: n.workspaceId,
+        channelId: n.channelId,
+        messageId: n.messageId,
+        threadRootId: n.message.threadRootId ?? null,
+        notificationId: n.id,
+      },
+    });
   }
 
   const live = useMemo(

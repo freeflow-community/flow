@@ -7,7 +7,10 @@
 // stay synchronous; writes go to the main process, which encrypts them
 // with the OS store. Focus and zoom are mirrored the same way.
 import { contextBridge, ipcRenderer } from 'electron';
-import type { DesktopInfo, DesktopLinks, DesktopSecrets, DesktopWindow, DesktopZoom, FlowDesktopBridge } from '@flow/shared';
+import type {
+  DesktopBadge, DesktopInfo, DesktopLinks, DesktopNotification, DesktopNotifications, DesktopSecrets,
+  DesktopWindow, DesktopZoom, FlowDesktopBridge, NotificationRouting,
+} from '@flow/shared';
 
 const info = ipcRenderer.sendSync('desktop:info') as DesktopInfo;
 
@@ -59,5 +62,34 @@ const zoom: DesktopZoom = {
   set: (level) => { if (typeof level === 'number') ipcRenderer.send('zoom:set', level); },
 };
 
-const bridge: FlowDesktopBridge = { info, secrets, links, window: win, zoom };
+// -- notifications -----------------------------------------------------------
+// The shell shows banners and reports clicks; a click that arrives before
+// the app registers its listener is kept and replayed, like a deep link.
+const clickListeners = new Set<(routing: NotificationRouting) => void>();
+const queuedClicks: NotificationRouting[] = [];
+ipcRenderer.on('notifications:click', (_event, routing: unknown) => {
+  if (!routing || typeof routing !== 'object') return;
+  if (clickListeners.size === 0) { queuedClicks.push(routing as NotificationRouting); return; }
+  for (const listener of clickListeners) listener(routing as NotificationRouting);
+});
+const notifications: DesktopNotifications = {
+  show: (n: DesktopNotification) => {
+    if (!n || typeof n !== 'object' || typeof n.id !== 'string') return;
+    const { id, title, subtitle, body, silent, routing } = n;
+    ipcRenderer.send('notifications:show', { id, title, subtitle, body, silent: silent === true, routing });
+  },
+  onClick: (listener) => {
+    clickListeners.add(listener);
+    for (const routing of queuedClicks.splice(0)) listener(routing);
+    return () => { clickListeners.delete(listener); };
+  },
+  clearDelivered: (routingId) => { if (typeof routingId === 'string') ipcRenderer.send('notifications:clearDelivered', routingId); },
+};
+
+// -- badge -------------------------------------------------------------------
+const badge: DesktopBadge = {
+  set: (count) => { if (typeof count === 'number' && Number.isFinite(count)) ipcRenderer.send('badge:set', count); },
+};
+
+const bridge: FlowDesktopBridge = { info, secrets, links, window: win, zoom, notifications, badge };
 contextBridge.exposeInMainWorld('flowDesktop', bridge);
